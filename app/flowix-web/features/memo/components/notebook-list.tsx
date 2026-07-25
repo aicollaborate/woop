@@ -9,8 +9,11 @@ import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
 import { useI18n } from '@features/i18n';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
-
-type NotebookDropPosition = 'before' | 'after';
+import {
+  computeNotebookDropPosition,
+  reorderNotebookIds,
+  type NotebookDropPosition,
+} from '@features/memo/components/notebook-reorder';
 
 interface NotebookListProps {
   notebooks: Notebook[];
@@ -130,8 +133,7 @@ export function NotebookList({
         if (!row) continue;
         const rect = row.getBoundingClientRect();
         if (y >= rect.top && y <= rect.bottom) {
-          const position: NotebookDropPosition =
-            y - rect.top < rect.height / 2 ? 'before' : 'after';
+          const position = computeNotebookDropPosition(y, rect.top, rect.height);
           return { id: notebooks[index].id, position };
         }
       }
@@ -142,20 +144,12 @@ export function NotebookList({
 
   const applyNotebookMove = useCallback(
     (sourceId: string, targetId: string, position: NotebookDropPosition) => {
-      if (sourceId === targetId) return;
-      const sourceIndex = notebooks.findIndex((nb) => nb.id === sourceId);
-      const targetIndex = notebooks.findIndex((nb) => nb.id === targetId);
-      if (sourceIndex < 0 || targetIndex < 0) return;
       const ids = notebooks.map((nb) => nb.id);
-      const [moved] = ids.splice(sourceIndex, 1);
-      // source 已经在 splice 里被移除; 之后 targetIndex 是「在原列表
-      // 里的位置」(对 source 位置之后的 target 没校正, 故需再减 1)。
-      let insertAt = targetIndex;
-      if (sourceIndex < targetIndex) insertAt = targetIndex - 1;
-      if (position === 'after') insertAt += 1;
-      insertAt = Math.max(0, Math.min(insertAt, ids.length));
-      ids.splice(insertAt, 0, moved);
-      void reorderNotebooks(ids);
+      const nextIds = reorderNotebookIds(ids, sourceId, targetId, position);
+      // source===target 或 source/target 不在列表 ── reorderNotebookIds 原样
+      // 返回同一引用, 据此跳过持久化 (避免无意义 IPC)。
+      if (nextIds === ids) return;
+      void reorderNotebooks(nextIds);
     },
     [notebooks, reorderNotebooks],
   );

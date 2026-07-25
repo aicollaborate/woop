@@ -30,8 +30,13 @@ import {
 import { useI18n, type I18nParams } from '@features/i18n';
 import { invalidateMentionTags } from '@features/editor/extensions/tag-mention';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
-
-type TagDropPosition = 'before' | 'after' | 'inside';
+import {
+  computeTagDropPosition,
+  getSubtreeIds,
+  rebuildTagOptionsFromLayout,
+  reorderTagLayout,
+  type TagDropPosition,
+} from '@features/memo/components/tag-reorder';
 
 interface TagTreeProps {
   selectedNotebook: Notebook | null;
@@ -73,6 +78,7 @@ function writePersistedCollapsedTagIds(notebookId: string, ids: string[]): void 
 //   - 拖拽重排 + reparent (useDragReorder, 替代原内联 tag 状态机)
 //   - 行内重命名 / 右键删除确认弹窗 / drag ghost
 // 与父级的唯一耦合是 onCountsChange (counts 上抛给 NavFilterButtons)。
+// 落点位置 / 子树 / 同级重排 / segment 树重建等纯逻辑见 tag-reorder.ts。
 export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   const { t } = useI18n();
   const activeFilter = useMemoStore((s) => s.activeFilter);
@@ -318,93 +324,6 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
     });
   }, []);
 
-  const rebuildTagOptionsFromLayout = useCallback(
-    (layout: MemoTagLayoutItem[]): MemoTagTreeItem[] => {
-      // Step 3+ 本地版: 跟 [memo-list-metadata-service] 的 buildTagTreeOptions
-      // 同源 ── 路径拆 segment、同 fullPath 合并、parent 由字面推导。
-      // 输入 `layout` 是真实 tag fullPath 列表 (用户拖拽后产生的新顺序),
-      // 输出是 segment 节点树, 用于立刻重渲染面板 (不重新触发 IPC)。
-      const segmentByFullPath = new Map<
-        string,
-        { name: string; fullPath: string; depth: number; count: number }
-      >();
-
-      // count 复用当前 tagOptions, 避免重算 prefix; 但 segmentByFullPath 不预填:
-      // 必须按 layout 顺序 ensureSegment, 否则 layout 顺序被忽略, 拖动后 UI 不变
-      // (要等 reload 走 buildTagTreeOptions 才生效)。
-      const countByFullPath = new Map(tagOptions.map((seg) => [seg.fullPath, seg.count]));
-
-      const ensureSegment = (fullPath: string) => {
-        if (segmentByFullPath.has(fullPath)) return;
-        const lastSlash = fullPath.lastIndexOf('/');
-        if (lastSlash > 0) {
-          ensureSegment(fullPath.slice(0, lastSlash));
-        }
-        const name = lastSlash > 0 ? fullPath.slice(lastSlash + 1) : fullPath;
-        const depthFromSlashes = (fullPath.match(/\//g) ?? []).length;
-        segmentByFullPath.set(fullPath, {
-          name,
-          fullPath,
-          depth: depthFromSlashes,
-          count: countByFullPath.get(fullPath) ?? 0,
-        });
-      };
-
-      // 按 layout 顺序展开: segment 节点顺序 = layout 顺序 (同级 reorder 立即生效)。
-      for (const item of layout) {
-        ensureSegment(item.id);
-      }
-
-      const childrenByParent = new Map<string | null, string[]>();
-      for (const fullPath of segmentByFullPath.keys()) {
-        const lastSlash = fullPath.lastIndexOf('/');
-        const parentFullPath = lastSlash > 0 ? fullPath.slice(0, lastSlash) : null;
-        const arr = childrenByParent.get(parentFullPath) ?? [];
-        arr.push(fullPath);
-        childrenByParent.set(parentFullPath, arr);
-      }
-
-      const result: MemoTagTreeItem[] = [];
-      const visit = (fullPath: string) => {
-        const seg = segmentByFullPath.get(fullPath)!;
-        const lastSlash = fullPath.lastIndexOf('/');
-        const parentFullPath = lastSlash > 0 ? fullPath.slice(0, lastSlash) : null;
-        result.push({
-          id: fullPath,
-          parentId: parentFullPath,
-          name: seg.name,
-          fullPath,
-          depth: seg.depth,
-          count: seg.count,
-        });
-        for (const child of childrenByParent.get(fullPath) ?? []) {
-          visit(child);
-        }
-      };
-
-      for (const root of childrenByParent.get(null) ?? []) {
-        visit(root);
-      }
-      return result;
-    },
-    [tagOptions]
-  );
-
-  const getSubtreeIds = useCallback(
-    (sourceId: string): string[] => {
-      const sourceIndex = tagOptions.findIndex((tag) => tag.id === sourceId);
-      if (sourceIndex < 0) return [];
-      const sourceDepth = tagOptions[sourceIndex].depth;
-      const ids = [sourceId];
-      for (let index = sourceIndex + 1; index < tagOptions.length; index += 1) {
-        if (tagOptions[index].depth <= sourceDepth) break;
-        ids.push(tagOptions[index].id);
-      }
-      return ids;
-    },
-    [tagOptions]
-  );
-
   // 拖动排序 / 层级逻辑:
   // 1. pointerdown 在行上设 setPointerCapture 并暂存起点;
   // 2. pointermove 越过 4px 阈值进入拖动态, 显示 ghost + drop 指示;
@@ -415,7 +334,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   const applyTagMove = useCallback(
     async (sourceId: string, targetId: string, position: TagDropPosition) => {
       if (sourceId === targetId) return;
-      const sourceSubtreeIds = getSubtreeIds(sourceId);
+      const sourceSubtreeIds = getSubtreeIds(tagOptions, sourceId);
       if (sourceSubtreeIds.length === 0 || sourceSubtreeIds.includes(targetId)) return;
 
       const target = tagOptions.find((tag) => tag.id === targetId);
@@ -475,45 +394,25 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         return;
       }
 
-      // **before / after**: 纯 UI 排序, 持久化到 tagLayout。
-      const currentLayout = tagLayout.length > 0
-        ? tagLayout
-        : tagOptions.map(({ id, parentId }) => ({ id, parentId }));
-      const movingItems = currentLayout.filter((item) => sourceSubtreeIds.includes(item.id));
-      const remaining = currentLayout.filter((item) => !sourceSubtreeIds.includes(item.id));
-      const nextMovingItems = movingItems;
-
-      let insertIndex = remaining.length;
-      const targetIndex = remaining.findIndex((item) => item.id === targetId);
-      if (targetIndex < 0) return;
-      if (position === 'before') {
-        insertIndex = targetIndex;
-      } else {
-        const targetSubtreeIds = getSubtreeIds(targetId).filter((id) => !sourceSubtreeIds.includes(id));
-        const lastTargetSubtreeId = targetSubtreeIds[targetSubtreeIds.length - 1] ?? targetId;
-        insertIndex = remaining.findIndex((item) => item.id === lastTargetSubtreeId) + 1;
-      }
-
-      const nextLayout = [
-        ...remaining.slice(0, insertIndex),
-        ...nextMovingItems,
-        ...remaining.slice(insertIndex),
-      ];
+      // **before / after**: 纯 UI 排序, 持久化到 tagLayout。布局算术走
+      // tag-reorder 的纯函数 (reorderTagLayout), 这里只做副作用。
+      const nextLayout = reorderTagLayout(tagLayout, tagOptions, sourceId, targetId, position);
+      if (!nextLayout) return;
 
       setTagLayout(nextLayout);
-      setTagOptions(rebuildTagOptionsFromLayout(nextLayout));
+      setTagOptions(rebuildTagOptionsFromLayout(nextLayout, tagOptions));
       void persistTagLayout(nextLayout, notebookId).catch((error) => {
         console.warn('[TagTree] Failed to persist tag layout:', error);
       });
       clearLibraryMetadata();
       invalidateMentionTags();
     },
-    [clearLibraryMetadata, getSubtreeIds, rebuildTagOptionsFromLayout, tagLayout, tagOptions]
+    [clearLibraryMetadata, tagLayout, tagOptions]
   );
 
   const findDropTarget = useCallback(
     (y: number, sourceId: string): DragDropTarget<TagDropPosition> | null => {
-      const sourceSubtreeIds = getSubtreeIds(sourceId);
+      const sourceSubtreeIds = getSubtreeIds(tagOptions, sourceId);
       for (const tag of visibleTagOptions) {
         if (tag.collapsedByAncestor) continue;
         if (sourceSubtreeIds.includes(tag.id)) continue;
@@ -521,19 +420,13 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         if (!row) continue;
         const rect = row.getBoundingClientRect();
         if (y >= rect.top && y <= rect.bottom) {
-          const relativeY = y - rect.top;
-          const position: TagDropPosition =
-            relativeY < rect.height / 3
-              ? 'before'
-              : relativeY > (rect.height * 2) / 3
-                ? 'after'
-                : 'inside';
+          const position = computeTagDropPosition(y - rect.top, rect.height);
           return { id: tag.id, position };
         }
       }
       return null;
     },
-    [getSubtreeIds, visibleTagOptions]
+    [tagOptions, visibleTagOptions]
   );
 
   const { draggingId, dropTarget, dragGhost, handlePointerDown } = useDragReorder<TagDropPosition>({

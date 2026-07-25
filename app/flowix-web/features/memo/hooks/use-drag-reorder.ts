@@ -60,6 +60,19 @@ export interface UseDragReorderResult<TPosition extends string> {
   handlePointerDown: (e: ReactPointerEvent<HTMLDivElement>, id: string) => void;
 }
 
+/**
+ * 位移是否超过拖拽阈值 ── dy 或 dx 任一达到 threshold 即视为开始拖动。
+ * 原内联判断 `dy < threshold && dx < threshold` 的反向 (取反 = 任一达到)。
+ * 抽出为纯函数便于单测阈值边界。
+ */
+export function hasExceededDragThreshold(
+  dy: number,
+  dx: number,
+  threshold: number,
+): boolean {
+  return dy >= threshold || dx >= threshold;
+}
+
 export function useDragReorder<TPosition extends string>({
   findDropTarget,
   applyMove,
@@ -106,7 +119,7 @@ export function useDragReorder<TPosition extends string>({
       if (!state.isDragging) {
         const dy = Math.abs(e.clientY - state.startY);
         const dx = Math.abs(e.clientX - state.startX);
-        if (dy < threshold && dx < threshold) return;
+        if (!hasExceededDragThreshold(dy, dx, threshold)) return;
         state.isDragging = true;
         setDraggingId(state.sourceId);
         if (state.rect) {
