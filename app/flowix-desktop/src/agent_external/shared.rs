@@ -890,15 +890,17 @@ mod tests {
     #[test]
     fn streaming_emit_buffer_flush_only_emits_non_empty() {
         let mut buf = StreamingEmitBuffer::new("t2".to_string());
-        // 鍙湁 text: 浠呬骇鍑?Text銆?        buf.append_text("a");
+        // 只有 text: 仅产出 Text。
+        buf.append_text("a");
         let chunks = buf.flush();
         assert_eq!(chunks.len(), 1);
         assert!(matches!(chunks[0], AgentChunk::Text { .. }));
-        // 鍙湁 reasoning: 浠呬骇鍑?Reasoning銆?        buf.append_reasoning("b");
+        // 只有 reasoning: 仅产出 Reasoning。
+        buf.append_reasoning("b");
         let chunks = buf.flush();
         assert_eq!(chunks.len(), 1);
         assert!(matches!(chunks[0], AgentChunk::Reasoning { .. }));
-        // 绌? 涓嶄骇鍑恒€?
+        // 空: 不产出。
         assert!(buf.flush().is_empty());
     }
 

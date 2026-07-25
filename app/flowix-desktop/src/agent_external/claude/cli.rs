@@ -707,7 +707,7 @@ mod tests {
                 "content": [
                     {
                         "type": "text",
-                        "text": "Base directory for this skill: /tmp/verify\n\nskill body"
+                        "text": "Plain user text before a tool result"
                     },
                     {
                         "type": "tool_result",
@@ -724,7 +724,7 @@ mod tests {
             [
                 AgentChunk::Text { text, .. },
                 AgentChunk::ToolResult { id, result, .. }
-            ] if text == "Base directory for this skill: /tmp/verify\n\nskill body"
+            ] if text == "Plain user text before a tool result"
                 && id == "toolu_1"
                 && result["content"] == "loaded"
         ));

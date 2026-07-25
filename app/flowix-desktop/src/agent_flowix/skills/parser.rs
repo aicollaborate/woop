@@ -149,9 +149,9 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\n\
              name: flowix-note\n\
-             description: 鍦?Flowix 榛樿绗旇鏈?(nb_default) 鍐欎竴鏉°€屾湰娆′慨澶嶉棶棰樸€嶇瑪璁般€俓n\
+             description: 在 Flowix 默认笔记本 (nb_default) 写一条「本次修复问题」笔记。\n\
              metadata:\n  \
-             short-description: 鍦?Flowix 榛樿绗旇鏈啓涓€鏉′慨澶嶇瑪璁癨n\
+             short-description: 在 Flowix 默认笔记本写一条修复笔记\n\
              ---\n\n\
              # body line 1\n\
              body line 2\n",
@@ -161,8 +161,11 @@ mod tests {
         let skill =
             parse_skill_file(&skill_dir.join("SKILL.md"), SkillOrigin::System).expect("parse ok");
         assert_eq!(skill.name, "flowix-note");
-        assert!(skill.description.starts_with("鍦?Flowix"));
-        assert!(skill.short_description.starts_with("鍦?Flowix"));
+        assert!(skill.description.starts_with("在 Flowix"));
+        assert_eq!(
+            skill.short_description,
+            "在 Flowix 默认笔记本写一条修复笔记"
+        );
         assert!(skill.body.starts_with("# body line 1"));
         assert_eq!(skill.origin, SkillOrigin::System);
         assert!(skill.source_path.ends_with("SKILL.md"));

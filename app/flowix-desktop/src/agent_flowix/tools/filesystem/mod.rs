@@ -212,10 +212,10 @@ mod tests {
     async fn glob_chinese_pattern_without_recursive_prefix_matches() {
         let root = unique_temp_dir("glob-chinese-flat");
         std::fs::create_dir_all(&root).expect("create root");
-        std::fs::write(root.join("鍒涙柊鑽爺绌?md"), "# 涓枃\n").expect("write chinese");
+        std::fs::write(root.join("创新药研究.md"), "# 中文\n").expect("write chinese");
 
         let args = serde_json::json!({
-            "pattern": "鍒涙柊鑽?.md",
+            "pattern": "创新药*.md",
             "limit": 10
         })
         .to_string();
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(data["found"].as_bool(), Some(true));
         assert_eq!(data["match_count"].as_u64(), Some(1));
         let first = data["matches"][0].as_str().expect("first match");
-        assert!(first.contains("鍒涙柊鑽爺绌?md"), "match: {first}");
+        assert!(first.contains("创新药研究.md"), "match: {first}");
         let _ = std::fs::remove_dir_all(root);
     }
 
