@@ -1,5 +1,5 @@
 /* Tiptap Editor — Markdown Styles */
-@import "highlight.js/styles/github-dark.css";
+/* 代码块高亮由 shiki 内联样式负责（codeblock-shiki 扩展），无 .hljs 类消费，不再引入 highlight.js CSS 主题 */
 
 .markdown-editor {
   --document-tag-height: calc(0.936rem + 4px);
