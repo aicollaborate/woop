@@ -167,8 +167,8 @@ export const AgentThreadCard = Node.create({
             threadId: null,
             source: getCurrentThreadCardSource(),
             role: undefined,
-            // 让 instance 自己持有 cwd / folders 快照, 而不是每次
-            // send 时再依赖全局 store 兜底链 → 修 启动 race 下 cwd 缺失
+            // 插入时只记录 runtime 默认和 notebookId；cwd / paths 在首次
+            // send 前解析并冻结，避开插入阶段 store 尚未 hydrate 的 race。
             runtimeConfig: buildInitialInstanceRuntimeConfig(typeKey),
           });
           const node = nodeType.create({

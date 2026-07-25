@@ -554,9 +554,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         memoId: this.agentRoleMemoId,
         name: this.agentRoleName,
       },
-      // 把 cwd / folders 快照写进 instance, 不再只靠前端 runtimeConfig
-      // 兜底链 (启动 race 窗口内 selectedNotebook / agent-access 还没
-      // hydrate 时, 兜底链可能全断导致 Claude Code CLI exit 1).
+      // 这里只记录 notebookId；cwd / paths 在首次 send 前解析并冻结，避免
+      // 此处 selectedNotebook / agent-access 尚未 hydrate 时写入空快照。
       runtimeConfig: buildInitialInstanceRuntimeConfig(this.typeKey),
     });
     this.updateAttrs({
