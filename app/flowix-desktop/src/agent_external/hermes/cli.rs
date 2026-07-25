@@ -12,8 +12,9 @@ use crate::agent_external::cli_resolver::{
 };
 use crate::agent_external::{
     append_workspace_context, emit_stream_end_once, kill_child_tree,
-    persist_and_emit_external_chunk, persist_external_chunk, resolve_run_id,
-    select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
+    persist_and_emit_external_chunk, persist_external_chunk, resolve_and_freeze_runtime_cwd,
+    resolve_run_id, select_external_session_for_runtime, ExternalRunRegistry,
+    USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -249,12 +250,21 @@ impl HermesCliManager {
         let hint = is_hermes_session_id(thread_id).then(|| thread_id.to_string());
         let session_id = select_external_session_for_runtime(mapped_session_id, hint);
 
-        let cwd = message
-            .cwd_for_runtime(AGENT_TYPE)
-            .map(PathBuf::from)
-            .filter(|p| p.exists())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let cwd = {
+            let manager = self.thread_manager.read().await;
+            resolve_and_freeze_runtime_cwd(
+                &manager,
+                thread_id,
+                |m, _| {
+                    m.cwd_for_runtime(AGENT_TYPE)
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_dir())
+                },
+                &message,
+                None,
+            )
+            .await?
+        };
         let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         let permission_mode = message
             .permission_mode_for_runtime(AGENT_TYPE)

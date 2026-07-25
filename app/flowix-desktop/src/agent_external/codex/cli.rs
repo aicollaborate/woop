@@ -22,7 +22,8 @@ use super::stream::read_codex_stdout;
 use super::{truncate_for_log, AGENT_TYPE};
 use crate::agent_external::{
     emit_stream_end_once, kill_child_tree, read_stderr_to_string,
-    select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
+    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, ExternalRunRegistry,
+    USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
@@ -251,7 +252,17 @@ impl CodexCliManager {
         };
         let hint = is_codex_session_id(thread_id).then(|| thread_id.to_string());
         let session_id = select_external_session_for_runtime(mapped_session_id, hint);
-        let cwd = resolve_codex_cwd(&message, session_id.as_deref());
+        let cwd = {
+            let manager = self.thread_manager.read().await;
+            resolve_and_freeze_runtime_cwd(
+                &manager,
+                &thread_id,
+                resolve_codex_cwd,
+                &message,
+                session_id.as_deref(),
+            )
+            .await?
+        };
         let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         let permission_mode = message
             .permission_mode_for_runtime(AGENT_TYPE)

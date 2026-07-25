@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::agent_flowix::{AgentChunk, RunInfo};
+use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::{NewAgentExternalEvent, ThreadManager};
 use crate::events as dispatcher;
 use crate::runtime_log;
@@ -642,6 +642,44 @@ pub fn select_external_session_for_runtime(
     external_session_id_hint: Option<String>,
 ) -> Option<String> {
     external_session_id_hint.or(mapped_session_id)
+}
+
+/// Resolve the working directory for an external CLI run, freezing it on the
+/// first turn so it never drifts mid-conversation.
+///
+/// Decision order:
+///   1. `frozenCwd` persisted in `agent_conversation_instances.runtime_config`
+///      on a prior turn - reused verbatim. This is the whole point: after the
+///      first message the cwd stops tracking the live notebook.
+///   2. The runtime-specific `resolver` (IPC `runtime_config.{runtime}.cwd`
+///      -> session-file cwd for claude/codex -> `None`). No process-cwd
+///      fallback: if nothing resolves we fail loudly instead of silently
+///      launching the CLI in `/`.
+///
+/// On branch (2) the resolved cwd is persisted so every future turn takes
+/// branch (1). Persistence is best-effort - a DB failure is logged but does
+/// not abort the run (the cwd is still valid for this turn).
+pub async fn resolve_and_freeze_runtime_cwd(
+    thread_manager: &ThreadManager,
+    thread_id: &str,
+    resolver: impl Fn(&AgentUserMessage, Option<&str>) -> Option<PathBuf>,
+    message: &AgentUserMessage,
+    session_id: Option<&str>,
+) -> Result<PathBuf, String> {
+    if let Ok(Some(frozen)) = thread_manager.read_frozen_cwd(thread_id).await {
+        if frozen.is_dir() {
+            return Ok(frozen);
+        }
+    }
+    let cwd = resolver(message, session_id)
+        .filter(|c| c.is_dir())
+        .ok_or_else(|| {
+            "Agent working directory unavailable; open a notebook or pick a folder".to_string()
+        })?;
+    if let Err(err) = thread_manager.upsert_frozen_cwd(thread_id, &cwd).await {
+        tracing::warn!("failed to persist frozen cwd for {thread_id}: {err}");
+    }
+    Ok(cwd)
 }
 
 /// Hard cap (in bytes) on a single line of stdout read from an external CLI.

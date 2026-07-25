@@ -138,4 +138,21 @@ mod tests {
             assert!(out.contains("Model: m"));
         }
     }
+
+    #[test]
+    fn system_prompt_contains_no_known_mojibake() {
+        let out = build_system_prompt(SystemPromptConfig {
+            model: "m",
+            tools_enabled: true,
+            skills: &[],
+            role_override: None,
+        });
+
+        for marker in ["鈥?", "鈫?", "璁颁", "鏂囦欢鏉冮檺", "绗旇", "浣岻D"] {
+            assert!(
+                !out.contains(marker),
+                "system prompt contains mojibake marker: {marker}"
+            );
+        }
+    }
 }

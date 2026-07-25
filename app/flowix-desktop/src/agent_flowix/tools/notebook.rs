@@ -15,7 +15,7 @@ pub const TOOL_NAME: &str = "available_dirs";
 pub fn available_dirs_tool() -> Tool {
     function_tool(
         TOOL_NAME,
-        "List directories the AI is allowed to access. Returns up to 10 entries; each has `kind` (`notebook` | `folder`), `id`, `name`, and absolute `path`. The list contains two kinds of locations: (1) notebook storage paths the user has granted access to 鈥?use these as starting points for `read` / `ls` on memos; (2) user-suggested reference / research paths the user explicitly added to 鏂囦欢鏉冮檺, where the AI may find source material to read. Directories toggled off in 鏂囦欢鏉冮檺 or missing from disk are excluded.",
+        "List directories the AI is allowed to access. Returns up to 10 entries; each has `kind` (`notebook` | `folder`), `id`, `name`, and absolute `path`. The list contains two kinds of locations: (1) notebook storage paths the user has granted access to — use these as starting points for `read` / `ls` on memos; (2) user-suggested reference / research paths the user explicitly added to File Permissions, where the AI may find source material to read. Directories toggled off in File Permissions or missing from disk are excluded.",
         serde_json::json!({
             "type": "object",
             "properties": {},

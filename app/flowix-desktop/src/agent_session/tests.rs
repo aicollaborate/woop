@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::agent_session::store::ThreadManager;
-    use crate::agent_session::types::{ChatMessage, NewAgentExternalEvent};
+    use crate::agent_session::types::{
+        AgentConversationSource, ChatMessage, NewAgentExternalEvent,
+        UpsertAgentConversationInstance,
+    };
     use crate::agent_types::AgentId;
     use rusqlite::params;
 
@@ -223,6 +226,67 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].thread_id, "codex-local-card-1");
         assert_eq!(listed[0].title, "Product database title");
+    }
+
+    #[tokio::test]
+    async fn frozen_cwd_round_trips_and_preserves_other_runtime_config_fields() {
+        let manager = ThreadManager::for_tests();
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "inst-frozen-cwd".to_string(),
+                agent_type: "claude".to_string(),
+                title: "frozen cwd test".to_string(),
+                thread_id: Some("thread-frozen-cwd".to_string()),
+                runtime_config: Some(
+                    r#"{"workspaceSnapshot":{"cwd":"/old"},"model":{"key":"sonnet"}}"#.to_string(),
+                ),
+                source: AgentConversationSource {
+                    kind: "thread-card".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+
+        // First turn: no frozen cwd yet.
+        assert!(manager
+            .read_frozen_cwd("thread-frozen-cwd")
+            .await
+            .unwrap()
+            .is_none());
+
+        // Freeze a cwd.
+        let cwd = std::path::PathBuf::from("/tmp/flowix-frozen-cwd");
+        manager
+            .upsert_frozen_cwd("thread-frozen-cwd", &cwd)
+            .await
+            .unwrap();
+
+        // Subsequent turn: frozen cwd reads back.
+        assert_eq!(
+            manager
+                .read_frozen_cwd("thread-frozen-cwd")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(cwd.as_path())
+        );
+
+        // Other runtime_config fields the frontend persisted are preserved.
+        let instance = manager
+            .find_agent_conversation_by_thread_id("thread-frozen-cwd")
+            .await
+            .unwrap()
+            .unwrap();
+        let rc: serde_json::Value =
+            serde_json::from_str(instance.runtime_config.as_deref().unwrap()).unwrap();
+        assert_eq!(rc["workspaceSnapshot"]["cwd"], "/old");
+        assert_eq!(rc["model"]["key"], "sonnet");
+        assert_eq!(rc["frozenCwd"], "/tmp/flowix-frozen-cwd");
     }
 
     #[tokio::test]

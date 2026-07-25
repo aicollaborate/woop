@@ -7,32 +7,32 @@ use super::history::codex_session_cwd;
 use super::AGENT_TYPE;
 use crate::agent_external::node::node_runtime_target;
 
-/// Cwd fallback chain:
+/// Cwd fallback chain (returns `None` when nothing resolves; the caller -
+/// `resolve_and_freeze_runtime_cwd` - then fails loudly instead of silently
+/// falling back to the process cwd):
 /// 1. `message.cwd_for_runtime` from IPC runtime_config.
 /// 2. The original cwd persisted in Codex session metadata.
-/// 3. Tauri process cwd.
-/// 4. ".".
 pub(crate) fn resolve_codex_cwd(
     message: &crate::agent_flowix::AgentUserMessage,
     session_id: Option<&str>,
-) -> PathBuf {
+) -> Option<PathBuf> {
     let from_ipc = message
         .cwd_for_runtime(AGENT_TYPE)
         .map(PathBuf::from)
         .filter(|p| p.exists());
     if let Some(cwd) = from_ipc {
-        return cwd;
+        return Some(cwd);
     }
 
     if let Some(sid) = session_id.filter(|s| !s.trim().is_empty()) {
         if let Ok(Some(cwd)) = codex_session_cwd(sid) {
             if cwd.exists() {
-                return cwd;
+                return Some(cwd);
             }
         }
     }
 
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    None
 }
 
 #[cfg(test)]

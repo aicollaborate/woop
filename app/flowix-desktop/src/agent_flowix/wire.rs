@@ -290,7 +290,7 @@ pub enum AgentError {
     UserConfig(#[from] crate::config::UserConfigError),
     #[error("llm provider error: {0}")]
     LlmProvider(String),
-    #[error("ai model not configured; open Preferences 鈫?Agent to set model and api key")]
+    #[error("ai model not configured; open Preferences → Agent to set model and api key")]
     NotConfigured,
     #[error("agent stuck: tool '{tool}' called {count} times with identical arguments")]
     Stuck { tool: String, count: u32 },

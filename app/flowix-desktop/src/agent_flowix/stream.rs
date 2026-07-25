@@ -805,10 +805,10 @@ impl AgentManager {
                                         .finalize_with_synthesized_message(
                                             thread_id,
                                             format!(
-                                                "(agent aborted 鈥?{err_msg}). \
+                                                "(agent aborted — {err_msg}). \
                                                  Split the request into smaller pieces \
                                                  or raise `max_total_tokens` in \
-                                                 Preferences 鈫?Agent."
+                                                 Preferences → Agent."
                                             ),
                                             app_handle,
                                             &run_id,
@@ -1006,7 +1006,7 @@ impl AgentManager {
                                     // crashed" toast. The user can
                                     // immediately send a new prompt.
                                     let synth_msg = format!(
-                                        "(agent aborted 鈥?{}). Try rephrasing the request \
+                                        "(agent aborted — {}). Try rephrasing the request \
                                          or check that the file path is correct.",
                                         err_msg
                                     );

@@ -507,7 +507,7 @@ fn sanitize(msg: &str) -> String {
     let mut chars = trimmed.chars();
     let head: String = chars.by_ref().take(SANITIZE_MAX_CHARS).collect();
     if chars.next().is_some() {
-        format!("{head}鈥?(truncated)")
+        format!("{head}… (truncated)")
     } else {
         head
     }
@@ -815,7 +815,7 @@ mod probe_tests {
         let huge = "a".repeat(SANITIZE_MAX_CHARS + 50);
         let out = sanitize(&huge);
         assert!(out.starts_with(&"a".repeat(SANITIZE_MAX_CHARS)));
-        assert!(out.ends_with("鈥?(truncated)"));
+        assert!(out.ends_with("… (truncated)"));
     }
 
     #[test]

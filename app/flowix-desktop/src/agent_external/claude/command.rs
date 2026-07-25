@@ -9,24 +9,24 @@ use super::AGENT_TYPE;
 pub(crate) fn resolve_claude_cwd(
     message: &crate::agent_flowix::AgentUserMessage,
     session_id: Option<&str>,
-) -> PathBuf {
+) -> Option<PathBuf> {
     let from_ipc = message
         .cwd_for_runtime(AGENT_TYPE)
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
     if let Some(cwd) = from_ipc {
-        return cwd;
+        return Some(cwd);
     }
 
     if let Some(sid) = session_id.filter(|s| !s.trim().is_empty()) {
         if let Ok(Some(cwd)) = claude_session_cwd(sid) {
             if cwd.is_dir() {
-                return cwd;
+                return Some(cwd);
             }
         }
     }
 
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    None
 }
 
 pub(crate) fn build_claude_command(

@@ -172,7 +172,12 @@ export function buildAgentRuntimeConfig({
   // folder -> 当前笔记本。 主空间本身也留在 workspacePaths 里, 由后端
   // (claude/command.rs::normalized_additional_workspace_dirs) 去重 cwd,
   // 不会重复出现在 --add-dir。
-  const frozenCwd = normalizeWorkspacePath(workspaceSnapshot?.cwd) || undefined;
+  // workspaceSnapshot.cwd is retired: the backend (frozenCwd in
+  // agent_conversation_instances.runtime_config) is the cwd authority and
+  // freezes it on the first turn. The frontend now sends the live primary
+  // workspace as cwd; the backend reuses the frozen one on subsequent turns.
+  // workspaceSnapshot.workspacePaths is still honored so --add-dir roots stay
+  // frozen across the conversation.
   const frozenPaths = (workspaceSnapshot?.workspacePaths ?? [])
     .map(normalizeWorkspacePath)
     .filter(Boolean);
@@ -180,15 +185,16 @@ export function buildAgentRuntimeConfig({
     .map(normalizeWorkspacePath)
     .filter(Boolean);
   const notebookPathNorm = normalizeWorkspacePath(notebookPath) || undefined;
-  const workspacePaths = frozenCwd
-    ? Array.from(new Set([frozenCwd, ...frozenPaths]))
+
+  const resolvedPrimary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
+  const primaryWorkspace = resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path;
+  const workspacePaths = workspaceSnapshot
+    ? Array.from(
+        new Set([primaryWorkspace, ...frozenPaths].filter((p): p is string => Boolean(p))),
+      )
     : Array.from(
         new Set([...folderPaths, ...(notebookPathNorm ? [notebookPathNorm] : [])]),
       );
-
-  const resolvedPrimary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
-  const primaryWorkspace =
-    frozenCwd ?? (resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path);
 
   const effectivePermissionMode =
     instanceRuntimeConfig?.access?.sandbox ?? permissionMode;

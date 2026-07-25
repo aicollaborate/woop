@@ -20,8 +20,8 @@ use super::stream::read_claude_stdout;
 use super::{truncate_for_log, AGENT_TYPE};
 use crate::agent_external::{
     emit_stream_end_once, kill_child_tree, persist_and_emit_external_chunk, persist_external_chunk,
-    read_stderr_to_string, resolve_run_id, select_external_session_for_runtime,
-    ExternalRunRegistry, USER_STOPPED_REASON,
+    read_stderr_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,
+    select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
@@ -287,7 +287,17 @@ impl ClaudeCliManager {
         let hint = is_claude_session_id(thread_id).then(|| thread_id.to_string());
         let session_id = select_external_session_for_runtime(mapped_session_id, hint);
 
-        let cwd = resolve_claude_cwd(&message, session_id.as_deref());
+        let cwd = {
+            let manager = self.thread_manager.read().await;
+            resolve_and_freeze_runtime_cwd(
+                &manager,
+                &thread_id,
+                resolve_claude_cwd,
+                &message,
+                session_id.as_deref(),
+            )
+            .await?
+        };
         let mut workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         for image_path in &message.image_paths {
             if let Some(parent) = std::path::Path::new(image_path).parent() {

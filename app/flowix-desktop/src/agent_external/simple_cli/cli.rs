@@ -11,7 +11,7 @@ use crate::agent_external::cli_resolver::{
 };
 use crate::agent_external::{
     append_workspace_context, emit_chunk_with_run_id, emit_stream_end_once, kill_child_tree,
-    resolve_run_id, ExternalRunRegistry, USER_STOPPED_REASON,
+    resolve_and_freeze_runtime_cwd, resolve_run_id, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -257,12 +257,22 @@ impl SimpleCliManager {
         app_handle: &tauri::AppHandle,
         stream_end_emitted: Arc<AtomicBool>,
     ) -> Result<(), String> {
-        let cwd = message
-            .cwd_for_runtime(self.kind.key())
-            .map(PathBuf::from)
-            .filter(|p| p.exists())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let runtime_key = self.kind.key();
+        let cwd = {
+            let manager = self.thread_manager.read().await;
+            resolve_and_freeze_runtime_cwd(
+                &manager,
+                thread_id,
+                |m, _| {
+                    m.cwd_for_runtime(runtime_key)
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_dir())
+                },
+                &message,
+                None,
+            )
+            .await?
+        };
         let workspace_paths = message.workspace_paths_for_runtime(self.kind.key());
         let user_prompt = message
             .llm_content

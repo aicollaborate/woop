@@ -92,7 +92,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(result.claude?.workspacePaths).toEqual(["D:\\当前笔记本"]);
   });
 
-  it("workspace snapshot wins over later notebook and default-folder changes", () => {
+  it("workspaceSnapshot.workspacePaths stays frozen; cwd follows live notebook (backend frozenCwd owns cwd stability)", () => {
     const result = buildAgentRuntimeConfig({
       typeKey: "codex",
       notebookPath: "/notes/changed",
@@ -114,8 +114,12 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       },
     });
 
-    expect(result.codex?.cwd).toBe("/projects/original");
+    // cwd follows the live primary workspace now; workspaceSnapshot.cwd is
+    // retired (backend frozenCwd owns cross-turn cwd stability).
+    expect(result.codex?.cwd).toBe("/projects/changed");
+    // frozen workspacePaths are still honored so --add-dir roots stay stable.
     expect(result.codex?.workspacePaths).toEqual([
+      "/projects/changed",
       "/projects/original",
       "/notes/original",
     ]);

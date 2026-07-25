@@ -1820,7 +1820,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
   });
 
-  it("reuses a conversation workspace snapshot after the selected notebook and defaults change", async () => {
+  it("workspaceSnapshot.workspacePaths stay frozen; cwd follows live notebook (backend frozenCwd owns cwd stability)", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const threadId = "thread-card-frozen-workspace";
@@ -1879,10 +1879,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       systemReminderDirectory: "D:\\notes\\original",
       runtimeConfig: {
         codex: {
-          cwd: "D:\\projects\\original",
+          cwd: "D:\\notes\\original",
           workspacePaths: [
-            "D:\\projects\\original",
             "D:\\notes\\original",
+            "D:\\projects\\original",
           ],
         },
       },

@@ -1211,6 +1211,73 @@ impl ThreadManager {
         instance.ok_or_else(|| ThreadError::NotFound(instance_id))
     }
 
+    /// Read the frozen working directory persisted for a conversation thread.
+    ///
+    /// `frozenCwd` lives at the top level of the `runtime_config` JSON so a
+    /// single field covers every external CLI runtime (an instance binds
+    /// exactly one agent_type). `None` when the thread has no instance row or
+    /// the row has no frozen cwd yet (first turn).
+    pub async fn read_frozen_cwd(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<PathBuf>, ThreadError> {
+        let instance = self.find_agent_conversation_by_thread_id(thread_id).await?;
+        Ok(instance
+            .and_then(|i| i.runtime_config)
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| {
+                v.get("frozenCwd")
+                    .and_then(serde_json::Value::as_str)
+                    .map(PathBuf::from)
+            }))
+    }
+
+    /// Persist `cwd` as the frozen working directory for a conversation.
+    ///
+    /// Called once on the first turn after the runtime-specific resolver picks
+    /// a concrete directory; subsequent turns read it back via `read_frozen_cwd`
+    /// and skip resolution, so the cwd never drifts mid-conversation.
+    pub async fn upsert_frozen_cwd(
+        &self,
+        thread_id: &str,
+        cwd: &std::path::Path,
+    ) -> Result<(), ThreadError> {
+        let instance = self
+            .find_agent_conversation_by_thread_id(thread_id)
+            .await?
+            .ok_or_else(|| ThreadError::NotFound(thread_id.to_string()))?;
+        let runtime_config = Self::patch_frozen_cwd(instance.runtime_config.as_deref(), cwd);
+        self.upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+            instance_id: instance.instance_id,
+            agent_type: instance.agent_type,
+            title: instance.title,
+            thread_id: instance.thread_id,
+            runtime_config: Some(runtime_config),
+            source: instance.source,
+            role: instance.role,
+            created_at: Some(instance.created_at),
+            updated_at: None,
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Merge `frozenCwd` into a `runtime_config` JSON string, preserving every
+    /// other field the frontend may have persisted (workspaceSnapshot, model,
+    /// access, ...).
+    fn patch_frozen_cwd(existing: Option<&str>, cwd: &std::path::Path) -> String {
+        let mut value: serde_json::Value = existing
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "frozenCwd".to_string(),
+                serde_json::Value::String(cwd.to_string_lossy().into_owned()),
+            );
+        }
+        serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
+    }
+
     pub async fn delete_agent_conversation_instance(
         &self,
         instance_id: &str,

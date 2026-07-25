@@ -127,8 +127,8 @@ pub async fn select_directory(app: tauri::AppHandle) -> Option<String> {
         let state_handle = handle.clone();
         handle
             .run_on_main_thread(move || {
-                let result = crate::config::pick_directory_with_bookmark("閫夋嫨绗旇鏈枃浠跺す")
-                    .map(|(path, bookmark)| {
+                let result = crate::config::pick_directory_with_bookmark("选择笔记本文件夹").map(
+                    |(path, bookmark)| {
                         let state = state_handle.state::<AppState>();
                         if let Err(e) = state
                             .security_bookmarks
@@ -137,7 +137,8 @@ pub async fn select_directory(app: tauri::AppHandle) -> Option<String> {
                             tracing::warn!("[select_directory] failed to persist bookmark: {e}");
                         }
                         path
-                    });
+                    },
+                );
                 tx.send(result).ok();
             })
             .ok()?;
@@ -152,7 +153,7 @@ pub async fn select_directory(app: tauri::AppHandle) -> Option<String> {
         let result = handle
             .dialog()
             .file()
-            .set_title("閫夋嫨绗旇鏈枃浠跺す")
+            .set_title("选择笔记本文件夹")
             .blocking_pick_folder()
             .map(|p| p.to_string());
         tx.send(result).ok();
@@ -183,8 +184,8 @@ pub async fn select_files(app: tauri::AppHandle) -> Option<Vec<String>> {
                     "webm", "mov", "avi", "zip", "rar", "7z", "tar", "gz",
                 ],
             )
-            .set_title("閫夋嫨鍥剧墖")
-            .add_filter("鍥剧墖", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
+            .set_title("选择文件")
+            .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
             .add_filter("All files", &["*"])
             .blocking_pick_files()
             .map(|paths| paths.into_iter().map(|p| p.to_string()).collect());
@@ -214,7 +215,7 @@ pub async fn save_file_dialog(
         let mut builder = handle
             .dialog()
             .file()
-            .set_title("淇濆瓨鏂囦欢")
+            .set_title("保存文件")
             .set_file_name(&suggested);
 
         for filter in &filter_list {

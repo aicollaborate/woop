@@ -400,4 +400,16 @@ mod tests {
             .unwrap();
         assert_eq!(migrated.entries.len(), 1);
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bookmark_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bookmark = macos::bookmark_for_directory(tmp.path())
+            .expect("a temporary directory should produce bookmark data");
+        let access = macos::resolve_bookmark(&bookmark)
+            .expect("newly created bookmark data should resolve immediately");
+        let canonical = std::fs::canonicalize(tmp.path()).unwrap();
+        assert_eq!(access.path_key(), normalize_path(&canonical));
+    }
 }
