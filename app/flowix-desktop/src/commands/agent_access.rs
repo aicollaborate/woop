@@ -56,16 +56,13 @@ pub async fn add_agent_access_folder_from_picker(
         return Ok(None);
     }
 
-    let comparable = trimmed.to_ascii_lowercase();
     let mut config = state.agent_access.get_config();
-    if config.entries.iter().any(|entry| {
-        entry
-            .path
-            .trim_end_matches(|c| c == '/' || c == '\\')
-            .to_ascii_lowercase()
-            == comparable
-    }) {
-        return Err("path already tracked".to_string());
+    if let Some(existing) = reusable_tracked_folder(&config, &trimmed)? {
+        // Folder entries form a global metadata/bookmark pool while
+        // `defaults.files[notebook_id]` owns the per-notebook attachment.
+        // Returning the existing folder lets a removed folder be attached
+        // again and lets multiple notebooks reference the same directory.
+        return Ok(Some(existing));
     }
 
     let now = chrono::Utc::now().timestamp_millis();
@@ -92,4 +89,72 @@ pub async fn add_agent_access_folder_from_picker(
         .map_err(|e| format!("agent access persist failed: {e}"))?;
     dispatcher::emit_to(&app, AGENT_ACCESS_CHANGED_EVENT, ());
     Ok(Some(entry))
+}
+
+fn reusable_tracked_folder(
+    config: &AgentAccessConfig,
+    path: &str,
+) -> Result<Option<AgentAccessEntry>, String> {
+    let comparable = path
+        .trim_end_matches(|c| c == '/' || c == '\\')
+        .to_ascii_lowercase();
+    let Some(existing) = config.entries.iter().find(|entry| {
+        entry
+            .path
+            .trim_end_matches(|c| c == '/' || c == '\\')
+            .to_ascii_lowercase()
+            == comparable
+    }) else {
+        return Ok(None);
+    };
+    if existing.kind == AgentAccessKind::Folder {
+        Ok(Some(existing.clone()))
+    } else {
+        Err("path already tracked as notebook".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(kind: AgentAccessKind, path: &str) -> AgentAccessEntry {
+        AgentAccessEntry {
+            id: "entry".to_string(),
+            kind,
+            path: path.to_string(),
+            name: "Entry".to_string(),
+            enabled: true,
+            workspace: false,
+            added_at: 1,
+            updated_at: 1,
+            missing: false,
+        }
+    }
+
+    #[test]
+    fn existing_folder_is_reusable_across_notebooks_and_after_removal() {
+        let config = AgentAccessConfig {
+            version: 1,
+            entries: vec![entry(AgentAccessKind::Folder, "/tmp/reference")],
+            defaults: None,
+        };
+
+        let reused = reusable_tracked_folder(&config, "/tmp/reference/")
+            .unwrap()
+            .expect("folder should be reused");
+
+        assert_eq!(reused.path, "/tmp/reference");
+    }
+
+    #[test]
+    fn notebook_path_is_not_reused_as_folder_metadata() {
+        let config = AgentAccessConfig {
+            version: 1,
+            entries: vec![entry(AgentAccessKind::Notebook, "/tmp/notebook")],
+            defaults: None,
+        };
+
+        assert!(reusable_tracked_folder(&config, "/tmp/notebook").is_err());
+    }
 }

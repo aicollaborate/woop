@@ -11,8 +11,9 @@ use crate::agent_external::cli_resolver::{
     no_extra_candidates, resolve_external_cli, ExternalCliSpec,
 };
 use crate::agent_external::{
-    emit_stream_end_once, kill_child_tree, persist_and_emit_external_chunk, persist_external_chunk,
-    resolve_run_id, select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
+    append_workspace_context, emit_stream_end_once, kill_child_tree,
+    persist_and_emit_external_chunk, persist_external_chunk, resolve_run_id,
+    select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -258,10 +259,11 @@ impl HermesCliManager {
         let permission_mode = message
             .permission_mode_for_runtime(AGENT_TYPE)
             .map(str::to_string);
-        let prompt = message
+        let user_prompt = message
             .llm_content
             .clone()
             .unwrap_or_else(|| message.content.clone());
+        let prompt = append_workspace_context(&user_prompt, &cwd, &workspace_paths);
 
         runtime_log::record_agent_event(
             "info",
@@ -281,7 +283,7 @@ impl HermesCliManager {
             })),
         );
 
-        self.persist_user_message(thread_id, &prompt, &message)
+        self.persist_user_message(thread_id, &user_prompt, &message)
             .await?;
 
         let started_at_ms = chrono::Utc::now().timestamp_millis();

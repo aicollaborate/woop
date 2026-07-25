@@ -1,7 +1,7 @@
 import type { AgentRuntimeSettingKind } from "@features/agent/runtime/agent-runtime-spec";
 import { createCheckIcon } from "@features/editor/extensions/agent-thread-card/agent-thread-card-icons";
 
-export type ExternalAgentEmptyControlKind = AgentRuntimeSettingKind | "files";
+export type ExternalAgentEmptyControlKind = AgentRuntimeSettingKind;
 
 export function createDropdownChevron(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

@@ -49,9 +49,29 @@ function createController(typeKey: AgentTypeKey) {
 }
 
 describe("ThreadMessageRenderController empty settings", () => {
-  it("renders runtime settings in an empty flowix card", () => {
+  it("flowix empty card no longer renders runtime settings (主空间由侧边栏资料决定)", () => {
     const { body, controller, createExternalAgentEmptySettings } =
       createController("flowix");
+
+    controller.render({
+      messages: [],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+
+    // flowix 没有 model/permission/reasoning/files 等可配置项, supportsAgentEmptySettings
+    // 返回 false ── 不再渲染空设置区。
+    expect(createExternalAgentEmptySettings).not.toHaveBeenCalled();
+    expect(
+      body.querySelector(".agent-thread-card__empty--codex-settings"),
+    ).toBeNull();
+  });
+
+  it("codex empty card renders runtime settings", () => {
+    const { body, controller, createExternalAgentEmptySettings } =
+      createController("codex");
 
     controller.render({
       messages: [],

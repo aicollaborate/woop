@@ -10,8 +10,8 @@ use crate::agent_external::cli_resolver::{
     no_extra_candidates, resolve_external_cli, ExternalCliSpec,
 };
 use crate::agent_external::{
-    emit_chunk_with_run_id, emit_stream_end_once, kill_child_tree, resolve_run_id,
-    ExternalRunRegistry, USER_STOPPED_REASON,
+    append_workspace_context, emit_chunk_with_run_id, emit_stream_end_once, kill_child_tree,
+    resolve_run_id, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -263,10 +263,12 @@ impl SimpleCliManager {
             .filter(|p| p.exists())
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
-        let prompt = message
+        let workspace_paths = message.workspace_paths_for_runtime(self.kind.key());
+        let user_prompt = message
             .llm_content
             .clone()
             .unwrap_or_else(|| message.content.clone());
+        let prompt = append_workspace_context(&user_prompt, &cwd, &workspace_paths);
 
         runtime_log::record_agent_event(
             "info",
@@ -278,11 +280,12 @@ impl SimpleCliManager {
             Some(serde_json::json!({
                 "run_id": run_id,
                 "cwd": cwd.display().to_string(),
+                "workspace_paths": workspace_paths,
                 "prompt_chars": prompt.chars().count(),
             })),
         );
 
-        self.persist_user_message(thread_id, &prompt, &message)
+        self.persist_user_message(thread_id, &user_prompt, &message)
             .await?;
 
         let result =

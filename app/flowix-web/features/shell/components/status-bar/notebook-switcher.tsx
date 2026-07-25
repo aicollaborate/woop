@@ -48,8 +48,6 @@ interface NotebookSwitcherProps {
    * notebook list so newly created / imported notebooks show up immediately.
    */
   onRefresh: (notebooks: Notebook[]) => void;
-  /** Width passed to the dropdown content; usually derived from the memo list column. */
-  dropdownWidth: number;
 }
 
 /** Pointer movement before treating the gesture as a drag rather than a click. */
@@ -91,7 +89,6 @@ export function NotebookSwitcher({
   onEdit,
   onDelete,
   onRefresh,
-  dropdownWidth,
 }: NotebookSwitcherProps) {
   const { t } = useI18n();
   const reorderNotebooks = useMemoStore((s) => s.reorderNotebooks);
@@ -246,7 +243,7 @@ export function NotebookSwitcher({
         side="top"
         sideOffset={2}
         className="flex flex-col max-h-[500px] overflow-hidden px-1 py-1 ml-2 bg-[var(--popover)]"
-        style={{ width: Math.max(160, dropdownWidth - 24) }}
+        style={{ width: 260 }}
       >
         <DropdownMenuLabel className="shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
           {t('status.notebookList')}
@@ -276,7 +273,7 @@ export function NotebookSwitcher({
                   : null;
               const rowClassName = cn(
                 'group relative flex select-none items-center gap-2 rounded-md px-2 py-1.5 pr-14 transition-colors',
-                isSource ? 'opacity-30' : 'cursor-pointer hover:bg-[var(--accent)]'
+                isSource ? 'opacity-30' : 'cursor-pointer hover:bg-[var(--muted)]'
               );
 
               // 行内容 fragment, 在拖拽态和非拖拽态复用。
@@ -291,6 +288,7 @@ export function NotebookSwitcher({
                     icon={notebook.icon}
                     name={notebook.name}
                     className="relative z-10 h-6 w-6 rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--secondary-foreground)] pointer-events-none"
+                    imageClassName="h-[72%] w-[72%]"
                   />
                   <div className="relative z-10 flex-1 min-w-0 flex items-center gap-1.5 pointer-events-none">
                     <span className="min-w-0 truncate">
@@ -323,7 +321,7 @@ export function NotebookSwitcher({
                         onEdit(notebook);
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
-                      className="flex h-6 w-6 items-center justify-center rounded bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
+                      className="flex h-6 w-6 items-center justify-center rounded bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
                       aria-label={t('status.editNotebook')}
                     >
                       <Pencil className="h-3 w-3" />
@@ -336,7 +334,7 @@ export function NotebookSwitcher({
                         onDelete(notebook);
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
-                      className="flex h-6 w-6 items-center justify-center rounded bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--destructive)] cursor-pointer"
+                      className="flex h-6 w-6 items-center justify-center rounded bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--destructive)] cursor-pointer"
                       aria-label={t('status.deleteNotebook')}
                     >
                       <Trash2 className="h-3 w-3" />

@@ -9,8 +9,6 @@ import { ProductUpdatePill } from '@features/shell/components/status-bar/product
 import { useI18n } from '@features/i18n';
 
 interface StatusBarProps {
-  /** Current width of the memo list column; used to size the notebook dropdown. */
-  memoColWidth: number;
   notebooks: Notebook[];
   selectedNotebook: Notebook | null;
   notebookPopupOpen: boolean;
@@ -41,7 +39,6 @@ interface StatusBarProps {
  * Renders no chrome of its own — it assumes it lives in a `h-[26px]` flex strip.
  */
 export function StatusBar({
-  memoColWidth,
   notebooks,
   selectedNotebook,
   notebookPopupOpen,
@@ -70,7 +67,6 @@ export function StatusBar({
           onEdit={onEditNotebook}
           onDelete={onDeleteNotebook}
           onRefresh={onRefreshNotebooks}
-          dropdownWidth={memoColWidth}
         />
       </div>
       {/* Right column: full-width content area; carries the top border. */}

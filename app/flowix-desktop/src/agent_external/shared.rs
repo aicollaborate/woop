@@ -1,20 +1,52 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 use tokio::process::Child;
 #[cfg(windows)]
 use tokio::process::Command;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::agent_flowix::{AgentChunk, RunInfo};
 use crate::agent_session::{NewAgentExternalEvent, ThreadManager};
 use crate::events as dispatcher;
 use crate::runtime_log;
+
+/// Add the extra Flowix workspace roots to runtimes that do not expose a
+/// stable `--add-dir`-style CLI flag. The process already runs in `cwd`; this
+/// note makes every other authorized root discoverable to the agent without
+/// altering the user message persisted in Flowix history.
+pub fn append_workspace_context(prompt: &str, cwd: &Path, workspace_paths: &[String]) -> String {
+    let cwd = cwd
+        .to_string_lossy()
+        .trim_end_matches(['/', '\\'])
+        .to_string();
+    let mut seen = std::collections::HashSet::new();
+    let additional: Vec<String> = workspace_paths
+        .iter()
+        .map(|path| path.trim().trim_end_matches(['/', '\\']).to_string())
+        .filter(|path| !path.is_empty() && path != &cwd && Path::new(path).is_dir())
+        .filter(|path| seen.insert(path.clone()))
+        .collect();
+
+    if additional.is_empty() {
+        return prompt.to_string();
+    }
+
+    format!(
+        "{prompt}\n\n[Flowix workspace context]\nThe user has attached these additional local reference directories. Read and search them when relevant to the request:\n{}",
+        additional
+            .iter()
+            .map(|path| format!("- {path}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
 
 /// One live external-agent child process per `thread_id`.
 ///
@@ -951,6 +983,33 @@ mod tests {
     fn resolve_run_id_falls_back_to_generated_thread_scoped_id() {
         let run_id = resolve_run_id("thread_1", Some(" "));
         assert!(run_id.starts_with("thread_1-"));
+    }
+
+    #[test]
+    fn workspace_context_lists_only_existing_additional_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("primary");
+        let reference = temp.path().join("reference");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&reference).unwrap();
+        let missing = temp.path().join("missing");
+        let paths = vec![
+            cwd.to_string_lossy().to_string(),
+            reference.to_string_lossy().to_string(),
+            reference.to_string_lossy().to_string(),
+            missing.to_string_lossy().to_string(),
+        ];
+
+        let prompt = append_workspace_context("Question", &cwd, &paths);
+
+        assert!(prompt.starts_with("Question\n\n[Flowix workspace context]"));
+        assert_eq!(
+            prompt
+                .matches(&reference.to_string_lossy().to_string())
+                .count(),
+            1
+        );
+        assert!(!prompt.contains(&missing.to_string_lossy().to_string()));
     }
 
     #[tokio::test]

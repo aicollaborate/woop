@@ -224,7 +224,7 @@ function MemoCardShell({
           onClick={() => onSelect(memo)}
           onDoubleClick={() => onOpenInWindow?.(memo)}
           className={cn(
-            'group memo-card relative cursor-pointer rounded-xl px-3 py-3 transition-all',
+            'group memo-card relative cursor-pointer rounded-lg px-2 py-3 transition-all',
             isSelected && 'bg-[var(--accent)]',
           )}
         >

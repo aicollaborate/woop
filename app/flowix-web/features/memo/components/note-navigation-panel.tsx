@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { StarFourIcon, CheckSquareIcon, HashIcon, StackIcon } from '@phosphor-icons/react';
-import { Pencil, Plus } from 'lucide-react';
+import { Check, Pencil, Plus } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { cn } from '@/lib/utils';
@@ -17,6 +17,7 @@ import { toast } from '@/lib/toast';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NoteNavigationPanelHeaderMac } from '@features/memo/components/note-navigation-panel-header-mac';
 import { NoteNavigationPanelHeaderWin } from '@features/memo/components/note-navigation-panel-header-win';
+import { NotebookAccessFilesList } from '@features/memo/components/notebook-access-files-list';
 import {
   NotebookIcon,
   useMemoLibraryMetadataStore,
@@ -75,39 +76,7 @@ interface NoteNavigationPanelProps {
 }
 
 // 笔记本列表区域高度 ── 持久化键 + 读 / 写助手。
-// 选 localStorage 而非 user-settings-store: 这是纯 UI 维度, 单 number,
-// 写读都是 O(1), 无需经 Tauri IPC; 现有 theme/apply.ts 也是同套模式。
-// 取值范围与 NOTEBOOK_LIST_MIN/MAX_HEIGHT 同步约束, 越界视为无效。
-const NOTEBOOK_LIST_HEIGHT_STORAGE_KEY = 'flowix:notebook-list-height';
 const TAG_COLLAPSED_STORAGE_PREFIX = 'flowix:tag-collapsed:';
-
-function readPersistedNotebookListHeight(
-  min: number,
-  max: number
-): number | null {
-  try {
-    const raw = localStorage.getItem(NOTEBOOK_LIST_HEIGHT_STORAGE_KEY);
-    if (raw === null) return null;
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return null;
-    if (parsed < min || parsed > max) return null;
-    return Math.round(parsed);
-  } catch {
-    return null;
-  }
-}
-
-function writePersistedNotebookListHeight(height: number | null): void {
-  try {
-    if (height === null) {
-      localStorage.removeItem(NOTEBOOK_LIST_HEIGHT_STORAGE_KEY);
-    } else {
-      localStorage.setItem(NOTEBOOK_LIST_HEIGHT_STORAGE_KEY, String(height));
-    }
-  } catch {
-    // localStorage 不可用 (隐私模式 / 配额满 / SSR) 时静默吞掉, 不影响 UI。
-  }
-}
 
 function getCollapsedTagsStorageKey(notebookId: string): string {
   return `${TAG_COLLAPSED_STORAGE_PREFIX}${notebookId}`;
@@ -131,6 +100,27 @@ function writePersistedCollapsedTagIds(notebookId: string, ids: string[]): void 
     localStorage.setItem(getCollapsedTagsStorageKey(notebookId), JSON.stringify(ids));
   } catch {
     // 折叠状态是纯 UI 偏好, localStorage 不可用时不影响标签树本身。
+  }
+}
+
+// 笔记本列表折叠 ── 全局偏好 (不分 notebook), 默认展开。
+// 与上方 tag 折叠 (per-notebook, 按 notebookId 分键) 不同: 笔记本列表只有
+// 一份, 用单一 key。 值用 '1'/'0' 而非 JSON, 与 boolean 语义对齐。
+const NOTEBOOK_LIST_COLLAPSED_STORAGE_KEY = 'flowix:notebook-list-collapsed';
+
+function readPersistedNotebookListCollapsed(): boolean {
+  try {
+    return localStorage.getItem(NOTEBOOK_LIST_COLLAPSED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writePersistedNotebookListCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(NOTEBOOK_LIST_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
+  } catch {
+    // 折叠状态是纯 UI 偏好, localStorage 不可用时不影响列表本身。
   }
 }
 
@@ -195,23 +185,21 @@ export function NoteNavigationPanel({
     isDragging: boolean;
   } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
-
-  // 笔记本列表区域手动调节高度 ── 默认按内容自适应 (max-h 兜底),
-  // 用户拖动分隔条后切到显式 height, 但仍受 MAX_NOTEBOOK_HEIGHT 限制。
-  // 拖动结束会把最终高度写入 localStorage, 下次打开时 readPersistedNotebookListHeight 还原。
-  const NOTEBOOK_LIST_MIN_HEIGHT = 80;
-  const NOTEBOOK_LIST_MAX_HEIGHT = 320;
-  const [notebookListHeight, setNotebookListHeight] = useState<number | null>(() =>
-    readPersistedNotebookListHeight(NOTEBOOK_LIST_MIN_HEIGHT, NOTEBOOK_LIST_MAX_HEIGHT)
+  // 笔记本列表折叠 ── 折叠后仅展示选中的笔记本, 隐藏其余笔记本与「新建」按钮。
+  // 初值取持久化: 上次关闭时的折叠态, 默认展开 (无记录 = false)。
+  const [notebookListCollapsed, setNotebookListCollapsed] = useState(
+    readPersistedNotebookListCollapsed,
   );
-  const notebookContainerRef = useRef<HTMLDivElement>(null);
-  const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
-  // window 事件回调里读取的 height 必须是「最新一次 setState 后的值」, 但事件 effect 是
-  // 空依赖建立的, 闭包里拿到的是旧值 ── 用 ref 同步 state 解决。
-  const latestNotebookListHeightRef = useRef<number | null>(notebookListHeight);
-  useEffect(() => {
-    latestNotebookListHeightRef.current = notebookListHeight;
-  }, [notebookListHeight]);
+  // 折叠动画结束后才过滤非选中行 ── 立即过滤会让内容瞬间缩到 1 行, max-h
+  // 收起动画因无内容可收而失效 (展开不过滤, 故展开动画正常)。 折叠时先把
+  // 选中行滚到顶部, 保证收起后选中行可见。
+  // 折叠态直接 filter (无需动画): 初始化即折叠时只渲染选中行, 避免选中行
+  // 不在顶部而被 max-h 裁掉。 展开态保持 false, 与原行为一致。
+  const [notebookFilterActive, setNotebookFilterActive] = useState(
+    readPersistedNotebookListCollapsed,
+  );
+  const notebookScrollerRef = useRef<HTMLDivElement | null>(null);
+  const collapseTimerRef = useRef<number | null>(null);
 
   const hiddenTagIdSet = useMemo(() => new Set(hiddenTagIds), [hiddenTagIds]);
   const collapsedTagIdSet = useMemo(() => new Set(collapsedTagIds), [collapsedTagIds]);
@@ -223,22 +211,20 @@ export function NoteNavigationPanel({
     return ids;
   }, [tagOptions]);
   const visibleTagOptions = useMemo(() => {
+    // 不过滤折叠子树, 而是全量渲染并标记 collapsedByAncestor;
+    // 折叠的子树行留在 DOM 中, 由外层 .tag-collapse-track 的 grid 0fr/1fr
+    // 过渡实现展开/折叠动画 (unmount 无法 CSS 过渡)。
     let collapsedDepth: number | null = null;
-    const visible: MemoTagTreeItem[] = [];
-
-    for (const tag of tagOptions) {
-      if (collapsedDepth !== null) {
-        if (tag.depth > collapsedDepth) continue;
+    return tagOptions.map((tag) => {
+      const collapsedByAncestor = collapsedDepth !== null && tag.depth > collapsedDepth;
+      if (collapsedDepth !== null && tag.depth <= collapsedDepth) {
         collapsedDepth = null;
       }
-
-      visible.push(tag);
       if (collapsedTagIdSet.has(tag.id)) {
         collapsedDepth = tag.depth;
       }
-    }
-
-    return visible;
+      return { ...tag, collapsedByAncestor };
+    });
   }, [collapsedTagIdSet, tagOptions]);
 
   useEffect(() => {
@@ -472,63 +458,39 @@ export function NoteNavigationPanel({
     window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'));
   }, []);
 
-  // 笔记本 / 标签 分隔条拖动 ── 与现有 tag 行 pointer 拖动复用 window listener 套路:
-  // pointerdown 在分隔条上记录起点 + 当前高度 + 锁选区; pointermove 累加 deltaY,
-  // clamp 到 [MIN, MAX] 后写入 state; pointerup/pointercancel 释放锁并还原 userSelect。
-  const handleResizeStart = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      const container = notebookContainerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      resizeStateRef.current = {
-        startY: e.clientY,
-        startHeight: notebookListHeight ?? rect.height,
-      };
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        /* noop */
+  // 折叠/展开笔记本列表 ── 折叠时先选中行滚到 scroller 顶部 (保证收起后
+  // 可见), 再触发 max-h 收起动画; 动画结束后 (duration-100) 才过滤非选中行。
+  // 立即过滤会让内容瞬间缩到 1 行 (< max-h), max-h 无内容可收, 动画不执行。
+  // 展开时先恢复全部行, 再展开 max-h (动画)。
+  const toggleNotebookListCollapse = useCallback(() => {
+    if (!notebookListCollapsed) {
+      const scroller = notebookScrollerRef.current;
+      const selectedId = useMemoStore.getState().selectedNotebook?.id;
+      const selectedRow = selectedId
+        ? notebookRowRefs.current.get(selectedId)
+        : null;
+      if (scroller && selectedRow) {
+        scroller.scrollTop +=
+          selectedRow.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top;
       }
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'row-resize';
-    },
-    [notebookListHeight]
-  );
-
-  useEffect(() => {
-    const handleMove = (e: PointerEvent) => {
-      const state = resizeStateRef.current;
-      if (!state) return;
-      const delta = e.clientY - state.startY;
-      const next = Math.max(
-        NOTEBOOK_LIST_MIN_HEIGHT,
-        Math.min(NOTEBOOK_LIST_MAX_HEIGHT, state.startHeight + delta)
-      );
-      setNotebookListHeight(next);
-    };
-    const handleUp = () => {
-      if (!resizeStateRef.current) return;
-      resizeStateRef.current = null;
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-      // 拖动结束: 把最终高度持久化到 localStorage, 下次打开时由 useState 初始化读回。
-      // 读 latestNotebookListHeightRef 而非直接闭包, 因为 effect 是空依赖建⽴的,
-      // 闭包里的 notebookListHeight 始终是 effect 创建时的旧值。
-      writePersistedNotebookListHeight(latestNotebookListHeightRef.current);
-    };
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', handleUp);
-    window.addEventListener('pointercancel', handleUp);
-    return () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-    };
-  }, []);
+      setNotebookListCollapsed(true);
+      writePersistedNotebookListCollapsed(true);
+      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = window.setTimeout(() => {
+        setNotebookFilterActive(true);
+        collapseTimerRef.current = null;
+      }, 100);
+    } else {
+      if (collapseTimerRef.current !== null) {
+        window.clearTimeout(collapseTimerRef.current);
+        collapseTimerRef.current = null;
+      }
+      setNotebookFilterActive(false);
+      setNotebookListCollapsed(false);
+      writePersistedNotebookListCollapsed(false);
+    }
+  }, [notebookListCollapsed]);
 
   const rebuildTagOptionsFromLayout = useCallback(
     (layout: MemoTagLayoutItem[]): MemoTagTreeItem[] => {
@@ -727,6 +689,7 @@ export function NoteNavigationPanel({
     (y: number, sourceId: string): TagDropTarget | null => {
       const sourceSubtreeIds = getSubtreeIds(sourceId);
       for (const tag of visibleTagOptions) {
+        if (tag.collapsedByAncestor) continue;
         if (sourceSubtreeIds.includes(tag.id)) continue;
         const row = rowRefs.current.get(tag.id);
         if (!row) continue;
@@ -975,26 +938,26 @@ export function NoteNavigationPanel({
         <NoteNavigationPanelHeaderMac onTogglePanel={onTogglePanel} />
       )}
 
-      {/* 笔记本列表 ── 与 status-bar/notebook-switcher 下拉项的呈现保持一致:
-          NotebookIcon + 名称 + 失效路径提示, hover 显形编辑/删除。
-          高度默认按内容自适应 (max-h 兜底 320px); 用户拖过分隔条后切到显式 height,
-          但仍受 320px 上限约束。下方标签区用 flex-1 填满剩余。 */}
-      <div
-        ref={notebookContainerRef}
-        className="flex min-h-0 max-h-[320px] shrink-0 flex-col"
-        style={notebookListHeight !== null ? { height: `${notebookListHeight}px` } : undefined}
-      >
+      {/* 笔记本列表 ── max-h 320px 固定顶部, 达到上限内部滚动; 标签列表占剩余高度独立滚动。
+          笔记本列表与 status-bar/notebook-switcher 下拉项呈现一致: NotebookIcon + 名称 +
+          失效路径提示, hover 显形编辑/删除。 */}
+      <div className="flex min-h-0 max-h-[320px] shrink-0 flex-col">
         <OverlayScrollbar
-          className="min-h-0 flex-1"
-          scrollerClassName="h-full overflow-y-auto px-2 pb-1"
+          className={cn(
+            "min-h-0 flex-1 overflow-hidden transition-[max-height] duration-100",
+            notebookListCollapsed ? "max-h-[44px]" : "max-h-[320px]",
+          )}
+          scrollerClassName="h-full overflow-y-auto px-2"
+          scrollerRef={notebookScrollerRef}
         >
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 pb-1">
             {notebooks.length === 0 ? (
               <div className="px-2 py-2 text-sm text-[var(--muted-foreground)]">
                 {t('status.noNotebooks')}
               </div>
             ) : (
               notebooks.map((notebook) => {
+                if (notebookFilterActive && notebook.id !== selectedNotebook?.id) return null;
                 const isActive = selectedNotebook?.id === notebook.id;
                 const isMissing = Boolean(notebook.missing);
                 const isNotebookDragging = draggingNotebookId === notebook.id;
@@ -1029,7 +992,6 @@ export function NoteNavigationPanel({
                       isNotebookDragging
                         ? 'cursor-grabbing opacity-40'
                         : 'cursor-pointer hover:bg-[var(--muted)]',
-                      !isNotebookDragging && isActive && 'bg-[var(--muted)]',
                       !isNotebookDragging && 'text-[var(--foreground)]',
                       isMissing && 'opacity-70',
                     )}
@@ -1048,7 +1010,7 @@ export function NoteNavigationPanel({
                       icon={notebook.icon}
                       name={notebook.name}
                       className="h-6 w-6 rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--secondary-foreground)]"
-                      imageClassName="h-5 w-5"
+                      imageClassName="h-[72%] w-[72%]"
                     />
                     <div className="flex-1 min-w-0 flex items-center gap-1.5">
                       <span className="min-w-0 truncate">
@@ -1065,6 +1027,11 @@ export function NoteNavigationPanel({
                         )}
                       </span>
                     </div>
+                    {isActive && (
+                      <div className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center transition-opacity group-hover:opacity-0 z-10 pointer-events-none">
+                        <Check className="h-4 w-4 text-[var(--primary)]" />
+                      </div>
+                    )}
                     {/* 编辑 ── 与 NotebookSwitcher 行内操作保持一致,
                         absolute 定位 + group-hover 渐显。删除入口已迁到
                         编辑弹窗的「移除」按钮, 列表行不再提供。 */}
@@ -1096,6 +1063,7 @@ export function NoteNavigationPanel({
             className={cn(
               'group relative mt-0.5 flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors',
               'text-[var(--muted-foreground)] hover:bg-[var(--muted)]',
+              notebookListCollapsed && 'hidden',
             )}
           >
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--muted)] text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]">
@@ -1103,7 +1071,6 @@ export function NoteNavigationPanel({
             </span>
             <span className="min-w-0 flex-1 truncate">{t('status.new')}</span>
           </button>
-        </OverlayScrollbar>
 
         {/* 笔记本 ghost ── fixed 跟手, pointer-events: none 避免干扰命中测试。
             仅当处于拖动态时挂载, 模仿 tag 那段 ghost 的视觉骨架。 */}
@@ -1126,33 +1093,54 @@ export function NoteNavigationPanel({
                   icon={nb.icon}
                   name={nb.name}
                   className="h-6 w-6 rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--secondary-foreground)]"
-                  imageClassName="h-5 w-5"
+                  imageClassName="h-[72%] w-[72%]"
                 />
                 <span className="min-w-0 flex-1 truncate">{nb.name}</span>
               </div>
             );
           })()
         )}
+        </OverlayScrollbar>
+        {/* 折叠/展开笔记本列表 ── 折叠后仅展示选中的笔记本, 隐藏其余与「新建」按钮。 */}
+        <button
+          type="button"
+          onClick={toggleNotebookListCollapse}
+          aria-expanded={!notebookListCollapsed}
+          aria-label={notebookListCollapsed ? t('memo.navigation.expandNotebookList') : t('memo.navigation.collapseNotebookList')}
+          className={cn(
+            "group relative flex h-4 w-full cursor-pointer select-none items-center justify-center text-[var(--muted-foreground)] transition-all duration-200 hover:text-[color-mix(in_oklch,var(--foreground)_30%,var(--muted-foreground))]",
+            notebookListCollapsed ? "mt-0 -mb-2" : "mt-0.5 mb-1",
+          )}
+        >
+          {/* 默认横线; hover 露出八字 (展开态 ⌃ 收起 / 折叠态 ⌄ 展开, 朝向相反, 张开角约 150°), 粗细 3 / 长度 +30% */}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" aria-hidden="true" className="h-3.5 w-3.5 opacity-30 transition-opacity duration-200 group-hover:opacity-0">
+            <path d="M1.71 12 L22.29 12" />
+          </svg>
+          {notebookListCollapsed ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              <path d="M2.06 10.67 L12 13.33 L21.94 10.67" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              <path d="M2.06 13.33 L12 10.67 L21.94 13.33" />
+            </svg>
+          )}
+        </button>
       </div>
-
-      {/* 笔记本 / 标签 分隔条 ── 鼠标 hover 显形 + 可拖动, 调节上方笔记本列表高度。
-          4px 命中区 (h-1) + 顶部 1px 视觉线 (border-t), 颜色取 --muted-foreground
-          中灰 /50 保证清晰可见; group-hover/active 切到 primary 色反馈。 */}
       <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={t("memo.navigation.resizeNotebookList")}
-        onPointerDown={handleResizeStart}
-        className="group mx-2 h-1 shrink-0 cursor-row-resize border-t border-[var(--muted-foreground)]/50 hover:border-[var(--primary)]/70 active:border-[var(--primary)]"
+        className="mx-2 mb-1 shrink-0 border-t border-[var(--muted-foreground)]/30"
       />
-
-      {/* 标签列表 ── 填满笔记本区剩余的 64% 高度, 内部独立滚动。 */}
       <div className="flex min-h-0 flex-1 flex-col">
         <OverlayScrollbar
           className="min-h-0 flex-1"
-          scrollerClassName="h-full overflow-y-auto px-2 pt-2 pb-3"
+          scrollerClassName="h-full overflow-y-auto px-2"
         >
-          <div className="space-y-0.5">
+
+      {/* 标签列表 ── 占剩余高度, 内部独立滚动。 */}
+          <div className="space-y-0.5 pt-2">
+            <div className="agent-thread-card__access-section-label">
+              {t('memo.navigation.tags')}
+            </div>
             <div
               role="button"
               tabIndex={0}
@@ -1258,7 +1246,13 @@ export function NoteNavigationPanel({
                   dropTarget?.id === tag.id && dropTarget.position === 'inside' && !isDragging;
 
                 return (
-                  <ContextMenu key={tag.id}>
+                  <div
+                    key={tag.id}
+                    className="tag-collapse-track"
+                    data-collapsed={tag.collapsedByAncestor || undefined}
+                    aria-hidden={tag.collapsedByAncestor || undefined}
+                  >
+                  <ContextMenu>
                   <ContextMenuTrigger asChild>
                   <div
                     ref={(node) => {
@@ -1269,7 +1263,7 @@ export function NoteNavigationPanel({
                       }
                     }}
                     role="button"
-                    tabIndex={0}
+                    tabIndex={tag.collapsedByAncestor ? -1 : 0}
                     onPointerDown={(event) => handleRowPointerDown(event, tag.id)}
                     onDoubleClick={(event) => {
                       if (!hasChildren) return;
@@ -1298,7 +1292,7 @@ export function NoteNavigationPanel({
                     <span
                       data-tag-icon=""
                       className={cn(
-                        'relative mr-2 shrink-0 opacity-90',
+                        'relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 opacity-90',
                         hasChildren && 'cursor-pointer',
                       )}
                       // `#` 图标当作独立控件: 单击展开/折叠, 不触发行
@@ -1340,7 +1334,7 @@ export function NoteNavigationPanel({
                       {hasChildren && (
                         <span
                           aria-hidden
-                          className="tag-expand-indicator pointer-events-none absolute -bottom-px -right-px h-0 w-0 border-b-[5px] border-l-[5px] border-l-transparent"
+                          className="tag-expand-indicator pointer-events-none absolute bottom-[3px] right-[3px] h-0 w-0 border-b-[5px] border-l-[5px] border-l-transparent"
                         />
                       )}
                     </span>
@@ -1402,11 +1396,20 @@ export function NoteNavigationPanel({
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
+                  </div>
                 );
               })}
               </>
             )}
           </div>
+
+          <div className="my-1 border-t border-[var(--muted-foreground)]/30" />
+
+          {/* 选中笔记本的可访问文件夹 (文件) ── 与标签同处一个滚动容器, 文件在标签
+              下方。 展示该 notebook 自己的默认 folders (不 fallback 全局), 主空间行
+              标角标; 空时显示「添加资料」按钮。 编辑入口仍在 agent thread card 的
+              access popover, 勾选/设主空间回写到此 notebook 的默认, 此处随 store 刷新。 */}
+          <NotebookAccessFilesList notebookId={selectedNotebook?.id} />
         </OverlayScrollbar>
       </div>
 

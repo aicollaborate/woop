@@ -19,8 +19,6 @@ import {
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
 import { useChatStore } from "@features/agent/store/chat-store";
-import { useMemoStore } from "@features/memo/store/memo-store";
-import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { agent } from "@platform/tauri/client";
 import {
   applyPopoverPosition,
@@ -62,12 +60,6 @@ export interface ExternalAgentSettingsControllerOptions {
   getLanguage: () => AppLanguage;
   t: (key: I18nKey) => string;
   isDestroyed: () => boolean;
-  isAccessPopoverOpen: () => boolean;
-  setAccessPopoverOpen: (
-    open: boolean,
-    anchor?: HTMLElement | null,
-    preferBelow?: boolean,
-  ) => void;
   consumeOutsidePointer?: (event: PointerEvent) => void;
 }
 
@@ -78,18 +70,11 @@ export class ExternalAgentSettingsController {
   private readonly getLanguage: () => AppLanguage;
   private readonly t: (key: I18nKey) => string;
   private readonly isDestroyed: () => boolean;
-  private readonly isAccessPopoverOpen: () => boolean;
-  private readonly setAccessPopoverOpen: (
-    open: boolean,
-    anchor?: HTMLElement | null,
-    preferBelow?: boolean,
-  ) => void;
   private readonly consumeOutsidePointer?: (event: PointerEvent) => void;
 
   private modelButton: HTMLButtonElement | null = null;
   private reasoningButton: HTMLButtonElement | null = null;
   private permissionButton: HTMLButtonElement | null = null;
-  private filesButton: HTMLButtonElement | null = null;
   private anchor: HTMLButtonElement | null = null;
   private kind: AgentRuntimeSettingKind | null = null;
   private open = false;
@@ -110,8 +95,6 @@ export class ExternalAgentSettingsController {
     this.getLanguage = options.getLanguage;
     this.t = options.t;
     this.isDestroyed = options.isDestroyed;
-    this.isAccessPopoverOpen = options.isAccessPopoverOpen;
-    this.setAccessPopoverOpen = options.setAccessPopoverOpen;
     this.consumeOutsidePointer = options.consumeOutsidePointer;
   }
 
@@ -234,10 +217,6 @@ export class ExternalAgentSettingsController {
     return this.anchor;
   }
 
-  get filesControl(): HTMLButtonElement | null {
-    return this.filesButton;
-  }
-
   loadDefaultModel(): void {
     const typeKey = this.getTypeKey();
     void agent
@@ -313,17 +292,10 @@ export class ExternalAgentSettingsController {
           this.getCurrentPermissionLabel(),
         )
       : null;
-    this.filesButton = this.createEmptyControl(
-      "files",
-      this.t("agent.files.title"),
-      this.getFilesControlLabel(),
-    );
-
     for (const button of [
       this.modelButton,
       this.reasoningButton,
       this.permissionButton,
-      this.filesButton,
     ]) {
       if (button) empty.append(button);
     }
@@ -347,12 +319,6 @@ export class ExternalAgentSettingsController {
       updateExternalAgentEmptyControl(
         this.reasoningButton,
         this.getCurrentCodexReasoningLabel(),
-      );
-    }
-    if (this.filesButton) {
-      updateExternalAgentEmptyControl(
-        this.filesButton,
-        this.getFilesControlLabel(),
       );
     }
   }
@@ -453,12 +419,6 @@ export class ExternalAgentSettingsController {
     value: string,
   ): HTMLButtonElement {
     return createExternalAgentEmptyControl(kind, label, value, (nextKind, button) => {
-      if (nextKind === "files") {
-        this.setSettingsPopoverOpen(false);
-        this.setAccessPopoverOpen(!this.isAccessPopoverOpen(), button, true);
-        return;
-      }
-      this.setAccessPopoverOpen(false);
       this.toggleSettingsPopover(nextKind, button);
     });
   }
@@ -600,54 +560,6 @@ export class ExternalAgentSettingsController {
       this.readRuntimeSetting("permission") ??
       useChatStore.getState().agentPermissionMode;
     return this.getPermissionLabel(mode as AgentPermissionMode);
-  }
-
-  private getFilesControlLabel(): string {
-    // label 与运行时 cwd 用同一段 cascade ── 见 primary-workspace.ts 的
-    // `resolvePrimaryWorkspace`。 这条 cascade 把"用户在本 thread 显式配
-    // 的值"放在最前面 (instance.*), 全局信息只作为"默认不配置时"的兜底。
-    const instanceId = this.getInstanceId();
-    const instanceFiles = instanceId
-      ? useAgentConversationStore.getState().instances[instanceId]
-          ?.runtimeConfig?.files
-      : undefined;
-    const accessEntries = useAgentAccessStore.getState().config.entries;
-    const cwd = (useMemoStore.getState().selectedNotebook as
-      | { path?: string }
-      | null
-      | undefined)?.path;
-
-    const resolved = resolvePrimaryWorkspace({
-      instanceFiles: instanceFiles ?? undefined,
-      globalEntries: accessEntries,
-      cwd,
-    });
-
-    return this.renderLabelFromResolved(resolved);
-  }
-
-  /**
-   * 把 resolvePrimaryWorkspace 的 source 翻译成按钮文案。
-   * path 优先匹配全局 entry.name, 找不到就拿 last segment, 最后才
-   * 落到空态文案。
-   */
-  private renderLabelFromResolved(
-    resolved: ReturnType<typeof resolvePrimaryWorkspace>,
-  ): string {
-    if (resolved.kind === "empty") {
-      return this.t("agent.access.empty.empty");
-    }
-    const accessEntries = useAgentAccessStore.getState().config.entries;
-    const matched = accessEntries.find(
-      (entry) => entry.path === resolved.path && !entry.missing,
-    );
-    if (matched) {
-      const explicitName = matched.name?.trim();
-      if (explicitName) return explicitName;
-    }
-    const segments = resolved.path.split(/[\\/]+/).filter(Boolean);
-    const last = segments[segments.length - 1]?.trim();
-    return last || this.t("agent.access.empty.empty");
   }
 
   private supportsRuntimeSetting(kind: AgentRuntimeSettingKind): boolean {

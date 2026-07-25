@@ -677,6 +677,15 @@ pub async fn chat_with_agent_stream(
             .map_err(|error| error.to_string())?;
     }
 
+    // Refresh security-scoped access at every run, not only at startup. This
+    // covers folders that were unavailable during launch and later restored,
+    // and ensures external CLI children inherit active directory extensions.
+    for path in message.workspace_paths_for_runtime(runtime.key()) {
+        state
+            .security_bookmarks
+            .start_accessing_for_path(Path::new(&path));
+    }
+
     // `agent_manager` 鏄?`Arc<AgentManager>`, `chat_stream` 鍐呴儴宸茬粡
     // `tokio::spawn` 鈹€鈹€ IPC 绔嬪嵆杩斿洖, 涓嶅啀 await 鏁翠釜 stream 璺戝畬銆?    // 鐪熸鐨勫姪鎵嬪洖绛旈€氳繃 `agent-chunk` 浜嬩欢 (`Text` / `Reasoning` 鍙樹綋)
     // 鎺ㄥ埌鍓嶇, 鎸?`thread_id` 娲惧彂鍒?`threadStates[tid]`銆?    //

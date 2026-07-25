@@ -311,6 +311,18 @@ pub fn run() {
                 security_bookmarks_for_state
                     .start_accessing_for_path(std::path::Path::new(&notebook.path));
             }
+            // Restore security-scoped access for user-selected reference
+            // folders as well. External CLI children inherit the parent's
+            // active extensions, so this must happen before any agent spawn.
+            for entry in agent_access_for_state
+                .get_config()
+                .entries
+                .into_iter()
+                .filter(|entry| entry.enabled && !entry.missing)
+            {
+                security_bookmarks_for_state
+                    .start_accessing_for_path(std::path::Path::new(&entry.path));
+            }
             memo_watcher
                 .write()
                 .unwrap_or_else(|poisoned| {
@@ -320,9 +332,8 @@ pub fn run() {
                 .rebind_all(app.handle().clone(), initial_notebooks.clone());
 
             // 鍙湪宸叉湁 current notebook 鏃跺仛鍚姩瀵硅处銆?current=None 鏃?            // `MemoFile` 浼氬洖閫€鍒伴粯璁?notebook 璺緞, 鍦?macOS 涓婂彲鑳借Е鍙?            // Documents 鏉冮檺寮圭獥銆?
-            let current_notebook_id =
-                crate::lock_utils::read_lock(&memo_file_arc, "memo_file")
-                    .current_notebook_id_value();
+            let current_notebook_id = crate::lock_utils::read_lock(&memo_file_arc, "memo_file")
+                .current_notebook_id_value();
             if current_notebook_id.is_some() {
                 match memo_file_arc
                     .read()

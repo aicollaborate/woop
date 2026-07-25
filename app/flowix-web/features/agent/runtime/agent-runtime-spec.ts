@@ -4,10 +4,10 @@ import type {
   AgentPermissionMode,
   AgentRuntimeConfig,
   AgentTypeKey,
+  FilesConfig,
   RuntimeConfig,
 } from "@/types/agent";
 import { CODEX_ACCESS_OPTIONS } from "@features/agent/config/codex-options";
-import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 
@@ -20,17 +20,19 @@ export interface AgentAccessOption {
 
 export interface BuildAgentRuntimeConfigInput {
   typeKey: AgentTypeKey;
-  cwd?: string;
+  /** 当前笔记本路径 (= systemReminderDirectory)。无资料时作主空间。 */
+  notebookPath?: string;
   permissionMode: AgentPermissionMode;
   codexModel: AgentCodexModel;
   codexReasoningEffort: AgentCodexReasoningEffort;
   instanceRuntimeConfig?: RuntimeConfig;
+  /** 当前笔记本的资料默认 (defaults.files[<notebookId>])。 */
+  defaultFiles?: FilesConfig;
 }
 
 export interface AgentRuntimeSpec {
   typeKey: AgentTypeKey;
   emptySettings: readonly AgentRuntimeSettingKind[];
-  supportsFilesSetting: boolean;
   accessOptions: readonly AgentAccessOption[];
   buildRuntimeConfig: (
     input: Omit<BuildAgentRuntimeConfigInput, "typeKey"> & {
@@ -54,15 +56,6 @@ const CLAUDE_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
 
 const NO_ACCESS_OPTIONS: readonly AgentAccessOption[] = [];
 
-function getEnabledAgentWorkspacePaths(): string[] {
-  const paths = useAgentAccessStore
-    .getState()
-    .config.entries.filter((entry) => entry.enabled && !entry.missing)
-    .map((entry) => normalizeWorkspacePath(entry.path))
-    .filter(Boolean);
-  return Array.from(new Set(paths));
-}
-
 export function normalizeCodexPermissionMode(
   mode: AgentPermissionMode | undefined,
 ): AgentPermissionMode {
@@ -78,7 +71,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   flowix: {
     typeKey: "flowix",
     emptySettings: [],
-    supportsFilesSetting: true,
     accessOptions: NO_ACCESS_OPTIONS,
     buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
       flowix: { cwd, workspacePaths },
@@ -87,7 +79,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   codex: {
     typeKey: "codex",
     emptySettings: ["model", "reasoning", "permission"],
-    supportsFilesSetting: true,
     accessOptions: CODEX_ACCESS_OPTIONS,
     buildRuntimeConfig: ({
       cwd,
@@ -108,7 +99,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   claude: {
     typeKey: "claude",
     emptySettings: ["model", "permission"],
-    supportsFilesSetting: true,
     accessOptions: CLAUDE_ACCESS_OPTIONS,
     buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode, codexModel }) => ({
       claude: { cwd, workspacePaths, permissionMode, model: codexModel },
@@ -117,7 +107,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   gemini: {
     typeKey: "gemini",
     emptySettings: [],
-    supportsFilesSetting: true,
     accessOptions: NO_ACCESS_OPTIONS,
     buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
       gemini: { cwd, workspacePaths },
@@ -126,7 +115,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   hermes: {
     typeKey: "hermes",
     emptySettings: ["permission"],
-    supportsFilesSetting: true,
     accessOptions: HERMES_ACCESS_OPTIONS,
     buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
       hermes: { cwd, workspacePaths, permissionMode },
@@ -135,7 +123,6 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   openclaw: {
     typeKey: "openclaw",
     emptySettings: [],
-    supportsFilesSetting: true,
     accessOptions: NO_ACCESS_OPTIONS,
     buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
       openclaw: { cwd, workspacePaths },
@@ -155,8 +142,10 @@ export function supportsAgentRuntimeSetting(
 }
 
 export function supportsAgentEmptySettings(typeKey: AgentTypeKey): boolean {
+  // files 控件已移除 (主空间由侧边栏资料列表决定), 空状态设置区只看
+  // model / permission / reasoning 是否有可配置项。
   const spec = getAgentRuntimeSpec(typeKey);
-  return spec.supportsFilesSetting || spec.emptySettings.length > 0;
+  return spec.emptySettings.length > 0;
 }
 
 export function getAgentAccessOptions(
@@ -167,44 +156,34 @@ export function getAgentAccessOptions(
 
 export function buildAgentRuntimeConfig({
   typeKey,
-  cwd,
+  notebookPath,
   permissionMode,
   codexModel,
   codexReasoningEffort,
   instanceRuntimeConfig,
+  defaultFiles,
 }: BuildAgentRuntimeConfigInput): AgentRuntimeConfig {
-  const instanceFiles = instanceRuntimeConfig?.files;
-  const instanceWorkspacePaths = instanceFiles
-    ? [...instanceFiles.folders, ...instanceFiles.notebooks]
-        .map(normalizeWorkspacePath)
-        .filter(Boolean)
-    : [];
+  // 文件区域 = 资料列表 (defaults.files[<notebookId>].folders) + 当前笔记本。
+  // 主空间 (cwd) 由 resolvePrimaryWorkspace 决定: 资料主空间 -> 资料首
+  // folder -> 当前笔记本。 主空间本身也留在 workspacePaths 里, 由后端
+  // (claude/command.rs::normalized_additional_workspace_dirs) 去重 cwd,
+  // 不会重复出现在 --add-dir。
+  const folderPaths = (defaultFiles?.folders ?? [])
+    .map(normalizeWorkspacePath)
+    .filter(Boolean);
+  const notebookPathNorm = normalizeWorkspacePath(notebookPath) || undefined;
+  const workspacePaths = Array.from(
+    new Set([...folderPaths, ...(notebookPathNorm ? [notebookPathNorm] : [])]),
+  );
 
-  // primaryWorkspace 兜底链 ── 必须保证非空, 否则 CLI 启动会因缺 cwd 失败
-  // ("Claude Code CLI exited with status exit status: 1: Please provide a
-  // directory path")。 旧版用 `!instanceFiles` 把 global 兜底门控住, 让
-  // thread 的 per-thread runtime 一旦存在就完全屏蔽 global workspace ──
-  // 但用户点 star 设的 global workspace 不写 per-thread, 这种设计下
-  // thread 没显式设 workspace 时 cwd 就空了。
-  //
-  // per-thread 优先 (workspace / folders), 但**不论** instanceFiles 是否
-  // 存在, global workspace 始终作为兜底 ── 这样用户在 agent panel 上点
-  // star 设的 workspace 才会落到所有 thread 上, CLI 启动也能拿到 cwd。
-  const globalWorkspacePaths = getEnabledAgentWorkspacePaths();
-  const effectiveWorkspacePaths = instanceFiles
-    ? Array.from(new Set(instanceWorkspacePaths))
-    : globalWorkspacePaths;
-  // primaryWorkspace 与 settings controller 的 `getFilesControlLabel` 共用
-  // 同一段 cascade (primary-workspace.resolvePrimaryWorkspace)。 instance 优
-  // 先, 全局信息只作为"默认未配置时"的兜底, 最后落到 systemReminderDirectory。
   const resolvedPrimary = resolvePrimaryWorkspace({
-    instanceFiles,
-    globalEntries: useAgentAccessStore.getState().config.entries,
-    cwd,
+    defaultFiles,
+    notebookPath,
   });
   // empty 变体无 path ── 收窄后取, 否则 undefined (上层 dispatch 据此判断是否拦截)。
   const primaryWorkspace =
     resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path;
+
   const effectivePermissionMode =
     instanceRuntimeConfig?.access?.sandbox ?? permissionMode;
   const effectiveModel =
@@ -213,7 +192,7 @@ export function buildAgentRuntimeConfig({
     instanceRuntimeConfig?.reasoningEffort ?? codexReasoningEffort;
   return getAgentRuntimeSpec(typeKey).buildRuntimeConfig({
     cwd: primaryWorkspace,
-    workspacePaths: effectiveWorkspacePaths,
+    workspacePaths,
     permissionMode: effectivePermissionMode,
     codexModel: effectiveModel,
     codexReasoningEffort: effectiveReasoningEffort,

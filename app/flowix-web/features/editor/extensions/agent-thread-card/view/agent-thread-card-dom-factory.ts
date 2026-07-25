@@ -15,7 +15,6 @@ export interface AgentThreadCardDomFactoryOptions {
   onCollapseClick: (event: MouseEvent) => void;
   onBodyClick: (event: MouseEvent) => void;
   onBodyScroll: (event: Event) => void;
-  onAccessClick: (event: MouseEvent) => void;
   onComposerMouseDown: (event: MouseEvent) => void;
 }
 
@@ -41,8 +40,6 @@ export interface AgentThreadCardDomParts {
   composerImages: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
   input: HTMLTextAreaElement;
-  accessButton: HTMLButtonElement;
-  accessPopover: HTMLDivElement;
   codexSettingsPopover: HTMLDivElement;
   composerRolePopover: HTMLDivElement;
   sendButtonMount: HTMLSpanElement;
@@ -189,24 +186,6 @@ export function createAgentThreadCardDom(
   composerImages.className = "agent-thread-card__composer-images";
   composerImages.hidden = true;
 
-  const accessButton = document.createElement("button");
-  accessButton.type = "button";
-  accessButton.className = "agent-thread-card__access-trigger";
-  accessButton.textContent = options.t("editor.threadCard.accessButton");
-  accessButton.setAttribute("aria-haspopup", "menu");
-  accessButton.setAttribute("aria-expanded", "false");
-  accessButton.addEventListener("click", options.onAccessClick);
-
-  const accessPopover = document.createElement("div");
-  accessPopover.className = "agent-thread-card__access-popover";
-  accessPopover.setAttribute("role", "menu");
-  accessPopover.hidden = true;
-  // click 由 AccessPopoverController 顶层 delegation 接管 (看
-  // handleClick); 这里不再挂额外 listener, 避免双重派发。 mousedown
-  // 也不挂 ── AccessPopoverController.handleOutsidePointer 在 pointerdown
-  // 捕获阶段判断"inside popover"早返, 不会因 click/mousedown 误关弹窗。
-  document.body.appendChild(accessPopover);
-
   const codexSettingsPopover = document.createElement("div");
   codexSettingsPopover.className =
     "agent-thread-card__codex-settings-popover";
@@ -240,7 +219,6 @@ export function createAgentThreadCardDom(
     composerImages,
     composerRoleIcon,
     input,
-    // accessButton, // “指令”入口暂时隐藏，保留节点与控制器以便后续恢复。
     sendButtonMount,
   );
   composer.addEventListener("mousedown", options.onComposerMouseDown);
@@ -269,8 +247,6 @@ export function createAgentThreadCardDom(
     composerImages,
     composerRoleIcon,
     input,
-    accessButton,
-    accessPopover,
     codexSettingsPopover,
     composerRolePopover,
     sendButtonMount,

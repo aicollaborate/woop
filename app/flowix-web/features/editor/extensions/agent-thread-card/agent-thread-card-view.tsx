@@ -33,7 +33,6 @@ import { submitAgentThreadCardConversation } from "@features/editor/extensions/a
 import { createFullscreenIcon } from "@features/editor/extensions/agent-thread-card/agent-thread-card-icons";
 import { createAgentThreadCardDom } from "@features/editor/extensions/agent-thread-card/view/agent-thread-card-dom-factory";
 import { AgentThreadCardChromeController } from "@features/editor/extensions/agent-thread-card/chrome";
-import { AccessPopoverController } from "@features/editor/extensions/agent-thread-card/access";
 import { ExternalAgentSettingsController } from "@features/editor/extensions/agent-thread-card/settings/external-agent-settings-controller";
 import { AgentRolePickerController } from "@features/editor/extensions/agent-thread-card/role/agent-role-picker-controller";
 import { FullscreenLayoutController } from "@features/editor/extensions/agent-thread-card/fullscreen/fullscreen-layout-controller";
@@ -185,9 +184,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   // 阅读器跳过; 视觉与按钮同高 (28px), 1px var(--border) 着色。
   // 可见性与 fullscreenButton 同步 (renderFullscreenState 一起切 hidden)。
   private actionsDivider: HTMLSpanElement;
-  private accessButton: HTMLButtonElement;
-  private accessPopover: HTMLDivElement;
-  private accessPopoverController: AccessPopoverController;
   private externalAgentSettings: ExternalAgentSettingsController;
   private externalSettingsLoadedTypeKey: AgentTypeKey | null = null;
   private agentRolePicker: AgentRolePickerController;
@@ -201,7 +197,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private unsubscribeQuickPhrases: (() => void) | null = null;
   private boundHandleBodyScroll = (): void => {
     this.messages.handleScroll();
-    this.scheduleAccessPopoverPosition();
   };
   private boundHandleRequestFullscreen = (event: Event): void => {
     const detail = (event as CustomEvent<{
@@ -303,10 +298,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       },
       onBodyClick: this.handleBodyClick,
       onBodyScroll: this.boundHandleBodyScroll,
-      onAccessClick: (event) => {
-        // 指令按钮：暂时去掉弹窗，后续再设计
-        event.stopPropagation();
-      },
       onComposerMouseDown: (event) => {
         const target = event.target as HTMLElement | null;
         if (!target || target.closest("textarea, button")) return;
@@ -332,7 +323,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getNodeSize: () => this.node.nodeSize,
       isFullscreen: () => this.isFullscreen,
       closeTransientUi: () => {
-        this.setAccessPopoverOpen(false);
         this.setCodexSettingsPopoverOpen(false);
         this.setComposerRolePopoverOpen(false);
       },
@@ -361,8 +351,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.composer = domParts.composer;
     this.composerRoleIcon = domParts.composerRoleIcon;
     this.input = domParts.input;
-    this.accessButton = domParts.accessButton;
-    this.accessPopover = domParts.accessPopover;
     this.sendButtonMount = domParts.sendButtonMount;
 
     const { codexSettingsPopover, composerRolePopover } = domParts;
@@ -373,10 +361,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getLanguage: () => this.language,
       t: (key) => this.t(key),
       isDestroyed: () => this.isDestroyed,
-      isAccessPopoverOpen: () => this.accessPopoverController.isOpen,
-      setAccessPopoverOpen: (open, anchor = null, preferBelow = true) => {
-        this.setAccessPopoverOpen(open, anchor, preferBelow);
-      },
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
     });
 
@@ -392,19 +376,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
       injectPrompt: (text) => this.injectQuickPhrasePrompt(text),
       openPreferences: () => this.openPreferencesForQuickPhrases(),
-    });
-    this.accessPopoverController = new AccessPopoverController({
-      button: this.accessButton,
-      popover: this.accessPopover,
-      t: (key) => this.t(key),
-      isDestroyed: () => this.isDestroyed,
-      isInsideRelatedTarget: (target) =>
-        !!(
-          this.externalAgentSettings.filesControl?.contains(target) ||
-          this.composerRoleIcon.contains(target)
-      ),
-      consumeOutsidePointer: consumeEditorPopoverDismissPointer,
-      getInstanceId: () => this.instanceId ?? undefined,
     });
     this.fullscreenLayout = new FullscreenLayoutController({
       dom: this.dom,
@@ -455,8 +426,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         this.refreshExternalAgentEmptySettings(),
       isExternalSettingsOpen: () => this.externalAgentSettings.isOpen,
       renderCodexSettingsPopover: () => this.renderCodexSettingsPopover(),
-      isAccessPopoverOpen: () => this.accessPopoverController.isOpen,
-      renderAccessPopover: () => this.renderAccessPopover(),
       syncRuntimeBadge: () => this.chrome.syncRuntimeBadge(),
     });
     this.messages = new AgentThreadCardMessagesController({
@@ -665,18 +634,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.externalAgentSettings.loadDefaultModel();
   }
 
-  private setAccessPopoverOpen(
-    open: boolean,
-    anchor: HTMLElement | null = null,
-    preferBelow = true,
-  ): void {
-    this.accessPopoverController.setOpen(open, anchor, preferBelow);
-  }
-
-  private renderAccessPopover(): void {
-    this.accessPopoverController.render();
-  }
-
   private createExternalAgentEmptySettings(): HTMLElement {
     return this.externalAgentSettings.createEmptySettings();
   }
@@ -747,10 +704,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   /** 打开偏好设置, 跳到「工具」tab ── 弹窗内「添加常用语」按钮使用。 */
   private openPreferencesForQuickPhrases(): void | Promise<void> {
     return windows.openPreferences("tools");
-  }
-
-  private scheduleAccessPopoverPosition(): void {
-    this.accessPopoverController.schedulePosition();
   }
 
   private applyResolvedExternalSessionId(
@@ -1063,7 +1016,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     return !!(
       target &&
       (this.dom.contains(target) ||
-        this.accessPopoverController.popoverElement.contains(target) ||
         this.externalAgentSettings.popoverElement.contains(target) ||
         this.agentRolePicker.popoverElement.contains(target))
     );
@@ -1399,7 +1351,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT,
       this.boundHandleRequestFullscreen,
     );
-    this.setAccessPopoverOpen(false);
     this.setCodexSettingsPopoverOpen(false);
     this.unsubscribeQuickPhrases?.();
     this.unsubscribeQuickPhrases = null;
@@ -1415,7 +1366,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.messages.dispose();
     this.body.removeEventListener("scroll", this.boundHandleBodyScroll);
     this.runtime.dispose();
-    this.accessPopoverController.dispose();
     this.externalAgentSettings.dispose();
     this.agentRolePicker.dispose();
     this.fullscreenLayout.dispose();

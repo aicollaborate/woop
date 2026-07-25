@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import type { ChatMessage } from "@/types";
 import type {
   AgentTypeKey,
-  FilesConfig,
   RuntimeConfig,
   RuntimeConfigPatch,
 } from "@/types/agent";
@@ -13,7 +12,6 @@ import type {
 import { stripSystemBlock } from "@features/agent/message";
 import { agentClient } from "@features/agent/store/agent-client";
 import type { LiveMessageState } from "@features/agent/store/chunk-result";
-import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import type { ThreadsMap } from "@features/agent/store/thread-runtime-state";
 import {
   filterRenderableHistoryMessages,
@@ -76,7 +74,6 @@ export interface AgentConversationStore {
     patch: Partial<Omit<AgentConversationInstance, "instanceId" | "createdAt">>,
   ) => AgentConversationInstance;
   setRuntimeConfig: (instanceId: string, patch: RuntimeConfigPatch) => void;
-  lockInstanceFileSeed: (instanceId: string) => AgentConversationInstance | null;
   getInstance: (instanceId: string | null | undefined) => AgentConversationInstance | null;
   updateThread: (
     instanceId: string,
@@ -201,45 +198,6 @@ function normalizeConversationTitle(title: string | null | undefined): string {
 
 const instanceWriteQueues = new Map<string, Promise<void>>();
 
-/**
- * hydrate 鍚庢壂涓€閬? 缁?runtime_config 鏄┖ / 涓嶅叏鐨?instance 鍐欎竴浠? * 褰撳墠 global store 鐨勫揩鐓? 鍚屼竴 instance 鍚庣画 sendMessageToThread
- * 鎷垮埌 `conversation.instance.runtimeConfig` 鏃? cwd 宸茬粡鏈夊€? 涓嶅啀
- * 渚濊禆 buildAgentRuntimeConfig 鐨勫厹搴曢摼.
- *
- * 娉ㄦ剰: 浠呭湪 files 涓虹┖ OR files.workspace 涓虹┖鏃?backfill. 鑻ョ敤鎴? * 宸茬粡鍦?settings popover 閲屾墜鍔ㄦ敼杩?runtime_config (cwd/files 涓? * 鏄┖), 涓嶅姩瀹? 閬垮厤瑕嗙洊鐢ㄦ埛閰嶇疆.
- */
-function backfillMissingRuntimeConfig(
-  backendInstances: BackendAgentConversationInstance[],
-): void {
-  const initialByType = new Map<
-    AgentConversationInstance["agentType"],
-    ReturnType<typeof buildInitialInstanceRuntimeConfig>
-  >();
-  const tryBackfill = (agentType: AgentConversationInstance["agentType"]) => {
-    let initial = initialByType.get(agentType);
-    if (!initial) {
-      initial = buildInitialInstanceRuntimeConfig(agentType);
-      initialByType.set(agentType, initial);
-    }
-    return initial;
-  };
-  for (const backend of backendInstances) {
-    const parsed = parseRuntimeConfigSnapshot(backend.runtimeConfig);
-    const filesEmpty =
-      !parsed?.files ||
-      (!parsed.files.workspace &&
-        (!parsed.files.folders || parsed.files.folders.length === 0) &&
-        (!parsed.files.notebooks || parsed.files.notebooks.length === 0));
-    const cwdMissing = !parsed?.cwd;
-    if (!filesEmpty && !cwdMissing) continue;
-    const seed = tryBackfill(backend.agentType);
-    // 鑷冲皯瑕佹妸 cwd 鍐欏埌椤跺眰, 杩欐牱 resetRuntimeConfig(null) + 鍚庣画 set 鍙互鏁戝洖.
-    useAgentConversationStore.getState().setRuntimeConfig(
-      backend.instanceId,
-      seed,
-    );
-  }
-}
 
 function enqueueInstanceWrite(
   instanceId: string,
@@ -303,11 +261,6 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
             }
             return { instances: next };
           });
-          // Backfill 鑰?instance 鐨?runtime_config 鈹€鈹€ 涔嬪墠 createInstance
-          // 娌″～, DB 閲岃繖浜涜 runtime_config = NULL, 閲嶅惎鍚?chat-stream.ts
-          // 鐨?buildAgentRuntimeConfig 鍏滃簳閾惧彲鑳藉叏鏂?(selectedNotebook /
-          // agent-access 鍚姩 race 绐楀彛). 鐢ㄥ綋鍓?global store 鐨勭湡鍊煎悓姝?          // 鍥炲～涓€娆? 鐒跺悗钀?SQLite, 涔嬪悗 cwd 涓嶅啀渚濊禆 store hydrate 鏃跺簭.
-          backfillMissingRuntimeConfig(instances);
         } catch (err) {
           console.error("[AgentConversation] Failed to hydrate instances:", err);
         }
@@ -378,14 +331,6 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
             existing.runtimeConfig,
             patch,
           );
-          // _frozen 鏄唴閮ㄥ喕缁撴爣璁? 涓嶈兘琚閮?patch 璇垹 鈹€鈹€ 浠呭湪 lockInstanceFileSeed
-          // 鏄惧紡璋冪敤鏃惰 true, 鍏跺畠璺緞淇濇寔 sticky.
-          if (existing.runtimeConfig?.files?._frozen) {
-            mergedConfig.files = {
-              ...(mergedConfig.files ?? { folders: [], notebooks: [] }),
-              _frozen: true,
-            };
-          }
           nextInstance = touch({
             ...existing,
             runtimeConfig: mergedConfig,
@@ -400,35 +345,6 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
         if (nextInstance) persistInstance(nextInstance);
       },
 
-      lockInstanceFileSeed: (instanceId) => {
-        let nextInstance: AgentConversationInstance | null = null;
-        set((state) => {
-          const existing = state.instances[instanceId];
-          if (!existing) return state;
-          const files = existing.runtimeConfig?.files;
-          if (!files) return state;
-          // 宸茬粡鍐荤粨杩囧氨涓嶈鏃犳剰涔夐噸鍐?鈹€鈹€ 鍚屼竴 thread 鍦?retry 璺緞涓嬪彲鑳?          // 绗簩娆¤繘 sendMessageToThread, 杩欓噷idempotent.
-          if (files._frozen) return state;
-          nextInstance = touch({
-            ...existing,
-            runtimeConfig: {
-              ...existing.runtimeConfig,
-              files: {
-                ...files,
-                _frozen: true,
-              },
-            },
-          });
-          return {
-            instances: {
-              ...state.instances,
-              [instanceId]: nextInstance!,
-            },
-          };
-        });
-        if (nextInstance) persistInstance(nextInstance);
-        return nextInstance;
-      },
 
       getInstance: (instanceId) =>
         instanceId ? get().instances[instanceId] ?? null : null,
@@ -825,38 +741,6 @@ export function selectRunningAgentConversationThreadIds(
   return Array.from(threadIds);
 }
 
-/**
- * "涓婃璁捐繃鐨勫亸濂? 蹇収 鈹€鈹€ 鏂板缓 instance 鏃?`buildInitialInstanceRuntimeConfig`
- * 鍚屾璇诲畠浣滀负 workspace 绉嶅瓙鐨勬潵婧?
- *   - 鎵炬渶杩戜竴涓?`runtimeConfig.files._frozen === true` 鐨?instance (鎸?updatedAt 鍊掑簭)
- *   - 鍙寫鍑?files.workspace / .folders / .notebooks 杩欎笁涓瓧娈? 涓嶆幒鏉? *     model / access / reasoning 绛夊叾瀹冨瓧娈? *   - 鎵句笉鍒板喕缁?instance 鏃惰繑鍥?null, 涓婃父 cascade 閫€鍒?selectedNotebook +
- *     agent-access-store firstEnabledFolder 鍏滃簳
- *
- * 鎰忓浘: 鐢ㄦ埛鍦?instance A 涓婅皟鏁翠富绌洪棿/folder 鍒楄〃鍚? 杩樻病鍙戞秷鎭箣鍓嶈繖浜涘€? * 涓嶈兘钀藉埌鍏ㄥ眬 `useAgentAccessStore`, 浣嗕笅涓€鏉?instance B 搴斿綋鑳芥劅鐭ュ埌 --
- * 鍚﹀垯 B 閲嶆柊璧?buildInitialInstanceRuntimeConfig 灏卞彧鑳界敤 cascade 鍏滃簳
- * (寰堝彲鑳芥嬁鍒?selectedNotebook 杩欑"鍏ㄥ眬"鍊?, 涓?A 鐢ㄦ埛鐨勬湰鎰忎笉涓€鑷淬€? */
-export function selectLatestFrozenFileSeed(
-  state: Pick<AgentConversationStore, "instances">,
-): FilesConfig | null {
-  let best: AgentConversationInstance | null = null;
-  for (const id of Object.keys(state.instances)) {
-    const instance = state.instances[id];
-    if (!instance) continue;
-    if (!instance.runtimeConfig?.files?._frozen) continue;
-    if (best === null || instance.updatedAt > best.updatedAt) {
-      best = instance;
-    }
-  }
-  if (!best) return null;
-  const files = best.runtimeConfig?.files;
-  if (!files) return null;
-  // 鍓ュ嚭 cwd 鍐崇瓥蹇呴渶鐨勪笁涓瓧娈? _frozen 鏍囪鏈韩涓嶅啀浼犻€?鈹€鈹€ 鎺ユ敹绔柊寤?  // instance 鏃朵笉搴旇鏄?frozen 鐘舵€? 蹇呴』鐢遍鏉?send 鏃跺啀娆?lock銆?
-  return {
-    workspace: files.workspace,
-    folders: files.folders,
-    notebooks: files.notebooks,
-  };
-}
 
 
 

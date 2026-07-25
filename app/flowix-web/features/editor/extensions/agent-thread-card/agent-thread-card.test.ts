@@ -2,8 +2,28 @@ import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const memoStateMock = vi.hoisted(() => ({
+  memos: [] as Array<unknown>,
+  selectedMemo: null,
+  selectedNotebook: null as null | {
+    id: string;
+    path: string;
+    name?: string;
+  },
+  notebooks: [] as Array<unknown>,
+  loadNotebooks: vi.fn(async () => undefined),
+}));
+
 const agentAccessState = vi.hoisted(() => ({
-  config: { entries: [] as Array<Record<string, unknown>> },
+  config: { entries: [] as Array<Record<string, unknown>> } as {
+    entries: Array<Record<string, unknown>>;
+    defaults?: {
+      files?: Record<
+        string,
+        { workspace?: string; folders: string[]; notebooks: string[] }
+      >;
+    };
+  },
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -81,15 +101,9 @@ vi.mock("@features/agent/store/agent-runtime-store", () => ({
   },
 }));
 
-vi.mock("@features/memo", () => ({
+vi.mock("@features/memo/store/memo-store", () => ({
   useMemoStore: {
-    getState: () => ({
-      memos: [],
-      selectedMemo: null,
-      selectedNotebook: null,
-      notebooks: [],
-      loadNotebooks: vi.fn(async () => undefined),
-    }),
+    getState: () => memoStateMock,
     subscribe: vi.fn(() => () => undefined),
   },
 }));
@@ -945,32 +959,32 @@ describe("AgentThreadCard NodeView streaming", () => {
     vi.useRealTimers();
   });
 
-  it("submits Codex Thread Card messages with Files workspace runtime config", async () => {
+  it("submits Codex Thread Card messages with workspace derived from notebook folder defaults", async () => {
     const { AgentThreadCard } =
       await import("@features/editor/extensions/agent-thread-card");
     const { agent } = await import("@platform/tauri/client");
     const threadId = "thread-card-submit-codex-workspace";
+    memoStateMock.selectedNotebook = {
+      id: "nb-current",
+      path: "D:\\workspace\\main",
+    };
     agentAccessState.config = {
+      // defaults.folders 里的每个 folder 必须在 entries 里有对应的
+      // enabled && !missing 授权条目, 否则 resolveAuthorizedDefaultFiles
+      // 会把它收窄掉 (防越权)。
       entries: [
-        {
-          id: "folder-main",
-          kind: "folder",
-          path: "D:\\workspace\\main\\",
-          name: "Main",
-          enabled: true,
-          workspace: true,
-          missing: false,
-        },
-        {
-          id: "folder-extra",
-          kind: "folder",
-          path: "D:\\workspace\\extra",
-          name: "Extra",
-          enabled: true,
-          workspace: false,
-          missing: false,
-        },
+        { id: "e-main", kind: "folder", path: "D:\\workspace\\main", name: "main", enabled: true, missing: false },
+        { id: "e-extra", kind: "folder", path: "D:\\workspace\\extra", name: "extra", enabled: true, missing: false },
       ],
+      defaults: {
+        files: {
+          "nb-current": {
+            workspace: "D:\\workspace\\main",
+            folders: ["D:\\workspace\\main", "D:\\workspace\\extra"],
+            notebooks: [],
+          },
+        },
+      },
     };
     const host = document.createElement("div");
     document.body.append(host);

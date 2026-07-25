@@ -320,19 +320,6 @@ function EmptyState() {
   );
 }
 
-function ListLoadingState({ text }: { text: string }) {
-  return (
-    <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
-      {text}
-    </div>
-  );
-}
-
-// MemoList 窗口事件监听器的实例计数 ── 列内 + 浮层内可同时挂多个 MemoList,
-// 但 window 上的 flowix:* 监听只由首个挂载者注册, 后续实例共享, 避免一份
-// 快捷键触发两份 dialog / setState。具体实现见 useEffect 中的分支。
-let memoListGlobalListenerCount = 0;
-
 const MEMO_LIST_INITIAL_RENDER_COUNT = 120;
 const MEMO_LIST_RENDER_BATCH_SIZE = 80;
 const MEMO_LIST_LOAD_MORE_THRESHOLD_PX = 720;
@@ -470,18 +457,11 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   }, []);
 
   // 全局事件监听器 ── 跨组件 shortcut / dispatchEvent 解耦点。
-  // 多个 MemoList 实例 (列内 + 浮层内) 共存时, 只让第一个挂载的实例注册监听器,
-  // 否则同一快捷键会触发两个 dialog / 状态变化。 用模块级 refcount 控制:
-  // refcount 0 → 1 时挂载监听器, 1 → 0 时卸载。
-  // ── 仅供 memo-list-hover-preview.tsx 的浮层复用 MemoList 时不产生副作用 ──
+  // 主列表始终挂载（侧栏收起时只是宽度变为 0），所以只让主列表持有这些监听器。
+  // hover 浮层通过 hideHeader 标识为只读复用实例，不能重复响应全局事件。
   useEffect(() => {
-    memoListGlobalListenerCount++;
-    if (memoListGlobalListenerCount > 1) {
-      // 已经有别的实例挂着, 这里只占计数, 不重复 addEventListener。
-      return () => {
-        memoListGlobalListenerCount--;
-      };
-    }
+    if (hideHeader) return;
+
     const cleanups: Array<() => void> = [];
     const handleOpenNotebook = () => {
       setNewNotebookName('');
@@ -514,14 +494,9 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     window.addEventListener('flowix:toggle-palette', handleTogglePalette);
     cleanups.push(() => window.removeEventListener('flowix:toggle-palette', handleTogglePalette));
     return () => {
-      memoListGlobalListenerCount--;
-      // 只有最后一实例卸载时才真正 removeEventListener, 否则会过早解绑,
-      // 后续挂着但非主的 MemoList 实例就收不到事件了。
-      if (memoListGlobalListenerCount === 0) {
-        for (const cleanup of cleanups) cleanup();
-      }
+      for (const cleanup of cleanups) cleanup();
     };
-  }, []);
+  }, [hideHeader]);
 
   // Shared delete path for both the dialog button and Enter shortcut.
   const handleDeleteConfirm = useCallback(() => {
@@ -681,7 +656,6 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     currentMemoListQueryKey,
     loadedMemoListQueryKey,
   });
-  const memoListLoadingText = showMemoListLoading ? t('memo.list.loadingMemos') : null;
   const visibleLoadingText = blockingLoadingText;
   // 选中标签的展示名: tagMap 只收录真实 tag (id = 完整路径, 如
   // "Flowix/云存储"), 不含路径前缀 segment。选中父节点 (e.g. "Flowix")
@@ -689,6 +663,33 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   // tagMap 取不到, fallback 到 activeTagId (即 fullPath) 本身展示 ──
   // 与 memo-card 的 `tagMap[tagId] || tagId` 同模式。
   const activeTagName = activeTagId ? (tagMap[activeTagId] ?? activeTagId) : null;
+
+  // 顶部标题文案: 有筛选条件时只展示筛选后缀 (如 "#云存储" / "待办"), 不再带
+  // 笔记本名或"全部"前缀; 无任何筛选时展示"全部"。thisWeek/thisMonth 同样计入
+  // 筛选条件, 避免选了"只看本周"顶部却仍显示"全部"的误导。tagged 但无具体 tag
+  // (activeTagName 为空) 时退回"全部"。
+  const { headerLabel, hasActiveFilter } = (() => {
+    const parts: string[] = [];
+    // tag 保留 "#" 前缀; 其余筛选 (待办/对话/颜色/只看本周/只看本月) 仅展示文案,
+    // 不带 "@" 前缀。
+    if (activeTagName) parts.push(`#${activeTagName}`);
+    if (activeFilter === 'todos') parts.push(t('memo.list.filterTasks'));
+    if (activeFilter === 'agents') parts.push(t('memo.list.filterAgents'));
+    if (activeFilter === 'color') {
+      const colorLabel =
+        colorFilter === 'any'
+          ? t('memo.list.filterColorAny')
+          : colorFilter === 'none'
+            ? t('document.color.noColorTooltip')
+            : t(COLOR_LABEL_KEYS[colorFilter]);
+      parts.push(colorLabel);
+    }
+    if (activeFilter === 'thisWeek') parts.push(t('memo.list.filterThisWeek'));
+    if (activeFilter === 'thisMonth') parts.push(t('memo.list.filterThisMonth'));
+    return parts.length > 0
+      ? { headerLabel: parts.join(' '), hasActiveFilter: true }
+      : { headerLabel: t('memo.list.filterAll'), hasActiveFilter: false };
+  })();
 
   // 'color' 是前端专用 filter — 后端返回全量, 这里按 `colorFilter` 二次过滤:
   //   'any'  → memo.colors.length > 0
@@ -892,25 +893,14 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   ]);
 
   useEffect(() => {
-    memoListGlobalListenerCount++;
-    if (memoListGlobalListenerCount > 1) {
-      return () => {
-        memoListGlobalListenerCount--;
-      };
-    }
-    const cleanups: Array<() => void> = [];
+    if (hideHeader) return;
+
     const handleRequest = () => {
       void handleCreateMemo();
     };
     window.addEventListener('flowix:create-memo', handleRequest);
-    cleanups.push(() => window.removeEventListener('flowix:create-memo', handleRequest));
-    return () => {
-      memoListGlobalListenerCount--;
-      if (memoListGlobalListenerCount === 0) {
-        for (const cleanup of cleanups) cleanup();
-      }
-    };
-  }, [handleCreateMemo]);
+    return () => window.removeEventListener('flowix:create-memo', handleRequest);
+  }, [handleCreateMemo, hideHeader]);
 
   // 入场动画入口: 每次 memos 变化时 (含新建/更新/删除) 在 layout 阶段同步
   // 询问 useMemoInsertAnimation 是否有 pending 新 card, 有就跑一次入场
@@ -987,49 +977,9 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
               >
                 <span
                   className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--foreground)] transition-colors duration-150 group-hover:text-[color-mix(in_oklch,var(--foreground)_80%,white)]"
-                  title={
-                    (() => {
-                      const base = selectedNotebook?.name || t('memo.list.selectNotebook');
-                      const tagSuffix = activeTagName ? ` #${activeTagName}` : '';
-                      const todoSuffix = activeFilter === 'todos' ? ` @${t('memo.list.filterTasks')}` : '';
-                      const agentSuffix = activeFilter === 'agents' ? ` @${t('memo.list.filterAgents')}` : '';
-                      // 颜色筛选的后缀直接展示具体的颜色名, 而不是泛化的
-                      // "只看颜色"。 colorFilter:
-                      //   'any'  → "标记颜色"
-                      //   'none' → "无"
-                      //   具体颜色 → 复用 picker 的 document.color.<key> 文案
-                      const colorSuffix = (() => {
-                        if (activeFilter !== 'color') return '';
-                        if (colorFilter === 'any') return ` @${t('memo.list.filterColorAny')}`;
-                        if (colorFilter === 'none') return ` @${t('document.color.noColorTooltip')}`;
-                        return ` @${t(COLOR_LABEL_KEYS[colorFilter])}`;
-                      })();
-                      const combined = `${base}${tagSuffix}${todoSuffix}${agentSuffix}${colorSuffix}`;
-                      return combined === base ? undefined : combined;
-                    })()
-                  }
+                  title={hasActiveFilter ? headerLabel : undefined}
                 >
-                  {selectedNotebook?.name || t('memo.list.selectNotebook')}
-                  {activeTagName && (
-                    <> {' '}#{activeTagName}</>
-                  )}
-                  {activeFilter === 'todos' && (
-                    <> {' '}@{t('memo.list.filterTasks')}</>
-                  )}
-                  {activeFilter === 'agents' && (
-                    <> {' '}@{t('memo.list.filterAgents')}</>
-                  )}
-                  {activeFilter === 'color' && (
-                    <>
-                      {' '}
-                      @
-                      {colorFilter === 'any'
-                        ? t('memo.list.filterColorAny')
-                        : colorFilter === 'none'
-                          ? t('document.color.noColorTooltip')
-                          : t(COLOR_LABEL_KEYS[colorFilter])}
-                    </>
-                  )}
+                  {headerLabel}
                 </span>
                 <ChevronDown className="w-3 h-3 text-[var(--muted-foreground)] shrink-0" strokeWidth={2.5} />
               </button>
@@ -1192,13 +1142,11 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
 
       <OverlayScrollbar
         className="flex min-h-0 flex-1"
-        scrollerClassName="flex-1 overflow-y-auto px-2 py-2"
+        scrollerClassName="flex-1 overflow-y-auto px-1 py-2"
         scrollerRef={listContainerRef}
         onScroll={handleMemoListScroll}
       >
-        {showMemoListLoading && memoListLoadingText ? (
-          <ListLoadingState text={memoListLoadingText} />
-        ) : memos.length > 0 ? (
+        {memos.length > 0 ? (
           // 普通列渲染: 父容器是 flex-col, 每张卡在文档流里自然堆叠, 高度
           // 由内容撑开, 不再用 transform 定位。 GSAP 入场动画只作用在
           // 命中的 [data-insert-anim] 节点, 不影响周围 row 的流式布局 ──

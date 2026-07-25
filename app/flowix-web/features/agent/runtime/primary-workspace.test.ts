@@ -1,158 +1,64 @@
 import { describe, expect, it } from "vitest";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
-import type { AgentAccessEntry } from "@/lib/types/agent-access";
-
-function makeEntry(
-  overrides: Partial<AgentAccessEntry> & { path: string },
-): AgentAccessEntry {
-  return {
-    id: overrides.id ?? "entry",
-    kind: overrides.kind ?? "folder",
-    path: overrides.path,
-    name: overrides.name ?? overrides.path,
-    enabled: overrides.enabled ?? true,
-    workspace: overrides.workspace ?? false,
-    missing: overrides.missing ?? false,
-    addedAt: 1,
-    updatedAt: 1,
-  };
-}
 
 describe("resolvePrimaryWorkspace", () => {
-  it("1. instance.workspace 永远优先, 不看全局", () => {
+  it("1. 资料主空间 (defaults.files.workspace) 优先", () => {
     expect(
       resolvePrimaryWorkspace({
-        instanceFiles: {
-          workspace: "D:\\thread-workspace",
-          folders: ["D:\\thread-folder"],
+        defaultFiles: {
+          workspace: "D:\\资料主空间",
+          folders: ["D:\\资料主空间", "D:\\其它"],
           notebooks: [],
         },
-        globalEntries: [
-          makeEntry({ path: "D:\\global-workspace", workspace: true }),
-        ],
+        notebookPath: "D:\\当前笔记本",
       }),
-    ).toEqual({ kind: "instance.workspace", path: "D:\\thread-workspace" });
+    ).toEqual({ kind: "default.workspace", path: "D:\\资料主空间" });
   });
 
-  it("2. instance.workspace 空时, 退到 instance.folders[0]", () => {
+  it("2. 资料主空间空时, 退到资料列表第一个 folder", () => {
     expect(
       resolvePrimaryWorkspace({
-        instanceFiles: {
+        defaultFiles: {
           workspace: undefined,
-          folders: ["D:\\first-folder", "D:\\second-folder"],
+          folders: ["D:\\第一份资料", "D:\\第二份资料"],
           notebooks: [],
         },
-        globalEntries: [
-          makeEntry({ path: "D:\\global-workspace", workspace: true }),
-        ],
+        notebookPath: "D:\\当前笔记本",
       }),
-    ).toEqual({ kind: "instance.folders[0]", path: "D:\\first-folder" });
+    ).toEqual({ kind: "default.folders[0]", path: "D:\\第一份资料" });
   });
 
-  it("3. instance 都没勾, 退到 instance.notebooks[0]", () => {
+  it("3. 资料列表为空 (没添加资料), 退到当前笔记本路径", () => {
     expect(
       resolvePrimaryWorkspace({
-        instanceFiles: {
-          workspace: undefined,
-          folders: [],
-          notebooks: ["D:\\first-notebook"],
-        },
-        globalEntries: [
-          makeEntry({ path: "D:\\global-workspace", workspace: true }),
-        ],
+        defaultFiles: { folders: [], notebooks: [], workspace: undefined },
+        notebookPath: "D:\\当前笔记本",
       }),
-    ).toEqual({
-      kind: "instance.notebooks[0]",
-      path: "D:\\first-notebook",
-    });
+    ).toEqual({ kind: "notebook", path: "D:\\当前笔记本" });
   });
 
-  it("4. instance 全空, 走全局 entry.workspace=true (firstWorkspace)", () => {
+  it("4. folders 里全是非法路径 (normalize 后空) 也退到当前笔记本", () => {
     expect(
       resolvePrimaryWorkspace({
-        instanceFiles: { folders: [], notebooks: [], workspace: undefined },
-        globalEntries: [
-          makeEntry({ path: "D:\\enabled", enabled: true, workspace: false }),
-          makeEntry({ path: "D:\\workspace", workspace: true }),
-        ],
+        defaultFiles: { folders: [""], notebooks: [], workspace: undefined },
+        notebookPath: "D:\\当前笔记本",
       }),
-    ).toEqual({
-      kind: "global.firstWorkspace",
-      path: "D:\\workspace",
-    });
+    ).toEqual({ kind: "notebook", path: "D:\\当前笔记本" });
   });
 
-  it("5. 没有 workspace=true 但有 enabled, 走 global.firstEnabled", () => {
-    expect(
-      resolvePrimaryWorkspace({
-        globalEntries: [
-          makeEntry({ path: "D:\\enabled-1", workspace: false, enabled: true }),
-          makeEntry({ path: "D:\\enabled-2", workspace: false, enabled: true }),
-        ],
-      }),
-    ).toEqual({
-      kind: "global.firstEnabled",
-      path: "D:\\enabled-1",
-    });
-  });
-
-  it("已冻结的空 instance 保持历史快照, 不继承后续全局 workspace", () => {
-    expect(
-      resolvePrimaryWorkspace({
-        instanceFiles: {
-          folders: [],
-          notebooks: [],
-          workspace: undefined,
-          _frozen: true,
-        },
-        cwd: "D:\\current-notebook",
-        globalEntries: [
-          makeEntry({ path: "D:\\later-workspace", workspace: true }),
-        ],
-      }),
-    ).toEqual({ kind: "cwd", path: "D:\\current-notebook" });
-  });
-
-  it("6. 全局空, 走 cwd (selectedNotebook / systemReminderDirectory)", () => {
-    expect(
-      resolvePrimaryWorkspace({ cwd: "D:\\current-notebook" }),
-    ).toEqual({ kind: "cwd", path: "D:\\current-notebook" });
-  });
-
-  it("7. 全空时返回 empty", () => {
+  it("5. 全空时返回 empty (dispatch 层据此判断是否拦截)", () => {
     expect(resolvePrimaryWorkspace({})).toEqual({ kind: "empty" });
-  });
-
-  it("missing=true 的 entry 不被选中", () => {
-    expect(
-      resolvePrimaryWorkspace({
-        globalEntries: [
-          makeEntry({
-            path: "D:\\missing",
-            missing: true,
-            workspace: true,
-            enabled: true,
-          }),
-          makeEntry({
-            path: "D:\\real",
-            workspace: false,
-            enabled: true,
-            missing: false,
-          }),
-        ],
-      }),
-    ).toEqual({ kind: "global.firstEnabled", path: "D:\\real" });
   });
 
   it("尾部斜杠被 normalize", () => {
     expect(
       resolvePrimaryWorkspace({
-        instanceFiles: {
+        defaultFiles: {
           workspace: "D:\\with-slash\\",
           folders: [],
           notebooks: [],
         },
       }),
-    ).toEqual({ kind: "instance.workspace", path: "D:\\with-slash" });
+    ).toEqual({ kind: "default.workspace", path: "D:\\with-slash" });
   });
 });

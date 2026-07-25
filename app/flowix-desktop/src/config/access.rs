@@ -96,13 +96,18 @@ impl AgentAccessStore {
 
     pub fn get_config(&self) -> AgentAccessConfig {
         let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
-        guard.clone()
+        let mut config = guard.clone();
+        refresh_missing_flags(&mut config.entries);
+        config
     }
 
     pub fn replace_config(
         &self,
-        config: AgentAccessConfig,
+        mut config: AgentAccessConfig,
     ) -> Result<AgentAccessConfig, UserConfigError> {
+        // `missing` is derived from disk and must never trust a stale Webview
+        // snapshot. Recompute before both persistence and the in-memory swap.
+        refresh_missing_flags(&mut config.entries);
         let content = serde_json::to_string_pretty(&config)?;
         let path = self.config_dir.join(AGENT_ACCESS_FILE_NAME);
         atomic_write_json(&path, &content)?;
@@ -295,6 +300,12 @@ fn trim_path(path: &str) -> String {
     path.trim_end_matches(|c| c == '/' || c == '\\').to_string()
 }
 
+fn refresh_missing_flags(entries: &mut [AgentAccessEntry]) {
+    for entry in entries {
+        entry.missing = !Path::new(&entry.path).is_dir();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +427,36 @@ mod tests {
         let decoded: AgentAccessConfig = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.defaults, Some(defaults));
+    }
+
+    #[test]
+    fn refresh_missing_flags_tracks_directories_on_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let present = temp.path().join("present");
+        std::fs::create_dir_all(&present).unwrap();
+        let absent = temp.path().join("absent");
+        let mut entries = vec![
+            entry(
+                "present",
+                AgentAccessKind::Folder,
+                &present.to_string_lossy(),
+                "Present",
+                true,
+                1,
+            ),
+            entry(
+                "absent",
+                AgentAccessKind::Folder,
+                &absent.to_string_lossy(),
+                "Absent",
+                true,
+                1,
+            ),
+        ];
+
+        refresh_missing_flags(&mut entries);
+
+        assert!(!entries[0].missing);
+        assert!(entries[1].missing);
     }
 }

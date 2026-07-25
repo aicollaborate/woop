@@ -18,8 +18,6 @@ export interface AgentThreadCardRuntimeControllerOptions {
   refreshExternalAgentEmptySettings: () => void;
   isExternalSettingsOpen: () => boolean;
   renderCodexSettingsPopover: () => void;
-  isAccessPopoverOpen: () => boolean;
-  renderAccessPopover: () => void;
   syncRuntimeBadge: () => void;
 }
 
@@ -47,8 +45,6 @@ export class AgentThreadCardRuntimeController {
       applyResolvedExternalSessionId: (threadId, sessionId, typeKey) => {
         this.applyResolvedSession(threadId, sessionId, typeKey);
       },
-      isAccessPopoverOpen: options.isAccessPopoverOpen,
-      renderAccessPopover: options.renderAccessPopover,
       syncRuntimeBadge: options.syncRuntimeBadge,
     });
   }

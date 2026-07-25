@@ -375,10 +375,7 @@ mod tests {
         });
 
         assert!(is_codex_task_complete(&legacy));
-        assert_eq!(
-            codex_run_signal(&legacy),
-            CodexRunSignal::TerminalCompleted
-        );
+        assert_eq!(codex_run_signal(&legacy), CodexRunSignal::TerminalCompleted);
         assert_eq!(
             codex_run_signal(&completed),
             CodexRunSignal::TerminalCompleted

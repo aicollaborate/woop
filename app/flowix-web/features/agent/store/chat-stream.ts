@@ -7,6 +7,8 @@ import type {
 } from "@/types/agent";
 import { buildAgentRuntimeConfig } from "@features/agent/runtime/agent-runtime-spec";
 import { agentClient } from "@features/agent/store/agent-client";
+import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
+import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
 import type { OutgoingUserPayload } from "@features/agent/store/user-message";
 
 export interface DispatchChatStreamArgs {
@@ -52,13 +54,22 @@ export async function dispatchChatStream({
   imagePaths,
   conversationTitle,
 }: DispatchChatStreamArgs): Promise<void> {
+  // 文件区域由「当前笔记本的资料列表 + 当前笔记本」实时推导 ── 不读
+  // instance.files 快照。 notebookId 在创建 instance 时快照于
+  // runtimeConfig.notebookId, 据此取该笔记本的资料默认; notebookPath
+  // (= systemReminderDirectory) 既是无资料时的主空间, 也并入可读写集合。
+  const notebookId = instanceRuntimeConfig?.notebookId;
+  const defaultFiles = notebookId
+    ? resolveAuthorizedDefaultFiles(useAgentAccessStore.getState().config, notebookId)
+    : undefined;
   const runtimeConfig = buildAgentRuntimeConfig({
     typeKey: agentType,
-    cwd: userPayload.systemReminderDirectory,
+    notebookPath: userPayload.systemReminderDirectory,
     permissionMode,
     codexModel,
     codexReasoningEffort,
     instanceRuntimeConfig,
+    defaultFiles,
   });
   await agentClient.chatStream(threadId, {
     content,

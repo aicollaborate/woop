@@ -47,9 +47,26 @@ export interface AgentAccessDefaultRuntime {
   reasoningEffort?: AgentCodexReasoningEffort;
 }
 
+/**
+ * `defaults.files` 的全局兜底 key ── 老版本单对象 `defaults.files` 迁移落点,
+ * 以及创建时未选笔记本 / 历史 instance (无 `runtimeConfig.notebookId`) 回写
+ * 时的 fallback 目标。
+ */
+export const DEFAULT_FILES_GLOBAL_KEY = "_global";
+
+/**
+ * 按 notebook 维度索引的 files 默认 ── key 为 notebook.id,
+ * `DEFAULT_FILES_GLOBAL_KEY` ("_global") 为兜底。 同一 notebook 下新建的
+ * agent 卡片共享该 notebook 的默认文件列表; 不同 notebook 互不影响。
+ *
+ * 老版本 `defaults.files` 是单个 `FilesConfig` 对象, 读取时由
+ * `normalizeFilesDefaults` 归一化到 `{ _global: <old> }`, 写入时始终落索引。
+ */
+export type AgentAccessFilesDefaults = Record<string, FilesConfig>;
+
 export interface AgentAccessDefaults {
   runtime?: Partial<Record<AgentTypeKey, AgentAccessDefaultRuntime>>;
-  files?: FilesConfig;
+  files?: AgentAccessFilesDefaults;
 }
 
 export interface AgentAccessConfig {

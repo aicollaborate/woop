@@ -650,18 +650,6 @@ export const useChatStore = create<ChatStore>()(
               threadId,
               agentType: type.key,
             });
-            // 首次 send: 把 instance.files 烧录成只读真值 ── 见
-            // agent-conversation-store.lockInstanceFileSeed 的注释。
-            // 之后再调 setRuntimeConfig / buildInitialInstanceRuntimeConfig 都
-            // 不再影响 instance.files, 上次设的偏好成为下次新建 instance 的种子
-            // (selectLatestFrozenFileSeed) 锁定在这里。
-            // isFirstMessage 的判断与 `getRenderableMessageCount === 0` 同源
-            // (chat-store.ts:543), 这里用它 (而不是 rely 双源) 避免 race。
-            if (isFirstMessage) {
-              useAgentConversationStore
-                .getState()
-                .lockInstanceFileSeed(options.instanceId);
-            }
           }
 
           try {

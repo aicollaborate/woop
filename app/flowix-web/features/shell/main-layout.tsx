@@ -644,7 +644,6 @@ export function MainLayout() {
           </div>
           {/* Status bar */}
           <StatusBar
-            memoColWidth={memoColWidth}
             notebooks={notebooks}
             selectedNotebook={selectedNotebook}
             notebookPopupOpen={notebookPopupOpen}

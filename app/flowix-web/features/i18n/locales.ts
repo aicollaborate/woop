@@ -430,7 +430,7 @@ export const messages = {
     "status.editNotebook": "编辑笔记本",
     "status.deleteNotebook": "删除笔记本",
     "status.newNotebook": "新建笔记本",
-    "status.new": "新建",
+    "status.new": "新建笔记本",
     "status.invalidNotebookPath": "笔记本路径已失效",
     "status.upgrade": "新版本",
 
@@ -568,6 +568,7 @@ export const messages = {
     "agent.access.addFolder": "添加",
     "agent.access.addFolderHint": "添加到全局访问列表, 所有 Agent Thread Card 可见",
     "agent.access.alreadyTracked": "该目录已被跟踪",
+    "agent.access.folderExists": "文件夹已存在",
     "agent.access.saveFailed": "保存失败",
     "agent.access.notSelected": "未选择目录",
     "agent.access.typeSettings": "角色设置",
@@ -645,7 +646,12 @@ export const messages = {
     "memo.delete.confirm": "删除",
     "memo.navigation.collapsePanel": "折叠面板",
     "memo.navigation.collapsePanelTooltip": "折叠面板",
-    "memo.navigation.resizeNotebookList": "调整笔记本列表高度",
+    "memo.navigation.collapseNotebookList": "折叠笔记本列表",
+    "memo.navigation.expandNotebookList": "展开笔记本列表",
+    "memo.navigation.notebooks": "笔记本",
+    "memo.navigation.tags": "标签",
+    "memo.navigation.files": "资料",
+    "memo.navigation.addFolder": "添加",
     "memo.notebook.letterIcon": "使用字母图标",
 
     // notebook dialogs
@@ -1443,7 +1449,7 @@ export const messages = {
     "status.editNotebook": "Edit notebook",
     "status.deleteNotebook": "Delete notebook",
     "status.newNotebook": "New notebook",
-    "status.new": "New",
+    "status.new": "New notebook",
     "status.invalidNotebookPath": "Notebook path is invalid",
     "status.upgrade": "New version",
 
@@ -1583,6 +1589,7 @@ export const messages = {
     "agent.access.addFolderHint":
       "Adds to the global access list — visible to all Agent Thread Cards",
     "agent.access.alreadyTracked": "This folder is already tracked",
+    "agent.access.folderExists": "Folder already added",
     "agent.access.saveFailed": "Failed to save",
     "agent.access.notSelected": "No directory selected",
     "agent.access.typeSettings": "Role Settings",
@@ -1660,7 +1667,12 @@ export const messages = {
     "memo.delete.confirm": "Delete",
     "memo.navigation.collapsePanel": "Collapse panel",
     "memo.navigation.collapsePanelTooltip": "Collapse panel",
-    "memo.navigation.resizeNotebookList": "Resize notebook list",
+    "memo.navigation.collapseNotebookList": "Collapse notebook list",
+    "memo.navigation.expandNotebookList": "Expand notebook list",
+    "memo.navigation.notebooks": "Notebooks",
+    "memo.navigation.tags": "Tags",
+    "memo.navigation.files": "Source",
+    "memo.navigation.addFolder": "Add",
     "memo.notebook.letterIcon": "Use initials as icon",
 
     // notebook dialogs

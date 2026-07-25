@@ -129,6 +129,18 @@ export interface RuntimeConfig {
   tools?: string[];
   /** 预留：cwd 显式覆盖 (当前 files.workspace 优先) */
   cwd?: string;
+  /**
+   * 创建该 instance 时所属 notebook 的 id 快照 (如 `nb_<ts>` / `nb_default`)。
+   *
+   * 非运行时配置 ── 它不发给 LLM, 仅用于把"卡片里勾选/设主空间确认的
+   * files"回写到所属 notebook 的默认 (`agent-access.defaults.files[<notebookId>]`),
+   * 让同一 notebook 下后续新建的卡片共享这份默认。 借 `runtimeConfig` 的
+   * JSON 透传通道一起落 SQLite (后端 `runtime_config` 是裸 TEXT, 不解析内部),
+   * 与 `_frozen` 同构 ── 无需 backend schema 升级。
+   *
+   * 缺失 (历史 instance / 创建时未选笔记本) 时, 回写 fallback 到 `_global`。
+   */
+  notebookId?: string;
 }
 
 /**

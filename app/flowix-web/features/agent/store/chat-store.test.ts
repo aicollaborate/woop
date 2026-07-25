@@ -2,6 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentChunk } from "@/types/agent";
 import { CONTEXT_PROMPT_MARKER } from "@features/agent/message";
 
+const memoStateMock = vi.hoisted(() => ({
+  selectedNotebook: null as null | {
+    id: string;
+    path: string;
+    name?: string;
+  },
+  selectedMemo: null,
+  notebooks: [] as Array<unknown>,
+}));
+
 const agentAccessMock = vi.hoisted(() => ({
   config: {
     entries: [] as Array<{
@@ -13,6 +23,22 @@ const agentAccessMock = vi.hoisted(() => ({
       workspace?: boolean;
       missing: boolean;
     }>,
+  } as {
+    entries: Array<{
+      id: string;
+      kind: "notebook" | "folder";
+      path: string;
+      name: string;
+      enabled: boolean;
+      workspace?: boolean;
+      missing: boolean;
+    }>;
+    defaults?: {
+      files?: Record<
+        string,
+        { workspace?: string; folders: string[]; notebooks: string[] }
+      >;
+    };
   },
 }));
 
@@ -66,11 +92,7 @@ vi.mock("@platform/tauri/client", () => ({
 
 vi.mock("@features/memo/store/memo-store", () => ({
   useMemoStore: {
-    getState: () => ({
-      selectedNotebook: null,
-      selectedMemo: null,
-      notebooks: [],
-    }),
+    getState: () => memoStateMock,
   },
 }));
 
@@ -126,6 +148,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       "@features/agent/store/agent-conversation-store"
     );
     agentAccessMock.config = { entries: [] };
+    memoStateMock.selectedNotebook = null;
     useChatStore.setState(useChatStore.getInitialState(), true);
     useAgentConversationStore.setState(
       useAgentConversationStore.getInitialState(),
@@ -1636,55 +1659,43 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(payload).not.toHaveProperty("codexModel");
   });
 
-  it("passes enabled Files entries as Codex runtime workspaces", async () => {
+  it("derives Codex cwd and workspacePaths from notebook folder defaults + current notebook", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const threadId = "thread-card-runtime-config-codex-workspaces";
+    memoStateMock.selectedNotebook = {
+      id: "nb-current",
+      path: "D:\\projects\\flowix",
+    };
     agentAccessMock.config = {
+      // defaults.folders 里的每个 folder 必须在 entries 里有对应的
+      // enabled && !missing 授权条目, 否则 resolveAuthorizedDefaultFiles
+      // 会把它收窄掉 (防越权)。
       entries: [
-        {
-          id: "nb-1",
-          kind: "notebook",
-          path: "D:\\notes\\main\\",
-          name: "Main",
-          enabled: true,
-          missing: false,
-        },
-        {
-          id: "folder-1",
-          kind: "folder",
-          path: "D:\\projects\\flowix",
-          name: "Flowix",
-          enabled: true,
-          workspace: true,
-          missing: false,
-        },
-        {
-          id: "folder-disabled",
-          kind: "folder",
-          path: "D:\\disabled",
-          name: "Disabled",
-          enabled: false,
-          missing: false,
-        },
-        {
-          id: "folder-missing",
-          kind: "folder",
-          path: "D:\\missing",
-          name: "Missing",
-          enabled: true,
-          missing: true,
-        },
+        { id: "e-notes-main", kind: "folder", path: "D:\\notes\\main", name: "main", enabled: true, missing: false },
+        { id: "e-flowix", kind: "folder", path: "D:\\projects\\flowix", name: "flowix", enabled: true, missing: false },
       ],
+      defaults: {
+        files: {
+          "nb-current": {
+            workspace: "D:\\projects\\flowix",
+            folders: ["D:\\notes\\main", "D:\\projects\\flowix"],
+            notebooks: [],
+          },
+        },
+      },
     };
 
     useChatStore.setState({
       threadTypes: { [threadId]: "codex" },
     });
 
-    await useChatStore
-      .getState()
-      .sendMessageToThread(threadId, "hello workspaces", "codex");
+    await useChatStore.getState().sendMessageToThread(
+      threadId,
+      "hello workspaces",
+      "codex",
+      { runtimeConfig: { notebookId: "nb-current" } },
+    );
 
     const calls = vi.mocked(agent.chatStream).mock.calls;
     const payload = calls[calls.length - 1]?.[1];
@@ -1699,38 +1710,37 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
   });
 
-  it("uses the first enabled folder as cwd when no workspace is marked", async () => {
+  it("uses first folder as cwd when no workspace is set, includes current notebook", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const threadId = "thread-card-runtime-config-first-folder";
+    memoStateMock.selectedNotebook = {
+      id: "nb-current",
+      path: "D:\\projects\\flowix",
+    };
     agentAccessMock.config = {
-      entries: [
-        {
-          id: "nb-1",
-          kind: "notebook",
-          path: "D:\\notes\\main\\",
-          name: "Main",
-          enabled: true,
-          missing: false,
+      entries: [],
+      defaults: {
+        files: {
+          "nb-current": {
+            workspace: undefined,
+            folders: ["D:\\projects\\flowix"],
+            notebooks: [],
+          },
         },
-        {
-          id: "folder-1",
-          kind: "folder",
-          path: "D:\\projects\\flowix\\",
-          name: "Flowix",
-          enabled: true,
-          missing: false,
-        },
-      ],
+      },
     };
 
     useChatStore.setState({
       threadTypes: { [threadId]: "codex" },
     });
 
-    await useChatStore
-      .getState()
-      .sendMessageToThread(threadId, "hello first folder", "codex");
+    await useChatStore.getState().sendMessageToThread(
+      threadId,
+      "hello first folder",
+      "codex",
+      { runtimeConfig: { notebookId: "nb-current" } },
+    );
 
     const calls = vi.mocked(agent.chatStream).mock.calls;
     const payload = calls[calls.length - 1]?.[1];
@@ -1739,7 +1749,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       runtimeConfig: {
         codex: {
           cwd: "D:\\projects\\flowix",
-          workspacePaths: ["D:\\notes\\main", "D:\\projects\\flowix"],
+          workspacePaths: ["D:\\projects\\flowix"],
         },
       },
     });
