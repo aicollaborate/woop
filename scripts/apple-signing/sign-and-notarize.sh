@@ -13,7 +13,7 @@
 #   APPLE_TEAM_ID                   10-character Team ID from Membership Details
 #   APPLE_ID                        Apple Account email
 #
-# Notarization auth — EXACTLY ONE of these two:
+# Notarization auth - EXACTLY ONE of these two:
 #   APPLE_KEYCHAIN_PROFILE          (preferred) Profile name previously stored via
 #                                   `xcrun notarytool store-credentials <name> ...`
 #                                   Password lives only in macOS Keychain.
@@ -23,7 +23,11 @@
 # Optional env vars:
 #   SKIP_BUILD=1                    Skip `tauri build`, use existing target/
 #   SKIP_NOTARIZE=1                 Build + sign only, don't submit to notary
-#   DMG_PATH                        Override the auto-detected .dmg
+#   DMG_PATH                        (ignored in dual-target mode) override a single .dmg
+#
+# macOS 发版走方案 B: aarch64 + x86_64 两个 target 各出一个 DMG, 各自签名 + notarize。
+# build 由 build-tauri-production.mjs 循环两个 --target 完成, 本脚本对每个 target 的
+# bundle 走 resign CLI sidecar -> re-seal .app -> notarize -> staple。
 
 set -euo pipefail
 
@@ -32,17 +36,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DESKTOP_DIR="$REPO_ROOT/app/flowix-desktop"
 ENTITLEMENTS="$DESKTOP_DIR/entitlements.plist"
 
-# CARGO_TARGET_DIR is exported by scripts/build-cli.sh — usually
+# CARGO_TARGET_DIR is exported by scripts/build-cli.sh - usually
 # $REPO_ROOT/.build/cargo-target. Tauri's bundle output goes there, NOT
 # under app/flowix-desktop/target/release.
+# `tauri build --target <triple>` 把 bundle 落到 $CARGO_TARGET_DIR/<triple>/release/bundle/,
+# 跟 host 路径 ($CARGO_TARGET_DIR/release/bundle/) 分开, 两个 target 互不覆盖。
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/.build/cargo-target}"
-BUNDLE_MACOS="$CARGO_TARGET_DIR/release/bundle/macos"
-BUNDLE_DMG="$CARGO_TARGET_DIR/release/bundle/dmg"
+MACOS_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 
 # ---- 0. Validate inputs ----
-: "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY not set — run \`security find-identity -v -p codesigning\` and copy the full string}"
-: "${APPLE_TEAM_ID:?APPLE_TEAM_ID not set — find in developer.apple.com → Membership Details}"
-: "${APPLE_ID:?APPLE_ID not set — your Apple Developer Account email}"
+: "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY not set - run \`security find-identity -v -p codesigning\` and copy the full string}"
+: "${APPLE_TEAM_ID:?APPLE_TEAM_ID not set - find in developer.apple.com -> Membership Details}"
+: "${APPLE_ID:?APPLE_ID not set - your Apple Developer Account email}"
 
 # Notarization auth: pick one of two paths
 if [ -n "${APPLE_KEYCHAIN_PROFILE:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]; then
@@ -81,7 +86,7 @@ if ! security find-identity -v -p codesigning | grep -qF "$APPLE_SIGNING_IDENTIT
 fi
 
 if [ ! -f "$ENTITLEMENTS" ]; then
-  echo "ERROR: $ENTITLEMENTS missing — the project no longer matches the docs." >&2
+  echo "ERROR: $ENTITLEMENTS missing - the project no longer matches the docs." >&2
   exit 1
 fi
 
@@ -89,73 +94,103 @@ cd "$REPO_ROOT"
 
 # ---- 1. Build ----
 if [ -z "${SKIP_BUILD:-}" ]; then
-  echo "==> [1/4] Building Flowix.app + Flowix.dmg (this can take 3-6 minutes)"
-  echo "         (signs automatically per tauri.conf.production.json)"
+  echo "==> [build] Building Flowix.app + Flowix.dmg for ${MACOS_TARGETS[*]} (3-6 min/target)"
+  echo "         (build-tauri-production.mjs loops both --target, signs automatically per tauri.conf.production.json)"
   if [ ! -d node_modules ]; then
     npm ci --no-audit --no-fund
   fi
   npm run tauri:build:production
 else
-  echo "==> [1/4] Skipping build (SKIP_BUILD=1)"
+  echo "==> [build] Skipping build (SKIP_BUILD=1)"
 fi
 
-# ---- 2. Re-sign the CLI sidecar with the same Developer ID ----
+# ---- 2-4. Per-target: re-sign CLI sidecar + re-seal .app, notarize + staple ----
+# 方案 B: macOS 出 ARM + Intel 两个独立 DMG, 每个 target 各走一遍签名 + notarize。
 # Tauri signs the .app contents, but the embedded `flowix-cli` sidecar needs
 # a separate pass so its code signature is consistent with the outer bundle
 # (otherwise Gatekeeper's nested-validation check on the inner binary can
 # trip over an ad-hoc-only signature).
-APP_BUNDLE="$(find "$BUNDLE_MACOS" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -1 || true)"
-if [ -z "$APP_BUNDLE" ]; then
-  echo "ERROR: built .app bundle not found under $BUNDLE_MACOS" >&2
-  echo "       (CARGO_TARGET_DIR=${CARGO_TARGET_DIR})" >&2
-  exit 1
-fi
-
-CLI_BINARY="$APP_BUNDLE/Contents/MacOS/flowix-cli"
-if [ -f "$CLI_BINARY" ]; then
-  echo "==> [2/4] Re-signing CLI sidecar: $CLI_BINARY"
-  codesign --force --options runtime \
-    --sign "$APPLE_SIGNING_IDENTITY" \
-    --entitlements "$ENTITLEMENTS" \
-    "$CLI_BINARY"
-  # Re-seal the outer bundle after touching the inner binary
-  codesign --force --options runtime \
-    --sign "$APPLE_SIGNING_IDENTITY" \
-    --entitlements "$ENTITLEMENTS" \
-    "$APP_BUNDLE"
-else
-  echo "==> [2/4] No flowix-cli sidecar at $CLI_BINARY — skipping (build may have changed layout)"
-fi
-
-# ---- 3. Locate the .dmg ----
 if [ -n "${DMG_PATH:-}" ]; then
-  DMG="$DMG_PATH"
-else
-  DMG="$(ls -t "$BUNDLE_DMG/"*.dmg 2>/dev/null | head -1 || true)"
-fi
-if [ -z "$DMG" ] || [ ! -f "$DMG" ]; then
-  echo "ERROR: .dmg not found. Either set DMG_PATH or run a full tauri:build:production first." >&2
-  exit 1
+  echo "WARN: DMG_PATH is set but dual-target mode signs both aarch64 + x64; DMG_PATH ignored." >&2
 fi
 
-# ---- 4. Notarize + staple ----
-if [ -z "${SKIP_NOTARIZE:-}" ]; then
-  echo "==> [3/4] Submitting $DMG to Apple notary (interactive-ish — can take 1-5 min)"
-  xcrun notarytool submit "$DMG" "${NOTARY_AUTH_FLAGS[@]}" --wait
+sign_and_notarize_target() {
+  local triple="$1"
+  local bundle_macos="$CARGO_TARGET_DIR/$triple/release/bundle/macos"
+  local bundle_dmg="$CARGO_TARGET_DIR/$triple/release/bundle/dmg"
 
-  echo "==> [4/4] Stapling notarization ticket back onto the .dmg"
-  xcrun stapler staple "$DMG"
-  xcrun stapler validate "$DMG"
-else
-  echo "==> [3/4,4/4] Skipping notarization + stapling (SKIP_NOTARIZE=1)"
-fi
+  echo
+  echo ":::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+  echo "  Target: $triple"
+  echo ":::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+
+  local app_bundle
+  app_bundle="$(find "$bundle_macos" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -1 || true)"
+  if [ -z "$app_bundle" ]; then
+    echo "ERROR: built .app bundle not found under $bundle_macos" >&2
+    echo "       (CARGO_TARGET_DIR=${CARGO_TARGET_DIR})" >&2
+    exit 1
+  fi
+
+  local cli_binary="$app_bundle/Contents/MacOS/flowix-cli"
+  if [ -f "$cli_binary" ]; then
+    echo "==> Re-signing CLI sidecar: $cli_binary"
+    codesign --force --options runtime \
+      --sign "$APPLE_SIGNING_IDENTITY" \
+      --entitlements "$ENTITLEMENTS" \
+      "$cli_binary"
+    # Re-seal the outer bundle after touching the inner binary
+    codesign --force --options runtime \
+      --sign "$APPLE_SIGNING_IDENTITY" \
+      --entitlements "$ENTITLEMENTS" \
+      "$app_bundle"
+  else
+    echo "==> No flowix-cli sidecar at $cli_binary - skipping (build may have changed layout)"
+  fi
+
+  # Locate the .dmg (newest in this target's dmg dir)
+  local dmg
+  dmg="$(ls -t "$bundle_dmg/"*.dmg 2>/dev/null | head -1 || true)"
+  if [ -z "$dmg" ] || [ ! -f "$dmg" ]; then
+    echo "ERROR: .dmg not found under $bundle_dmg for $triple." >&2
+    echo "       Run a full tauri:build:production first." >&2
+    exit 1
+  fi
+
+  if [ -z "${SKIP_NOTARIZE:-}" ]; then
+    echo "==> Submitting $dmg to Apple notary (can take 1-5 min)"
+    xcrun notarytool submit "$dmg" "${NOTARY_AUTH_FLAGS[@]}" --wait
+
+    echo "==> Stapling notarization ticket back onto the .dmg"
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+  else
+    echo "==> Skipping notarization + stapling (SKIP_NOTARIZE=1)"
+  fi
+
+  SIGNED_DMGS+=("$dmg")
+
+  echo
+  echo "  DMG ($triple): $dmg"
+  echo "  SHA-256:"
+  shasum -a 256 "$dmg" | awk '{print "    " $1}'
+}
+
+SIGNED_DMGS=()
+for triple in "${MACOS_TARGETS[@]}"; do
+  sign_and_notarize_target "$triple"
+done
 
 # ---- Done ----
 echo
 echo "================================================="
-echo "  Notarized DMG ready:"
-echo "    $DMG"
+echo "  Notarized DMGs ready (${#SIGNED_DMGS[@]} targets):"
+for dmg in "${SIGNED_DMGS[@]}"; do
+  echo "    $dmg"
+done
 echo
-echo "  SHA-256 (paste into your release notes so users can verify):"
-shasum -a 256 "$DMG" | awk '{print "    " $1}'
+echo "  SHA-256 (paste into release notes so users can verify):"
+for dmg in "${SIGNED_DMGS[@]}"; do
+  shasum -a 256 "$dmg" | awk -v d="$dmg" '{print "    " $1 "  " d}'
+done
 echo "================================================="

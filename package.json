@@ -13,6 +13,7 @@
     "cli:build": "bash scripts/build-cli.sh",
     "cli:build:debug": "bash scripts/build-cli.sh --debug",
     "cli:build:all": "bash scripts/build-cli.sh --all",
+    "cli:build:macos": "bash scripts/build-cli.sh --macos",
     "tauri:dev": "tauri dev --config app/flowix-desktop/tauri.conf.dev.json",
     "tauri:dev:win": "tauri dev --config app/flowix-desktop/tauri.windows.dev.conf.json",
     "tauri:build": "tauri build",
