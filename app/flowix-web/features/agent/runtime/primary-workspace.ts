@@ -1,8 +1,8 @@
 /**
  * 主工作目录 (cwd) 单一 cascade ── 提交时 runtime cwd 与 UI 一致。
  *
- * 新模型下 agent 的文件区域完全由「当前笔记本的资料列表 + 当前笔记本」
- * 决定, 不再读 instance.files 快照, 也不再有全局 enabled/workspace 兜底:
+ * 首次运行时，agent 的文件区域由「所属笔记本的资料列表 + 笔记本路径」
+ * 决定；结果随后写入 instance.workspaceSnapshot，后续运行不再调用本函数:
  *
  *   1. defaultFiles.workspace   ─ 侧边栏资料列表里显式设的主空间 folder
  *   2. defaultFiles.folders[0]  ─ 有资料但没显式设主空间时, 取第一个
@@ -11,7 +11,7 @@
  *
  * 「资料列表」= `agent-access.defaults.files[<notebookId>]`, 由侧边栏
  * `NotebookAccessFilesList` 编辑 (添加 folder / 切主空间 / 删除 folder)。
- * `notebookPath` = 提交时注入的 systemReminderDirectory (当前笔记本路径)。
+ * `notebookPath` = instance.notebookId 对应的笔记本路径。
  */
 import type { FilesConfig } from "@/types/agent";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";

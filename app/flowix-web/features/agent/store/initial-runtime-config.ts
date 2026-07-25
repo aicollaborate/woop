@@ -1,10 +1,9 @@
 /**
  * 给新创建的 AgentConversationInstance 填一份"初始 runtime_config"。
  *
- * 新模型下文件区域 (cwd / folders) 由「当前笔记本的资料列表 + 当前笔记本」
- * 在提交时实时推导 (见 agent-runtime-spec::buildAgentRuntimeConfig +
- * primary-workspace::resolvePrimaryWorkspace), 不再烧录进 instance 快照,
- * 也不再有冻结 / seed 机制。
+ * 文件区域 (cwd / workspacePaths / notebookPath) 不在卡片插入时读取；它们
+ * 会在首次提交前由 ensureConversationWorkspaceSnapshot 解析并冻结。这样既
+ * 避免插入阶段 store 尚未 hydrate 的 race，也保证后续 turn 不随全局配置变化。
  *
  * 这里只种子 model / access / reasoningEffort 的全局默认, 以及创建时所属
  * notebookId ── 提交时据此 resolveDefaultFiles(config, notebookId) 取该

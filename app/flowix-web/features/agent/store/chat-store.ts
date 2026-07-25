@@ -606,6 +606,8 @@ export const useChatStore = create<ChatStore>()(
             agentRoleMemoId: options?.agentRoleMemoId,
             agentRoleName: options?.agentRoleName,
             agentRoleBody: options?.agentRoleBody ?? null,
+            systemReminderDirectory:
+              options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
           });
           const runId = createRunId(threadId);
 

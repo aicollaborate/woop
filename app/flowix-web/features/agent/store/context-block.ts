@@ -149,14 +149,14 @@ export function appendFirstMessageContext(
   return `${content}\n${blocks.join("\n\n")}`;
 }
 
-export function buildUserLlmContent(content: string): {
+export function buildUserLlmContent(content: string, directoryOverride?: string): {
   llmContent: string;
   systemReminderDirectory?: string;
   systemReminderDocumentPath?: string;
 } {
   const memoState = useMemoStore.getState();
   const documentState = useDocumentStore.getState();
-  const currentDirectory = memoState.selectedNotebook?.path?.trim();
+  const currentDirectory = directoryOverride?.trim() || memoState.selectedNotebook?.path?.trim();
   if (!currentDirectory) {
     return { llmContent: content };
   }

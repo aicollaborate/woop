@@ -6,6 +6,7 @@ import type {
   AgentTypeKey,
   FilesConfig,
   RuntimeConfig,
+  WorkspaceSnapshot,
 } from "@/types/agent";
 import { CODEX_ACCESS_OPTIONS } from "@features/agent/config/codex-options";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
@@ -28,6 +29,8 @@ export interface BuildAgentRuntimeConfigInput {
   instanceRuntimeConfig?: RuntimeConfig;
   /** 当前笔记本的资料默认 (defaults.files[<notebookId>])。 */
   defaultFiles?: FilesConfig;
+  /** Conversation-scoped path snapshot; takes precedence over live inputs. */
+  workspaceSnapshot?: WorkspaceSnapshot | null;
 }
 
 export interface AgentRuntimeSpec {
@@ -162,27 +165,30 @@ export function buildAgentRuntimeConfig({
   codexReasoningEffort,
   instanceRuntimeConfig,
   defaultFiles,
+  workspaceSnapshot,
 }: BuildAgentRuntimeConfigInput): AgentRuntimeConfig {
   // 文件区域 = 资料列表 (defaults.files[<notebookId>].folders) + 当前笔记本。
   // 主空间 (cwd) 由 resolvePrimaryWorkspace 决定: 资料主空间 -> 资料首
   // folder -> 当前笔记本。 主空间本身也留在 workspacePaths 里, 由后端
   // (claude/command.rs::normalized_additional_workspace_dirs) 去重 cwd,
   // 不会重复出现在 --add-dir。
+  const frozenCwd = normalizeWorkspacePath(workspaceSnapshot?.cwd) || undefined;
+  const frozenPaths = (workspaceSnapshot?.workspacePaths ?? [])
+    .map(normalizeWorkspacePath)
+    .filter(Boolean);
   const folderPaths = (defaultFiles?.folders ?? [])
     .map(normalizeWorkspacePath)
     .filter(Boolean);
   const notebookPathNorm = normalizeWorkspacePath(notebookPath) || undefined;
-  const workspacePaths = Array.from(
-    new Set([...folderPaths, ...(notebookPathNorm ? [notebookPathNorm] : [])]),
-  );
+  const workspacePaths = frozenCwd
+    ? Array.from(new Set([frozenCwd, ...frozenPaths]))
+    : Array.from(
+        new Set([...folderPaths, ...(notebookPathNorm ? [notebookPathNorm] : [])]),
+      );
 
-  const resolvedPrimary = resolvePrimaryWorkspace({
-    defaultFiles,
-    notebookPath,
-  });
-  // empty 变体无 path ── 收窄后取, 否则 undefined (上层 dispatch 据此判断是否拦截)。
+  const resolvedPrimary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
   const primaryWorkspace =
-    resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path;
+    frozenCwd ?? (resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path);
 
   const effectivePermissionMode =
     instanceRuntimeConfig?.access?.sandbox ?? permissionMode;

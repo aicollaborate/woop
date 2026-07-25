@@ -1,0 +1,169 @@
+import type { RuntimeConfig, WorkspaceSnapshot } from "@/types/agent";
+import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
+import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
+import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
+import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
+import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useMemoStore } from "@features/memo/store/memo-store";
+
+function uniquePaths(paths: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      paths
+        .map(normalizeWorkspacePath)
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+}
+
+/** Treat persisted JSON as untrusted and only accept complete snapshots. */
+export function normalizeWorkspaceSnapshot(
+  value: unknown,
+): WorkspaceSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.version !== 1 ||
+    typeof candidate.cwd !== "string" ||
+    !Array.isArray(candidate.workspacePaths) ||
+    !candidate.workspacePaths.every((path) => typeof path === "string")
+  ) {
+    return null;
+  }
+  const cwd = normalizeWorkspacePath(candidate.cwd);
+  if (!cwd) return null;
+  const notebookId =
+    typeof candidate.notebookId === "string" ? candidate.notebookId.trim() : "";
+  const notebookPath =
+    typeof candidate.notebookPath === "string"
+      ? normalizeWorkspacePath(candidate.notebookPath)
+      : "";
+  return {
+    version: 1,
+    cwd,
+    workspacePaths: uniquePaths([
+      cwd,
+      ...(candidate.workspacePaths as string[]),
+    ]),
+    ...(notebookId ? { notebookId } : {}),
+    ...(notebookPath ? { notebookPath } : {}),
+    capturedAt:
+      typeof candidate.capturedAt === "number" &&
+      Number.isFinite(candidate.capturedAt)
+        ? candidate.capturedAt
+        : 0,
+  };
+}
+
+function migrateLegacyWorkspace(
+  runtimeConfig: RuntimeConfig,
+  fallbackNotebookId?: string,
+  fallbackNotebookPath?: string,
+): WorkspaceSnapshot | null {
+  const files = runtimeConfig.files;
+  const folders = Array.isArray(files?.folders)
+    ? files.folders.filter((path): path is string => typeof path === "string")
+    : [];
+  const notebooks = Array.isArray(files?.notebooks)
+    ? files.notebooks.filter((path): path is string => typeof path === "string")
+    : [];
+  const cwd = normalizeWorkspacePath(
+    runtimeConfig.cwd ??
+      files?.workspace ??
+      folders[0] ??
+      notebooks[0],
+  );
+  if (!cwd) return null;
+  const notebookPath = uniquePaths(notebooks)[0] ?? fallbackNotebookPath;
+  const resolvedNotebookId = runtimeConfig.notebookId ?? fallbackNotebookId;
+  return {
+    version: 1,
+    cwd,
+    workspacePaths: uniquePaths([
+      cwd,
+      ...folders,
+      ...notebooks,
+      notebookPath,
+    ]),
+    ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
+    ...(notebookPath ? { notebookPath } : {}),
+    capturedAt: Date.now(),
+  };
+}
+
+/**
+ * Return the frozen workspace for an instance, capturing and persisting it
+ * once when an old/new instance does not have one yet.
+ */
+export function ensureConversationWorkspaceSnapshot(
+  instanceId: string,
+): RuntimeConfig {
+  const conversationStore = useAgentConversationStore.getState();
+  const instance = conversationStore.getInstance(instanceId);
+  if (!instance) throw new Error("Agent conversation instance was not found");
+
+  const runtimeConfig = instance.runtimeConfig ?? {};
+  const existing = normalizeWorkspaceSnapshot(runtimeConfig.workspaceSnapshot);
+  if (existing) {
+    const resolvedNotebookId = runtimeConfig.notebookId ?? existing.notebookId;
+    if (!runtimeConfig.notebookId && resolvedNotebookId) {
+      conversationStore.setRuntimeConfig(instanceId, {
+        notebookId: resolvedNotebookId,
+        workspaceSnapshot: existing,
+      });
+    }
+    return {
+      ...runtimeConfig,
+      ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
+      workspaceSnapshot: existing,
+    };
+  }
+
+  const memoState = useMemoStore.getState();
+  const configuredNotebookId = runtimeConfig.notebookId;
+  const notebook =
+    (configuredNotebookId
+      ? memoState.notebooks.find((item) => item.id === configuredNotebookId)
+      : null) ??
+    (!configuredNotebookId || memoState.selectedNotebook?.id === configuredNotebookId
+      ? memoState.selectedNotebook
+      : null);
+  const notebookId = configuredNotebookId ?? notebook?.id;
+  const notebookPath = normalizeWorkspacePath(notebook?.path);
+
+  let snapshot = migrateLegacyWorkspace(runtimeConfig, notebookId, notebookPath);
+  if (!snapshot) {
+    const defaultFiles = resolveAuthorizedDefaultFiles(
+      useAgentAccessStore.getState().config,
+      notebookId,
+    );
+    const primary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
+    if (primary.kind === "empty") {
+      // Do not permanently freeze an empty startup/hydration race.
+      return runtimeConfig;
+    }
+    snapshot = {
+      version: 1,
+      cwd: primary.path,
+      workspacePaths: uniquePaths([
+        primary.path,
+        ...(defaultFiles?.folders ?? []),
+        notebookPath,
+      ]),
+      ...(notebookId ? { notebookId } : {}),
+      ...(notebookPath ? { notebookPath } : {}),
+      capturedAt: Date.now(),
+    };
+  }
+
+  const resolvedNotebookId = runtimeConfig.notebookId ?? snapshot.notebookId;
+  conversationStore.setRuntimeConfig(instanceId, {
+    workspaceSnapshot: snapshot,
+    ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
+  });
+  return {
+    ...runtimeConfig,
+    ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
+    workspaceSnapshot: snapshot,
+  };
+}

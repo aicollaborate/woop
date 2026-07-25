@@ -677,13 +677,35 @@ pub async fn chat_with_agent_stream(
             .map_err(|error| error.to_string())?;
     }
 
-    // Refresh security-scoped access at every run, not only at startup. This
-    // covers folders that were unavailable during launch and later restored,
-    // and ensures external CLI children inherit active directory extensions.
-    for path in message.workspace_paths_for_runtime(runtime.key()) {
+    // Refresh security-scoped access at every run, not only at startup. Start
+    // access before validating because a macOS bookmark may be what makes the
+    // directory visible to this process. Explicit runtime paths must never
+    // silently fall back to the application cwd when a frozen path disappears.
+    let runtime_cwd = message
+        .cwd_for_runtime(runtime.key())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string);
+    let runtime_workspace_paths = message.workspace_paths_for_runtime(runtime.key());
+    if let Some(path) = runtime_cwd.as_deref() {
         state
             .security_bookmarks
-            .start_accessing_for_path(Path::new(&path));
+            .start_accessing_for_path(Path::new(path));
+    }
+    for path in &runtime_workspace_paths {
+        state
+            .security_bookmarks
+            .start_accessing_for_path(Path::new(path));
+    }
+    if let Some(path) = runtime_cwd.as_deref() {
+        if !Path::new(path).is_dir() {
+            return Err(format!("Agent working directory is unavailable: {path}"));
+        }
+    }
+    for path in &runtime_workspace_paths {
+        if !Path::new(path).is_dir() {
+            return Err(format!("Agent workspace directory is unavailable: {path}"));
+        }
     }
 
     // `agent_manager` 鏄?`Arc<AgentManager>`, `chat_stream` 鍐呴儴宸茬粡

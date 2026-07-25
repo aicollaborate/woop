@@ -30,6 +30,7 @@ export interface PrepareUserMessageOptions {
   agentRoleMemoId?: string;
   agentRoleName?: string;
   agentRoleBody?: string | null;
+  systemReminderDirectory?: string;
 }
 
 /**
@@ -49,8 +50,9 @@ export function prepareUserMessage({
   agentRoleMemoId,
   agentRoleName,
   agentRoleBody,
+  systemReminderDirectory,
 }: PrepareUserMessageOptions): PreparedUserMessage {
-  const userPayload = buildUserLlmContent(content);
+  const userPayload = buildUserLlmContent(content, systemReminderDirectory);
   const llmContent = appendFirstMessageContext(
     userPayload.llmContent,
     isFirstMessage,

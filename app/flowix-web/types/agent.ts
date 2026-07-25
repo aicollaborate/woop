@@ -98,22 +98,36 @@ export interface AccessConfig {
 }
 
 export interface FilesConfig {
-  /** 主工作目录 (path 单值) ── 映射到 message.systemReminderDirectory */
+  /** 旧版主工作目录；历史 instance 会一次性迁移到 workspaceSnapshot。 */
   workspace?: string;
   /** 启用目录列表 (path 数组) */
   folders: string[];
   /** 笔记本路径列表 (path 数组, 与 agent-access-store 同语义) */
   notebooks: string[];
   /**
-   * 标记 "此 instance 已经发出过首条消息" 的内嵌位 ── 烧录成功后由
-   * `agent-conversation-store.lockInstanceFileSeed()` 设置为 true, 之后
-   * `buildInitialInstanceRuntimeConfig()` 不会再用冻结前的暂存或全局
-   * 兜底链覆盖这个 instance 的 files, "上次设的偏好" 已经转成只读真值。
+   * 旧冻结模型的兼容字段。新数据使用 `RuntimeConfig.workspaceSnapshot`。
    *
    * 字段仅在 JS 层用, 序列化到 backend snapshot 时跟着 files 一起落 SQLite
    * (`runtimeConfig` 走 JSON.stringify), 不需要 backend schema 升级。
    */
   _frozen?: boolean;
+}
+
+/**
+ * Conversation-scoped workspace captured immediately before the first run.
+ * Later turns reuse these exact paths instead of consulting notebook defaults
+ * or the currently selected notebook again.
+ */
+export interface WorkspaceSnapshot {
+  version: 1;
+  /** Effective process working directory. */
+  cwd: string;
+  /** Complete authorized path set; runtime adapters de-duplicate cwd. */
+  workspacePaths: string[];
+  /** Notebook association and path as they existed when the snapshot was made. */
+  notebookId?: string;
+  notebookPath?: string;
+  capturedAt: number;
 }
 
 export interface RuntimeConfig {
@@ -127,8 +141,10 @@ export interface RuntimeConfig {
   reasoningEffort?: AgentCodexReasoningEffort;
   /** 预留：工具白名单 */
   tools?: string[];
-  /** 预留：cwd 显式覆盖 (当前 files.workspace 优先) */
+  /** 旧版 cwd 显式覆盖；历史数据会迁移到 workspaceSnapshot。 */
   cwd?: string;
+  /** 首次运行时冻结的 cwd / add-dir / notebook 路径。 */
+  workspaceSnapshot?: WorkspaceSnapshot;
   /**
    * 创建该 instance 时所属 notebook 的 id 快照 (如 `nb_<ts>` / `nb_default`)。
    *

@@ -92,6 +92,35 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(result.claude?.workspacePaths).toEqual(["D:\\当前笔记本"]);
   });
 
+  it("workspace snapshot wins over later notebook and default-folder changes", () => {
+    const result = buildAgentRuntimeConfig({
+      typeKey: "codex",
+      notebookPath: "/notes/changed",
+      permissionMode: "workspace-write",
+      codexModel: "inherit",
+      codexReasoningEffort: "low",
+      defaultFiles: {
+        workspace: "/projects/changed",
+        folders: ["/projects/changed"],
+        notebooks: [],
+      },
+      workspaceSnapshot: {
+        version: 1,
+        cwd: "/projects/original",
+        workspacePaths: ["/projects/original", "/notes/original"],
+        notebookId: "nb-original",
+        notebookPath: "/notes/original",
+        capturedAt: 1,
+      },
+    });
+
+    expect(result.codex?.cwd).toBe("/projects/original");
+    expect(result.codex?.workspacePaths).toEqual([
+      "/projects/original",
+      "/notes/original",
+    ]);
+  });
+
   it("instance 里的 model / permission / reasoningEffort 覆盖 chat-store 全局值", () => {
     const result = buildAgentRuntimeConfig({
       typeKey: "codex",

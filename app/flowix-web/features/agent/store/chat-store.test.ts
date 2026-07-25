@@ -1755,6 +1755,75 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
   });
 
+  it("reuses a conversation workspace snapshot after the selected notebook and defaults change", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const threadId = "thread-card-frozen-workspace";
+    memoStateMock.selectedNotebook = {
+      id: "nb-changed",
+      path: "D:\\notes\\changed",
+    };
+    agentAccessMock.config = {
+      entries: [
+        {
+          id: "e-changed",
+          kind: "folder",
+          path: "D:\\projects\\changed",
+          name: "changed",
+          enabled: true,
+          missing: false,
+        },
+      ],
+      defaults: {
+        files: {
+          "nb-original": {
+            workspace: "D:\\projects\\changed",
+            folders: ["D:\\projects\\changed"],
+            notebooks: [],
+          },
+        },
+      },
+    };
+    useChatStore.setState({ threadTypes: { [threadId]: "codex" } });
+
+    await useChatStore.getState().sendMessageToThread(
+      threadId,
+      "keep the original workspace",
+      "codex",
+      {
+        runtimeConfig: {
+          notebookId: "nb-original",
+          workspaceSnapshot: {
+            version: 1,
+            cwd: "D:\\projects\\original",
+            workspacePaths: [
+              "D:\\projects\\original",
+              "D:\\notes\\original",
+            ],
+            notebookId: "nb-original",
+            notebookPath: "D:\\notes\\original",
+            capturedAt: 1,
+          },
+        },
+      },
+    );
+
+    const calls = vi.mocked(agent.chatStream).mock.calls;
+    const payload = calls[calls.length - 1]?.[1];
+    expect(payload).toMatchObject({
+      systemReminderDirectory: "D:\\notes\\original",
+      runtimeConfig: {
+        codex: {
+          cwd: "D:\\projects\\original",
+          workspacePaths: [
+            "D:\\projects\\original",
+            "D:\\notes\\original",
+          ],
+        },
+      },
+    });
+  });
+
   it("renames local agent threads through the standard action", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
@@ -1940,4 +2009,3 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
 });
-

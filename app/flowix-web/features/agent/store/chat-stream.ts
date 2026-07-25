@@ -10,6 +10,7 @@ import { agentClient } from "@features/agent/store/agent-client";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
 import type { OutgoingUserPayload } from "@features/agent/store/user-message";
+import { normalizeWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
 
 export interface DispatchChatStreamArgs {
   threadId: string;
@@ -54,12 +55,13 @@ export async function dispatchChatStream({
   imagePaths,
   conversationTitle,
 }: DispatchChatStreamArgs): Promise<void> {
-  // 文件区域由「当前笔记本的资料列表 + 当前笔记本」实时推导 ── 不读
-  // instance.files 快照。 notebookId 在创建 instance 时快照于
-  // runtimeConfig.notebookId, 据此取该笔记本的资料默认; notebookPath
-  // (= systemReminderDirectory) 既是无资料时的主空间, 也并入可读写集合。
+  // Thread Card 首次运行前会冻结 workspaceSnapshot，后续 turn 只使用快照。
+  // 没有快照的非卡片调用 / 历史调用仍走旧的 notebookId 实时回退。
+  const workspaceSnapshot = normalizeWorkspaceSnapshot(
+    instanceRuntimeConfig?.workspaceSnapshot,
+  );
   const notebookId = instanceRuntimeConfig?.notebookId;
-  const defaultFiles = notebookId
+  const defaultFiles = !workspaceSnapshot && notebookId
     ? resolveAuthorizedDefaultFiles(useAgentAccessStore.getState().config, notebookId)
     : undefined;
   const runtimeConfig = buildAgentRuntimeConfig({
@@ -70,6 +72,7 @@ export async function dispatchChatStream({
     codexReasoningEffort,
     instanceRuntimeConfig,
     defaultFiles,
+    workspaceSnapshot,
   });
   await agentClient.chatStream(threadId, {
     content,
