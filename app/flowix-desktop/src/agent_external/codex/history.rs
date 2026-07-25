@@ -42,6 +42,52 @@ pub async fn get_session_page(
     .map_err(|e| e.to_string())?
 }
 
+/// Read tool-shaped `response_item` records written by Codex for the current
+/// turn. The live stdout protocol omits some `custom_tool_call` wrappers, while
+/// the rollout JSONL keeps them. The stream reconciler consumes this bounded
+/// slice before `StreamEnd`, mirroring Claude's complete-snapshot backfill.
+pub(crate) async fn get_rollout_tool_response_items_since(
+    session_id: &str,
+    started_at_millis: i64,
+) -> Result<Vec<Value>, String> {
+    let session_id = session_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let Some(path) = find_codex_session_file(&session_id)? else {
+            return Ok(Vec::new());
+        };
+        let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        Ok(parse_rollout_tool_response_items_since(
+            &text,
+            started_at_millis,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn parse_rollout_tool_response_items_since(text: &str, started_at_millis: i64) -> Vec<Value> {
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|value| {
+            value.get("type").and_then(Value::as_str) == Some("response_item")
+                && value
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .and_then(parse_timestamp_millis)
+                    .is_some_and(|timestamp| timestamp >= started_at_millis)
+        })
+        .filter(|value| {
+            let payload = value.get("payload").unwrap_or(value);
+            let item_type = payload
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            tool_event_definition(item_type).is_some()
+                || looks_like_unknown_tool_event(item_type, payload)
+        })
+        .collect()
+}
+
 pub fn is_codex_session_id(text: &str) -> bool {
     // 蹇呴』鏄惧紡鎷掔粷 "codex-local-agent-inst-<ts>-<seq>" 绛夊墠绔崰浣嶇 鈹€鈹€
     // 杩欎簺瀛楃涓查暱搴?鈮?32 涓斿寘鍚?5 涓?dash, 鑰佺増瀹芥澗鍒ゆ柇浼氭妸瀹冨綋鎴?    // session id 浼犵粰 Codex CLI 鐨?resume, 浣?CLI 涓嶈 鈹€鈹€ 涓?    // claude_history 鍚岀梾鍚屾不銆?
@@ -960,6 +1006,69 @@ mod tests {
         assert_eq!(
             session_id_from_filename(&path).as_deref(),
             Some("019ed38f-e9e3-7b61-8be3-80a40788d6e3")
+        );
+    }
+
+    #[test]
+    fn reads_only_current_turn_tool_response_items_for_stream_reconciliation() {
+        let text = [
+            serde_json::json!({
+                "timestamp": "2026-07-25T09:31:39.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "old_call",
+                    "name": "exec",
+                    "input": "text('old')"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-25T09:31:41.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "hello" }]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-25T09:31:42.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "current_call",
+                    "name": "exec",
+                    "input": "text('current')"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-25T09:31:43.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "current_call",
+                    "output": "done"
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        let started_at = parse_timestamp_millis("2026-07-25T09:31:40.000Z").unwrap();
+
+        let events = parse_rollout_tool_response_items_since(&text, started_at);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0]
+                .pointer("/payload/call_id")
+                .and_then(Value::as_str),
+            Some("current_call")
+        );
+        assert_eq!(
+            events[1].pointer("/payload/type").and_then(Value::as_str),
+            Some("custom_tool_call_output")
         );
     }
 

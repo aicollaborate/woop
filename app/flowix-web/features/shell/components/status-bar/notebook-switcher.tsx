@@ -309,7 +309,7 @@ export function NotebookSwitcher({
                   )}
                   {isActive && !isSource && (
                     <div className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center transition-opacity group-hover:opacity-0 z-10 pointer-events-none">
-                      <Check className="h-4 w-4 text-[var(--primary)]" />
+                      <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
                     </div>
                   )}
                   <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity z-10">

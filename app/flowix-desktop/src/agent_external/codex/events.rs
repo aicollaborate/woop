@@ -15,7 +15,7 @@ use super::{truncate_chars, MAX_UI_OUTPUT_PREVIEW_CHARS};
 //   - item.started + item.type=command_execution -> ToolCall
 //   - item.completed + item.type=command_execution -> ToolResult
 //   - item.completed + item.type=agent_message/message -> Text
-//   - item.started/item.completed + item.type=reasoning -> Reasoning
+//   - item.started/item.updated/item.completed + item.type=reasoning -> Reasoning
 //   - item.started/item.completed + item.type=function_call/custom_tool_call -> ToolCall
 //   - item.started/item.completed + item.type=function_call_output/custom_tool_call_output -> ToolResult
 //   - turn.completed.usage -> Usage
@@ -181,7 +181,9 @@ fn parse_codex_event(value: &Value) -> CodexEvent {
             .map(|message| CodexEvent::Error { message })
             .unwrap_or(CodexEvent::Unknown),
         "turn.failed" => parse_turn_failed(value),
-        "item.started" | "item.completed" => parse_codex_item_event(value, &event_type),
+        "item.started" | "item.updated" | "item.completed" => {
+            parse_codex_item_event(value, &event_type)
+        }
         "turn_context" => {
             let payload = event_payload(value);
             CodexEvent::Lifecycle {
@@ -500,6 +502,9 @@ fn tool_complete_from_payload(
 }
 
 fn tool_input_payload(payload: &Value, item_type: &str) -> Value {
+    if item_type == "todo_list" {
+        return normalize_todo_list_input(payload);
+    }
     if matches!(
         item_type,
         "mcp_tool_call" | "mcp_tool_call_end" | "dynamic_tool_call"
@@ -551,6 +556,58 @@ fn tool_input_payload(payload: &Value, item_type: &str) -> Value {
         }
     }
     fallback_tool_payload(payload, item_type)
+}
+
+fn normalize_todo_list_input(payload: &Value) -> Value {
+    let items = ["items", "todos", "plan"]
+        .iter()
+        .find_map(|key| payload.get(*key).and_then(Value::as_array));
+    let Some(items) = items else {
+        return fallback_tool_payload(payload, "todo_list");
+    };
+
+    let plan = items
+        .iter()
+        .filter_map(|item| {
+            if let Some(step) = item.as_str().filter(|step| !step.trim().is_empty()) {
+                return Some(serde_json::json!({
+                    "step": step.trim(),
+                    "status": "pending",
+                }));
+            }
+            let item = item.as_object()?;
+            let step = ["step", "text", "content", "title", "label"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|step| !step.is_empty())?;
+            let status = ["status", "state"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .map(normalize_todo_status)
+                .or_else(|| {
+                    item.get("completed")
+                        .and_then(Value::as_bool)
+                        .map(|completed| if completed { "completed" } else { "pending" })
+                })
+                .unwrap_or("pending");
+            Some(serde_json::json!({
+                "step": step,
+                "status": status,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({ "plan": plan })
+}
+
+fn normalize_todo_status(status: &str) -> &'static str {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "completed" | "complete" | "done" | "finished" | "success" | "succeeded" => "completed",
+        "in_progress" | "in-progress" | "inprogress" | "doing" | "running" | "active"
+        | "executing" => "in_progress",
+        _ => "pending",
+    }
 }
 
 fn tool_output_payload(payload: &Value, item_type: &str) -> Value {
@@ -891,6 +948,85 @@ mod tests {
                 if id == "item_1"
                     && name == "command_execution"
                     && input.get("command").and_then(Value::as_str) == Some("bash -lc ls")
+        ));
+    }
+
+    #[test]
+    fn maps_codex_todo_list_lifecycle_to_update_plan_chunks() {
+        let started = serde_json::json!({
+            "type": "item.started",
+            "item": {
+                "id": "item_plan",
+                "type": "todo_list",
+                "items": [
+                    { "text": "Inspect streaming events", "completed": false },
+                    { "title": "Compare persisted history", "state": "running" }
+                ]
+            }
+        });
+        let updated = serde_json::json!({
+            "type": "item.updated",
+            "item": {
+                "id": "item_plan",
+                "type": "todo_list",
+                "todos": [
+                    { "content": "Inspect streaming events", "status": "done" },
+                    { "label": "Compare persisted history", "status": "in-progress" }
+                ]
+            }
+        });
+        let completed = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "item_plan",
+                "type": "todo_list",
+                "plan": [
+                    { "step": "Inspect streaming events", "status": "completed" },
+                    { "step": "Compare persisted history", "completed": true }
+                ]
+            }
+        });
+
+        let started_chunks = codex_event_to_chunks("thread_1", &started);
+        assert!(matches!(
+            started_chunks.as_slice(),
+            [AgentChunk::ToolCall { id, name, input, .. }]
+                if id == "item_plan"
+                    && name == "update_plan"
+                    && input.pointer("/plan/0/status").and_then(Value::as_str)
+                        == Some("pending")
+                    && input.pointer("/plan/1/status").and_then(Value::as_str)
+                        == Some("in_progress")
+        ));
+
+        let updated_chunks = codex_event_to_chunks("thread_1", &updated);
+        assert!(matches!(
+            updated_chunks.as_slice(),
+            [
+                AgentChunk::ToolCall { id, name, input, .. },
+                AgentChunk::ToolResult { id: result_id, name: result_name, .. }
+            ]
+                if id == "item_plan"
+                    && result_id == id
+                    && name == "update_plan"
+                    && result_name == name
+                    && input.pointer("/plan/0/status").and_then(Value::as_str)
+                        == Some("completed")
+                    && input.pointer("/plan/1/status").and_then(Value::as_str)
+                        == Some("in_progress")
+        ));
+
+        let completed_chunks = codex_event_to_chunks("thread_1", &completed);
+        assert!(matches!(
+            completed_chunks.as_slice(),
+            [
+                AgentChunk::ToolCall { input, .. },
+                AgentChunk::ToolResult { .. }
+            ]
+                if input.pointer("/plan/0/step").and_then(Value::as_str)
+                        == Some("Inspect streaming events")
+                    && input.pointer("/plan/1/status").and_then(Value::as_str)
+                        == Some("completed")
         ));
     }
 

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
-
-const SELECTED_ITEM_SCROLL_PADDING_TOP = 20;
+import {
+  scrollSelectedItemIntoView,
+} from '@features/editor/extensions/shared/scroll-selected-item';
 
 interface UseSelectedItemScrollOptions<Item> {
   items: Item[];
@@ -27,18 +28,7 @@ export function useSelectedItemScroll<Item>({
     const scroller = scrollerRef.current;
     if (!item || !scroller) return;
 
-    const scrollerRect = scroller.getBoundingClientRect();
-    const itemRect = item.getBoundingClientRect();
-    const itemTop = itemRect.top - scrollerRect.top + scroller.scrollTop;
-    const itemBottom = itemRect.bottom - scrollerRect.top + scroller.scrollTop;
-    const visibleTop = scroller.scrollTop + SELECTED_ITEM_SCROLL_PADDING_TOP;
-    const visibleBottom = scroller.scrollTop + scroller.clientHeight;
-
-    if (itemTop >= visibleTop && itemBottom <= visibleBottom) return;
-
-    const targetTop = itemTop - SELECTED_ITEM_SCROLL_PADDING_TOP;
-    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-    scroller.scrollTop = Math.max(0, Math.min(targetTop, maxScrollTop));
+    scrollSelectedItemIntoView(scroller, item);
   }, [selectedIndex, items, scrollSelectedItem]);
 
   return { scrollerRef, itemRefs };

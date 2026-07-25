@@ -1,12 +1,9 @@
 .markdown-editor .frontmatter-property-node {
-  /* 临时止血: 内联 YAML 属性条的 key 下拉选择会触发提前提交/自动隐藏
-     (WebKit focusout-on-removal), 先整体隐藏, 改用笔记属性对话框编辑。
-     根因修复见 frontmatter-node-view.ts 的 focusout / saveProperty。 */
-  display: none;
   margin: 0 0 0.75rem;
 }
 
 .markdown-editor .frontmatter-property {
+  --frontmatter-tag-height: calc(1.092rem + 4px);
   --frontmatter-row-gap: 0.35rem;
   --frontmatter-padding-block: 0.125rem;
   --frontmatter-row-padding:
@@ -51,15 +48,10 @@
   display: inline-flex;
   min-width: 0;
   max-width: 12rem;
+  height: var(--frontmatter-tag-height);
   box-sizing: border-box;
   align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 9999px;
-  background: transparent;
-  color: var(--foreground);
-  padding: var(--frontmatter-padding-block) 0.6rem;
-  font-size: inherit;
-  line-height: inherit;
+  line-height: 1.4;
 }
 
 .markdown-editor .frontmatter-property__tag-label {
@@ -89,10 +81,10 @@
 .markdown-editor .frontmatter-property__tag-remove {
   position: absolute;
   top: 50%;
-  right: 0;
-  left: 0;
+  right: 0.2rem;
+  left: auto;
   z-index: 1;
-  width: 100%;
+  width: 1rem;
   height: 1rem;
   border-radius: 9999px;
   background: var(--document-tag-bg);
@@ -122,15 +114,15 @@
 }
 
 .markdown-editor .frontmatter-property__tag-add {
-  height: auto;
+  height: var(--frontmatter-tag-height);
   width: auto;
   min-height: 0;
   box-sizing: border-box;
-  padding: var(--frontmatter-padding-block) 0.6rem;
+  padding: 1px 0.4rem;
   border: 1px dashed color-mix(in oklch, var(--muted-foreground) 36%, transparent);
-  border-radius: 9999px;
-  font-size: inherit;
-  line-height: inherit;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
   white-space: nowrap;
 }
 
@@ -161,16 +153,56 @@
 }
 
 .markdown-editor .frontmatter-property__tag-input {
-  width: clamp(5rem, 22ch, 12rem);
+  width: calc(4em + 1.2rem + 2px);
+  min-width: 0;
+  max-width: none;
+  height: var(--frontmatter-tag-height);
   box-sizing: border-box;
+  appearance: none;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--foreground);
-  padding: var(--frontmatter-padding-block) 0.4rem;
-  font: inherit;
+  padding: 2px 0;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.4;
   outline: none;
   box-shadow: none;
+}
+
+.markdown-editor .frontmatter-property__tag-input-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+}
+
+.markdown-editor .frontmatter-property__tag-suggestions {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  left: 0;
+  z-index: 20;
+  width: 172px;
+  max-height: 12rem;
+  --mention-note-max-height: 12rem;
+}
+
+.markdown-editor .frontmatter-property__tag-suggestions[hidden] {
+  display: none;
+}
+
+.markdown-editor .frontmatter-property__tag-suggestion-items {
+  max-height: calc(12rem - 24px);
+  overflow-y: auto;
+}
+
+.markdown-editor .frontmatter-property__tag-suggestion-hash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
 }
 
 .markdown-editor .frontmatter-property__tag-input:focus {

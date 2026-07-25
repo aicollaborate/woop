@@ -25,7 +25,7 @@ pub(crate) struct CodexToolEventDefinition {
     pub prefer_payload_name: bool,
 }
 
-/// Protocol baseline verified against Codex CLI 0.144.4 and local rollout
+/// Protocol baseline verified against Codex CLI 0.145.0 and local rollout
 /// files. New variants must be added here before parser-specific handling.
 pub(crate) const CODEX_TOOL_EVENT_DEFINITIONS: &[CodexToolEventDefinition] = &[
     payload_named_definition("function_call", "function_call", CodexToolEventMode::Call),
@@ -103,6 +103,7 @@ pub(crate) const CODEX_TOOL_EVENT_DEFINITIONS: &[CodexToolEventDefinition] = &[
         "collab_agent_tool_call",
         CodexToolEventMode::Lifecycle,
     ),
+    definition("todo_list", "update_plan", CodexToolEventMode::Complete),
     definition("tool_search_call", "tool_search", CodexToolEventMode::Call),
     definition(
         "tool_search_output",
@@ -200,7 +201,9 @@ pub(crate) fn tool_event_name(
         })
         .filter(|name| !name.trim().is_empty());
     if payload_name == Some("exec") {
-        if let Some(name) = single_nested_exec_tool_name(payload) {
+        let names = nested_exec_tool_names(payload);
+        if names.len() == 1 {
+            let name = names.into_iter().next().expect("one nested tool name");
             return name;
         }
     }
@@ -216,9 +219,11 @@ pub(crate) fn tool_event_name(
 /// `exec`. When that wrapper invokes exactly one distinct `tools.<name>(...)`
 /// function, expose the inner name for the UI. Multi-tool orchestration stays
 /// labelled `exec` because splitting it into synthetic rows would be lossy.
-fn single_nested_exec_tool_name(payload: &Value) -> Option<String> {
-    let input = payload.get("input").and_then(Value::as_str)?;
+pub(crate) fn nested_exec_tool_names(payload: &Value) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
+    let Some(input) = payload.get("input").and_then(Value::as_str) else {
+        return names;
+    };
     let mut rest = input;
     while let Some(index) = rest.find("tools.") {
         rest = &rest[index + "tools.".len()..];
@@ -232,9 +237,7 @@ fn single_nested_exec_tool_name(payload: &Value) -> Option<String> {
         }
         rest = &rest[len.min(rest.len())..];
     }
-    (names.len() == 1)
-        .then(|| names.into_iter().next())
-        .flatten()
+    names
 }
 
 #[cfg(test)]
@@ -268,6 +271,7 @@ mod tests {
             "image_generation_end",
             "dynamic_tool_call",
             "collab_agent_tool_call",
+            "todo_list",
             "tool_search_call",
             "tool_search_output",
             "function_call",

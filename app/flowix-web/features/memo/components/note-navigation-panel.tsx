@@ -1029,7 +1029,7 @@ export function NoteNavigationPanel({
                     </div>
                     {isActive && (
                       <div className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center transition-opacity group-hover:opacity-0 z-10 pointer-events-none">
-                        <Check className="h-4 w-4 text-[var(--primary)]" />
+                        <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
                       </div>
                     )}
                     {/* 编辑 ── 与 NotebookSwitcher 行内操作保持一致,
@@ -1138,9 +1138,6 @@ export function NoteNavigationPanel({
 
       {/* 标签列表 ── 占剩余高度, 内部独立滚动。 */}
           <div className="space-y-0.5 pt-2">
-            <div className="agent-thread-card__access-section-label">
-              {t('memo.navigation.tags')}
-            </div>
             <div
               role="button"
               tabIndex={0}
@@ -1230,6 +1227,13 @@ export function NoteNavigationPanel({
               <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
                 {todoMemoCount}
               </span>
+            </div>
+            {/* 标签分类标题 ── 过滤器 (全部/对话/待办) 在上, 真正的标签树在此标题之下。 */}
+            <div
+              className="agent-thread-card__access-section-label"
+              style={{ marginTop: 6 }}
+            >
+              {t('memo.navigation.tags')}
             </div>
             {tagOptions.length > 0 && (
               <>

@@ -116,6 +116,10 @@ function isDataChunk(kind: AgentEvent["kind"]): boolean {
   );
 }
 
+function isToolChunk(kind: AgentEvent["kind"]): boolean {
+  return kind === "tool_call" || kind === "tool_result";
+}
+
 /**
  * 计算一条 AgentEvent 应当对 chat slice 产生的 patch。 仅处理需要同步
  * 落盘的 event ── 高频 text / reasoning 通过 rAF buffer 异步走, 不进这里。
@@ -128,7 +132,13 @@ function applyEventToChatSlice(
   event: AgentEvent,
 ): Partial<DispatcherChatSlice> | null {
   const tid = event.threadId;
-  const st = ensureRunActive(slice.threadStates[tid] ?? emptyThreadState(), event);
+  const currentThreadState =
+    slice.threadStates[tid] ?? emptyThreadState();
+  const isLateToolEvent =
+    isToolChunk(event.kind) && isRunEnded(currentThreadState, event.runId);
+  const st = isLateToolEvent
+    ? currentThreadState
+    : ensureRunActive(currentThreadState, event);
   switch (event.kind) {
     case "session_resolved": {
       if (!event.sessionId || event.sessionId === tid) return null;
@@ -216,13 +226,22 @@ function applyEventToChatSlice(
         event.display,
       );
       const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, event.name),
+        ...(isLateToolEvent
+          ? st
+          : applyRunToolState(st, event, event.name)),
         messages: next.messages,
         pendingAssistantId: null,
       };
       syncLiveMessageState(event.agentType, tid, nextThreadState);
+      const runtimeThreadState = isLateToolEvent
+        ? releaseThreadRuntimeMessages(nextThreadState)
+        : nextThreadState;
       return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
+        threadStates: threadRunUpdate(
+          slice.threadStates,
+          tid,
+          runtimeThreadState,
+        ),
       };
     }
     case "tool_result": {
@@ -235,12 +254,19 @@ function applyEventToChatSlice(
         event.agentType,
       );
       const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, null),
+        ...(isLateToolEvent ? st : applyRunToolState(st, event, null)),
         messages: next.messages,
       };
       syncLiveMessageState(event.agentType, tid, nextThreadState);
+      const runtimeThreadState = isLateToolEvent
+        ? releaseThreadRuntimeMessages(nextThreadState)
+        : nextThreadState;
       return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
+        threadStates: threadRunUpdate(
+          slice.threadStates,
+          tid,
+          runtimeThreadState,
+        ),
       };
     }
     case "error": {
@@ -355,13 +381,14 @@ export function createStreamEventDispatcher(
       isLoading: currentThreadState.isLoading,
     });
 
-    // Guard: 已终结 run 的 late data chunk 直接丢弃。后端 codex turn.completed
-    // 后提前 emit StreamEnd, 不再发 data chunk; abort 时 kill 残留的 in-flight
-    // data chunk 到达时 run 已 cancelled/completed。丢弃避免 ensureRunActive
-    // 复活 run + pendingAssistantId=null 导致的新建消息碎片化。stream_end /
-    // error / session_resolved / stream_start / usage 不属 data chunk, 不受
-    // 影响; 真源在后端 event log, 下次 loadThread 重放正确。
-    if (isDataChunk(event.kind) && isRunEnded(currentThreadState, event.runId)) {
+    // 已终结 run 的 late text/reasoning 仍丢弃,避免补丁式复活 run 和消息
+    // 碎片化。工具事件是例外: Codex 可能先发 turn.completed/StreamEnd,
+    // 再送达工具尾包;它们需要合并进 conversation store,但不得恢复 run。
+    if (
+      isDataChunk(event.kind) &&
+      !isToolChunk(event.kind) &&
+      isRunEnded(currentThreadState, event.runId)
+    ) {
       return;
     }
 

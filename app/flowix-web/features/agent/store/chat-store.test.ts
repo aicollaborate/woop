@@ -877,6 +877,70 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(Object.values(idleState.runs)).toHaveLength(0);
   });
 
+  it("merges late tool chunks after stream_end without reviving the run", async () => {
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const store = useChatStore.getState();
+    const threadId = "thread-card-codex-late-tool";
+    const runId = "run-late-tool";
+
+    store.bindThreadType(threadId, "codex");
+    store.dispatchAgentChunk({
+      kind: "stream_start",
+      thread_id: threadId,
+      run_id: runId,
+      agent_type: "codex",
+    });
+    store.dispatchAgentChunk({
+      kind: "stream_end",
+      thread_id: threadId,
+      run_id: runId,
+      agent_type: "codex",
+      reason: null,
+    });
+    store.dispatchAgentChunk({
+      kind: "tool_call",
+      thread_id: threadId,
+      run_id: runId,
+      id: "late-tool-1",
+      name: "exec_command",
+      input: { command: "pwd" },
+      agent_type: "codex",
+    });
+    store.dispatchAgentChunk({
+      kind: "tool_result",
+      thread_id: threadId,
+      run_id: runId,
+      id: "late-tool-1",
+      name: "exec_command",
+      result: { output_preview: "/tmp/project\n", exit_code: 0 },
+      agent_type: "codex",
+    });
+
+    const messageState =
+      useAgentConversationStore.getState().messageStates[threadId];
+    expect(messageState.messages).toHaveLength(1);
+    expect(messageState.messages[0]).toMatchObject({
+      role: "tool",
+      toolCallId: "late-tool-1",
+      toolName: "exec_command",
+      isLoading: false,
+    });
+    expect(messageState.messages[0].toolData).toContain("/tmp/project");
+
+    const idleState = useChatStore.getState().threadStates[threadId];
+    expect(idleState.isLoading).toBe(false);
+    expect(idleState.activeRunId).toBeNull();
+    expect(idleState.messages).toEqual([]);
+    expect(idleState.runs[runId]).toBeUndefined();
+    expect(idleState.lastRun).toMatchObject({
+      runId,
+      status: "completed",
+    });
+  });
+
   it("ignores stale stream_end after a newer run has started", async () => {
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const store = useChatStore.getState();

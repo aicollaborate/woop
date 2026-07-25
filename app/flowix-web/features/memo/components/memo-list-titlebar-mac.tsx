@@ -9,7 +9,7 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import { useI18n } from '@features/i18n';
-import productLogo from '@/assets/product-logo.png';
+import productLogo from '@/assets/product-logo.svg';
 
 interface MemoListTitlebarMacProps {
   noteNavigationVisible: boolean;
@@ -42,7 +42,7 @@ export function MemoListTitlebarMac({
                 src={productLogo}
                 alt=""
                 aria-hidden="true"
-                className="h-4 w-4 shrink-0 rounded opacity-75"
+                className="h-4 w-4 shrink-0 rounded opacity-75 [[data-theme='dark']_&]:brightness-0 [[data-theme='dark']_&]:invert"
               />
             </button>
           </DropdownMenuTrigger>

@@ -1,7 +1,7 @@
 // Regenerates the desktop icon set from app/flowix-web/assets/app-icon-source.png.
 //
-// This script must never rewrite app/flowix-web/assets/product-logo.png.
-// product-logo.png is the in-app titlebar logo; app-icon-source.png is the
+// This script must never rewrite app/flowix-web/assets/product-logo.svg.
+// product-logo.svg is the in-app titlebar logo; app-icon-source.png is the
 // packaged desktop App icon source.
 //
 // Run from repo root:
@@ -30,7 +30,7 @@ import { deflateSync, inflateSync } from 'node:zlib';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const backendDir = resolve(root, 'app/flowix-desktop');
-const productLogoPng = resolve(root, 'app/flowix-web/assets/product-logo.png');
+const productLogoSvg = resolve(root, 'app/flowix-web/assets/product-logo.svg');
 const sourcePng = resolve(root, 'app/flowix-web/assets/app-icon-source.png');
 const iconsDir = resolve(backendDir, 'icons');
 const tmpDir = resolve(root, '.tmp-icon-build');
@@ -65,7 +65,7 @@ const WINDOWS_ICON_FILES = [
 console.log(`source  ${sourcePng}`);
 console.log(`output  ${iconsDir}`);
 
-const productLogoHashBefore = fileHash(productLogoPng);
+const productLogoHashBefore = fileHash(productLogoSvg);
 rmSync(tmpDir, { recursive: true, force: true });
 mkdirSync(tmpDir, { recursive: true });
 
@@ -104,9 +104,9 @@ for (const sub of ['android', 'ios']) {
 console.log('cleaned app/flowix-desktop/icons/{android,ios}');
 
 rmSync(tmpDir, { recursive: true, force: true });
-const productLogoHashAfter = fileHash(productLogoPng);
+const productLogoHashAfter = fileHash(productLogoSvg);
 if (productLogoHashBefore !== productLogoHashAfter) {
-	throw new Error('gen-icon.mjs must not modify app/flowix-web/assets/product-logo.png');
+	throw new Error('gen-icon.mjs must not modify app/flowix-web/assets/product-logo.svg');
 }
 
 function fileHash(file) {

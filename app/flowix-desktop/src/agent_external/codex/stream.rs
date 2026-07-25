@@ -1,15 +1,17 @@
-use std::collections::HashSet;
-use std::sync::atomic::AtomicBool;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::io::BufReader;
 
 use super::events::{codex_event_to_chunks, is_transient_codex_reconnect_event};
+use super::history::{get_rollout_tool_response_items_since, is_codex_session_id};
 use super::io::read_capped_line;
-use super::runtime::{persist_and_emit_codex_chunk, persist_codex_chunk};
+use super::runtime::persist_and_emit_codex_chunk;
+use super::tool_events::nested_exec_tool_names;
 use super::{truncate_for_log, AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
-use crate::agent_external::{emit_stream_end_once, ExternalRunRegistry};
+use crate::agent_external::ExternalRunRegistry;
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
@@ -22,14 +24,18 @@ pub(crate) async fn read_codex_stdout<R>(
     runs: ExternalRunRegistry,
     reader: BufReader<R>,
     stream_end_emitted: Arc<AtomicBool>,
+    started_at_millis: i64,
 ) -> Result<(), String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut reader = reader;
     let mut seen_sessions = HashSet::new();
+    let mut resolved_session_id = is_codex_session_id(&thread_id).then(|| thread_id.clone());
     let mut emit_thread_id = thread_id.clone();
     let mut terminal_turn_seen = false;
+    let mut emitted_tool_ids = HashSet::new();
+    let mut emitted_tool_signatures = HashMap::new();
     while let Some((line, line_truncated_by_reader)) =
         read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await?
     {
@@ -99,6 +105,7 @@ where
         log_codex_stdout_event(&thread_id, line, &value);
 
         if let Some(session_id) = extract_session_id(&value) {
+            resolved_session_id = Some(session_id.clone());
             if seen_sessions.insert(session_id.clone()) {
                 runtime_log::record_agent_event(
                     "info",
@@ -154,6 +161,7 @@ where
         }
 
         for chunk in codex_event_to_chunks(&emit_thread_id, &value) {
+            record_stdout_tool_call(&chunk, &mut emitted_tool_ids, &mut emitted_tool_signatures);
             persist_and_emit_codex_chunk(&app_handle, &thread_manager, &chunk, &run_id, Some(line))
                 .await;
         }
@@ -161,27 +169,9 @@ where
         match codex_run_signal(&value) {
             CodexRunSignal::TerminalCompleted => {
                 terminal_turn_seen = true;
-                // turn.completed 的 usage 等 chunk 已在上一行 codex_event_to_chunks
-                // 落库。terminal turn 即内容完整, 立刻发 StreamEnd (CAS 抢占, 与
-                // stop_chat / watchdog 互斥) 并 persist 为该 run 最后一行事件,
-                // 随后 break 丢弃 trailing (session_meta / compacted 等无 UI
-                // payload 的 lifecycle 噪声)。UI 当场收尾, tail 后台继续 join
-                // stderr + wait child 收尸, 不阻塞前端。
-                let stream_end = AgentChunk::StreamEnd {
-                    thread_id: emit_thread_id.clone(),
-                    reason: None,
-                };
-                if emit_stream_end_once(
-                    &app_handle,
-                    &thread_id,
-                    &run_id,
-                    AGENT_TYPE,
-                    None,
-                    &stream_end_emitted,
-                ) {
-                    persist_codex_chunk(&thread_manager, &stream_end, &run_id, None).await;
-                }
-                break;
+                // 与 Claude 一致: terminal 只做标记,继续排空 stdout 到 EOF。
+                // StreamEnd 由 run_codex 返回后的统一尾部发送,保证任何 trailing
+                // tool item 和 rollout 补发都先于终态到达前端。
             }
             CodexRunSignal::TerminalFailed => {
                 // turn.failed 不提前: 它需要 Error chunk + 失败 reason, 由
@@ -190,6 +180,48 @@ where
                 terminal_turn_seen = true;
             }
             CodexRunSignal::Continue => {}
+        }
+    }
+
+    let mut reconciled_tool_chunks = 0usize;
+    if !stream_end_emitted.load(Ordering::Acquire) {
+        if let Some(session_id) = resolved_session_id.as_deref() {
+            match get_rollout_tool_response_items_since(session_id, started_at_millis).await {
+                Ok(events) => {
+                    for chunk in reconcile_rollout_tool_events(
+                        &emit_thread_id,
+                        &events,
+                        &emitted_tool_ids,
+                        &mut emitted_tool_signatures,
+                    ) {
+                        if stream_end_emitted.load(Ordering::Acquire) {
+                            break;
+                        }
+                        persist_and_emit_codex_chunk(
+                            &app_handle,
+                            &thread_manager,
+                            &chunk,
+                            &run_id,
+                            None,
+                        )
+                        .await;
+                        reconciled_tool_chunks += 1;
+                    }
+                }
+                Err(err) => runtime_log::record_agent_event(
+                    "warn",
+                    "codex_stdout",
+                    "codex.rollout_reconcile_failed",
+                    "Failed to reconcile Codex rollout tool events",
+                    Some(&thread_id),
+                    Some(AGENT_TYPE),
+                    Some(serde_json::json!({
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "error": err,
+                    })),
+                ),
+            }
         }
     }
 
@@ -202,9 +234,143 @@ where
         Some(AGENT_TYPE),
         Some(serde_json::json!({
             "terminal_turn_seen": terminal_turn_seen,
+            "reconciled_tool_chunks": reconciled_tool_chunks,
         })),
     );
     Ok(())
+}
+
+fn record_stdout_tool_call(
+    chunk: &AgentChunk,
+    emitted_tool_ids: &mut HashSet<String>,
+    emitted_tool_signatures: &mut HashMap<String, usize>,
+) {
+    let AgentChunk::ToolCall {
+        id, name, input, ..
+    } = chunk
+    else {
+        return;
+    };
+    if !emitted_tool_ids.insert(id.clone()) {
+        return;
+    }
+    let signature = tool_signature(name, input);
+    *emitted_tool_signatures.entry(signature).or_default() += 1;
+}
+
+fn reconcile_rollout_tool_events(
+    thread_id: &str,
+    events: &[Value],
+    stdout_tool_ids: &HashSet<String>,
+    stdout_tool_signatures: &mut HashMap<String, usize>,
+) -> Vec<AgentChunk> {
+    let mut chunks = Vec::new();
+    let mut skipped_rollout_ids = HashSet::new();
+    let mut rollout_tool_names = HashMap::new();
+
+    for event in events {
+        let payload = event.get("payload").unwrap_or(event);
+        let nested_exec_names = if payload.get("type").and_then(Value::as_str)
+            == Some("custom_tool_call")
+            && payload.get("name").and_then(Value::as_str) == Some("exec")
+        {
+            nested_exec_tool_names(payload)
+        } else {
+            Default::default()
+        };
+        let skip_nested_exec = !nested_exec_names.is_empty()
+            && consume_all_tool_signatures(stdout_tool_signatures, &nested_exec_names);
+
+        for mut chunk in codex_event_to_chunks(thread_id, event) {
+            match &mut chunk {
+                AgentChunk::ToolCall {
+                    id, name, input, ..
+                } => {
+                    let signature = tool_signature(name.as_str(), input);
+                    let already_streamed = if stdout_tool_ids.contains(id.as_str()) {
+                        if !skip_nested_exec {
+                            consume_tool_signature(stdout_tool_signatures, &signature);
+                        }
+                        true
+                    } else {
+                        skip_nested_exec
+                            || consume_tool_signature(stdout_tool_signatures, &signature)
+                    };
+                    if already_streamed {
+                        skipped_rollout_ids.insert(id.clone());
+                    } else {
+                        rollout_tool_names.insert(id.clone(), name.clone());
+                        chunks.push(chunk);
+                    }
+                }
+                AgentChunk::ToolResult { id, name, .. } => {
+                    if skipped_rollout_ids.contains(id.as_str())
+                        || stdout_tool_ids.contains(id.as_str())
+                    {
+                        continue;
+                    }
+                    if let Some(tool_name) = rollout_tool_names.get(id.as_str()) {
+                        *name = tool_name.clone();
+                    }
+                    // Paired results complete calls backfilled above. Result-only
+                    // records are also useful: the frontend can create a completed
+                    // row when a call record was absent or malformed.
+                    chunks.push(chunk);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    chunks
+}
+
+fn consume_all_tool_signatures(
+    counts: &mut HashMap<String, usize>,
+    names: &std::collections::BTreeSet<String>,
+) -> bool {
+    if names
+        .iter()
+        .any(|name| counts.get(name).copied().unwrap_or_default() == 0)
+    {
+        return false;
+    }
+    for name in names {
+        consume_tool_signature(counts, name);
+    }
+    true
+}
+
+fn consume_tool_signature(counts: &mut HashMap<String, usize>, signature: &str) -> bool {
+    let Some(count) = counts.get_mut(signature) else {
+        return false;
+    };
+    if *count == 0 {
+        return false;
+    }
+    *count -= 1;
+    true
+}
+
+fn tool_signature(name: &str, input: &Value) -> String {
+    match name {
+        "command_execution" => "exec_command".to_string(),
+        "file_change" => "apply_patch".to_string(),
+        "image_generation" => "image_gen__imagegen".to_string(),
+        "mcp_tool_call" => {
+            let tool = input.get("tool").and_then(Value::as_str).unwrap_or(name);
+            if tool.starts_with("mcp__") {
+                return tool.to_string();
+            }
+            input
+                .get("server")
+                .and_then(Value::as_str)
+                .filter(|server| !server.is_empty())
+                .map(|server| format!("mcp__{server}__{tool}"))
+                .unwrap_or_else(|| tool.to_string())
+        }
+        _ => name.to_string(),
+    }
 }
 
 fn looks_like_codex_json_event_line(line: &str) -> bool {
@@ -225,8 +391,8 @@ fn looks_like_codex_json_event_line(line: &str) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CodexRunSignal {
     Continue,
-    /// `turn.completed` / legacy `task_complete`: 成功完成, 内容已完整, 可立即
-    /// 发 StreamEnd 收尾。
+    /// `turn.completed` / legacy `task_complete`: 成功完成。reader 继续排空
+    /// stdout 并完成 rollout 对账,随后由统一 tail 发送 StreamEnd。
     TerminalCompleted,
     /// `turn.failed` (非 reconnect): 失败, 需 Error chunk + 失败 reason, 走原
     /// tail 路径, 不提前结束 (避免把 failed 误标成 completed)。
@@ -361,6 +527,73 @@ fn find_nested_session_id(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rollout_reconciliation_skips_streamed_nested_tools_and_backfills_pure_exec() {
+        let stdout_call = AgentChunk::ToolCall {
+            thread_id: "thread_1".to_string(),
+            id: "item_1".to_string(),
+            name: "command_execution".to_string(),
+            input: serde_json::json!({ "command": "pwd" }),
+        };
+        let mut stdout_ids = HashSet::new();
+        let mut stdout_signatures = HashMap::new();
+        record_stdout_tool_call(&stdout_call, &mut stdout_ids, &mut stdout_signatures);
+        let events = vec![
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "call_command",
+                    "name": "exec",
+                    "input": "const r = await tools.exec_command({cmd: 'pwd'}); text(r.output);"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_command",
+                    "output": "pwd output"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "call_pure_exec",
+                    "name": "exec",
+                    "input": "ALL_TOOLS.filter(x => x.name.includes('browser')).forEach(text);"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_pure_exec",
+                    "output": "tool metadata"
+                }
+            }),
+        ];
+
+        let chunks =
+            reconcile_rollout_tool_events("thread_1", &events, &stdout_ids, &mut stdout_signatures);
+
+        assert!(matches!(
+            chunks.as_slice(),
+            [
+                AgentChunk::ToolCall { id, name, .. },
+                AgentChunk::ToolResult {
+                    id: result_id,
+                    name: result_name,
+                    ..
+                }
+            ] if id == "call_pure_exec"
+                && result_id == id
+                && name == "exec"
+                && result_name == name
+        ));
+    }
 
     #[test]
     fn detects_task_complete_and_turn_terminal_events() {

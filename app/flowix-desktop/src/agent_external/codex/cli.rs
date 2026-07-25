@@ -304,6 +304,7 @@ impl CodexCliManager {
         }
 
         preflight_codex()?;
+        let started_at_millis = chrono::Utc::now().timestamp_millis();
 
         let mut child = build_codex_command_with_images(
             session_id.as_deref(),
@@ -374,14 +375,14 @@ impl CodexCliManager {
             self.runs.clone(),
             BufReader::new(stdout),
             stream_end_emitted.clone(),
+            started_at_millis,
         );
         let stderr_task =
             read_stderr_to_string(thread_id, Some(run_id), &self.runs, BufReader::new(stderr));
 
         let (stdout_result, stderr_text) = tokio::join!(stdout_task, stderr_task);
-        // read_codex_stdout 鍙紶鎾鍙栭敊璇?鈹€鈹€ Codex 鐨?task_complete 浠呮爣璁?terminal
-        // turn, StreamEnd 缁熶竴鐢?tail / stop_chat / watchdog 缁?`stream_end_emitted`
-        // CAS 鍙? 涓嶅啀浠庤鍙栬矾寰勮繑鍥?宸插彂"淇″彿銆?
+        // 与 Claude 一致: stdout reader 排空并完成 rollout 工具对账后返回;
+        // StreamEnd 统一由 chat_stream 尾部 / stop_chat / watchdog 通过 CAS 发送。
         stdout_result?;
 
         let mut child = self.runs.remove_if_run_id(thread_id, Some(run_id)).await;

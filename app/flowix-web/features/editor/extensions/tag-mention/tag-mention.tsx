@@ -4,7 +4,7 @@ import { TagMentionDropdown } from '@features/editor/extensions/tag-mention/tag-
 import { queryMentionTags, type MentionTagItem } from '@features/editor/extensions/tag-mention/tag-mention-data';
 
 const TRIGGER = '#';
-const WIDTH = 150;
+const WIDTH = 172;
 
 function isValidTagTriggerPosition(view: EditorView, from: number): boolean {
   if (from === 0) return true;

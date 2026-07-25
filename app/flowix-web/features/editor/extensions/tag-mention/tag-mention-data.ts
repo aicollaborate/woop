@@ -1,19 +1,15 @@
 import { tags } from '@platform/tauri/client';
+import {
+  filterMentionTags,
+  type MentionTagItem,
+} from '@features/editor/extensions/tag-mention/tag-mention-filter';
 
-export interface MentionTagItem {
-  id: string;
-  name: string;
-  /** 是否是"新建"占位项 */
-  create: boolean;
-}
+export { filterMentionTags };
+export type { MentionTagItem };
 
 let cachedTags: MentionTagItem[] | null = null;
 let tagCachePromise: Promise<MentionTagItem[]> | null = null;
 let notebookIdProvider: () => string | null = () => null;
-
-function normalizeTagName(query: string): string {
-  return query.trim().replace(/^#+/, '').replace(/\s+/g, '');
-}
 
 async function fetchMentionTags(): Promise<MentionTagItem[]> {
   const response = await tags.getAll(notebookIdProvider() ?? undefined);
@@ -52,18 +48,6 @@ export function invalidateMentionTags(): void {
 }
 
 export async function queryMentionTags(query: string): Promise<MentionTagItem[]> {
-  const normalizedQuery = normalizeTagName(query).toLowerCase();
   const allTags = await loadMentionTags();
-  if (!normalizedQuery) return allTags;
-
-  const matched = allTags.filter((tag) => tag.name.toLowerCase().includes(normalizedQuery));
-  const exact = matched.some((tag) => tag.name.toLowerCase() === normalizedQuery);
-  if (!exact) {
-    matched.unshift({
-      id: normalizedQuery,
-      name: normalizeTagName(query),
-      create: true,
-    });
-  }
-  return matched;
+  return filterMentionTags(allTags, query);
 }

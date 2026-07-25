@@ -2,6 +2,7 @@
 @import "highlight.js/styles/github-dark.css";
 
 .markdown-editor {
+  --document-tag-height: calc(0.936rem + 4px);
   display: block;
   height: 100%;
   width: 100%;
@@ -553,6 +554,11 @@
 }
 
 .markdown-editor .tag-node {
+  display: inline-flex;
+  height: var(--document-tag-height);
+  box-sizing: border-box;
+  align-items: center;
+  vertical-align: baseline;
   color: var(--document-tag-foreground, var(--primary-foreground));
   font-weight: 400;
   font-size: 0.78rem;

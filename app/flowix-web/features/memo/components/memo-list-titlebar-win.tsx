@@ -9,7 +9,7 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import { useI18n } from '@features/i18n';
-import productLogo from '@/assets/product-logo.png';
+import productLogo from '@/assets/product-logo.svg';
 
 interface MemoListTitlebarWinProps {
   onCollapseSidebar: () => void;
@@ -36,7 +36,12 @@ export function MemoListTitlebarWin({
             aria-label="Flowix menu"
             className="flex h-7 items-center gap-1 rounded-md pl-1 pr-2 select-none transition-colors hover:bg-[var(--muted)]"
           >
-            <img src={productLogo} alt="" aria-hidden="true" className="h-[12.6px] w-[12.6px] shrink-0 rounded" />
+            <img
+              src={productLogo}
+              alt=""
+              aria-hidden="true"
+              className="h-[12.6px] w-[12.6px] shrink-0 rounded [[data-theme='dark']_&]:brightness-0 [[data-theme='dark']_&]:invert [[data-theme='dark']_&]:opacity-75"
+            />
             <span className="leading-none translate-y-[1px] text-[13px] font-semibold tracking-tight text-[color-mix(in_oklch,var(--foreground)_86%,transparent)]">
               Flowix
             </span>

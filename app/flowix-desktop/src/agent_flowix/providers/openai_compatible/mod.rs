@@ -449,11 +449,20 @@ impl OpenAICompatibleProvider {
     ) -> Result<Vec<ChatMessageReq>, RllmError> {
         let mut result: Vec<ChatMessageReq> = Vec::with_capacity(messages.len() + 1);
 
-        // Add system message if configured
-        if let Some(system) = &self.config.system {
+        // Some OpenAI-compatible gateways (notably MiniMax) reject the whole
+        // request when *any* message has an empty `content` field (2013:
+        // "chat content is empty").  The connection probe intentionally
+        // builds a provider with an empty system prompt, so do not serialize
+        // that placeholder as a real message.
+        if let Some(system) = self
+            .config
+            .system
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             result.push(ChatMessageReq {
                 role: "system".to_string(),
-                content: Some(text_content(system.clone())),
+                content: Some(text_content(system)),
                 reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
@@ -501,8 +510,12 @@ impl OpenAICompatibleProvider {
                         continue;
                     }
 
-                    let content = if msg.content.is_empty() {
-                        None
+                    // OpenAI permits null/omitted `content` for a pure tool
+                    // call, but stricter compatible gateways do not.  A
+                    // neutral transport-only fallback keeps the exchange
+                    // valid without changing the persisted/UI transcript.
+                    let content = if msg.content.trim().is_empty() {
+                        Some(text_content("Tool call requested."))
                     } else {
                         Some(text_content(msg.content.clone()))
                     };
@@ -514,9 +527,14 @@ impl OpenAICompatibleProvider {
                         tool_call_id: None,
                     });
                     for r in matched_results {
+                        let tool_content = if r.function.arguments.trim().is_empty() {
+                            "{}".to_string()
+                        } else {
+                            r.function.arguments.clone()
+                        };
                         result.push(ChatMessageReq {
                             role: "tool".to_string(),
-                            content: Some(text_content(r.function.arguments.clone())),
+                            content: Some(text_content(tool_content)),
                             reasoning_content: None,
                             tool_calls: None,
                             tool_call_id: Some(r.id.clone()),
@@ -529,6 +547,18 @@ impl OpenAICompatibleProvider {
                     index += 1;
                 }
                 MessageType::Text => {
+                    // Interrupted/cancelled runs and legacy databases may
+                    // contain empty text rows. They carry no model context and
+                    // strict gateways reject them, so drop them at the final
+                    // provider boundary.
+                    if msg.content.trim().is_empty() {
+                        tracing::warn!(
+                            "[OpenAI] Skipping empty {} text message before request",
+                            Self::role_to_str(&msg.role)
+                        );
+                        index += 1;
+                        continue;
+                    }
                     let content = if matches!(msg.role, ChatRole::User) {
                         self.prepare_user_content(&msg.content).await?
                     } else {
@@ -1117,6 +1147,74 @@ mod tests {
         assert_eq!(messages[0].tool_calls.as_ref().unwrap()[0].id, call.id);
         assert_eq!(messages[1].role, "tool");
         assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_1"));
+
+        let assistant = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(assistant["content"], "Tool call requested.");
+    }
+
+    #[tokio::test]
+    async fn prepare_messages_omits_empty_system_and_text_rows() {
+        let provider = OpenAICompatibleProvider::new(
+            OpenAICompatibleConfig::new("test-key", "test-model", "https://example.com/v1")
+                .with_system("  \n"),
+        );
+        let messages = provider
+            .prepare_messages(&[
+                LlmChatMessage {
+                    role: ChatRole::Assistant,
+                    content: String::new(),
+                    message_type: MessageType::Text,
+                }
+                .into(),
+                LlmChatMessage {
+                    role: ChatRole::User,
+                    content: "hello".to_string(),
+                    message_type: MessageType::Text,
+                }
+                .into(),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(messages.len(), 1);
+        let value = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(value["role"], "user");
+        assert_eq!(value["content"], "hello");
+    }
+
+    #[tokio::test]
+    async fn prepare_messages_replaces_empty_tool_result_content() {
+        let provider = OpenAICompatibleProvider::new(OpenAICompatibleConfig::new(
+            "test-key",
+            "test-model",
+            "https://example.com/v1",
+        ));
+        let call = llm_tool_call("call_1", "read", r#"{"path":"a.md"}"#);
+        let messages = provider
+            .prepare_messages(&[
+                LlmChatMessage {
+                    role: ChatRole::Assistant,
+                    content: String::new(),
+                    message_type: MessageType::ToolUse(vec![call]),
+                }
+                .into(),
+                LlmChatMessage {
+                    role: ChatRole::User,
+                    content: String::new(),
+                    message_type: MessageType::ToolResult(vec![llm_tool_call(
+                        "call_1",
+                        "tool_result",
+                        "",
+                    )]),
+                }
+                .into(),
+            ])
+            .await
+            .unwrap();
+
+        let tool = serde_json::to_value(&messages[1]).unwrap();
+        assert_eq!(tool["role"], "tool");
+        assert_eq!(tool["content"], "{}");
     }
 
     #[tokio::test]

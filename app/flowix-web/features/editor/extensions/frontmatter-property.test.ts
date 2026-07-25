@@ -18,6 +18,7 @@ import {
   updateVisibleFrontmatterProperty,
 } from '@features/document/properties/frontmatter-model';
 import { generatePropertyKey } from '@features/document/properties/property-key';
+import { useTagStore } from '@features/memo/store/tag-store';
 
 describe('frontmatter property helpers', () => {
   it('skips the system key and returns every property from the first group', () => {
@@ -229,7 +230,7 @@ describe('frontmatter property helpers', () => {
     tagPicker.dom.remove();
   });
 
-  it('renders the first configured property through the real Tiptap node view', async () => {
+  it('shows only tag controls while preserving other YAML properties', async () => {
     const host = document.createElement('div');
     document.body.append(host);
     const editor = new Editor({
@@ -242,6 +243,7 @@ describe('frontmatter property helpers', () => {
       content: [
         '---',
         'key: 8c7dxu0l',
+        'tags: [alpha, beta]',
         'type: prompt',
         'status: todo',
         'keywords: [推广, 归类]',
@@ -259,227 +261,34 @@ describe('frontmatter property helpers', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect(editor.state.doc.firstChild?.type.name).toBe('frontmatter');
-    const displayedKeys = [...host.querySelectorAll('.frontmatter-property__key')]
-      .map((element) => element.textContent);
-    const displayedValues = [...host.querySelectorAll('.frontmatter-property__value')]
-      .map((element) => element.textContent);
-    expect(displayedKeys).toEqual(['类型', '状态', '关键词', 'priority']);
-    expect(displayedValues).toEqual(['提示词', '待处理', '推广归类', 'high']);
-    expect(host.querySelector('.frontmatter-property__separator')).toBeNull();
-    expect(host.querySelector('.frontmatter-property__edit-icon')).toBeNull();
-    expect(editor.state.doc.content.content.filter((node) => node.type.name === 'frontmatter')).toHaveLength(1);
-    const addPropertyButton = host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__add-property',
-    );
-    expect(host.querySelectorAll('.frontmatter-property__display')).toHaveLength(4);
-    expect(addPropertyButton).not.toBeNull();
-    expect(addPropertyButton?.parentElement?.classList.contains(
-      'frontmatter-property__tags',
-    )).toBe(true);
-    expect(addPropertyButton?.previousElementSibling?.classList.contains(
-      'frontmatter-property__tag-add',
-    )).toBe(true);
-    expect(host.querySelector('.frontmatter-property__toggle')).toBeNull();
-
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__display[data-key="status"] '
-      + '.frontmatter-property__display-key',
-    )?.click();
-    const keyTrigger = host.querySelector<HTMLButtonElement>('.frontmatter-property__key-trigger');
-    const valueTrigger = host.querySelector<HTMLButtonElement>('.frontmatter-property__value-trigger');
-    expect(host.querySelector('.frontmatter-property__editor')).not.toBeNull();
-    expect(keyTrigger).not.toBeNull();
-    expect(valueTrigger).not.toBeNull();
-    expect(host.querySelector('.frontmatter-property__value-input')).toBeNull();
-    expect(keyTrigger?.tagName).toBe('BUTTON');
-    const keyMenu = host.querySelector<HTMLElement>('.frontmatter-property__key-menu');
-    const keyOptions = [...host.querySelectorAll<HTMLButtonElement>('.frontmatter-property__key-option')];
-    expect(keyMenu?.hidden).toBe(false);
-    expect(keyOptions.map((option) => option.dataset.key)).toContain('status');
-    expect(keyMenu?.querySelector('optgroup')).toBeNull();
-    const addedType = keyMenu?.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-option[data-key="type"]',
-    );
-    expect(addedType?.disabled).toBe(true);
-    expect(addedType?.querySelector('.frontmatter-property__key-option-added')?.textContent)
-      .toBe('已添加');
-    const selectedCheck = keyMenu?.querySelector(
-      '.frontmatter-property__key-option[aria-selected="true"] '
-      + '.frontmatter-property__key-option-check svg',
-    );
-    expect(selectedCheck?.getAttribute('viewBox')).toBe('0 0 24 24');
-    expect(selectedCheck?.querySelector('path')?.getAttribute('d')).toBe('M20 6 9 17l-5-5');
-    expect(host.querySelector('.frontmatter-property__action')).toBeNull();
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-option[data-key="status"]',
-    )?.click();
-    const rerenderedValueTrigger = host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__value-trigger',
-    );
-    rerenderedValueTrigger?.click();
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__value-option[data-value="done"]',
-    )?.click();
-    const otherDocumentBlock = document.createElement('p');
-    otherDocumentBlock.tabIndex = -1;
-    document.body.append(otherDocumentBlock);
-    otherDocumentBlock.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    otherDocumentBlock.focus();
-
-    expect(host.querySelector('.frontmatter-property__editor')).toBeNull();
-    expect(editor.getMarkdown()).toContain('status: done');
-    expect([...host.querySelectorAll('.frontmatter-property__value')].map(
-      (element) => element.textContent,
-    )).toEqual(['提示词', '已完成', '推广归类', 'high']);
-
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__display[data-key="status"] '
-      + '.frontmatter-property__display-value',
-    )?.click();
-    expect(host.querySelector<HTMLElement>('.frontmatter-property__value-menu')?.hidden)
-      .toBe(false);
-    otherDocumentBlock.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    otherDocumentBlock.focus();
+    expect([...host.querySelectorAll('.frontmatter-property__tag-label')]
+      .map((element) => element.textContent)).toEqual(['#alpha', '#beta']);
+    expect([...host.querySelectorAll('.frontmatter-property__tag-chip')]
+      .every((element) => element.classList.contains('tag-node'))).toBe(true);
+    expect(host.querySelector('.frontmatter-property__tag-add')).not.toBeNull();
+    expect(host.querySelector('.frontmatter-property__add-property')).toBeNull();
+    expect(host.querySelector('.frontmatter-property__display')).toBeNull();
     expect(host.querySelector('.frontmatter-property__editor')).toBeNull();
 
-    host.querySelector<HTMLButtonElement>('.frontmatter-property__add-property')?.click();
-    const markdownBeforeBlankProperty = editor.getMarkdown();
-    const addEditor = host.querySelector('.frontmatter-property__editor');
-    expect(addEditor).not.toBeNull();
-    expect(host.querySelector('.frontmatter-property__add-property')).not.toBeNull();
-    expect(addEditor?.previousElementSibling?.classList.contains(
-      'frontmatter-property__tags',
-    )).toBe(true);
-    otherDocumentBlock.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(host.querySelector('.frontmatter-property__editor')).toBeNull();
-    expect(host.querySelector('.frontmatter-property__validation')).toBeNull();
-    expect(host.querySelector('.frontmatter-property__add-property')).not.toBeNull();
-    expect(editor.getMarkdown()).toBe(markdownBeforeBlankProperty);
+    const markdown = editor.getMarkdown();
+    expect(markdown).toContain('type: prompt');
+    expect(markdown).toContain('status: todo');
+    expect(markdown).toContain('keywords: [推广, 归类]');
+    expect(markdown).toContain('priority: high');
 
     editor.destroy();
-    otherDocumentBlock.remove();
-    host.remove();
-  });
-
-  it('keeps the add-property editor open after picking a key from the dropdown', async () => {
-    const host = document.createElement('div');
-    document.body.append(host);
-    const editor = new Editor({
-      element: host,
-      extensions: [StarterKit, Markdown, Frontmatter],
-      content: '---\nkey: 8c7dxu0l\n---\nBody',
-      contentType: 'markdown',
-    });
-
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-    host.querySelector<HTMLButtonElement>('.frontmatter-property__add-property')?.click();
-    expect(host.querySelector('.frontmatter-property__editor')).not.toBeNull();
-    expect(host.querySelector<HTMLElement>('.frontmatter-property__key-menu')?.hidden)
-      .toBe(false);
-
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-option[data-key="status"]',
-    )?.click();
-
-    // The editor must stay open with the chosen key committed to the trigger,
-    // not auto-cancel as if the property were still empty.
-    expect(host.querySelector('.frontmatter-property__editor')).not.toBeNull();
-    expect(host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-trigger-label',
-    )?.textContent).toBe('状态');
-    expect(host.querySelector('.frontmatter-property__value-trigger')).not.toBeNull();
-    expect(editor.getMarkdown()).not.toContain('status:');
-
-    editor.destroy();
-    host.remove();
-  });
-
-  it('does not commit when a re-render evicts the focused key option (webkit removal focusout)', async () => {
-    const host = document.createElement('div');
-    document.body.append(host);
-    const editor = new Editor({
-      element: host,
-      extensions: [StarterKit, Markdown, Frontmatter],
-      content: '---\nkey: 8c7dxu0l\n---\nBody',
-      contentType: 'markdown',
-    });
-
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-    host.querySelector<HTMLButtonElement>('.frontmatter-property__add-property')?.click();
-    // Capture the editor element that owns the currently-focused key option,
-    // before picking a key re-renders and detaches it.
-    const previousEditor = host.querySelector<HTMLElement>('.frontmatter-property__editor');
-    expect(previousEditor).not.toBeNull();
-
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-option[data-key="status"]',
-    )?.click();
-
-    // WebKit fires a `focusout` on the detached previous editor when the
-    // focused key option is removed by the re-render. relatedTarget can be
-    // null OR document.body (focus briefly lands on body before the new value
-    // control is focused). Either way this must NOT be treated as the user
-    // leaving the editor.
-    previousEditor!.dispatchEvent(
-      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
-    );
-    previousEditor!.dispatchEvent(
-      new FocusEvent('focusout', { bubbles: true, relatedTarget: null }),
-    );
-    await Promise.resolve();
-
-    expect(host.querySelector('.frontmatter-property__editor')).not.toBeNull();
-    expect(host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__key-trigger-label',
-    )?.textContent).toBe('状态');
-    expect(editor.getMarkdown()).not.toContain('status:');
-
-    editor.destroy();
-    host.remove();
-  });
-
-  it('activates empty text and multiselect values from the value column', async () => {
-    const host = document.createElement('div');
-    const outside = document.createElement('button');
-    document.body.append(host, outside);
-    const editor = new Editor({
-      element: host,
-      extensions: [StarterKit, Markdown, Frontmatter],
-      content: '---\nkey: 8c7dxu0l\nsummary: ""\nkeywords: []\n---\nBody',
-      contentType: 'markdown',
-    });
-
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__display[data-key="summary"] '
-      + '.frontmatter-property__display-value',
-    )?.click();
-    const textInput = host.querySelector<HTMLInputElement>(
-      '.frontmatter-property__value-input',
-    );
-    expect(textInput).not.toBeNull();
-    expect(document.activeElement).toBe(textInput);
-
-    outside.focus();
-    host.querySelector<HTMLButtonElement>(
-      '.frontmatter-property__display[data-key="keywords"] '
-      + '.frontmatter-property__display-value',
-    )?.click();
-    const multiInput = host.querySelector<HTMLInputElement>(
-      '.frontmatter-property__multi-input',
-    );
-    expect(multiInput).not.toBeNull();
-    expect(document.activeElement).toBe(multiInput);
-
-    editor.destroy();
-    outside.remove();
     host.remove();
   });
 
   it('renders tags as a standalone wrapping strip and appends from its trailing control', async () => {
+    useTagStore.setState({
+      tags: [
+        { id: 'alpha', name: 'alpha' },
+        { id: 'beta', name: 'beta' },
+        { id: 'gammaLongTag', name: 'gammaLongTag' },
+        { id: 'work/path', name: 'work/path' },
+      ],
+    });
     const host = document.createElement('div');
     document.body.append(host);
     const editor = new Editor({
@@ -492,27 +301,100 @@ describe('frontmatter property helpers', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect([...host.querySelectorAll('.frontmatter-property__key')]
-      .map((element) => element.textContent)).toEqual(['状态']);
+      .map((element) => element.textContent)).toEqual([]);
+    expect(host.querySelector('.frontmatter-property__add-property')).toBeNull();
     expect([...host.querySelectorAll('.frontmatter-property__tag-label')]
-      .map((element) => element.textContent)).toEqual(['alpha', 'beta']);
+      .map((element) => element.textContent)).toEqual(['#alpha', '#beta']);
     const addButton = host.querySelector<HTMLButtonElement>('.frontmatter-property__tag-add');
     expect(addButton).not.toBeNull();
     expect(addButton?.textContent).toBe('添加标签');
+    if (addButton) {
+      addButton.getBoundingClientRect = () => ({
+        x: 0,
+        y: 0,
+        width: 88,
+        height: 24,
+        top: 0,
+        right: 88,
+        bottom: 24,
+        left: 0,
+        toJSON: () => ({}),
+      });
+    }
     addButton?.click();
+    await Promise.resolve();
 
     const input = host.querySelector<HTMLInputElement>('.frontmatter-property__tag-input');
     expect(input).not.toBeNull();
     if (input) {
+      expect(input.hasAttribute('placeholder')).toBe(false);
+      expect(input.getAttribute('aria-label')).toBe('输入标签后回车');
+      expect(input.style.width).toBe('88px');
+      expect(host.querySelector<HTMLElement>(
+        '.frontmatter-property__tag-suggestions',
+      )?.hidden).toBe(false);
+      expect([...host.querySelectorAll('.mention-tag-name')]
+        .map((element) => element.textContent)).toEqual(['gammaLongTag', 'work/path']);
+      const suggestionItems = host.querySelector<HTMLElement>(
+        '.frontmatter-property__tag-suggestion-items',
+      );
+      const initialOptions = host.querySelectorAll<HTMLButtonElement>(
+        '.mention-note-item',
+      );
+      if (suggestionItems && initialOptions[1]) {
+        Object.defineProperties(suggestionItems, {
+          clientHeight: { configurable: true, value: 40 },
+          scrollHeight: { configurable: true, value: 100 },
+        });
+        suggestionItems.getBoundingClientRect = () => ({
+          x: 0,
+          y: 0,
+          width: 172,
+          height: 40,
+          top: 0,
+          right: 172,
+          bottom: 40,
+          left: 0,
+          toJSON: () => ({}),
+        });
+        initialOptions[1].getBoundingClientRect = () => ({
+          x: 0,
+          y: 50,
+          width: 172,
+          height: 20,
+          top: 50,
+          right: 172,
+          bottom: 70,
+          left: 0,
+          toJSON: () => ({}),
+        });
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          bubbles: true,
+        }));
+        expect(suggestionItems.scrollTop).toBe(30);
+      }
+      Object.defineProperty(input, 'scrollWidth', {
+        configurable: true,
+        value: 140,
+      });
       input.value = 'gamma';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(input.style.width).toBe('141px');
+      expect([...host.querySelectorAll('.mention-tag-name')]
+        .map((element) => element.textContent)).toEqual(['gamma', 'gammaLongTag']);
+      host.querySelectorAll<HTMLButtonElement>('.mention-note-item')[1]?.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, cancelable: true }),
+      );
     }
 
     expect([...host.querySelectorAll('.frontmatter-property__tag-label')]
-      .map((element) => element.textContent)).toEqual(['alpha', 'beta', 'gamma']);
+      .map((element) => element.textContent)).toEqual(['#alpha', '#beta', '#gammaLongTag']);
     expect(editor.getMarkdown()).toContain('tags:');
-    expect(editor.getMarkdown()).toContain('- gamma');
+    expect(editor.getMarkdown()).toContain('- gammaLongTag');
+    expect(editor.getMarkdown()).toContain('status: todo');
 
+    useTagStore.setState({ tags: [] });
     editor.destroy();
     host.remove();
   });
@@ -545,7 +427,7 @@ describe('frontmatter property helpers', () => {
     expect(editor.getMarkdown()).toContain('tags:');
     expect(editor.getMarkdown()).toContain('- newtag');
     expect([...host.querySelectorAll('.frontmatter-property__tag-label')]
-      .map((element) => element.textContent)).toEqual(['newtag']);
+      .map((element) => element.textContent)).toEqual(['#newtag']);
 
     editor.destroy();
     host.remove();

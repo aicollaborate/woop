@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize)]
 pub(super) struct ChatMessageReq {
     pub(super) role: String,
-    /// OpenAI 鍏佽 assistant 鍦ㄦ惡甯?tool_calls 鏃?content 涓?null / 缂虹渷銆?
+    /// Optional in the wire type for protocol compatibility. The provider's
+    /// request preparation currently guarantees non-empty content for every
+    /// emitted message because some compatible gateways reject null/empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) content: Option<ChatMessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]

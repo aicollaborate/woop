@@ -5,10 +5,10 @@ export type { AgentTypeKey };
 // Agent 图标集中管理 ─────────────────────────────────────────
 // 所有 agent 类型图标统一在此处 import, 后续要换图标只改这一个文件。
 // 实际静态资源:
-//   - flowix-agent.png        Flowix 类型图标(从桌面导入)
+//   - flowix-agent.svg        Flowix 类型图标(正方形画布，从桌面导入)
 //   - codex.svg               Codex CLI 品牌图标(从桌面导入)
 //   - icon-claude-code.svg    Claude Code 品牌图标
-import flowixAgent from '@/assets/flowix-agent.png';
+import flowixAgent from '@/assets/flowix-agent.svg';
 import iconCodex from '@/assets/codex.svg';
 import iconClaudeCode from '@/assets/icon-claude-code.svg';
 import iconGeminiCli from '@/assets/icon-gemini-cli.svg';
