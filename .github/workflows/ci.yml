@@ -1,0 +1,74 @@
+name: CI
+
+# PR / push 级别的前置检查 ── 合并前拦截类型错误、单测回归与 Rust 编译失败。
+# 发版流水线见 release.yml（tag 驱动，跨平台打包）。
+#
+# 设计原则：先保证"绿灯可跑"，再逐步收紧。
+#   - clippy 暂不加 `-D warnings`（代码库历史较长，尚未确认是否 clippy-clean）；
+#     待清理干净后可改为 `cargo clippy --workspace --all-targets -- -D warnings` 升级为阻断式。
+#   - 可选后续：加 `cargo fmt --check`（需先统一格式）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web · typecheck + unit tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+  rust:
+    name: Rust · clippy + tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Linux system deps (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/target -> ci
+
+      - name: Clippy
+        working-directory: app
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        working-directory: app
+        run: cargo test --workspace

@@ -32,6 +32,8 @@ Thumbs.db
 # Tauri / Rust
 **/*.rs.bk
 Cargo.lock.bak
+# Rust 静态库产物 ── 仅 cargo build 生成，不应入库（曾经误提交过 libflowix_anthropic_check.rlib）
+*.rlib
 
 # Test / cache
 coverage/
