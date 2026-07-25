@@ -314,7 +314,8 @@ impl UserConfigStore {
     fn new_with_secret_store(home_dir: PathBuf, secrets: SecretStore) -> Self {
         let config_dir = home_dir.join(USER_CONFIG_DIR_NAME);
         let _ = fs::create_dir_all(&config_dir);
-        // ~/.flowix 鐩綍鏀剁揣鍒?0o700, 鍚屾満鍣ㄥ叾浠栫敤鎴疯繘涓嶆潵, 鏂囦欢鏉冮檺鎵嶆湁鎰忎箟銆?        set_dir_owner_only_perms(&config_dir);
+        // Restrict the configuration directory to its owner.
+        set_dir_owner_only_perms(&config_dir);
 
         let preference = Self::read_preference_from_disk(&config_dir).unwrap_or_default();
         let ai_config = Self::read_ai_config_from_disk(&config_dir).unwrap_or_default();
@@ -472,7 +473,8 @@ pub(crate) fn atomic_write_json(path: &Path, content: &str) -> std::io::Result<(
         f.write_all(content.as_bytes())?;
         f.sync_all()?;
     }
-    // 鍐欏畬鍗宠 0o600, 閬垮厤 rename 杩囩▼涓嚭鐜?涓栫晫鍙"鐨勪腑闂存€?    set_file_owner_only_perms(&tmp);
+    // Restrict the temporary file before the atomic rename.
+    set_file_owner_only_perms(&tmp);
     fs::rename(&tmp, path)?;
     // rename 涔嬪悗鍐?chmod 涓€娆? 瑕嗙洊鐩爣鏂囦欢鏉冮檺 (POSIX rename 淇濈暀 source 鏉冮檺)
     set_file_owner_only_perms(path);
@@ -593,7 +595,7 @@ mod tests {
             max_total_tokens: 50_000,
         };
         let s = toml::to_string(&cfg).unwrap();
-        // camelCase 褰㈢姸 鈹€鈹€ 涓庡墠绔?AiModelConfig / IPC payload 瀵归綈銆?        assert!(s.contains("maxTotalTokens = 50000"), "got: {s}");
+        assert!(s.contains("maxTotalTokens = 50000"), "got: {s}");
         let back: AiModelConfig = toml::from_str(&s).unwrap();
         assert_eq!(back.max_total_tokens, 50_000);
         assert_eq!(back.model, "gpt-4o");
@@ -612,7 +614,7 @@ mod tests {
             },
         };
         let s = toml::to_string_pretty(&cfg).unwrap();
-        // 椤跺眰 [model] 琛? 瀛楁淇濇寔 camelCase 鈹€鈹€ 涓?IPC JSON 褰㈢姸涓€鑷淬€?        assert!(s.contains("[model]"), "got: {s}");
+        assert!(s.contains("[model]"), "got: {s}");
         let back: AiConfigFile = toml::from_str(&s).unwrap();
         assert_eq!(back, cfg);
     }

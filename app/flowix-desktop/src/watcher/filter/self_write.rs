@@ -17,7 +17,9 @@ impl Filter for SelfWriteSuppressor {
         };
         // 椤烘墜鍓灊杩囪€佹潯鐩€係ELF_WRITE_TTL (2s) 瑕嗙洊 IPC 鍛戒护缁撴潫 鈫?notify
         // 鍥炶皟鍒拌揪鐨勯棿闅? FSEvents 鍙岃Е鍙?(macOS 鎶婁竴娆?fs::write 鎷嗘垚
-        // Metadata(Any) + Data(Content) 涓ゆ潯 Modify) 涔熼兘鍦ㄧ獥鍐呫€?        map.retain(|_, t| t.elapsed() < SELF_WRITE_TTL);
+        // Keep both Metadata and Data events suppressed during the TTL, then
+        // prune expired entries so the table stays bounded.
+        map.retain(|_, t| t.elapsed() < SELF_WRITE_TTL);
 
         // 涓?remove 琛ㄩ」 鈥?FSEvents 鍙岃Е鍙戜袱鏉′簨浠堕兘瑕佸悶, remove 鍚庣浜屾潯
         // 浼?MISS 婕忓埌 processor 璧?"澶栭儴淇敼" 璺緞銆?琛ㄩ」鐢变笂闈㈢殑 retain

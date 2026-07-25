@@ -67,7 +67,8 @@ pub async fn execute_tool(
                     "kind": "notebook",
                     "id": entry.id,
                     "name": nb.map(|c| c.name.clone()).unwrap_or_else(|| entry.name.clone()),
-                    // path 浠?notebook 娉ㄥ唽琛ㄤ负鍑?鈹€鈹€ access 鍒楄〃閲屽彲鑳?                    // 鏄?reconcile 鍓嶇殑鏃у€? 淇′换娉ㄥ唽琛ㄣ€?                    "path": nb.map(|c| c.path.clone()).unwrap_or_else(|| entry.path.clone()),
+                    // Prefer the notebook registry path over a stale access entry.
+                    "path": nb.map(|c| c.path.clone()).unwrap_or_else(|| entry.path.clone()),
                 });
                 if let Some(c) = nb {
                     if let Some(icon) = &c.icon {

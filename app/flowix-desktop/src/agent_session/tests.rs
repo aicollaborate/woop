@@ -381,6 +381,49 @@ mod tests {
         assert_eq!(version, 1);
     }
 
+    #[test]
+    fn migration_adds_missing_external_session_metadata_column() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open legacy db");
+            conn.execute_batch(
+                "
+                CREATE TABLE threads (
+                    thread_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE thread_external_sessions (
+                    thread_id TEXT NOT NULL,
+                    runtime TEXT NOT NULL,
+                    external_session_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (thread_id, runtime),
+                    UNIQUE (runtime, external_session_id)
+                );
+                ",
+            )
+            .expect("seed legacy external-session table");
+        }
+
+        let manager = ThreadManager::new(db_path).expect("migrate legacy db");
+        let conn = manager.lock_conn();
+        let columns = conn
+            .prepare("PRAGMA table_info(thread_external_sessions)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns
+            .iter()
+            .any(|column| column == "session_metadata_json"));
+    }
+
     #[tokio::test]
     async fn external_event_insert_creates_missing_product_thread() {
         let manager = ThreadManager::for_tests();

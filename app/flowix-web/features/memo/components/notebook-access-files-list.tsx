@@ -168,77 +168,76 @@ export function NotebookAccessFilesList({
             : t('agent.access.setWorkspace')
           : undefined;
         return (
-          <div
+          <Tooltip
             key={item.path}
-            className={cn(
-              'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
-              item.missing ? 'opacity-70' : 'hover:bg-[var(--muted)]',
-            )}
+            content={item.missing ? t('agent.access.pathMissing') : item.path}
+            side="right"
+            align="start"
           >
-            <Tooltip content={iconTitle} side="right">
-              <span
-                role={canSwitchWorkspace ? 'button' : undefined}
-                tabIndex={canSwitchWorkspace ? 0 : undefined}
-                aria-label={iconTitle}
-                onClick={
-                  canSwitchWorkspace
-                    ? (event) => {
-                        event.stopPropagation();
-                        handleToggleWorkspace(item.path);
-                      }
-                    : undefined
-                }
-                onKeyDown={
-                  canSwitchWorkspace
-                    ? (event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
+            <div
+              className={cn(
+                'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
+                item.missing ? 'opacity-70' : 'hover:bg-[var(--muted)]',
+              )}
+            >
+              <Tooltip content={iconTitle} side="right">
+                <span
+                  role={canSwitchWorkspace ? 'button' : undefined}
+                  tabIndex={canSwitchWorkspace ? 0 : undefined}
+                  aria-label={iconTitle}
+                  onClick={
+                    canSwitchWorkspace
+                      ? (event) => {
                           event.stopPropagation();
                           handleToggleWorkspace(item.path);
                         }
-                      }
-                    : undefined
-                }
-                className={cn(
-                  'relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--muted-foreground)]',
-                  canSwitchWorkspace &&
-                    'cursor-pointer transition-colors hover:bg-[color-mix(in_oklch,var(--primary)_14%,var(--muted))]',
-                )}
-              >
-                <Folder className="h-3.5 w-3.5" weight="fill" />
-                {isWorkspace && (
-                  <span
-                    className="agent-thread-card__access-workspace-mark"
-                    aria-hidden="true"
-                  />
-                )}
-              </span>
-            </Tooltip>
-            <div className="flex-1 min-w-0 flex items-center gap-1.5">
-              <Tooltip
-                content={item.missing ? t('agent.access.pathMissing') : item.path}
-                side="right"
-                align="start"
-              >
+                      : undefined
+                  }
+                  onKeyDown={
+                    canSwitchWorkspace
+                      ? (event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleToggleWorkspace(item.path);
+                          }
+                        }
+                      : undefined
+                  }
+                  className={cn(
+                    'relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--muted-foreground)]',
+                    canSwitchWorkspace && 'cursor-pointer transition-colors',
+                  )}
+                >
+                  <Folder className="h-3.5 w-3.5" weight="fill" />
+                  {isWorkspace && (
+                    <span
+                      className="agent-thread-card__access-workspace-mark"
+                      aria-hidden="true"
+                    />
+                  )}
+                </span>
+              </Tooltip>
+              <div className="flex-1 min-w-0 flex items-center gap-1.5">
                 <span className={cn('min-w-0 truncate', item.missing && 'text-[var(--muted-foreground)]')}>
                   {item.name}
                 </span>
+              </div>
+              <Tooltip content={t('agent.access.deleteFolder')} side="right">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveFolder(item.path);
+                  }}
+                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--destructive)] group-hover:opacity-100"
+                  aria-label={t('agent.access.deleteFolder')}
+                >
+                  <Trash className="h-3.5 w-3.5" />
+                </button>
               </Tooltip>
             </div>
-            <Tooltip content={t('agent.access.deleteFolder')} side="right">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleRemoveFolder(item.path);
-                }}
-                className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--destructive)] group-hover:opacity-100"
-                aria-label={t('agent.access.deleteFolder')}
-              >
-                <Trash className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-          </div>
+          </Tooltip>
         );
       })}
       <Tooltip content={t('agent.access.addFolderHint')} side="right" align="start">
@@ -247,7 +246,7 @@ export function NotebookAccessFilesList({
           onClick={handleAddFolder}
           className="group relative flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
         >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--muted-foreground)]">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]">
             <Plus className="h-3.5 w-3.5" />
           </span>
           <span className="min-w-0 flex-1 truncate">

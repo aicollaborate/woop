@@ -748,7 +748,8 @@ mod tests {
             !real_id.is_empty(),
             "register_existing_file should have generated a non-empty id; got empty"
         );
-        // 鏂囦欢鍚?(v3) 璺?id 瑙ｈ€? 杩欐潯涓嶅彉閲忔槸鍥炲綊鏍稿績: 鍒犻櫎浜嬩欢閲?        // 蹇呴』甯?memo index 鐨?id, 鑰屼笉鏄粠 filename 閲岀‖鐚?        assert_ne!(real_id, filename, "v3 id must be decoupled from filename");
+        // V3 ids come from the memo index rather than the physical filename.
+        assert_ne!(real_id, filename, "v3 id must be decoupled from filename");
         // 璺緞瀛樺湪 + 璺?base join 璧锋潵绛変簬 expected_abs (unregister_memo_by_path
         // 鍐呴儴灏辨槸杩欎釜 invariant guard 閫氳繃鍚庢墠鍒?entry)
         assert!(

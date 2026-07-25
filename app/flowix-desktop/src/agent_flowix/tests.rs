@@ -82,7 +82,8 @@ fn call_key_distinguishes_different_tools() {
 
 #[test]
 fn tool_call_row_id_uses_tool_call_id_when_present() {
-    // 涓绘祦璺緞: LLM 缁欑殑 tool_call.id 鐩存帴鎷煎墠缂€ 鈹€鈹€ 涓庡巻鍙叉寔涔呭寲灞傚畬鍏ㄥ吋瀹广€?    assert_eq!(tool_call_row_id("call_abc123"), "tool_call_abc123");
+    // The common path prefixes the model-provided tool call id.
+    assert_eq!(tool_call_row_id("call_abc123"), "tool_call_abc123");
     assert_eq!(
         tool_call_row_id("call_019f0000-0000-7000-8000-000000000000"),
         "tool_call_019f0000-0000-7000-8000-000000000000",

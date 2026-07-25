@@ -47,7 +47,8 @@ pub fn run() {
 
     // 鍚姩鏃跺湪 `~/.local/bin/flowix-cli` 寤轰竴涓?symlink銆傝鎯呰
     // `cli_link` 妯″潡: 骞傜瓑 (姣忔鍚姩閮借窇, 宸插瓨鍦ㄥ氨涓嶅姩), 澶辫触鍙?warn
-    // 涓嶉樆濉?GUI 鍚姩, 鑼冨洿 macOS + Linux (cfg(unix))銆?    cli_link::ensure_cli_symlink();
+    // This is idempotent and failures do not block GUI startup.
+    cli_link::ensure_cli_symlink();
 
     let user_config_dir = get_user_config_dir(&home_dir);
     std::fs::create_dir_all(&user_config_dir).ok();
@@ -159,7 +160,8 @@ pub fn run() {
     }
 
     // 榛樿缁?Agent `~/.flowix/skills/` 鐨勮鏉冮檺 鈹€鈹€ LLM 鍙互鐩存帴 `read` / `grep`
-    // 浠绘剰 SKILL.md, 涓嶅繀鍏堣皟 `load_skill`銆?    agent_access_arc.ensure_skill_folder(&skills_root);
+    // Let the agent read registered skills directly when needed.
+    agent_access_arc.ensure_skill_folder(&skills_root);
 
     let skill_store = Arc::new(crate::agent_flowix::skills::SkillStore::load(&skills_root));
     tracing::info!(
@@ -235,7 +237,8 @@ pub fn run() {
 
             // 鈹€鈹€ 1) 鍚姩鎺㈡祴 external CLI 璺緞 鈹€鈹€
             //   瀵?source=auto/缂哄け鐨?agent 璺戞帰娴嬮摼 (env>PATH>鍊欓€?shell),
-            //   鍐欏叆 ~/.flowix/agent-external-config.json 骞剁亴杩?            //   cli_resolver::REGISTRY; source=user 鐨勮烦杩?(灏婇噸鐢ㄦ埛鎵嬫敼)銆?            //   姝ゅ悗 resolve_external_cli 鍛戒腑鍗崇敤, 涓嶅啀姣忔潯娑堟伅鎺㈡祴銆?            agent_external_config.run_startup_detect();
+            // Populate the external CLI registry once at startup.
+            agent_external_config.run_startup_detect();
 
             // 鈹€鈹€ 2) 鏋勯€?AppState 骞?manage 鈹€鈹€
             let app_state = AppState {

@@ -1657,7 +1657,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const store = useChatStore.getState();
 
-    // 鈹€鈹€ 鎯呭舰 1: 鍏ㄦ柊 thread, 浠庢湭璺戣繃銆?    vi.clearAllMocks();
+    // Scenario 1: a brand-new thread that has never run.
+    vi.clearAllMocks();
     await store.stopThreadRun("thread-stop-empty");
     expect(agent.stopChatStream).toHaveBeenCalledWith(
       "thread-stop-empty",

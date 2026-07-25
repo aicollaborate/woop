@@ -31,7 +31,8 @@ pub(crate) fn acquire_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     // 娉ㄥ唽琛ㄦ槸杩涚▼绾?static, 璺ㄦ祴璇曚細涓插懗 鈹€鈹€ 鎷垮埌閿佸悗鍏堟竻鍥?None, 淇濊瘉姣忎釜
-    // 娴嬭瘯閮戒粠绾嚱鏁版帰娴嬭涓鸿捣姝ャ€傛祴璇曡嫢瑕侀獙璇?registry 璇箟, 鍦ㄩ攣鍐呰嚜琛?set銆?    cli_resolver::reset_external_cli_registry_for_test();
+    // Tests start from pure detection behavior unless they explicitly seed the registry.
+    cli_resolver::reset_external_cli_registry_for_test();
     guard
 }
 

@@ -212,7 +212,8 @@ impl AgentExternalConfig {
     /// 閲嶆柊鎺㈡祴鍗曚釜 agent: 娓呮敞鍐岃〃璇ラ」 -> 璺戞帰娴?-> 鍐?`source = auto` ->
     /// 鏇存柊娉ㄥ唽琛ㄣ€傝繑鍥炴帰娴嬪埌鐨?path (`None` = 娌℃帰娴嬪埌)銆?
     pub fn redetect(&self, agent_key: &str) -> std::io::Result<Option<PathBuf>> {
-        // 鍏堜粠娉ㄥ唽琛ㄧЩ闄よ椤? 浣?`resolve_*_binary` 鍥為€€鎺㈡祴閾捐€岄潪鍛戒腑鏃?path銆?        update_external_cli_path(agent_key, None);
+        // Remove the cached path before running the fallback detection chain.
+        update_external_cli_path(agent_key, None);
         let detected = detect_external_binary(agent_key);
         {
             let mut data = self.write_data();

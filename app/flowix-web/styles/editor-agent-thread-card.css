@@ -2128,7 +2128,7 @@
 }
 
 /* Workspace row 视觉 ── workspace entry (folder 或 notebook) 的 avatar 渲染
- * 原图标 + 左上角三角蒙块 (.access-workspace-mark) 作为 "主空间" 标记
+ * 原图标 + 左侧竖长条标记 (.access-workspace-mark) 作为 "主空间" 标记
  * (workspace 全局唯一), 不可点击。 非 workspace + 非 missing 的 entry
  * (folder 或 notebook) 整个 avatar 就是一个 button, 点击直接 setWorkspace ──
  * 不再 hover 出 star 按钮覆盖, 交互入口即图标本身。 */
@@ -2137,8 +2137,8 @@
  * (背景 `var(--muted)` + 颜色 `var(--secondary-foreground)`); folder 图标走
  * `.access-row-icon` 的 `var(--muted-foreground)`, notebook 图标走
  * `.access-avatar--icon` ── 与同 kind 的普通 entry 视觉重量完全一致, "workspace"
- * 这个角色标记只靠左上角三角蒙块体现, 不靠图标形状或颜色暗示。 avatar 设
- * position/overflow, 让三角蒙块能贴左上角, 并被 6px 圆角自然裁圆。 (不再用
+ * 这个角色标记只靠左侧竖长条体现, 不靠图标形状或颜色暗示。 avatar 设
+ * position/overflow, 让长条能贴左边缘定位; 长条自带全圆角呈胶囊形。 (不再用
  * `--workspace svg` 统一 14px ── 那会误把 notebook 的 20px 图标也缩小;
  * folder 图标尺寸由 `.access-row-icon` 自带, notebook 由 `--icon svg` 自带。) */
 
@@ -2150,19 +2150,20 @@
   cursor: pointer;
 }
 
-/* workspace 三角蒙块 ── 贴 avatar 左上角的直角三角形 (直角在左上), 用
- * var(--primary) 实色填充, 作为 "主空间" 的角标。 9×9 既能一眼识别又不
- * 喧宾夺主; avatar 的 overflow:hidden + 6px 圆角会把三角的左上顶点裁成
- * 与 avatar 一致的圆角, 视觉上是 "角上贴了一块"。 pointer-events:none
- * 让蒙块不挡 avatar 上的点击。 */
+/* workspace 侧边标记 ── 贴 avatar 左边缘的竖长条, 用 var(--primary) 实色
+ * 填充, 作为 "主空间" 的标记。 3px 宽 × 12px 高, 上下居中 (top:50% +
+ * translateY(-50%)); 仅右侧上下圆角 (border-radius:0 9999px 9999px 0, 受
+ * 3px 宽限制实际半径 1.5px 呈右半圆), 左侧贴 avatar 边缘保持直角, 既能
+ * 一眼识别又不喧宾夺主。 pointer-events:none 让标记不挡 avatar 上的点击。 */
 .agent-thread-card__access-workspace-mark {
   position: absolute;
-  top: 0;
+  top: 50%;
   left: 0;
-  width: 9px;
-  height: 9px;
+  width: 3px;
+  height: 12px;
+  transform: translateY(-50%);
   background: var(--primary);
-  clip-path: polygon(0 0, 100% 0, 0 100%);
+  border-radius: 0 9999px 9999px 0;
   pointer-events: none;
 }
 

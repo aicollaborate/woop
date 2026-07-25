@@ -146,6 +146,13 @@ impl ThreadManager {
             ",
         )?;
 
+        // `CREATE TABLE IF NOT EXISTS` does not add columns to an existing
+        // table. Builds prior to session metadata created
+        // `thread_external_sessions` without this column, while
+        // `migrate_external_thread_identity` reads it unconditionally. Add it
+        // before that migration so startup does not fall back to the in-memory
+        // thread store.
+        Self::ensure_external_session_metadata_column(conn)?;
         Self::migrate_agent_external_events_table(conn)?;
         conn.execute_batch(
             "
@@ -213,6 +220,25 @@ impl ThreadManager {
         Self::migrate_external_thread_identity(conn)?;
         conn.pragma_update(None, "user_version", THREAD_DB_SCHEMA_VERSION)?;
 
+        Ok(())
+    }
+
+    fn ensure_external_session_metadata_column(conn: &Connection) -> Result<(), ThreadError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(thread_external_sessions)")?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        if !columns
+            .iter()
+            .any(|column| column == "session_metadata_json")
+        {
+            conn.execute(
+                "ALTER TABLE thread_external_sessions ADD COLUMN session_metadata_json TEXT",
+                [],
+            )?;
+        }
         Ok(())
     }
 

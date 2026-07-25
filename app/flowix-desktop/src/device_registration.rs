@@ -504,7 +504,7 @@ mod tests {
     fn nested_user_info_roundtrips_via_json() {
         let b = fresh_boot();
         let json = serde_json::to_string(&b).unwrap();
-        // 椤跺眰蹇呴』鏄?schemaVersion + userInfo 宓屽, 瀛楁涓嶅啀 flat銆?        assert!(json.contains("\"schemaVersion\""));
+        assert!(json.contains("\"schemaVersion\""));
         assert!(json.contains("\"userInfo\""));
         assert!(json.contains("\"deviceId\""));
         // 纭 userInfo 鏄祵濂楀璞? 瀛楁涓嶅湪椤跺眰銆?

@@ -424,7 +424,8 @@ pub fn reorder_notebooks(
     let notebooks: Vec<Notebook> = updated.into_iter().map(notebook_from_config).collect();
 
     // 璺ㄧ獥鍙ｅ悓姝? 璁╁叾瀹冪獥鍙?reload銆侼OTEBOOKS_CHANGED_EVENT 璧?dispatcher::emit_to
-    // (璺?AGENT_ACCESS_CHANGED_EVENT / tag-system-changed 鍚屾)銆傛湰绐楀彛鍓嶇 store 涔?    // 閫氳繃 IPC 杩斿洖鍊兼洿鏂? 杩欓噷鍙彂浜嬩欢缁欏叾瀹冪獥鍙ｅ嵆鍙€?    dispatcher::emit_to(&app, NOTEBOOKS_CHANGED_EVENT, ());
+    // Notify other windows; the caller updates its own store from the IPC result.
+    dispatcher::emit_to(&app, NOTEBOOKS_CHANGED_EVENT, ());
     Ok(notebooks)
 }
 

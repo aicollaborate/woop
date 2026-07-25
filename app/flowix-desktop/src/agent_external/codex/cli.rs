@@ -961,7 +961,8 @@ mod tests {
 
         let found = result.expect("expected to find fake codex in PATH");
         // `which_codex` 鐩存帴鎷?`dir.join("codex")` 杩斿洖锛屼笉璧扮鍙烽摼鎺ヨВ鏋愶紱
-        // 鐩存帴姣旇矾寰勫嵆鍙紝閬垮紑 macOS 涓?`/var` 鈫?`/private/var` 璺ㄩ摼鎺?canonicalize 鎶介銆?        assert_eq!(found, dir.join("codex"));
+        // Compare paths directly to avoid macOS /var -> /private/var canonicalization.
+        assert_eq!(found, dir.join("codex"));
     }
 
     #[test]

@@ -164,10 +164,10 @@ impl OpenAICompatibleProvider {
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(std::time::Duration::from_secs(120))
             // L1-a: 鍏虫帀 hyper 閫忔槑瑙ｅ帇 鈥?SSE 娴佺殑 chunked body 涓嶅簲琚?            //        gzip/brotli 涓棿灞傛敼鍐? 鍚﹀垯 zstd 澶磋В鏋愬け璐ヤ細鍐掓场涓?            //        Kind::Decode, 鏍瑰洜鍏跺疄鏄?缃戝叧娉ㄥ叆閫忔槑瑙ｅ帇"銆傚悓鏃?            //        閰?Accept-Encoding: identity 鏄惧紡澹版槑"涓嶅帇缂?,
-            //        涓?no_gzip 褰㈡垚鍙屽悜淇濋櫓銆?            .no_gzip()
+            .no_gzip()
             // L1-b: 30s 蹇冭烦 鈥?涓棿缃戠粶璁惧 NAT / 闃茬伀澧?60-90s 闈欓粯鍒囨柇
-            //        闀胯繛鎺ユ槸 LLM 娴佸紡鏂祦鐨勫父瑙佹牴鍥犮€?            .tcp_keepalive(std::time::Duration::from_secs(30))
-            // L1-c: 杩炴帴姹犵┖闂?90s 鍥炴敹 鈥?閬垮厤澶嶇敤"鐪嬭捣鏉ユ椿鐫€浣嗗疄闄?            //        宸茶缃戝叧 reset"鐨勮繛鎺ャ€?            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .expect("Failed to build reqwest Client");
         Self {
@@ -659,7 +659,7 @@ impl OpenAICompatibleProvider {
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 // L1-d: 鏄惧紡鎷掔粷鍘嬬缉 鈥?涓?builder.no_gzip() 鍙屽悜淇濋櫓,
-                //        SSE 娴佸紡鍝嶅簲缁忛€忔槑瑙ｅ帇鍚庡鏄撹璇垽涓?Decode 閿欒銆?                .header("Accept-Encoding", "identity")
+                .header("Accept-Encoding", "identity")
                 .timeout(timeout)
                 .body(body.clone());
 

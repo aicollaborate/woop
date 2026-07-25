@@ -318,7 +318,8 @@ pub async fn thread_delete(
     // (HashMap<thread_id, HashMap<path, full_file_content>>, 鏁存湰绗旇鏈ぇ灏?
     // 涓庡崱姝绘娴嬭鏁? 鍚﹀垯浼氭棤闄愭硠闇层€備袱寮犺〃鐙珛 HashMap.remove, 鎬绘槸鎴愬姛銆?    //
     // `agent_manager` 鏄?`Arc<AgentManager>`, `cleanup_thread` 鏄?`&self` 鏂规硶,
-    // 鐩存帴璋冪敤鍗冲彲, 涓嶅啀闇€瑕?`.write().await` 鍖呰銆?    state.agent_manager.cleanup_thread(&thread_id).await;
+    // `agent_manager` is an `Arc<AgentManager>` and cleanup takes `&self`.
+    state.agent_manager.cleanup_thread(&thread_id).await;
     let manager = state.thread_manager.read().await;
     manager
         .delete_thread_with_agent_conversations(&thread_id)

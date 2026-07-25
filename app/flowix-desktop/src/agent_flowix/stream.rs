@@ -531,12 +531,10 @@ impl AgentManager {
 
         self.persist_user_message(thread_id, &message).await?;
         // 鍏滃簳娓呯┖璇?thread 鐨勫崱姝绘娴嬭鏁般€侺LM 缁欐渶缁堝洖绛旂殑姝ｅ父璺緞涔熶細娓?
-        // 杩欓噷鍙厹寮傚父閫€鍑?(stuck / 100 cycle 涓婇檺 / stream error) 鍚庣敤鎴烽噸鍙?        // 鍚屼竴 thread 鐨勫満鏅? 閬垮厤涓婃鐨勮鏁版薄鏌撴柊涓€杞€?        self.clear_tool_call_attempts(thread_id).await;
+        // A user retry starts a fresh stuck-tool detection window.
+        self.clear_tool_call_attempts(thread_id).await;
         // 鐢ㄦ埛娑堟伅宸茶惤鐩? 涓嬮潰鐨?ReAct 寰幆绗竴杞?reload 浼氳鍒般€?        // load_thread_llm_messages 鐜板湪鐩存帴杩斿洖 rllm 鐨?ChatMessage 搴忓垪, 鍖呭惈
         // tool_use / tool_result銆傛瘡杞?cycle 椤堕儴鍐?reload 涓€娆℃嬁鍒版渶鏂拌惤鐩樼姸鎬併€?
-        #[allow(unused_assignments)]
-        let mut llm_messages: Vec<OpenAICompatibleChatMessage> = Vec::new();
-
         // React loop with streaming
         let max_cycles = 100;
         let mut full_response = String::new();
@@ -574,7 +572,12 @@ impl AgentManager {
 
             // 姣忚疆浠庣洏涓?reload, 鎷垮埌鏈疆 (鍚笂杞? 鏂拌惤鐩樼殑 assistant(tool_calls) +
             // tool(result) 琛? 浣滀负涓嬭疆 LLM 璋冪敤鐨勭湡瀹炰笂涓嬫枃銆傝繖鏍?disk 鏄敮涓€鐪熸簮,
-            // 涓嶉渶瑕佸啀鍦ㄥ惊鐜噷鎵嬪姩 push ToolUse/ToolResult 鍒?llm_messages銆?            llm_messages = self.load_thread_llm_messages(thread_id).await?;
+            // The persisted thread is the source of truth for user,
+            // assistant tool-call, and tool-result messages.
+            // Keep the declaration at the point of reload. If this statement
+            // is accidentally swallowed by a comment again, later uses fail
+            // to compile instead of silently sending a system-only request.
+            let mut llm_messages = self.load_thread_llm_messages(thread_id).await?;
             if let Some(instruction) = pending_recovery_instruction.take() {
                 llm_messages.push(OpenAICompatibleChatMessage {
                     role: ChatRole::User,
@@ -1121,7 +1124,8 @@ impl AgentManager {
             // Continue only when this cycle actually executed a tool. A cycle without
             // tool calls is the completion signal for the current ReAct task.
             if !hit_tool_call {
-                // LLM 缁欏嚭鏈€缁堝洖绛? 瑙嗕负瀹屾垚涓€娆″畬鏁翠换鍔? 娓呯┖鍗℃妫€娴嬭鏁般€?                self.clear_tool_call_attempts(thread_id).await;
+                // A final answer completes the task and clears stuck-tool state.
+                self.clear_tool_call_attempts(thread_id).await;
                 self.flush_reasoning_message(thread_id, &reasoning_buffer)
                     .await?;
                 if let Some(mut checkpoint) = assistant_checkpoint.take() {

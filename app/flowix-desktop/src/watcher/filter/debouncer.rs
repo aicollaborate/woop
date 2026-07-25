@@ -17,7 +17,8 @@ impl Filter for Debouncer {
         let Ok(mut map) = ctx.last_emit.lock() else {
             return FilterDecision::Pass;
         };
-        // 1.5s 婊氬姩绐楀彛 (DEBOUNCE * 10) 淇濈暀, 閬垮厤闃叉姈琛ㄩ暱鏈熷闀裤€?        map.retain(|_, t| t.elapsed() < DEBOUNCE.saturating_mul(10));
+        // Bound the debounce table to a rolling window.
+        map.retain(|_, t| t.elapsed() < DEBOUNCE.saturating_mul(10));
         if let Some(last) = map.get(&key) {
             if last.elapsed() < DEBOUNCE {
                 return FilterDecision::Drop {
