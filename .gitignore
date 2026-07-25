@@ -41,3 +41,12 @@ coverage/
 # Local artifacts
 test.json
 app/flowix-desktop/tauri*.production.local.json
+
+# Apple Developer ID signing (scripts live in scripts/apple-signing/,
+# but the actual keys/certs must never be committed)
+*.p12
+*.csr
+*.cer
+flowix_devid.key
+.app-store-connect/
+developerID_application.*

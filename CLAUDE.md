@@ -59,6 +59,197 @@ codesign --force --deep --sign - \
 
 `--sign -` 是 ad-hoc 签名，只适合本机开发 / 本地试装，不能替代 Developer ID 签名与 notarization。先签 `Contents/MacOS/flowix-cli`，再签外层 `.app`；若实际产物路径不同，以 `target/release/bundle/macos/*.app` 为准。
 
+## macOS 发布流水线（Developer ID 直分发 + Notarization）
+
+production 发版走 Apple Developer ID 直分发（不走 Mac App Store），完整脚本在 `scripts/apple-signing/`：
+
+```
+scripts/apple-signing/
+├── gen-csr.sh            # 生成 CSR + private key → ~/.flowix-signing/
+├── make-p12.sh           # .cer + .key → 可导入 Keychain 的 .p12（legacy 路径）
+├── sign-and-notarize.sh  # 完整发版：tauri build → resign → notary → staple
+└── README.md             # 流程图 + 5 步走 + 隐私边界
+```
+
+### 一次性配置
+
+#### 1. Apple Developer Account
+- 账号邮箱（注册时绑定的，**不能改**）：Apple ID 主邮箱
+- Membership Details → **Legal Entity Name**（精确复制粘贴）
+- notary 凭据的源邮箱必须跟 Apple Developer Account 邮箱一致
+
+#### 2. 生成本地私钥 + CSR
+```bash
+bash scripts/apple-signing/gen-csr.sh \
+  "<Apple ID 邮箱>" \
+  "<Common Name，ASCII>" \
+  "<Legal Entity Name 精确>" \
+  "CN"
+```
+输出：
+- `~/.flowix-signing/devid.key`（private key，**永不丢失**）
+- `~/.flowix-signing/devid.csr`（后续可重用来 renewal）
+
+#### 3. Apple Developer Portal 创建 Developer ID Application 证书
+- 登 <https://developer.apple.com/account/resources/certificates/list>
+- `+` → **Developer ID Application**（**不是** Apple Development / Apple Distribution / Developer ID Installer）→ 上传 `devid.csr`
+- 下载 `developerID_application.cer`（Safari 可能保存为 `development.cer`，**以 CN 字段的 `Developer ID Application:` 前缀为准**判断）
+- 把 .cer 放进 `~/.flowix-signing/`
+
+#### 4. 合 .p12 + 导入 Keychain
+
+```bash
+# 合包（绕过 make-p12.sh 交互式 prompt，一次性 inline）
+openssl x509 -in ~/.flowix-signing/development.cer -inform DER -out /tmp/devid.pem
+PASS="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
+printf '%s' "$PASS" > ~/.flowix-signing/.p12pass
+chmod 600 ~/.flowix-signing/.p12pass
+
+openssl pkcs12 -export \
+  -inkey ~/.flowix-signing/devid.key \
+  -in /tmp/devid.pem \
+  -out ~/.flowix-signing/devid.p12 \
+  -name "$(openssl x509 -in /tmp/devid.pem -noout -subject | sed 's/^subject=//')" \
+  -passout "file:$HOME/.flowix-signing/.p12pass"
+chmod 600 ~/.flowix-signing/devid.p12
+rm -f /tmp/devid.pem
+
+# 导入 login keychain（加 -T 让 codesign 不再要求密码）
+PASS="$(cat ~/.flowix-signing/.p12pass)"
+security import "$HOME/.flowix-signing/devid.p12" \
+  -k "$HOME/Library/Keychains/login.keychain-db" \
+  -P "$PASS" \
+  -T /usr/bin/codesign \
+  -T /usr/bin/security \
+  -T /usr/bin/codesign_allocate \
+  -T /usr/bin/productbuild \
+  -A
+```
+
+验证：
+```bash
+security find-identity -v -p codesigning
+# 形如：
+#   1) A3D249298A0E... "Developer ID Application: <Name> (<TEAMID>)"
+```
+
+#### 5. notarytool 凭据存到 Keychain（避免每次粘 App-Specific Password）
+```bash
+HISTFILE=/dev/null xcrun notarytool store-credentials "flowix-notarize" \
+  --apple-id "<Apple ID 邮箱>" \
+  --team-id  "<10 位 Team ID>" \
+  --password "<App-Specific Password 16 位>"
+```
+
+> ⚠️ `store-credentials` 的 profile 名是**位置参数**，不是 `--keychain-profile`（后者是 `submit` 的 flag）。
+
+`App-Specific Password` 在 <https://appleid.apple.com> → Sign-In and Security → App-Specific Passwords → **+**（标签填 `flowix-notarize`）生成，**16 位**仅生成时显示一次。
+
+### 每次发版（一条命令打完）
+
+```bash
+cd /Users/rop/Desktop/vibe/flowix-main
+
+PATH="$HOME/.cargo/bin:$PATH" \
+APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" \
+APPLE_TEAM_ID="<TEAMID 10 位>" \
+APPLE_ID="<Apple ID 邮箱>" \
+APPLE_KEYCHAIN_PROFILE="flowix-notarize" \
+bash scripts/apple-signing/sign-and-notarize.sh
+```
+
+`sign-and-notarize.sh` 内部步骤：
+
+1. `npm run tauri:build:production`（生成 `~/.build/cargo-target/release/bundle/{macos,dmg}/`）
+2. 用 Developer ID 重新签内嵌 `flowix-cli` sidecar
+3. `xcrun notarytool submit --keychain-profile flowix-notarize --wait`
+4. `xcrun stapler staple` 钉 ticket
+5. 打印 SHA-256 + 最终 DMG 路径
+
+> ⚠️ **不要** 用 `npm run tauri:build`（默认无签名）、`npm run tauri:build:mac`/`win`（platform 特定全路径）。
+
+### 4 个 env var 各自去哪
+
+| env var | 给哪步用 |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | `scripts/prepare-tauri-production-config.mjs` 写进 `tauri.conf.macos.production.local.json` |
+| `APPLE_TEAM_ID` | 同上 |
+| `APPLE_ID` | notarytool 备用（仅 keychain-profile 模式不需要） |
+| `APPLE_KEYCHAIN_PROFILE` | notarytool 走 keychain auth（推荐）；可替换为 `APPLE_APP_SPECIFIC_PASSWORD` fallback |
+
+### 关键路径与发现
+
+| 知识点 | 详细 |
+|---|---|
+| **CARGO_TARGET_DIR** | `scripts/build-cli.sh` 把它设到 `$REPO_ROOT/.build/cargo-target`，**不是** `app/flowix-desktop/target/release`。`sign-and-notarize.sh` 内部已经按这个路径找 |
+| **Tauri 自带 notarization 跳过** | Tauri 读 `APPLE_PASSWORD` env var 才走内部 notarize。我们不设，Tauri warn 但不拒；手动 `notarytool submit` 在 `sign-and-notarize.sh` 里完成 |
+| **codesign private key 永远不存 Keychain 之外** | `~/.flowix-signing/devid.key` 是唯一副本；`.gitignore` 已把 `*.p12` / `*.key` / `*.csr` / `developerID_application.*` 加进去 |
+| **已发布 DMG 的签名 cert 寿命** | 6 个月 Developer ID Application cert（Apple 写死，不能 1 年） |
+
+### 半年后续 cert（renewal）
+
+Developer ID Application cert **有效期 6 个月，Apple 写死，不支持 1 年**。到期前 ~2 周 revoke 旧 cert，用同一个 `.key` 重出一份 `.csr` 重新颁发：
+
+```bash
+# 1. 用现成私钥重出 CSR（也可换新 key，Apple 都接受）
+openssl req -new -key ~/.flowix-signing/devid.key \
+  -out ~/.flowix-signing/devid-v2.csr \
+  -subj "/emailAddress=<Apple ID 邮箱>/CN=<Common Name>/O=<Legal Entity>/C=CN"
+
+# 2. Apple Developer Portal: Certificates → 勾旧 cert → Revoke → + → Developer ID Application → Upload devid-v2.csr → 下载新 .cer
+
+# 3. 重复上文「一次性配置 #4」即可（make-p12 + import keychain）
+```
+
+新 cert 的 SHA-1 跟旧的不同，但 CN 和 Team ID 不变，所以 `APPLE_SIGNING_IDENTITY` 字符串**不变**（codesign 内部按 SHA-1 找）。
+
+### 故障排除
+
+#### `xcrun notarytool store-credentials`: Unknown option '--keychain-profile'
+profile 名是**位置参数**：
+```bash
+xcrun notarytool store-credentials "flowix-notarize" --apple-id ... --team-id ... --password ...
+```
+（submit/log/info 才是 `-p, --keychain-profile` flag。）
+
+#### Keychain Access 报「The specified item could not be found in the keychain」/「在钥匙串中找不到指定的项」
+不要双击 `.cer` 单独导入。改成 `.cer + .key → .p12 → security import` 整套。具体走本文档「一次性配置 #4」。`.p12` PKCS#12 把证书 + 私钥作为整体入 Keychain，绕开单 .cer 跟 private key 不在同一个 keychain 引起的查找失败。
+
+#### Tauri build 时跳过 notarization（看到 `Warn skipping app notarization` 日志）
+Tauri 读 `APPLE_PASSWORD`，我们不设。这是预期行为；真正的 notarize 在 `sign-and-notarize.sh` 里跑 `notarytool submit`。
+
+#### Notarytool submission 卡 In Progress（超 60 分钟超 Apple SLA）
+- 正常情况下 1-5 分钟 verdict
+- 同一 hash 多次提交可能在 Apple 后端 stuck
+- **不要尝试 cancel** —— Apple 没给 client-side cancel API
+- 处理路径：
+  1. 等 Apple SRE 自动清（4-24 小时常见）
+  2. 重新 `notarytool submit`（不同 submission ID，可能 front-of-queue）
+  3. 切到 **App Store Connect API key auth**（`--key /Users/<user>/.appstoreconnect/private_keys/AuthKey_XXXXXX.p8 --key-id XXXXXX --issuer UUID`），走不同 auth 后端
+  4. **fallback**：发布**已签未 notarize** 的 DMG，让用户跑 `xattr -d com.apple.quarantine /Applications/Flowix.app` 手工旁路 Gatekeeper（公开分发不能这么做，内部/技术用户可以）
+
+#### `entitlements.plist` 那 3 条 JIT 相关 entitlement 在 notarization 被 Apple 审到
+答复模板（Apple 公认可接受）：
+> The application uses JIT-compiled and runtime-generated executable memory for the embedded WebKit-based editor surface (Tauri WebView) and a Rust-native LLM runtime. `allow-jit` and `allow-unsigned-executable-memory` are required for runtime code generation in these components. `disable-library-validation` is required to load third-party Rust dynamic libraries (`rllm` and dependencies) that are not signed by Apple. The main binary remains properly signed with a valid Apple Developer ID Application certificate.
+
+#### `xcrun altool` 在新 macOS 不存在
+从 macOS Sequoia 起 `altool` 被移除，**notarytool 是唯一可用 API 通道**。如果看到 `unable to find utility "altool"` 就是这条。
+
+#### `PATH` 找不到 `cargo`
+每次发版 bash 调用前手动 `PATH="$HOME/.cargo/bin:$PATH"`（notarytool 也不在 `$PATH` 默认内会找不到）。或在 `~/.zshrc` 里 `export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` 永久加。
+
+### 永远不会过期但**永久保密**
+
+下列任何一项**泄露 = 撤销旧 cert + 重建整套**：
+- `~/.flowix-signing/devid.key`（private key）
+- `~/.flowix-signing/devid.p12`（cert + key 合包）
+- `~/.flowix-signing/.p12pass`（chmod 600）
+- macOS Keychain 里 `flowix-notarize` profile
+- App-Specific Password 16 位 token
+- `APPLE_APP_SPECIFIC_PASSWORD` env var 内容
+
+`scripts/apple-signing/README.md` 里有完整的「never paste into chat」清单。
+
 ## Rules
 
 - 在非常确信情况下再进行代码修改
@@ -228,7 +419,16 @@ flowix-main/
 │
 ├── scripts/
 │   ├── build-cli.sh                      # 编 CLI sidecar
-│   └── gen-icon.mjs                      # 生成图标
+│   ├── gen-icon.mjs                      # 生成图标
+│   ├── prepare-tauri-production-config.mjs  # env var → tauri.macos.production.local.json
+│   ├── build-tauri-production.mjs       # cli:build + prepare + tauri build 的编排
+│   ├── sign-cli.sh                       # ad-hoc 重新签 flowix-cli sidecar（参考用，production 用 sign-and-notarize.sh）
+│   ├── release.sh / upload-release.sh / rename-dmg.sh  # CI / 发版辅助
+│   └── apple-signing/                    # Developer ID + notarization 流水线
+│       ├── gen-csr.sh
+│       ├── make-p12.sh
+│       ├── sign-and-notarize.sh
+│       └── README.md
 │
 ├── vite.config.ts                        # Vite 配置
 ├── tailwind.config.js                    # Tailwind
