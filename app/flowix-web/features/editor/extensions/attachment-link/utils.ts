@@ -1,5 +1,5 @@
 // ─── Storage Key Utilities ─────────────────────────────────────────────────────
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@platform/tauri/core';
 
 export function decodeStorageKey(src: string): string | null {
     if (!src.startsWith('asset://') && !src.startsWith('http://asset.localhost/') && !src.startsWith('https://asset.localhost/')) return null;

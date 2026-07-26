@@ -1,5 +1,5 @@
 import Link from '@tiptap/extension-link';
-import { Extension, markInputRule, markPasteRule, type InputRuleMatch, type PasteRuleMatch } from '@tiptap/core';
+import { Extension, markInputRule, markPasteRule, type InputRuleMatch, type MarkdownParseHelpers, type MarkdownToken, type PasteRuleMatch } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { isVideoUrl } from '@features/editor/extensions/attachment-link/utils';
@@ -116,7 +116,9 @@ export function findMarkdownLinkPasteMatches(text: string): PasteRuleMatch[] {
 export const MarkdownLink = Link.extend({
   priority: 50,
 
-  parseMarkdown(token: any, helpers: any) {
+  // @ts-expect-error Tiptap's runtime explicitly accepts null to let the next
+  // registered token handler try, but MarkdownParseResult omits null.
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     if (!isPlainMarkdownLinkUrl(token.href)) {
       return null;
     }

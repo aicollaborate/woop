@@ -172,12 +172,11 @@ export function buildAgentRuntimeConfig({
   // folder -> 当前笔记本。 主空间本身也留在 workspacePaths 里, 由后端
   // (claude/command.rs::normalized_additional_workspace_dirs) 去重 cwd,
   // 不会重复出现在 --add-dir。
-  // workspaceSnapshot.cwd is retired: the backend (frozenCwd in
-  // agent_conversation_instances.runtime_config) is the cwd authority and
-  // freezes it on the first turn. The frontend now sends the live primary
-  // workspace as cwd; the backend reuses the frozen one on subsequent turns.
-  // workspaceSnapshot.workspacePaths is still honored so --add-dir roots stay
-  // frozen across the conversation.
+  // Before the first run, workspaceSnapshot.cwd is the already-resolved
+  // notebook workspace candidate (资料主空间 -> 资料首 folder -> 笔记本路径).
+  // Send that exact cwd to the backend; once the run starts, the backend's
+  // dedicated frozen_cwd column becomes the sole authority for later turns.
+  // workspaceSnapshot.workspacePaths follows the same conversation snapshot.
   const frozenPaths = (workspaceSnapshot?.workspacePaths ?? [])
     .map(normalizeWorkspacePath)
     .filter(Boolean);
@@ -187,7 +186,9 @@ export function buildAgentRuntimeConfig({
   const notebookPathNorm = normalizeWorkspacePath(notebookPath) || undefined;
 
   const resolvedPrimary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
-  const primaryWorkspace = resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path;
+  const livePrimary = resolvedPrimary.kind === "empty" ? undefined : resolvedPrimary.path;
+  const snapshotPrimary = normalizeWorkspacePath(workspaceSnapshot?.cwd) || undefined;
+  const primaryWorkspace = snapshotPrimary ?? livePrimary;
   const workspacePaths = workspaceSnapshot
     ? Array.from(
         new Set([primaryWorkspace, ...frozenPaths].filter((p): p is string => Boolean(p))),

@@ -6,7 +6,7 @@ import { Plus, Trash } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@shared/ui/tooltip';
 
@@ -151,8 +151,9 @@ export function NotebookAccessFilesList({
     [notebookId, effectiveWorkspace, folderPaths, defaultFiles, setDefaultFiles, t],
   );
 
+  // 资料组 ── 外侧容器, pt-1 提供组上方留白 (与标签组对称, 用 padding 而非 margin); pb-4 是滚动列表末尾底部留白。
   return (
-    <div className="pt-2 pb-4">
+    <div className="pt-1 pb-4">
       <div className="agent-thread-card__access-section-label">
         {t('memo.navigation.files')}
       </div>
@@ -177,7 +178,7 @@ export function NotebookAccessFilesList({
             <div
               className={cn(
                 'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
-                item.missing ? 'opacity-70' : 'hover:bg-[var(--muted)]',
+                item.missing && 'opacity-70',
               )}
             >
               <Tooltip content={iconTitle} side="right">

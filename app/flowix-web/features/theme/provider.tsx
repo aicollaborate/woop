@@ -2,8 +2,7 @@
 
 import { useEffect } from 'react';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
-import { applyTheme } from '@features/theme/apply';
-import { sanitizeTheme } from '@features/theme/sanitize';
+import { applyTheme, sanitizeTheme } from '@/lib/theme';
 
 /**
  * 全局主题应用层。

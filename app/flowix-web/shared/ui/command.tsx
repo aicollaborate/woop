@@ -5,7 +5,7 @@ import { Command as CommandPrimitive, useCommandState } from 'cmdk';
 import { Search, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Command palette (shadcn UI 风格, 基于 cmdk).

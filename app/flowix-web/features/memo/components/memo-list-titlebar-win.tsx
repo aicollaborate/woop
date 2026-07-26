@@ -8,7 +8,7 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import productLogo from '@/assets/product-logo.svg';
 
 interface MemoListTitlebarWinProps {

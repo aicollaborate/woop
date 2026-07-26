@@ -1,5 +1,5 @@
 import { TOOL_ICON_PATHS } from "@features/agent/message/tool-icon-paths";
-import { translate, type AppLanguage, type I18nKey } from "@features/i18n";
+import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
 import type { AgentTypeKey } from "@/types/agent";
 
 /* ════════════════════════════════════════════════════════════════════════

@@ -3,7 +3,7 @@ import { LoaderCircle } from 'lucide-react';
 import { useSelectedItemScroll } from '@features/editor/extensions/shared/use-selected-item-scroll';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import type { MentionNoteItem } from '@features/editor/extensions/note-mention/note-mention-data';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 export interface NoteMentionDropdownProps {
   items: MentionNoteItem[];

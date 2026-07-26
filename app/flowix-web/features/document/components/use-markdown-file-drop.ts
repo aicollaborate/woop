@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@platform/tauri/window';
 
 const MARKDOWN_EXTENSION_PATTERN = /\.(md|markdown)$/i;
 

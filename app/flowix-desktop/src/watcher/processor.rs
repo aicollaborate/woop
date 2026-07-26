@@ -1,10 +1,10 @@
 //! `MemoEventProcessor` 鈥?鎶?`RawFsEvent` 杞垚 `MemoEvent` 骞?emit銆?//!
-//! watcher manager 涓嶇洿鎺ヨ皟 `MemoFile` 鐨?register / reload / unregister,
-//! 缁熶竴濮旀淳缁欐湰妯″潡銆俻ipeline 璺戣繃涔嬪悗, 鎶?`RawFsEvent` 鍠傜粰
-//! `MemoEventProcessor::process`, 瀹冪湅 event.kind 鍒嗘淳, 璧?register_unnamed /
-//! reload / unregister, 鏈€鍚?emit `MemoEvent` (璧?dispatcher 鎶借薄, 澶?channel
-//! 鍚庣画鍦ㄨ繖閲?extend)銆?//!
-//! `process` 鏄悓姝ョ殑: 鎷垮埌浜嬩欢 鈫?鍚屾鏀?//! `MemoFile` (Arc<RwLock>) 鈫?鍚屾 emit 鈫?杩斿洖銆俷otify 鍥炶皟绾跨▼涓?await銆?
+//! watcher manager 不直接调 `MemoFile` �?register / reload / unregister,
+//! 统一委派给本模块。pipeline 跑过之后, �?`RawFsEvent` 喂给
+//! `MemoEventProcessor::process`, 它看 event.kind 分派, �?register_unnamed /
+//! reload / unregister, 最�?emit `MemoEvent` (�?dispatcher 抽象, �?channel
+//! 后续在这�?extend)�?//!
+//! `process` �?��步的: 拿到事件 �?同�?�?//! `MemoFile` (Arc<RwLock>) �?同�? emit �?返回。notify 回调线程�?await�?
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,18 +21,18 @@ pub struct NotebookWatchContext {
     pub root: PathBuf,
 }
 
-/// 涓氬姟澶勭悊鍣?鈥?鐘舵€佺敱璋冪敤鏂规敞鍏?(memo_file / app)銆?///
-/// 鏁呮剰涓嶅仛鎴?struct 鎸佸瓧娈? 鑰屾槸 stateless: `process` 鎺ユ敹鎵€鏈変緷璧栥€傚師鍥?
-/// manager 鐨?notify 鍥炶皟闂寘宸茬粡鏄?`move |res| { ... }`, 闂寘鎹曡幏
-/// Arc<MemoFile> / AppHandle 寮曠敤, 涓嶉渶瑕?processor 鍐呴儴鍐嶆寔涓€浠姐€?
+/// 业务处理�?—状态由调用方注�?(memo_file / app)�?///
+/// 故意不做�?struct 持字�? 而是 stateless: `process` 接收所有依赖。原�?
+/// manager �?notify 回调�?��已经�?`move |res| { ... }`, �?��捕获
+/// Arc<MemoFile> / AppHandle 引用, 不需�?processor 内部再持一份�?
 pub struct MemoEventProcessor;
 
-/// 绾嚱鏁板垎娴佺粨鏋? dispatcher 鍐冲畾瑕?emit 鍝釜浜嬩欢 + 闄勫甫鐨勫壇浣滅敤鏁版嵁銆?
+/// �?��数分流结�? dispatcher 决定�?emit �?��事件 + 附带的副作用数据�?
 #[derive(Debug)]
 pub(crate) enum DispatchOutcome {
-    /// 璧?Updated 璺緞, 鏃犲壇浣滅敤
+    /// �?Updated �?��, 无副作用
     Updated(MemoEvent),
-    /// 璧?Created 璺緞, 闇€瑕?caller 璋?mark_self_write(new_abs_path) 鎶戝埗
+    /// �?Created �?��, 需�?caller �?mark_self_write(new_abs_path) 抑制
     /// 鍚庣画 notify 浜嬩欢
     Created {
         event: MemoEvent,
@@ -100,27 +100,43 @@ fn emit_created_for_context(
     }
 }
 
-/// Frontmatter-key-first 鍒嗘祦: 缁欎竴涓?Create/Modify 浜嬩欢鐨?abs path,
-/// 鍐冲畾 emit 鍝 MemoEvent銆?///
-/// **纾佺洏 frontmatter 鐨?`key` 瀛楁鏄?id 鐪熸簮**, 鏂囦欢鍚嶆槸娲剧敓灞炴€с€傝纾佺洏 鈫?/// 鎶?key 鈫?鍦?memo index 閲屾寜 id 鍙嶆煡, 鍛戒腑鍗崇敤 key 瀵瑰簲鐨?entry; 涓嶅懡涓?/// 鎵嶉€€鍥?filename 鍏滃簳銆?///
-/// 杩欐牱鍋氱殑鏍稿績鏀剁泭: rename 鍚?fs::rename 鎷嗘垚鐨?From + To 涓ゆ潯浜嬩欢, To 浜嬩欢
-/// 璇诲埌鐨?frontmatter key 璺熸棫 entry 鐨?id 涓€鑷?鈫?鍛戒腑 鈫?璧?`rename_memo_file`
-/// 鏀?entry.filename, id 淇濈暀銆傚畬鍏ㄤ笉闇€瑕?inode_tracker / file_index 杩欎簺 OS 灞?/// 鍏冩暟鎹? 鍦?NTFS / FAT32 / exFAT / 缃戠粶鐩?/ symlink 涓婅涓轰竴鑷淬€?///
-/// 鍒嗘祦瑙勫垯 (鎸?disk key + memo index 鐘舵€?:
-/// - key 鍛戒腑 + filename 涓€鑷? reload (閲嶆淳鐢?preview/tags/todos)
-/// - key 鍛戒腑 + filename 涓嶄竴鑷?+ old file 宸蹭笉瀛樺湪: physical rename, 淇濈暀 id
-/// - key 鍛戒腑 + filename 涓嶄竴鑷?+ old file 浠嶅瓨鍦? pasted duplicate, 鏂板缓 memo 骞跺埛鏂?key
-/// - key 涓嶅湪褰撳墠 memo index: pasted/imported markdown, 鏂板缓 memo 骞跺埛鏂?key
-/// - 鏃?key + filename 鍦?memo index: reload (淇濈暀 id/filename, 鐢ㄦ埛淇濆瓨鏃朵細娉ㄥ叆 key)
-/// - 鏃?key + filename 涓嶅湪: register (鐢熸垚鏂?id, 閫氳繃 merge_frontmatter 娉ㄥ叆)
+/// Frontmatter-key-first 分流: 给一�?Create/Modify 事件�?abs path,
+/// 决定 emit �?? MemoEvent�?///
+/// **磁盘 frontmatter �?`key` 字�?�?id 真源**, 文件名是派生属性。�?磁盘 �?/// �?key �?�?memo index 里按 id 反查, 命中即用 key 对应�?entry; 不命�?/// 才退�?filename 兜底�?///
+/// 这样做的核心收益: rename �?fs::rename 拆成�?From + To 两条事件, To 事件
+/// 读到�?frontmatter key 跟旧 entry �?id 一�?�?命中 �?�?`rename_memo_file`
+/// �?entry.filename, id 保留。完全不需�?inode_tracker / file_index 这些 OS �?/// 元数�? �?NTFS / FAT32 / exFAT / 网络�?/ symlink 上�?为一致�?///
+/// 分流规则 (�?disk key + memo index 状�?:
+/// - key 命中 + filename 一�? reload (重派�?preview/tags/todos)
+/// - key 命中 + filename 不一�?+ old file 已不存在: physical rename, 保留 id
+/// - key 命中 + filename 不一�?+ old file 仍存�? pasted duplicate, 新建 memo 并刷�?key
+/// - key 不在当前 memo index: pasted/imported markdown, 新建 memo 并刷�?key
+/// - �?key + filename �?memo index: reload (保留 id/filename, 用户保存时会注入 key)
+/// - �?key + filename 不在: register (生成�?id, 通过 merge_frontmatter 注入)
 ///
-/// 浠?`process()` 鎶藉嚭鏉ュソ鍋氬崟娴?(process 鏈韩渚濊禆 AppHandle, 涓嶆槗娴?;
-/// 鍒嗘祦瑙勫垯鍙窡 MemoFile 鐘舵€佹湁鍏? 璺?Tauri 瑙ｈ€︺€?
+/// �?`process()` 抽出来好做单�?(process �?��依赖 AppHandle, 不易�?;
+/// 分流规则�?�� MemoFile 状态有�? �?Tauri 解耦�?
+/// 测试入口: 不需要自写抑制的调用方走这条, mark 传 no-op。生产路径 (`process`) 直接
+/// 调 [`dispatch_modify_event_with_mark`], 在每个写盘分支 *之前* mark_self_write ──
+/// 关闭 "stamp 写盘触发的 self-write notify 事件先于 mark 到达" 的 race window (见
+/// manager.rs 模块头注释)。此前 mark 在写盘之后做、靠 process 跑在 notify 共享线程上
+/// 的串行性兜底; process 移到 worker 线程后那层串行性没了, 必须改成写盘前 mark。
+#[cfg(test)]
 pub(crate) fn dispatch_modify_event(
     memo_file: &MemoFile,
     ctx: &NotebookWatchContext,
     path: &Path,
+    event_kind: FsEventKind,
+) -> Result<DispatchOutcome, String> {
+    dispatch_modify_event_with_mark(memo_file, ctx, path, event_kind, |_: &Path| {})
+}
+
+fn dispatch_modify_event_with_mark(
+    memo_file: &MemoFile,
+    ctx: &NotebookWatchContext,
+    path: &Path,
     _event_kind: FsEventKind,
+    mark: impl Fn(&Path),
 ) -> Result<DispatchOutcome, String> {
     let filename = path
         .file_name()
@@ -128,7 +144,7 @@ pub(crate) fn dispatch_modify_event(
         .ok_or_else(|| format!("invalid path: {}", path.display()))?
         .to_string();
 
-    // 璇荤鐩樻娊 frontmatter key 鈹€鈹€ id 鐪熸簮銆傝澶辫触 (鏉冮檺 / 涓存椂娑堝け) 閫€鍥?    // filename-based 鍏滃簳, 琛屼负绛夊悓鏈?refactor 鍓嶃€?
+    // 读�?盘抽 frontmatter key ── id 真源。�?失败 (权限 / 临时消失) 退�?    // filename-based 兜底, 行为等同�?refactor 前�?
     let disk_key = std::fs::read_to_string(path)
         .ok()
         .and_then(|c| extract_frontmatter_key(&c));
@@ -169,22 +185,31 @@ pub(crate) fn dispatch_modify_event(
                 // and already-new index states.
                 let old_path = ctx.root.join(&existing.filename);
                 if is_physical_rename_candidate(&old_path) {
+                    // sync_renamed_memo_from_key 不写 memo 文件 (只读 + 改 in-memory index),
+                    // 无 self-write, 不需要 mark。
                     sync_renamed_memo_from_key(memo_file, ctx, &existing, &id, &old_path, path)
                 } else {
+                    // register_pasted_copy_as_new -> register_existing_file_as_new 会
+                    // atomic_write_bytes 把 key stamp 进文件: 必须先 mark 再写。
+                    mark(path);
                     register_pasted_copy_as_new(memo_file, ctx, path, Some(&id))
                 }
             }
-            None => register_pasted_copy_as_new(memo_file, ctx, path, Some(&id)),
+            None => {
+                mark(path);
+                register_pasted_copy_as_new(memo_file, ctx, path, Some(&id))
+            }
         },
         None => {
-            // Disk 鏃?frontmatter key: 涓嶈兘鐢?id 鍙嶆煡, 閫€鍒?filename-based銆?
+            // Disk �?frontmatter key: 不能�?id 反查, 退�?filename-based�?
             if memo_file
                 .find_memo_by_filename_for_notebook_id(&ctx.notebook_id, &filename)
                 .is_some()
             {
                 reload_existing_memo(memo_file, ctx, &filename)
             } else {
-                // 鏂版枃浠舵棤 key: register_existing_file_for_notebook_id 璧?generate-new-id + stamp 璺緞
+                // 新文件无 key: register_existing_file_for_notebook_id �?generate-new-id + stamp �?��
+                mark(path);
                 let memo =
                     memo_file.register_existing_file_for_notebook_id(&ctx.notebook_id, path)?;
                 Ok(emit_created_for_context(ctx, memo, path.to_path_buf()))
@@ -208,18 +233,18 @@ fn is_physical_rename_candidate(old_path: &Path) -> bool {
     !old_path.exists()
 }
 
-/// path 鏄惁鍦ㄥ綋鍓?notebook 鐨?`attachments/` 鐩綍涓? 杩欏眰鍒ゆ柇鐙珛浜?/// [`crate::watcher::WhitelistConfig`], 鍥犱负 whitelist 鍙 preference.json
+/// path �?��在当�?notebook �?`attachments/` �?���? 这层判断�?���?/// [`crate::watcher::WhitelistConfig`], 因为 whitelist �?? preference.json
 /// 瑕嗙洊, 鐢ㄦ埛鐨勬棫閰嶇疆鍙兘婕忛厤 `attachments`. processor 鍦ㄥ叆鍙ｈ蛋杩欓亾闃茬嚎,
-/// 鎶?attachments/ 涓嬬殑浠讳綍 .md 鏂囦欢 (鏃犺鏄笉鏄澶嶅埗杩涙潵鐨勫彟涓€鍙扮瑪璁版湰
-/// 鐨勭瑪璁? 閮界洿鎺ユ嫆鎺? 閬垮厤"骞界伒绗旇"姹℃煋 memo 鍒楄〃.
+/// �?attachments/ 下的任何 .md 文件 (无�?�?���??复制进来的另一台笔记本
+/// 的笔�? 都直接拒�? 避免"幽灵笔�?"污染 memo 列表.
 ///
-/// 璧?[`crate::watcher::path::normalize_for_compare`] 鑰屼笉鏄８ `starts_with`:
-/// - canonicalize 浠讳竴杈瑰け璐ラ兘閫€鍒?鐖剁洰褰?canonicalize + join"鍥為€€璺緞,
-///   鏂囦欢鍒氬啓鐩樹絾 fs 鍏冩暟鎹湭灏辩华鏃朵粛鑳界粰鍑烘纭瓟妗?/// - 鍚屼竴浠?normalize 璺?watcher 鎶戝埗琛?(`SelfWriteSuppressor` /
-///   `Debouncer`) 鍙ｅ緞涓€鑷? 閬垮厤鍗婄姸鎬佽矾寰?(canonical vs 闈?canonical)
+/// �?[`crate::watcher::path::normalize_for_compare`] 而不�?�� `starts_with`:
+/// - canonicalize 任一边失败都退�?父目�?canonicalize + join"回退�?��,
+///   文件刚写盘但 fs 元数�?��就绪时仍能给出�?�?���?/// - 同一�?normalize �?watcher 抑制�?(`SelfWriteSuppressor` /
+///   `Debouncer`) 口径一�? 避免半状态路�?(canonical vs �?canonical)
 ///   缁曡繃杩欓亾闃茬嚎
-/// - 涓嶅啀鐢?component-level 鍖归厤 (`parent.file_name == "attachments"`),
-///   閭ｇ鍖归厤浼氳鏉€ `bar/attachments/foo.md` 杩欑"宓屽鍚屽悕瀛愮洰褰?璺緞.
+/// - 不再�?component-level 匹配 (`parent.file_name == "attachments"`),
+///   那�?匹配会�?杀 `bar/attachments/foo.md` 这�?"嵌�?同名子目�?�?��.
 fn is_under_attachments_dir(ctx: &NotebookWatchContext, path: &Path) -> bool {
     let attachments_dir =
         crate::watcher::path::normalize_for_compare(&ctx.root.join("attachments"));
@@ -276,7 +301,7 @@ fn register_pasted_copy_as_new(
     Ok(emit_created_for_context(ctx, memo, path.to_path_buf()))
 }
 
-/// 鍚?[`emit_updated`] 浣嗚矾寰勭敤浜嬩欢鍘熷 path (rename 鍦烘櫙涓嬫槸鏂颁綅缃殑缁濆璺緞)銆?
+/// �?[`emit_updated`] 但路径用事件原�? path (rename 场景下是新位�?��绝�?�?��)�?
 fn emit_updated_at(
     ctx: &NotebookWatchContext,
     before: Option<&Memo>,
@@ -336,10 +361,10 @@ fn try_remove_from_search_index(app: &AppHandle, id: &str) {
 }
 
 impl MemoEventProcessor {
-    /// 鍏ュ彛 鈥?pipeline 璺戣繃涔嬪悗璋冪敤, 浜嬩欢宸查€氳繃 filter銆?    ///
+    /// 入口 —pipeline 跑过之后调用, 事件已通过 filter�?    ///
     /// 琛屼负:
-    /// - Create/Modify: 鏂囦欢瀛樺湪 鈫?key-first 鍒嗘祦; 涓嶅瓨鍦?鈫?unregister
-    /// - Remove:        unregister (鎸?filename 鏌?memo index, 鍛戒腑鍒? 娌″懡涓?no-op)
+    /// - Create/Modify: 文件存在 �?key-first 分流; 不存�?�?unregister
+    /// - Remove:        unregister (�?filename �?memo index, 命中�? 没命�?no-op)
     /// - Other:         蹇界暐
     pub fn process(
         event: &RawFsEvent,
@@ -355,12 +380,12 @@ impl MemoEventProcessor {
             return;
         }
 
-        // 闃插尽鎬ф嫤鎴? 闄勪欢鐩綍涓嬬殑 .md 鏂囦欢涓嶆槸 memo, 涓€寰嬩笉澶勭悊.
-        // 鍚庣 `save_attachment` / `save_attachment_content` 浼氭妸浠绘剰琚€?        // 涓殑鏂囦欢澶嶅埗鍒?`<notebook>/attachments/`, 鍖呮嫭鐢ㄦ埛閫変簡鍙︿竴涓?        // notebook 鐨勭瑪璁?.md 鈥?杩欑鎯呭喌 attachment 鐩綍閲屼細鍑虹幇涓€浠?        // 涓嶈鍑虹幇鍦?memo 鍒楄〃閲岀殑"骞界伒绗旇".
+        // 防御性拦�? 附件�?��下的 .md 文件不是 memo, 一律不处理.
+        // 后�? `save_attachment` / `save_attachment_content` 会把任意�?�?        // �?��文件复制�?`<notebook>/attachments/`, 包括用户选了另一�?        // notebook 的笔�?.md —这�?情况 attachment �?��里会出现一�?        // 不�?出现�?memo 列表里的"幽灵笔�?".
         //
-        // 杩欓亾闃茬嚎鐙珛浜?whitelist (whitelist 鍙兘琚敤鎴风殑 preference.json
-        // 瑕嗙洊, 鎴栬€?hot-update 鏈熼棿绐楀彛鐭殏涓嶄竴鑷?, 璧?processor 鍏ュ彛
-        // 鎷掓帀, 鏄?create / modify / remove 涓夌 kind 鐨勬渶鍚庝竴閬撻椄銆?
+        // 这道防线�?���?whitelist (whitelist �?���?��户的 preference.json
+        // 覆盖, 或�?hot-update 期间窗口�?��不一�?, �?processor 入口
+        // 拒掉, �?create / modify / remove 三�? kind 的最后一道闸�?
         if is_under_attachments_dir(ctx, &event.path) {
             tracing::debug!(
                 "[MemoWatcher] processor skipped attachments/ path: {}",
@@ -373,15 +398,21 @@ impl MemoEventProcessor {
             FsEventKind::Create | FsEventKind::Modify => {
                 let path = &event.path;
                 if !path.exists() {
-                    // Modify 浜嬩欢浣嗘枃浠舵病浜?鈥?璧?Delete 璺緞
+                    // Modify 事件但文件没�?—�?Delete �?��
                     Self::unregister_and_emit(app, memo_file, ctx, path);
                     return;
                 }
                 wait_for_markdown_copy_to_settle(path);
 
-                // Frontmatter-key-first 鍒嗘祦 鈹€鈹€ 璇︽儏瑙?[`dispatch_modify_event`]銆?
+                // Frontmatter-key-first 分流 ── 详情�?[`dispatch_modify_event`]�?
                 let outcome = match memo_file.read() {
-                    Ok(mf) => dispatch_modify_event(&mf, ctx, path, event.kind),
+                    Ok(mf) => dispatch_modify_event_with_mark(
+                        &mf,
+                        ctx,
+                        path,
+                        event.kind,
+                        |p| crate::watcher::runtime::mark_self_write_for(app, p),
+                    ),
                     Err(_) => return,
                 };
                 match outcome {
@@ -415,15 +446,15 @@ impl MemoEventProcessor {
                 }
             }
             FsEventKind::Remove => {
-                // Remove 浜嬩欢鎸?filename 鍒?鈹€鈹€ 娌℃湁 inode_tracker 涔熸棤鎵€璋?
-                // - GUI 璺緞涓?SelfWriteSuppressor 宸茬粡鍚炰簡 From 浜嬩欢, 璧颁笉鍒拌繖閲?                // - 澶栭儴 rename 鐨?From 浜嬩欢: 杩?unregister_and_emit, 鍚庤窡鐨?To
-                //   浜嬩欢璧?key-first 鍒嗘祦鐨?(c) 鍒嗘敮, 鐢ㄧ鐩?frontmatter key 閲嶅缓
-                //   entry, id 淇濈暀 (浣?createdAt/updatedAt 浼氶噸缃垚 now, 鍥犱负
-                //   浠庣鐩樿涓嶅埌鍘熷鏃堕棿鎴? 杩欐槸 frontmatter-key-first 鍦ㄥ閮?                //   rename 鍦烘櫙涓嬬浉瀵?inode_tracker 鐨勫彇鑸?
+                // Remove 事件�?filename �?── 没有 inode_tracker 也无所�?
+                // - GUI �?���?SelfWriteSuppressor 已经吞了 From 事件, 走不到这�?                // - 外部 rename �?From 事件: �?unregister_and_emit, 后跟�?To
+                //   事件�?key-first 分流�?(c) 分支, 用�?�?frontmatter key 重建
+                //   entry, id 保留 (�?createdAt/updatedAt 会重�?�� now, 因为
+                //   从�?盘�?不到原�?时间�? 这是 frontmatter-key-first 在�?�?                //   rename 场景下相�?inode_tracker 的取�?
                 Self::unregister_and_emit(app, memo_file, ctx, &event.path);
             }
             FsEventKind::Other => {
-                // Access / Other 鈥?蹇界暐
+                // Access / Other —忽略
             }
         }
     }
@@ -434,21 +465,21 @@ impl MemoEventProcessor {
         ctx: &NotebookWatchContext,
         path: &Path,
     ) {
-        // v2: inode 杩樺湪 tracker 閲岀殑璇? 杩欐槸 rename 鐨勬棫浣嶇疆, 璺宠繃 unregister
-        // (璁?Create(new) 璧?rename 閰嶅璺緞)銆?process() 宸茬粡鍏堝仛浜嗕竴娆℃鏌?
-        // 杩欓噷鍐?defense-in-depth 涓€娆°€?
+        // v2: inode 还在 tracker 里的�? 这是 rename 的旧位置, 跳过 unregister
+        // (�?Create(new) �?rename 配�?�?��)�?process() 已经先做了一次�?�?
+        // 这里�?defense-in-depth 一欰�?
         let Ok(mf) = memo_file.read() else {
             return;
         };
         // 鐗╃悊鏂囦欢鍚嶆槸 `<title>.md` (id 璺熸枃浠跺悕瑙ｈ€?, 鏃у疄鐜颁細鎶婄┖ id 鍙戝埌鍓嶇,
-        // 璁?`handleMemoDeleted` 鐨?`memos.filter(m => m.id !== "")` 涓€鏉￠兘
-        // 杩囨护涓嶆帀 -> 骞界伒绗旇銆?        //
-        // 淇硶: **鍦?`unregister_memo_by_path` 涔嬪墠**鎸?filename 鍙嶆煡 memo index
-        // 鎷垮埌鐪熷疄 id銆俙unregister_memo_by_path` 鍐呴儴灏辨槸鐢ㄥ悓涓€ filename 鍖归厤 + 鍒?        // entry, 鎵€浠ヨ繖閲屾煡鍒扮殑 id 璺熷畠鍗冲皢鍒犵殑閭ｆ潯鏄悓涓€鏉? 涓嶅瓨鍦?race -- 閮芥槸
-        // 璧?`current_index_io` 閿佷覆琛屽寲, 鍐呴儴鍙 + 鍐?memo index 涓€娆°€?        //
-        // 鎷夸笉鍒?id 鐨勪袱绉嶆儏褰?
-        // - 璺緞閲屾病鏈夊悎娉曠殑 .md 鏂囦欢鍚?(濡?`..`): 鐩存帴鏀惧純 emit, 鍙嶆
-        //   `unregister_memo_by_path` 涔熶細 return false, memo index 娌″姩銆?        // - filename 涓嶅湪 memo index (瀛ょ珛 .md / 宸茬粡琚垹杩?: 鍚屾牱鏀惧純 emit, 涓嶅嚟绌?        //   generate id, 淇濇寔 id 涓€瀹氭潵鑷?memo index 杩欎釜涓嶅彉閲忋€?
+        // �?`handleMemoDeleted` �?`memos.filter(m => m.id !== "")` 一条都
+        // 过滤不掉 -> 幽灵笔�?�?        //
+        // �?��: **�?`unregister_memo_by_path` 之前**�?filename 反查 memo index
+        // 拿到真实 id。`unregister_memo_by_path` 内部就是用同一 filename 匹配 + �?        // entry, 所以这里查到的 id 跟它即将删的那条�?��一�? 不存�?race -- 都是
+        // �?`current_index_io` 锁串行化, 内部�?? + �?memo index 一欰�?        //
+        // 拿不�?id 的两种情�?
+        // - �?��里没有合法的 .md 文件�?(�?`..`): 直接放弃 emit, 反�?
+        //   `unregister_memo_by_path` 也会 return false, memo index 没动�?        // - filename 不在 memo index (孤立 .md / 已经�?���?: 同样放弃 emit, 不凭�?        //   generate id, 保持 id 一定来�?memo index 这个不变量�?
         let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
             return;
         };
@@ -467,9 +498,9 @@ impl MemoEventProcessor {
         }
         let entry_path = path.display().to_string();
         try_remove_from_search_index(app, &id);
-        // emit 甯︾湡瀹?id 鐨?Deleted, 璁╁墠绔?handleMemoDeleted 鑳界簿鍑嗕粠
-        // 鍒楄〃 filter 鎺?(閬垮厤 id=鈥溾€?鏃?filter 浠€涔堥兘涓嶄涪銆佸彧鑳介潬
-        // triggerRefresh 閲嶆媺琛ユ晳)銆?path 渚濈劧浼犲嚭, 渚涗細璇濈偣浠?path 鍖归厤銆?
+        // emit 带真�?id �?Deleted, 让前�?handleMemoDeleted 能精准从
+        // 列表 filter �?(避免 id=“�?�?filter 什么都不丢、只能靠
+        // triggerRefresh 重拉补救)�?path 依然传出, 供会话点�?path 匹配�?
         emit(
             app,
             MemoEvent::Deleted {
@@ -484,10 +515,10 @@ impl MemoEventProcessor {
 
 #[cfg(test)]
 mod tests {
-    //! 瑕嗙洊 `dispatch_modify_event` 绾嚱鏁扮殑涓ょ鍒嗘祦璺緞銆?    //!
-    //! 涓嶄緷璧?Tauri AppHandle / MemoWatcher / inode tracker 鈹€鈹€ 鎷?MemoFile
-    //! 鐩存帴璋冪函鍑芥暟, 鏂█ emit 鍑烘潵鐨勪簨浠?kind/path/memo 瀛楁銆?    //!
-    //! setup pattern 璺?flowix-core 鐨?`fresh_memo_file` 涓€鑷? tempdir +
+    //! 覆盖 `dispatch_modify_event` �?��数的两�?分流�?���?    //!
+    //! 不依�?Tauri AppHandle / MemoWatcher / inode tracker ── �?MemoFile
+    //! 直接调纯函数, �?�� emit 出来的事�?kind/path/memo 字�?�?    //!
+    //! setup pattern �?flowix-core �?`fresh_memo_file` 一�? tempdir +
     //! seed notebook registry + MemoFile::new銆?
     use super::*;
     use flowix_core::memo_file::MemoFile;
@@ -497,7 +528,7 @@ mod tests {
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    /// 鏋勯€犱竴涓寚鍚?tempdir 鐨?MemoFile, tempdir 妯℃嫙 "default notebook"銆?
+    /// 构造一�?���?tempdir �?MemoFile, tempdir 模拟 "default notebook"�?
     fn fresh_memo_file() -> (MemoFile, PathBuf) {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let tmp = std::env::temp_dir().join(format!(
@@ -514,9 +545,9 @@ mod tests {
         fs::create_dir_all(&config_dir).unwrap();
 
         let memo_file = MemoFile::new(config_dir);
-        // 鎶婃祴璇?fixture 鐨?nb_test 鍐欒繘 SQLite 鈹€鈹€ 娌℃湁杩欐潯, register_existing_file
-        // 璧?memo index sync 鏃舵挒 `memos.notebook_id` -> `notebooks.id` 鐨?        // FOREIGN KEY 澶辫触 (FOREIGN KEY constraint failed)銆?        // 涓嶈皟 set_current_notebook 鐨勮瘽, get_memo_base 璧伴粯璁よ矾寰?        // (~/Documents/flowix) 鈹€鈹€ register_existing_file / write_index
-        // 浼氬啓鍒伴偅涓洰褰? 鎴戜滑鐨?tempdir 娴嬭瘯 fixture 澶辨晥銆?
+        // 把测�?fixture �?nb_test 写进 SQLite ── 没有这条, register_existing_file
+        // �?memo index sync 时撞 `memos.notebook_id` -> `notebooks.id` �?        // FOREIGN KEY 失败 (FOREIGN KEY constraint failed)�?        // 不调 set_current_notebook 的话, get_memo_base 走默认路�?        // (~/Documents/flowix) ── register_existing_file / write_index
+        // 会写到那�?���? 我们�?tempdir 测试 fixture 失效�?
         let cfg = flowix_core::memo_file::NotebookConfig {
             id: "nb_test".to_string(),
             name: "Test".to_string(),
@@ -554,8 +585,8 @@ mod tests {
         assert!(!is_direct_notebook_child(&ctx, &nested_document));
     }
 
-    /// 鍐欎竴涓?.md 鍒?notebook 鏍圭洰褰? 璧?register_existing_file 鎶婂畠鐧昏
-    /// 杩?memo index銆傝繑鍥?(memo, abs_path)銆?
+    /// 写一�?.md �?notebook 根目�? �?register_existing_file 把它登�?
+    /// �?memo index。返�?(memo, abs_path)�?
     fn seed_registered_md(mf: &MemoFile, base: &PathBuf, title: &str) -> (String, PathBuf) {
         let filename = format!("{title}.md");
         let path = base.join(&filename);
@@ -564,7 +595,7 @@ mod tests {
             format!("---\ntitle: {title}\n---\n# {title}\n\ninitial body\n"),
         )
         .unwrap();
-        // register_existing_file 鑷繁鐢熸垚 id, 杩欓噷鍙叧蹇?filename
+        // register_existing_file �?��生成 id, 这里�?���?filename
         let _memo = mf.register_existing_file(&path).expect("register ok");
         (filename, path)
     }
@@ -575,10 +606,10 @@ mod tests {
         let (mf, base) = fresh_memo_file();
         let (filename, path) = seed_registered_md(&mf, &base, "Hello");
 
-        // (2) 妯℃嫙"vim 鏀?body": 瑕嗗啓纾佺洏
+        // (2) 模拟"vim �?body": 覆写磁盘
         fs::write(&path, format!("# Hello\n\nexternal edit content\n")).unwrap();
 
-        // (3) 璋?dispatch_modify_event, 鏈熸湜 Updated
+        // (3) �?dispatch_modify_event, 期望 Updated
         let outcome = dispatch_modify_event(&mf, &watch_ctx(&base), &path, FsEventKind::Modify)
             .expect("dispatch ok");
         let event = match outcome {
@@ -603,7 +634,7 @@ mod tests {
                     .to_string();
                 assert_eq!(ep, expected_path, "path should equal base+filename");
                 assert_eq!(memo.filename, filename);
-                // preview 鏉ヨ嚜鏂?body 鐨勬淳鐢?
+                // preview 来自�?body 的派�?
                 assert!(
                     memo.preview.contains("external edit content"),
                     "preview should reflect new body, got: {}",
@@ -617,13 +648,13 @@ mod tests {
 
     #[test]
     fn dispatch_modify_event_emits_created_for_unregistered_file() {
-        // (1) 鍑嗗: 涓存椂 notebook, **涓?*娉ㄥ唽浠讳綍 .md
+        // (1) 准�?: 临时 notebook, **�?*注册任何 .md
         let (mf, base) = fresh_memo_file();
         let filename = "Stranger.md";
         let path = base.join(filename);
         fs::write(&path, "# Stranger\n\nnew file content\n").unwrap();
 
-        // (2) 璋?dispatch_modify_event, 鏈熸湜 Created + new_abs_path
+        // (2) �?dispatch_modify_event, 期望 Created + new_abs_path
         let outcome = dispatch_modify_event(&mf, &watch_ctx(&base), &path, FsEventKind::Create)
             .expect("dispatch ok");
         let (event, new_abs_path) = match outcome {
@@ -643,10 +674,67 @@ mod tests {
             other => panic!("expected Created, got {:?}", std::mem::discriminant(&other)),
         }
         // register_existing_file_for_notebook_id 璧?generate-new-id + stamp 璺緞,
-        // new_abs_path 璺熷師 path 涓嶄竴瀹氱浉鍚?
+        // new_abs_path 跟原 path 不一定相�?
         assert!(
             new_abs_path.exists(),
             "registered file should exist on disk"
+        );
+    }
+
+    #[test]
+    fn dispatch_modify_event_with_mark_marks_before_register_write_only() {
+        // 验证 mark_self_write 在「会写盘的注册分支」之前被调用、在「只读 reload 分支」不调用。
+        // 这是 process 移到 worker 线程后关闭 self-write echo race 的关键: stamp 写盘前
+        // mark 必须已落抑制表 (见 manager.rs 模块头注释), 否则 stamp 触发的 self-write
+        // notify 事件会先于 mark 到达 -> Created 后跟一个冗余 Updated。
+        use std::cell::RefCell;
+        let (mf, base) = fresh_memo_file();
+        let filename = "Stranger.md";
+        let path = base.join(filename);
+        fs::write(&path, "# Stranger\n\nno frontmatter key\n").unwrap();
+
+        // (1) 未注册文件 (无 key) -> register 分支会 stamp key 写盘: mark 应被调用一次。
+        let marked = RefCell::new(Vec::<PathBuf>::new());
+        let outcome = dispatch_modify_event_with_mark(
+            &mf,
+            &watch_ctx(&base),
+            &path,
+            FsEventKind::Create,
+            |p: &Path| marked.borrow_mut().push(p.to_path_buf()),
+        )
+        .expect("dispatch ok");
+        match &outcome {
+            DispatchOutcome::Created { .. } => {}
+            other => panic!("expected Created (register), got {:?}", std::mem::discriminant(other)),
+        }
+        assert_eq!(
+            marked.borrow().len(),
+            1,
+            "mark must fire exactly once before the register write"
+        );
+        assert_eq!(
+            marked.borrow()[0], path,
+            "mark must be called with the event path (the file about to be stamped)"
+        );
+
+        // (2) 同一文件已注册 (有 key, 已索引) -> reload 分支只读不写盘: mark 不应被调用,
+        // 否则会在 2s TTL 内误吞合法的外部连续编辑。
+        marked.borrow_mut().clear();
+        let outcome = dispatch_modify_event_with_mark(
+            &mf,
+            &watch_ctx(&base),
+            &path,
+            FsEventKind::Modify,
+            |p: &Path| marked.borrow_mut().push(p.to_path_buf()),
+        )
+        .expect("dispatch ok");
+        match &outcome {
+            DispatchOutcome::Updated(_) => {}
+            other => panic!("expected Updated (reload), got {:?}", std::mem::discriminant(other)),
+        }
+        assert!(
+            marked.borrow().is_empty(),
+            "mark must NOT fire on the read-only reload branch"
         );
     }
 
@@ -684,7 +772,7 @@ mod tests {
 
     #[test]
     fn dispatch_modify_event_updated_preserves_id_across_external_edit() {
-        // 鍏抽敭涓嶅彉閲? 澶栭儴鏀?body 鍚? memo index 閲岃繖鏉?entry 鐨?id 涓嶄細鍙?        // (id 鍦?register_existing_file 鏃剁敓鎴? 鍚庣画 reload 鍙姩 preview/
+        // 关键不变�? 外部�?body �? memo index 里这�?entry �?id 不会�?        // (id �?register_existing_file 时生�? 后续 reload �?�� preview/
         // tags/todos/updated_at)銆?
         let (mf, base) = fresh_memo_file();
         let (_, path) = seed_registered_md(&mf, &base, "Note");
@@ -728,17 +816,17 @@ mod tests {
         assert!(matches!(second, DispatchOutcome::Updated(_)));
     }
 
-    /// 鍥炲綊: 鐗╃悊鍒犻櫎鏃? `unregister_and_emit` 蹇呴』鑳戒粠 memo index 鏌ュ埌鐪熷疄 id
-    /// 娉ㄥ叆鍒?`MemoEvent::Deleted` 閲屻€傜墿鐞嗘枃浠跺悕鏄?`<title>.md` (id 璺?    /// 鏂囦欢鍚嶈В鑰?, emit `id=""` 缁欏墠绔?鈫?`memos.filter(m => m.id !== "")`
-    /// 涓€鏉￠兘杩囨护涓嶆帀 鈫?骞界伒绗旇銆傝繖閲岀洿鎺ラ獙璇佷慨澶嶅悗鐨勬牳蹇冩煡鎵鹃€昏緫:
-    /// "鎸?filename 鎵?memo index entry, 鎷垮埌鐨?id 璺?register 鏃剁敓鎴愮殑 id 涓€鑷?銆?
+    /// 回归: 物理删除�? `unregister_and_emit` 必须能从 memo index 查到真实 id
+    /// 注入�?`MemoEvent::Deleted` 里。物理文件名�?`<title>.md` (id �?    /// 文件名解�?, emit `id=""` 给前�?�?`memos.filter(m => m.id !== "")`
+    /// 一条都过滤不掉 �?幽灵笔�?。这里直接验证修复后的核心查找逻辑:
+    /// "�?filename �?memo index entry, 拿到�?id �?register 时生成的 id 一�?�?
     #[test]
     fn physical_delete_resolves_real_id_from_index() {
         let (mf, base) = fresh_memo_file();
         let (filename, path) = seed_registered_md(&mf, &base, "Ghost");
 
         // 淇鍓? id=""
-        // 淇鍚? id 搴旇鏄?memo index 閲岃繖鏉?entry 鐨勭湡瀹?id
+        // �??�? id 应�?�?memo index 里这�?entry 的真�?id
         let memo = mf
             .find_memo_by_filename(&filename)
             .expect("seeded entry should be in memo index");
@@ -750,8 +838,8 @@ mod tests {
         );
         // V3 ids come from the memo index rather than the physical filename.
         assert_ne!(real_id, filename, "v3 id must be decoupled from filename");
-        // 璺緞瀛樺湪 + 璺?base join 璧锋潵绛変簬 expected_abs (unregister_memo_by_path
-        // 鍐呴儴灏辨槸杩欎釜 invariant guard 閫氳繃鍚庢墠鍒?entry)
+        // �?��存在 + �?base join 起来等于 expected_abs (unregister_memo_by_path
+        // 内部就是这个 invariant guard 通过后才�?entry)
         assert!(
             path.exists(),
             "seeded .md should still be on disk for this test"
@@ -764,8 +852,8 @@ mod tests {
         );
     }
 
-    /// 杈圭晫: 涓€涓?*鏈櫥璁?*鐨?.md 琚墿鐞嗗垹闄?(鐢ㄦ埛璇垹浜嗘湭娉ㄥ唽鏂囦欢, 鎴?    /// 鎴戜滑鍒?register 瀹屽氨鍒犱簡), `unregister_and_emit` 搴斿綋**涓?*emit
-    /// `MemoEvent::Deleted` (id 鎷夸笉鍒?,涔熶笉鍔?memo index銆?
+    /// 边界: 一�?*�?���?*�?.md �?��理删�?(用户�?��了未注册文件, �?    /// 我们�?register 完就删了), `unregister_and_emit` 应当**�?*emit
+    /// `MemoEvent::Deleted` (id 拿不�?,也不�?memo index�?
     #[test]
     fn physical_delete_for_unregistered_file_is_noop() {
         let (mf, base) = fresh_memo_file();
@@ -773,31 +861,31 @@ mod tests {
         let path = base.join(filename);
         fs::write(&path, "# Stray\n").unwrap();
 
-        // 妯℃嫙 unregister_and_emit 鐨?id 鏌ユ壘鍓嶇疆娈? filename 涓嶅湪 memo index
+        // 模拟 unregister_and_emit �?id 查找前置�? filename 不在 memo index
         let looked_up = mf.find_memo_by_filename(filename);
         assert!(
             looked_up.is_none(),
             "unregistered .md must not resolve to a memo index entry"
         );
 
-        // 妯℃嫙 unregister 娈? 鍚屾牱 no-op
+        // 模拟 unregister �? 同样 no-op
         let removed = mf.unregister_memo_by_path(&path);
         assert!(!removed, "unregister must return false for unknown file");
     }
 
     // ====== Frontmatter-key-first 鍒嗘祦锛歳ename via disk key ======
     //
-    // 澶嶇幇 GUI 鏍囬缂栬緫鐨勪唬鐮佽矾寰勶細fs::rename(OLD 鈫?NEW) 鍚?
-    // SELF_WRITE_SUPPRESSOR 鍚炰簡 From 浜嬩欢, To 浜嬩欢杩涘叆 dispatch_modify_event銆?    // 鍏抽敭鏂█: 纾佺洏 frontmatter key (璺?rename 淇濈暀) 鈫?鍛戒腑 OLD entry 鈫?    // rename_memo_file 鏀?entry.filename, id 涓嶅彉, created_at 涓嶅彉銆?    //
-    // 杩欎釜娴嬭瘯涓嶄緷璧?Tauri AppHandle / notify / SelfWriteSuppressor 鈥?鐩存帴
-    // 鍠備竴涓?Create 浜嬩欢褰㈡€佺殑 path 缁?dispatch_modify_event, 妯℃嫙 GUI 璺緞
-    // 璧板埌 processor 鏃剁殑鍏ュ弬銆?
+    // 复现 GUI 标�?编辑的代码路径：fs::rename(OLD �?NEW) �?
+    // SELF_WRITE_SUPPRESSOR 吞了 From 事件, To 事件进入 dispatch_modify_event�?    // 关键�?��: 磁盘 frontmatter key (�?rename 保留) �?命中 OLD entry �?    // rename_memo_file �?entry.filename, id 不变, created_at 不变�?    //
+    // 这个测试不依�?Tauri AppHandle / notify / SelfWriteSuppressor —直接
+    // 喂一�?Create 事件形态的 path �?dispatch_modify_event, 模拟 GUI �?��
+    // 走到 processor 时的入参�?
     #[test]
     fn dispatch_modify_event_detects_rename_via_frontmatter_key() {
         let (mf, base) = fresh_memo_file();
         let (filename, old_path) = seed_registered_md(&mf, &base, "Original");
 
-        // 鎶撳師濮?entry 鐨?id / timestamps
+        // 抓原�?entry �?id / timestamps
         let original = mf
             .find_memo_by_filename(&filename)
             .expect("seeded entry should exist");
@@ -805,14 +893,14 @@ mod tests {
         let original_created = original.created_at;
         let original_updated = original.updated_at;
 
-        // 鐗╃悊 rename 鈹€鈹€ 璺?GUI write_memo_renaming_on_title_change 涓€鏍?
-        // frontmatter key 璺熺潃鏂囦欢璧?(fs::rename 鏄?metadata-only 鎿嶄綔,
+        // 物理 rename ── �?GUI write_memo_renaming_on_title_change 一�?
+        // frontmatter key 跟着文件�?(fs::rename �?metadata-only 操作,
         // 鏂囦欢鍐呭涓嶅彉, frontmatter 鍧楃殑 key 瀛楁淇濈暀)
         let new_filename = "Renamed.md".to_string();
         let new_path = base.join(&new_filename);
         std::fs::rename(&old_path, &new_path).expect("physical rename must succeed");
 
-        // 鍠?To 浜嬩欢褰㈡€? dispatch_modify_event 璇荤鐩?鈫?鎶?key 鈫?鍙嶆煡 entry
+        // �?To 事件形�? dispatch_modify_event 读�?�?�?�?key �?反查 entry
         let outcome = dispatch_modify_event(&mf, &watch_ctx(&base), &new_path, FsEventKind::Create)
             .expect("dispatch ok");
         let event = match outcome {
@@ -830,7 +918,7 @@ mod tests {
                 source,
                 ..
             } => {
-                // 鍏抽敭涓嶅彉閲?鈹€鈹€ id 璺?rename 淇濈暀
+                // 关键不变�?── id �?rename 保留
                 assert_eq!(
                     id, original_id,
                     "id must be preserved across rename detected via frontmatter key"
@@ -839,7 +927,7 @@ mod tests {
                     memo.id, original_id,
                     "memo.id must match memo index entry id"
                 );
-                // filename 鏀规垚纾佺洏瀹為檯鏂囦欢鍚?
+                // filename 改成磁盘实际文件�?
                 assert_eq!(
                     memo.filename, new_filename,
                     "filename must reflect post-rename disk state"
@@ -855,7 +943,7 @@ mod tests {
                     memo.created_at, original_created,
                     "created_at must be preserved (rename_memo_file leaves it alone)"
                 );
-                // updated_at 鍒锋柊 鈹€鈹€ rename 鏈韩绠椾竴娆℃洿鏂?
+                // updated_at 刷新 ── rename �?��算一次更�?
                 assert!(
                     memo.updated_at >= original_updated,
                     "updated_at should be refreshed on rename"
@@ -865,7 +953,7 @@ mod tests {
             other => panic!("expected Updated, got {:?}", std::mem::discriminant(&other)),
         }
 
-        // 鏀跺熬: memo index 鐨?entry.filename 鐪熺殑鏇存柊浜?
+        // 收尾: memo index �?entry.filename 真的更新�?
         let entry_after = mf
             .find_memo_by_filename(&new_filename)
             .expect("new filename should be in memo index after rename");
@@ -873,7 +961,7 @@ mod tests {
             entry_after.id, original_id,
             "memo index entry's id must be preserved"
         );
-        // 鏃?filename 搴旇宸茬粡涓嶅湪 memo index
+        // �?filename 应�?已经不在 memo index
         assert!(
             mf.find_memo_by_filename(&filename).is_none(),
             "old filename must be removed from memo index after rename"
@@ -921,16 +1009,16 @@ mod tests {
         assert_eq!(extract_frontmatter_key(&pasted_content), Some(memo.id));
     }
 
-    // ====== Frontmatter-key-first 鍒嗘祦锛?c) case ======
+    // ====== Frontmatter-key-first 分流�?c) case ======
     //
-    // 妯℃嫙"memo index 宸茬粡琚墠搴忎簨浠舵竻鎺? 纾佺洏 key 杩樺湪" 鈹€鈹€ 姣斿澶栭儴
-    // rename 璧?From + To 涓ゆ潯浜嬩欢, From 杩涗簡 unregister_and_emit 鍒犱簡
-    // entry, To 杩?dispatch_modify_event 姝ゆ椂 read_memo(key) 杩斿洖 None銆?    // 褰撳墠绮樿创璇箟: 甯?key 鐨勯檶鐢熸枃浠朵篃鎸夋柊鏂囨。娉ㄥ唽, 骞舵妸纾佺洏 key 鍒锋柊鎴愭柊 id銆?
+    // 模拟"memo index 已经�?��序事件清�? 磁盘 key 还在" ── 比�?外部
+    // rename �?From + To 两条事件, From 进了 unregister_and_emit 删了
+    // entry, To �?dispatch_modify_event 此时 read_memo(key) 返回 None�?    // 当前粘贴�?��: �?key 的陌生文件也按新文档注册, 并把磁盘 key 刷新成新 id�?
     #[test]
     fn dispatch_modify_event_rekeys_orphan_disk_key_as_new_document() {
         let (mf, base) = fresh_memo_file();
 
-        // 鐩存帴閫犱竴涓?.md 甯?frontmatter key 浣?memo index 閲屾病璁板綍鐨?瀛ゅ効"
+        // 直接造一�?.md �?frontmatter key �?memo index 里没记录�?孤儿"
         let orphan_filename = "Orphan.md".to_string();
         let orphan_path = base.join(&orphan_filename);
         let orphan_id = "abc123";
@@ -940,7 +1028,7 @@ mod tests {
         )
         .unwrap();
 
-        // 妯℃嫙 read_memo 杩斿洖 None 鐨勭姸鎬?鈹€鈹€ memo index 骞插噣
+        // 模拟 read_memo 返回 None 的状�?── memo index 干净
         assert!(mf.read_current_memo(orphan_id).is_none());
 
         // dispatch: 搴斿垱寤烘柊 memo, 涓嶆部鐢ㄧ鐩樻棫 key
@@ -958,7 +1046,7 @@ mod tests {
         assert_ne!(memo.id, orphan_id, "pasted file must get a fresh id");
         assert_eq!(memo.filename, orphan_filename);
 
-        // 鏀跺熬: memo index 鐪熺殑鏈夎繖鏉?entry
+        // 收尾: memo index 真的有这�?entry
         assert!(
             mf.read_current_memo(orphan_id).is_none(),
             "old disk key must not be registered in this notebook"
@@ -974,21 +1062,21 @@ mod tests {
     // ====== GUI 鏍囬缂栬緫鍏ㄩ摼璺細SelfWriteSuppressor + dispatch 鍗忎綔 ======
     //
     // 妯℃嫙 write_memo_renaming_on_title_change 娴佺▼:
-    //   1. mark_self_write(OLD) 鈹€鈹€ 鎶?OLD 璺緞濉炴姂鍒惰〃
-    //   2. fs::rename(OLD 鈫?NEW) 鈹€鈹€ 瑙﹀彂 notify From(OLD) + To(NEW)
-    //   3. notify 鍥炶皟 鈫?filter pipeline:
-    //      - From(OLD) 鈫?SelfWriteSuppressor 鍛戒腑 鈫?鍚炴帀 鉁?    //      - To(NEW)   鈫?SelfWriteSuppressor miss 鈫?杩?processor
-    //   4. processor 璧?frontmatter-key-first 鍒嗘祦:
-    //      - 璇荤鐩?鈫?鎶?key = id (frontmatter 璺熺潃 fs::rename 璧?
-    //      - read_memo(id) 鈫?Some (entry 娌¤鍒? From 琚悶浜?
-    //      - existing.filename != current filename 鈫?(a) 鍒嗘敮
-    //      - rename_memo_file(OLD, NEW) 鈫?entry.filename 鏀? id 淇濈暀
+    //   1. mark_self_write(OLD) ── �?OLD �?��塞抑制表
+    //   2. fs::rename(OLD �?NEW) ── 触发 notify From(OLD) + To(NEW)
+    //   3. notify 回调 �?filter pipeline:
+    //      - From(OLD) �?SelfWriteSuppressor 命中 �?吞掉 �?    //      - To(NEW)   �?SelfWriteSuppressor miss �?�?processor
+    //   4. processor �?frontmatter-key-first 分流:
+    //      - 读�?�?�?�?key = id (frontmatter 跟着 fs::rename �?
+    //      - read_memo(id) �?Some (entry 沤?�? From �?���?
+    //      - existing.filename != current filename �?(a) 分支
+    //      - rename_memo_file(OLD, NEW) �?entry.filename �? id 保留
     //
-    // 鍏抽敭 invariant: id 璺?rename 淇濈暀, created_at 涓嶅彉, updated_at 鍒锋柊銆?    // 杩欐槸鐢ㄦ埛鎶ュ憡鐨?bug 鐨勬牳蹇?鈹€鈹€ 涔嬪墠 Windows 涓婂洜 inode_tracker 鐣欑┖,
-    // dispatch_modify_event 璧?filename-based 璺緞, 鎶?entry 褰?鏂版枃浠?
-    // 閲嶆柊娉ㄥ唽, id 婕傜Щ / createdAt 閲嶇疆銆?    //
-    // 杩欎釜娴嬭瘯**涓嶄緷璧?Tauri AppHandle / 鐪熷疄 notify** 鈹€鈹€ 鐩存帴璋?    // SelfWriteSuppressor + dispatch_modify_event, 楠岃瘉涓ゆ潯浜嬩欢娴佸叆
-    // processor 鍚? dispatch 鐨勮緭鍑烘槸姝ｇ‘鐨?rename_memo_file 璋冪敤銆?
+    // 关键 invariant: id �?rename 保留, created_at 不变, updated_at 刷新�?    // 这是用户报告�?bug 的核�?── 之前 Windows 上因 inode_tracker 留空,
+    // dispatch_modify_event �?filename-based �?��, �?entry �?新文�?
+    // 重新注册, id 漂移 / createdAt 重置�?    //
+    // 这个测试**不依�?Tauri AppHandle / 真实 notify** ── 直接�?    // SelfWriteSuppressor + dispatch_modify_event, 验证两条事件流入
+    // processor �? dispatch 的输出是正��?rename_memo_file 调用�?
     #[test]
     fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
         use crate::watcher::filter::{run_pipeline, PathFilter};
@@ -1000,7 +1088,7 @@ mod tests {
         let (mf, base) = fresh_memo_file();
         let (filename, old_path) = seed_registered_md(&mf, &base, "Original");
 
-        // 鎶撳師濮?entry 鐨?id / created_at / updated_at
+        // 抓原�?entry �?id / created_at / updated_at
         let original = mf
             .find_memo_by_filename(&filename)
             .expect("seeded entry should exist");
@@ -1008,7 +1096,7 @@ mod tests {
         let original_created = original.created_at;
         let original_updated = original.updated_at;
 
-        // ====== Step 1: GUI 鍐欑洏鍓?mark_self_write(OLD) ======
+        // ====== Step 1: GUI 写盘�?mark_self_write(OLD) ======
         let recent = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
             PathBuf,
             Instant,
@@ -1018,7 +1106,7 @@ mod tests {
             .unwrap()
             .insert(normalize_for_compare(&old_path), Instant::now());
 
-        // ====== Step 2: fs::rename(OLD 鈫?NEW) 鈹€鈹€ 鐗╃悊閲嶅懡鍚?======
+        // ====== Step 2: fs::rename(OLD �?NEW) ── 物理重命�?======
         let new_filename = "Renamed.md".to_string();
         let new_path = base.join(&new_filename);
         std::fs::rename(&old_path, &new_path).expect("physical rename must succeed");
@@ -1053,7 +1141,7 @@ mod tests {
             "To(NEW) must pass through filter pipeline (NEW was not marked)"
         );
 
-        // ====== Step 4: processor dispatch_modify_event(NEW) 鈹€鈹€ 璧?(a) 鍒嗘敮 ======
+        // ====== Step 4: processor dispatch_modify_event(NEW) ── �?(a) 分支 ======
         let outcome = dispatch_modify_event(&mf, &watch_ctx(&base), &new_path, FsEventKind::Create)
             .expect("dispatch ok");
         let event = match outcome {

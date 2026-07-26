@@ -239,7 +239,19 @@ fn read_stdin() -> Result<String, CliError> {
     std::io::stdin()
         .read_to_string(&mut s)
         .map_err(CliError::Io)?;
-    Ok(s)
+    Ok(strip_utf8_bom(s))
+}
+
+/// 剥离首部 UTF-8 BOM (U+FEFF)。
+///
+/// `read_to_string` 不剥 BOM; Windows 上某些重定向 / 编辑器会给 stdin 塞一个,
+/// 不剥会让首行变成 `\u{FEFF}# 标题` ── `derive_title` 派生和 frontmatter 解析
+/// 双双失效。MCP 路径不经此函数 (JSON-RPC 客户端不发 BOM)。
+fn strip_utf8_bom(s: String) -> String {
+    match s.strip_prefix('\u{FEFF}') {
+        Some(rest) => rest.to_string(),
+        None => s,
+    }
 }
 
 /// 从 body 第一行非空内容提取 title, fallback 链:
@@ -642,6 +654,17 @@ mod tests {
             updated_at: 1,
         };
         mf.write_notebook_configs(&[cfg]).unwrap();
+    }
+
+    #[test]
+    fn strip_utf8_bom_removes_leading_bom_only() {
+        // 首部 BOM 剥掉, 保证 `# 标题` 能被 derive_title 识别
+        assert_eq!(strip_utf8_bom("\u{FEFF}# 标题\n".into()), "# 标题\n");
+        // 无 BOM 原样返回
+        assert_eq!(strip_utf8_bom("# 标题\n".into()), "# 标题\n");
+        assert_eq!(strip_utf8_bom("".into()), "");
+        // 中间的 U+FEFF 不是 BOM, 不动
+        assert_eq!(strip_utf8_bom("a\u{FEFF}b".into()), "a\u{FEFF}b");
     }
 
     #[test]

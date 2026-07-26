@@ -13,7 +13,7 @@ import { files, notebooks as notebooksClient } from '@platform/tauri/client';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 async function enrichNotebookMissingState(notebooks: Notebook[]): Promise<Notebook[]> {
   if (notebooks.every((notebook) => Object.prototype.hasOwnProperty.call(notebook, 'missing'))) {

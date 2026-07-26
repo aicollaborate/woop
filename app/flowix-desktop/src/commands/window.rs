@@ -77,15 +77,15 @@ pub async fn open_preferences_window(
 
     let window = builder.build().map_err(|e| e.to_string())?;
     crate::window_chrome::apply_window_border_color(&window);
-    // 鏂扮獥鍙ｅ嵆鍒诲榻愪富棰樿儗鏅壊 (涓庝富绐楀彛鍚姩涓€鑷?, 閬垮厤鍐峰惎鍔ㄧ櫧闂€?
+    // 新窗口即刻�?齐主题背�?�� (与主窗口�?��一�?, 避免冷启动白�?�?
     let theme = state.user_config.get_preference().theme;
     crate::window_chrome::apply_theme_background(&window, theme);
     Ok(())
 }
 
-/// 鍓嶇鍒囨崲涓婚鏃剁珛鍗宠皟鐢? 鎶婃柊涓婚搴旂敤鍒版墍鏈夌獥鍙ｇ殑鍘熺敓 chrome (`set_theme` + 鑳屾櫙鑹?,
-/// 涓嶇瓑 `set_preference` 鐨?200ms 闃叉姈钀界洏, 瀹炵幇瀹炴椂璺熼殢銆傝惤鐩樹粛璧?debounced
-/// `set_preference`, 涓庤繖閲岃В鑰?-- 瑙嗚鏇存柊涓庢寔涔呭寲鍒嗙銆?
+/// 前�?切换主�?时立即调�? 把新主�?应用到所有窗口的原生 chrome (`set_theme` + 背景�?,
+/// 不等 `set_preference` �?200ms 防抖落盘, 实现实时跟随。落盘仍�?debounced
+/// `set_preference`, 与这里解�?-- 视�?更新与持久化分�?�?
 #[tauri::command]
 pub fn apply_window_theme(theme: Theme, app: tauri::AppHandle) -> Result<(), String> {
     crate::window_chrome::apply_theme_background_all(&app, theme);

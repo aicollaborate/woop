@@ -1,14 +1,15 @@
 import { useEffect, useRef } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@platform/tauri/window';
 
 import {
   hasDocumentUnsavedChanges,
   type DocumentIdentity,
 } from '@features/document';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { canonicalPath } from '@/lib/path';
+import { createLogger } from '@/lib/logger';
 import {
   windows,
   type ExternalDocumentChangedEvent,
@@ -24,12 +25,7 @@ interface UseExternalDocumentChangeWatchOptions {
 // fs_watcher 单次外部写入可能发多次事件 (FSEvents 双触发 + 编辑器
 // debounce save), cooldown 收敛冲突警告避免 toast 风暴。
 const CONFLICT_WARNING_COOLDOWN_MS = 5000;
-
-function debugDocumentSync(message: string, details: Record<string, unknown>): void {
-  if (!import.meta.env.DEV) return;
-  // eslint-disable-next-line no-console
-  console.log(message, details);
-}
+const logger = createLogger('external-document-watch');
 
 export function useExternalDocumentChangeWatch({
   filePath,
@@ -56,18 +52,16 @@ export function useExternalDocumentChangeWatch({
     const currentPath = canonicalPath(filePath);
 
     void (async () => {
-      debugDocumentSync('[external-document-watch] registering', {
-        path: currentPath,
+      logger.debug('registering', {
         windowLabel: getCurrentWindow().label,
       });
       unlisten = await getCurrentWindow().listen<ExternalDocumentChangedEvent>(
         'external-document-changed',
         async ({ payload }) => {
-          debugDocumentSync('[external-document-changed] received', {
-            path: payload.path,
+          logger.debug('change received', {
             kind: payload.kind,
             revision: payload.revision,
-            currentPath,
+            matchesCurrentDocument: canonicalPath(payload.path) === currentPath,
           });
           if (disposed || canonicalPath(payload.path) !== currentPath) return;
           if (hasDocumentUnsavedChanges(identity)) {
@@ -89,8 +83,7 @@ export function useExternalDocumentChangeWatch({
         return;
       }
       leaseId = await windows.watchExternalDocument(filePath);
-      debugDocumentSync('[external-document-watch] registered', {
-        path: currentPath,
+      logger.debug('registered', {
         leaseId,
         windowLabel: getCurrentWindow().label,
       });
@@ -99,7 +92,7 @@ export function useExternalDocumentChangeWatch({
         leaseId = null;
       }
     })().catch((error) => {
-      if (!disposed) console.warn('[external-document-changed] watch failed:', error);
+      if (!disposed) logger.warn('registration failed', { error });
     });
 
     return () => {

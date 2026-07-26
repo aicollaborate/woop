@@ -24,7 +24,7 @@ import {
   TagIcon,
   UserCircleIcon,
 } from '@phosphor-icons/react';
-import type { I18nKey } from '@features/i18n';
+import type { I18nKey } from '@/lib/i18n';
 
 /** UI-side data types. PascalCase to match the existing `PROPERTY_TYPES` array.
  *  'Tags' 已移除 — 多选统一走 'MultiSelect' (YAML 都是 array, UI 上 chips

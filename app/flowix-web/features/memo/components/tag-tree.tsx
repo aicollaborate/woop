@@ -27,7 +27,7 @@ import {
   type MemoTagLayoutItem,
   type MemoTagTreeItem,
 } from '@features/memo/services/memo-list-metadata-service';
-import { useI18n, type I18nParams } from '@features/i18n';
+import { useI18n, type I18nParams } from '@/lib/i18n';
 import { invalidateMentionTags } from '@features/editor/extensions/tag-mention';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
 import {
@@ -496,7 +496,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                   'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
                   isSelected
                     ? 'bg-[var(--muted)] text-[var(--foreground)]'
-                    : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+                    : 'text-[var(--foreground)]',
                   isDragging && 'opacity-50',
                   isDropInside && 'tag-drop-target-inside',
                   isHidden && !isSelected && 'opacity-70',

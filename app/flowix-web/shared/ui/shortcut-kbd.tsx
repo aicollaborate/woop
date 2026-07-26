@@ -1,9 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { formatChord } from '@features/shortcuts';
-import { resolveBinding } from '@features/shortcuts/registry';
-import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
+import { formatChord, resolveBinding, useShortcutsContext } from '@/lib/shortcuts';
 
 /**
  * 平台感知的快捷键展示 — 统一视觉基础。
@@ -56,8 +54,11 @@ export interface ShortcutKbdProps {
 }
 
 export function ShortcutKbd({ actionId, className }: ShortcutKbdProps) {
-  const overrides = useUserSettings().settings.shortcuts;
-  const chordString = resolveBinding(actionId, overrides).chordString;
+  // 没有 Provider 时 (slash menu 的 imperative root 在 document.body 下,
+  // 不在 Provider 子树里) 不渲染快捷键提示, 而不是把 layout effect 链炸掉。
+  const ctx = useShortcutsContext();
+  if (!ctx) return null;
+  const chordString = resolveBinding(actionId, ctx.overrides).chordString;
   if (!chordString) return null;
   return <Kbd chord={chordString} className={className} />;
 }

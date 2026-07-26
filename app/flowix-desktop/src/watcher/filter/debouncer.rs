@@ -8,7 +8,7 @@ use std::time::Instant;
 use crate::watcher::event::{DropReason, FilterDecision, RawFsEvent};
 use crate::watcher::filter::{Filter, FilterCtx, DEBOUNCE};
 
-/// 娈?3: 璺緞闃叉姈銆?50ms 鍐呭悓璺緞浜嬩欢鍚炪€?
+/// �?3: �?��防抖�?50ms 内同�?��事件吞�?
 pub struct Debouncer;
 
 impl Filter for Debouncer {

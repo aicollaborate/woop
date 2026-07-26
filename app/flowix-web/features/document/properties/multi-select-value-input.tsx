@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react';
-import { useI18n, translate } from '@features/i18n';
+import { useI18n, translate } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 interface MultiSelectValueInputProps {

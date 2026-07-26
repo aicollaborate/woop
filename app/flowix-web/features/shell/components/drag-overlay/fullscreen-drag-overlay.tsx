@@ -9,7 +9,7 @@
  * - 主题色走 `var(--card)` / `var(--foreground)` / `var(--muted-foreground)`，
  *   light / dark / rock 三套主题自动适配。
  */
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface FullscreenDragOverlayProps {
   visible: boolean;

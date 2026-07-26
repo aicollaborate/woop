@@ -1820,7 +1820,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
   });
 
-  it("workspaceSnapshot.workspacePaths stay frozen; cwd follows live notebook (backend frozenCwd owns cwd stability)", async () => {
+  it("uses the notebook workspace snapshot as cwd before backend freezing", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const threadId = "thread-card-frozen-workspace";
@@ -1879,10 +1879,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       systemReminderDirectory: "D:\\notes\\original",
       runtimeConfig: {
         codex: {
-          cwd: "D:\\notes\\original",
+          cwd: "D:\\projects\\original",
           workspacePaths: [
-            "D:\\notes\\original",
             "D:\\projects\\original",
+            "D:\\notes\\original",
           ],
         },
       },

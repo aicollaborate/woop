@@ -38,6 +38,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Layer boundaries
+        run: npm run check:layers
+
+      - name: Frontend debt ratchets
+        run: npm run check:frontend-debt
+
       - name: Unit tests
         run: npm test
 

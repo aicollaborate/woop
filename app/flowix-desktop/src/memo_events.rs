@@ -1,10 +1,10 @@
-//! 缁熶竴绗旇浜嬩欢鎬荤嚎 鈥?鎵€鏈?鍐欒€? (鐢ㄦ埛 UI / Agent / 澶栭儴宸ュ叿) 鍦ㄦ敼瀹岀鐩樺悗
-//! 閮?emit 杩欎竴涓簨浠? 鍓嶇涓€涓?`listen()` 娲惧彂鍒?store + 缂栬緫鍣ㄣ€?//!
+//! 统一笔�?事件总线 —所�?写�? (用户 UI / Agent / 外部工具) 在改完�?盘后
+//! �?emit 这一�?���? 前�?一�?`listen()` 派发�?store + 编辑器�?//!
 //! 璁捐瑕佺偣:
-//! - 鍗曚竴浜嬩欢鍚?`MEMO_EVENT`, `#[serde(tag = "kind")]` 鍐呴儴鍖哄垎 `created` /
-//!   `updated` / `deleted`銆傚鐢?[`crate::agent_flowix::AgentChunk`] 鐨勫垽鍒紡 enum 妯″紡銆?//! - `MemoChangeSource` 鍖哄垎澶栭儴宸ュ叿涓庡簲鐢ㄥ唴鍐欏叆銆傜紪杈戝櫒姝ｆ枃璺ㄧ獥鍙ｅ悓姝ヨ蛋
-//!   鐙珛鐨?`MEMO_CONTENT_UPDATED_EVENT`, 閬垮厤閫氱敤鍏冩暟鎹簨浠舵壙鎷呯獥鍙ｆ潵婧愬垽瀹氥€?//! - 鏃т簨浠?`agent-document-updated` 鐢?[`crate::agent_flowix`] 鐨?`edit` 宸ュ叿瑙﹀彂,
-//!   鏈閲嶆瀯搴熷純, 鏀圭敱鏈ā鍧楃殑 `Updated` 鍙樹綋鎵胯浇銆?
+//! - 单一事件�?`MEMO_EVENT`, `#[serde(tag = "kind")]` 内部区分 `created` /
+//!   `updated` / `deleted`。�?�?[`crate::agent_flowix::AgentChunk`] 的判�?�� enum 模式�?//! - `MemoChangeSource` 区分外部工具与应用内写入。编辑器正文跨窗口同步走
+//!   �?���?`MEMO_CONTENT_UPDATED_EVENT`, 避免通用元数�?��件承担窗口来源判定�?//! - 旧事�?`agent-document-updated` �?[`crate::agent_flowix`] �?`edit` 工具触发,
+//!   �??重构废弃, 改由�?��块的 `Updated` 变体承载�?
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
@@ -13,18 +13,18 @@ use flowix_core::memo_file::Memo;
 pub const MEMO_EVENT: &str = "memo-event";
 pub const MEMO_CONTENT_UPDATED_EVENT: &str = "memo-content-updated";
 
-/// 鍐欒€呮爣璇?鈥?浠?informational, 鍓嶇涓嶇敤浜庡垎鏀矾鐢便€?///
-/// Plan B 鍚?Agent 涓嶅啀鎵嬪姩 emit, watcher 鎶?Agent / 澶栭儴宸ュ叿鐨勭鐩?/// 鍙樻洿缁熶竴褰掑埌 `ExternalTool`銆俙AgentEdit` / `AgentWrite` 杩欎袱涓彉浣?/// 宸插垹闄?(鍘嗗彶 comment 鎻愬埌銆屽墠绔笉鐢ㄥ畠鍒嗘敮銆? 鍚堝苟鍚庤涔変竴鑷?銆?
+/// 写者标�?—�?informational, 前�?不用于分�?��由�?///
+/// Plan B �?Agent 不再手动 emit, watcher �?Agent / 外部工具的�?�?/// 变更统一归到 `ExternalTool`。`AgentEdit` / `AgentWrite` 这两�?���?/// 已删�?(历史 comment 提到「前�?��用它分支�? 合并后�?义一�?�?
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoChangeSource {
-    /// 鐢ㄦ埛鐐?"+" 鏂板缓绌虹瑪璁?
+    /// 用户�?"+" 新建空笔�?
     UserNew,
     /// "Save to Memo" 鎸夐挳瀵煎叆澶栭儴鏂囦欢
     UserImport,
-    /// 鐢ㄦ埛鍦ㄧ紪杈戝櫒淇濆瓨, 璧?`update_memo_db` / `write_document`
+    /// 用户在编辑器保存, �?`update_memo_db` / `write_document`
     UserEdit,
-    /// 澶栭儴缂栬緫鍣?/ 鍏朵粬 AI / Agent 鏀圭鐩? 鏂囦欢鐩戝惉鍣ㄨ瀵熷埌 鈹€鈹€
+    /// 外部编辑�?/ 其他 AI / Agent 改�?�? 文件监听器�?察到 ──
     /// v3 鍚庢墍鏈夐潪鐢ㄦ埛涓诲姩淇濆瓨鐨勮矾寰勯兘鍚堝埌杩欓噷
     ExternalTool,
 }
@@ -66,11 +66,11 @@ impl MemoDerivedChanged {
     }
 }
 
-/// 绗旇浜嬩欢銆傚墠绔?`useMemoEvents` 鏀跺埌鍚庢寜 `kind` 娲惧彂鍒?store action銆?
+/// 笔�?事件。前�?`useMemoEvents` 收到后按 `kind` 派发�?store action�?
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MemoEvent {
-    /// 鏂扮瑪璁拌惤鐩?(鏂板缓 / 鎷栨嫿 / 绮樿创 / import / Agent write 鏂版枃浠?
+    /// 新笔记落�?(新建 / 拖拽 / 粘贴 / import / Agent write 新文�?
     Created {
         memo: Memo,
         #[serde(rename = "notebookId")]
@@ -79,24 +79,24 @@ pub enum MemoEvent {
         derived_changed: MemoDerivedChanged,
         source: MemoChangeSource,
     },
-    /// 鐜版湁绗旇鐨?preview / tags / todos / `updatedAt` 鍙樺寲 (鐢ㄦ埛缂栬緫 /
-    /// Agent edit / 澶栭儴宸ュ叿鏀圭鐩?/ 鏀惰棌鐘舵€佸彉鍖?銆俙path` 鐢ㄤ簬鍓嶇缂栬緫鍣?
-    /// path 鍖归厤銆?
+    /// 现有笔�?�?preview / tags / todos / `updatedAt` 变化 (用户编辑 /
+    /// Agent edit / 外部工具改�?�?/ 收藏状态变�?。`path` 用于前�?编辑�?
+    /// path 匹配�?
     Updated {
         id: String,
         path: String,
         #[serde(rename = "notebookId")]
         notebook_id: String,
         /// v2 rename / update: 鍚庣 emit 鍓嶄粠 memo index 璇诲嚭褰撳墠 memo,
-        /// 闄勫湪 payload 閲屼竴璧峰彂缁欏墠绔€傚墠绔寜 id 鍐冲畾鏄?update (宸插湪 memos 閲屾浛鎹?
-        /// 杩樻槸 insert (涓嶅湪 memos 閲?push), 涓嶉渶瑕?readMemo IPC, 涔熶笉鐢?path 瀵规瘮
-        /// filename 鍒嗘祦銆?
+        /// 附在 payload 里一起发给前�?��前�?�� id 决定�?update (已在 memos 里替�?
+        /// 还是 insert (不在 memos �?push), 不需�?readMemo IPC, 也不�?path 对比
+        /// filename 分流�?
         memo: Memo,
         #[serde(rename = "derivedChanged")]
         derived_changed: MemoDerivedChanged,
         source: MemoChangeSource,
     },
-    /// 绗旇琚垹闄?(鐢ㄦ埛鍒犻櫎 / `clear_memos` / 澶栭儴宸ュ叿 rm 鏂囦欢)
+    /// 笔�?�?���?(用户删除 / `clear_memos` / 外部工具 rm 文件)
     Deleted {
         id: String,
         path: String,
@@ -189,9 +189,9 @@ pub fn emit_content_updated_to_sibling_windows<R: tauri::Runtime>(
 }
 
 impl MemoEvent {
-    /// 浜嬩欢鍏宠仈鐨?memo id銆侱eleted 鎬绘槸鏈?id; Created 浠?memo 閲屾嬁; Updated
-    /// 鐩存帴璇诲瓧娈点€傛病鏈?id (渚嬪 unregister_memo_by_path 鍚庣殑 Deleted) 杩斿洖
-    /// 褰撳墠鏈湪涓氬姟閫昏緫涓垎鏀娇鐢? 淇濈暀浣滃唴閮ㄦ帴鍙ｃ€?
+    /// 事件关联�?memo id。Deleted 总是�?id; Created �?memo 里拿; Updated
+    /// 直接读字段。没�?id (例�? unregister_memo_by_path 后的 Deleted) 返回
+    /// 当前�?��业务逻辑�?���?���? 保留作内部接口�?
     pub(crate) fn memo_id(&self) -> &str {
         match self {
             MemoEvent::Created { memo, .. } => &memo.id,
@@ -206,12 +206,12 @@ impl MemoEvent {
     }
 }
 
-/// 瑙﹀彂 emit 鐨勮杽鍖呰銆傚け璐ヤ笉 panic (let _ = 鍚炴帀 emit 閿欒, 璺?`agent-chunk`
-/// 鐨?emit 椋庢牸淇濇寔涓€鑷?鈥?IPC 閫氶亾鍏抽棴鏃朵笉璇ヨ涓氬姟閫昏緫宕?銆?///
-/// v3 鏀归€犲悗鐗╃悊 rename 涓嶅啀鍙戠敓, 涓嶅啀闇€瑕?id 浜岀骇鍏滃簳銆?
+/// 触发 emit 的薄包�?。失败不 panic (let _ = 吞掉 emit 错�?, �?`agent-chunk`
+/// �?emit 风格保持一�?—IPC 通道关闭时不该�?业务逻辑�?�?///
+/// v3 改造后物理 rename 不再发生, 不再需�?id 二级兜底�?
 pub fn emit(app: &AppHandle, event: MemoEvent) {
-    // 浼樺厛璧?dispatcher (SharedDispatcher) 鎶借薄, 鎷夸笉鍒伴€€鍒扮洿鎺?app.emit銆?    // dispatcher 鍦?lib.rs::run 閲?manage, 涓烘湭鏉ュ channel (attachment /
-    // tag / notebook) 鎻愪緵缁熶竴鍏ュ彛銆傛湰鍑芥暟鏄笟鍔″敮涓€璋冪敤鐐? 涓?    // 闇€瑕佸姩 agent.rs / commands/* 涓€琛屼唬鐮併€?
+    // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
+    // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
         emit_via_dispatcher(&dispatcher, event);
     } else {
@@ -219,10 +219,10 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
     }
 }
 
-/// 閫氳繃 dispatcher 娲惧彂 鈥?璧?`crate::events::EventDispatcher`
-/// 鎶借薄銆?`emit()` 榛樿浼樺厛璧拌繖閲?(浠?`app.state` 鎷?dispatcher 瀹炰緥),
-/// 鎷夸笉鍒版墠閫€鍒?`app.emit` 鐩存帴鍙戙€?澶?channel 鎵╁睍 (attachment-event /
-/// tag-event) 鍦?dispatcher 閲屽鍔? 涓氬姟璋冪敤鐐逛粛璧?`emit()`銆?///
+/// 通过 dispatcher 派发 —�?`crate::events::EventDispatcher`
+/// 抽象�?`emit()` 默�?优先走这�?(�?`app.state` �?dispatcher 实例),
+/// 拿不到才退�?`app.emit` 直接发�?�?channel 扩展 (attachment-event /
+/// tag-event) �?dispatcher 里�?�? 业务调用点仍�?`emit()`�?///
 
 pub fn emit_via_dispatcher(dispatcher: &crate::events::SharedDispatcher, event: MemoEvent) {
     let _ = event.memo_id();
@@ -232,8 +232,8 @@ pub fn emit_via_dispatcher(dispatcher: &crate::events::SharedDispatcher, event: 
 
 #[cfg(test)]
 mod tests {
-    //! serde wire-format 娴嬭瘯 鈥?淇濊瘉涓庡墠绔?TypeScript 闀滃儚 (app/flowix-web/types/memo.ts)
-    //! 鐨勭‖濂戠害銆俙kind` 蹇呴』鏄?snake_case, 瀛楁鍛藉悕 (memo/id/path/source) 鏄?    //! 璺?IPC 杈圭晫鐨勭‖绾﹀畾, 涓嶈闅忎究鏀广€?
+    //! serde wire-format 测试 —保证与前�?TypeScript 镜像 (app/flowix-web/types/memo.ts)
+    //! 的硬契约。`kind` 必须�?snake_case, 字�?命名 (memo/id/path/source) �?    //! �?IPC 边界的硬约定, 不�?随便改�?
     use super::*;
     use flowix_core::memo_file::Memo;
 
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(v["source"], "user_new");
         assert_eq!(v["notebookId"], "nb_default");
         assert_eq!(v["derivedChanged"]["tags"], true);
-        // memo 瀛楁淇濇寔 camelCase (Memo struct 鑷韩鐢?#[serde(rename = "createdAt")] 绛?
+        // memo 字�?保持 camelCase (Memo struct �?���?#[serde(rename = "createdAt")] �?
         assert_eq!(v["memo"]["id"], "abc123");
         assert_eq!(v["memo"]["filename"], "Sample.md");
         assert_eq!(v["memo"]["thumbnail"], "https://example.com/cover.png");
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn all_sources_have_snake_case_strings() {
-        // 闃叉鏃ュ悗鍔犳柊 source 鏃舵紡鎺?rename_all 瀵艰嚧 IPC 澶遍厤
+        // 防�?日后加新 source 时漏�?rename_all 导致 IPC 失配
         for (variant, expected) in [
             (MemoChangeSource::UserNew, "user_new"),
             (MemoChangeSource::UserImport, "user_import"),

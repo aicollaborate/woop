@@ -1,41 +1,17 @@
 /**
- * "通过链接打开笔记"模块 — 公开 API 入口。
+ * "通过链接打开笔记" - platform 层只保留纯解析原语 (types / path-helper / 事件常量)。
  *
- * 设计:
- *   - 后端 `open_target/handler.rs` 接收 `raw: String`, 解析 + emit
- *     `flowix:open-target` 事件, 然后通过 `openMemoByTarget` IPC 把
- *     `ResolvedOpenTarget` 同步返回给调用方 (供不依赖事件的前端路径用)。
- *   - 监听者 (`mountOpenTargetListener`) 负责把"系统 / single-instance /
- *     Agent 触发"的打开请求转成 UI 动作, 挂在 app.tsx 顶层。
- *   - 主动入口 (`openNoteByDeepLink` / `openNoteByPhysicalPath` /
- *     `openNoteByMemoId`) 供 noteReference 双击、Agent 工具调用、跨窗口
- *     等热路径用, 同步走完整 IPC 解析, 不依赖事件订阅。
- *   - 轻量解析 (`resolveMemoById` / `resolveMemoByPath`) 不触发打开动作,
- *     仅返回 ResolvedOpenTarget, 用于 noteReference mount/update 时异步
- *     校验并刷新 attrs.
+ * 编排逻辑 (openNoteByTarget / openNoteByDeepLink / openNoteByPhysicalPath /
+ * openNoteByMemoId / mountOpenTargetListener) 已上移到 features/memo/use-cases ──
+ * 它们操纵 memo/document store, 属应用编排, 不该在 platform 层反向依赖 features。
+ *   - features/memo/use-cases/open-by-target.ts      主动打开 + 轻量解析
+ *   - features/memo/use-cases/open-target-listener.ts 跨窗口事件订阅
  *
- * 用法:
- *   - app.tsx 顶层:
- *       useEffect(() => { void mountOpenTargetListener(); return unmount; }, []);
- *   - noteReference 双击:
- *       await openNoteByMemoId(memoId);
- *   - noteReference mount/update 异步校验:
- *       const r = await resolveMemoById(memoId);
+ * 本模块剩余 (后端 open_target 契约 + 纯路径解析):
+ *   - ResolvedOpenTarget 类型 + FLOWIX_OPEN_TARGET_EVENT 事件常量
+ *   - path-helper (resolveAbsolutePath)
  */
-
-export {
-  openNoteByTarget,
-  openNoteByDeepLink,
-  openNoteByPhysicalPath,
-  openNoteByMemoId,
-  resolveMemoById,
-  resolveMemoByPath,
-} from '@platform/open-target/opener';
-
-export {
-  mountOpenTargetListener,
-  unmountOpenTargetListener,
-} from '@platform/open-target/listener';
 
 export type { ResolvedOpenTarget } from '@platform/open-target/types';
 export { FLOWIX_OPEN_TARGET_EVENT } from '@platform/open-target/types';
+export { resolveAbsolutePath } from '@platform/open-target/path-helper';

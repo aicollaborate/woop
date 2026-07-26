@@ -1,11 +1,13 @@
 import { assetMarkdownUrl, decodeStorageKey } from '@features/editor/extensions/attachment-link/utils';
+import type { JSONContent, MarkdownToken } from '@tiptap/core';
 
 export function isAttachmentMarkdownUrl(url: string): boolean {
     return /^(asset:\/\/|https?:\/\/asset\.localhost\/)/i.test(url);
 }
 
-export function parseFileAttachmentMarkdown(token: any) {
-    const { url, title } = token;
+export function parseFileAttachmentMarkdown(token: MarkdownToken) {
+    const url = typeof token.url === 'string' ? token.url : '';
+    const title = typeof token.title === 'string' ? token.title : null;
 
     return {
         type: 'fileAttachment',
@@ -20,7 +22,7 @@ export function parseFileAttachmentMarkdown(token: any) {
     };
 }
 
-export function renderFileAttachmentMarkdown(node: any) {
+export function renderFileAttachmentMarkdown(node: JSONContent) {
     const { storageMode, storageKey, url, name } = node.attrs ?? {};
     const fileUrl = storageMode === 'attachment' && storageKey
         ? assetMarkdownUrl(String(storageKey))

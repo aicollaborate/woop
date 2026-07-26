@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-cli"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "chrono",
  "clap",
@@ -2144,11 +2144,12 @@ dependencies = [
  "shell-words",
  "tempfile",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "flowix-core"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -2171,7 +2172,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-desktop"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

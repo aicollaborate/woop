@@ -1,6 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { EditorView, NodeView } from '@tiptap/pm/view';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import {
   FrontmatterPropertyError,
   parseVisibleFrontmatter,

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { TextHOneIcon, TextHTwoIcon, TextHThreeIcon, TextHFourIcon, TextTIcon, ListBulletsIcon, ListNumbersIcon, CheckSquareIcon } from '@phosphor-icons/react'
-import type { I18nKey } from '@features/i18n'
+import type { I18nKey } from '@/lib/i18n'
 
 /**
  * Menu items for the drag handle popover. Kept as data (not inline JSX in

@@ -5,7 +5,7 @@ import {
   listMenuItems,
   type BlockMenuItem,
 } from '@features/editor/components/drag-context-menu/items'
-import { useI18n } from '@features/i18n'
+import { useI18n } from '@/lib/i18n'
 
 export type BlockMenuActionGroup = 'heading' | 'list' | 'danger'
 

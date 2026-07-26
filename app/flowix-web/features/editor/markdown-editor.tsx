@@ -34,11 +34,11 @@ import Frontmatter from '@features/editor/extensions/frontmatter';
 import { MenuPinExtension } from '@features/editor/extensions/menu-pin';
 import { BlockDragExtension } from '@features/editor/extensions/block-drag';
 import { SlashMenu } from '@features/editor/extensions/slash-menu';
-import { AgentThreadCard } from '@features/editor/extensions/agent-thread-card';
+import { AgentThreadCard } from '@features/agent/thread-card';
 import { TabAgentRun } from '@features/editor/extensions/tab-agent-run';
 import { TabCharacter } from '@features/editor/extensions/tab-character';
 import { TablePlugin } from '@features/editor/extensions/table/table-plugin';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface MarkdownEditorProps {
   content: string;
@@ -63,6 +63,12 @@ interface MarkdownEditorProps {
 export interface MarkdownEditorHandle {
   flushPendingChanges: () => string | null;
   getCurrentMarkdown: () => string;
+}
+
+interface NestedListMarkdownContext {
+  parentType?: string;
+  index: number;
+  meta?: { parentAttrs?: { start?: number } };
 }
 
 /**
@@ -223,7 +229,7 @@ const PreservedListItem = ListItem.extend({
     return renderNestedMarkdownContent(
       node,
       h,
-      (context: any) => {
+      (context: NestedListMarkdownContext) => {
         if (context.parentType === 'bulletList') {
           return '- ';
         }

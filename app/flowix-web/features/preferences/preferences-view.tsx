@@ -3,7 +3,10 @@
 import { useState, useEffect } from 'react';
 import { StarFourIcon } from '@phosphor-icons/react';
 import { FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
-import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
+import {
+	useUserSettings,
+	useUserSettingsActions,
+} from '@features/preferences/hooks/use-user-settings';
 import {
 	GeneralSection,
 	FormatSection,
@@ -24,8 +27,8 @@ import { Button } from '@shared/ui/button';
 import { WindowsTitlebarControls } from '@shared/window-titlebar-controls';
 import { PreferencesTitlebarMac } from '@features/preferences/preferences-titlebar-mac';
 import { PreferencesTitlebarWin } from '@features/preferences/preferences-titlebar-win';
-import { useI18n, type I18nKey } from '@features/i18n';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useI18n, type I18nKey } from '@/lib/i18n';
+import { getCurrentWindow } from '@platform/tauri/window';
 
 function isWindowsPlatform(): boolean {
 	return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -78,12 +81,40 @@ function PlaceholderSection({ title, emptyText }: { title: string; emptyText: st
 	);
 }
 
+function GeneralSettingsSection() {
+	const personalize = useUserSettings((settings) => settings.personalize);
+	const language = useUserSettings((settings) => settings.language);
+	const region = useUserSettings((settings) => settings.region);
+	const memoCardVariant = useUserSettings((settings) => settings.memoCardVariant);
+	const { updateSettings } = useUserSettingsActions();
+	return (
+		<GeneralSection
+			settings={personalize}
+			language={language}
+			region={region}
+			memoCardVariant={memoCardVariant}
+			updateSettings={updateSettings}
+		/>
+	);
+}
+
+function FormatSettingsSection() {
+	const format = useUserSettings((settings) => settings.format);
+	const { updateSettings } = useUserSettingsActions();
+	return <FormatSection settings={format} updateSettings={updateSettings} />;
+}
+
+function ThemeSettingsSection() {
+	const theme = useUserSettings((settings) => settings.theme);
+	const { updateSettings } = useUserSettingsActions();
+	return <ThemeSection settings={{ theme }} updateSettings={updateSettings} />;
+}
+
 interface PreferencesViewProps {
 	initialTab?: string;
 }
 
 export function PreferencesView({ initialTab }: PreferencesViewProps) {
-	const { settings, updateSettings } = useUserSettings();
 	const { t } = useI18n();
 	const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 	const title = t('preferences.title');
@@ -140,25 +171,13 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 					<div className="flex-1 flex justify-center p-6 overflow-y-auto [scrollbar-gutter:stable]">
 						<div className="w-full max-w-[500px]">
 							{activeTab === 'general' && (
-								<GeneralSection
-									settings={settings.personalize}
-									language={settings.language}
-									region={settings.region}
-									memoCardVariant={settings.memoCardVariant}
-									updateSettings={updateSettings}
-								/>
+								<GeneralSettingsSection />
 							)}
 							{activeTab === 'format' && (
-								<FormatSection
-									settings={settings.format}
-									updateSettings={updateSettings}
-								/>
+								<FormatSettingsSection />
 							)}
 							{activeTab === 'theme' && (
-								<ThemeSection
-									settings={settings}
-									updateSettings={updateSettings}
-								/>
+								<ThemeSettingsSection />
 							)}
 							{activeTab === 'noteSettings' && <NoteSettingsSection />}
 							{activeTab === 'aiAgent' && <AgentsSection />}

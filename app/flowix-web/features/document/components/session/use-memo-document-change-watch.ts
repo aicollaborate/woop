@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@platform/tauri/window';
 
 import {
   hasDocumentUnsavedChanges,
   isRecentSelfDocumentWrite,
   type DocumentIdentity,
 } from '@features/document';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { canonicalPath } from '@/lib/path';

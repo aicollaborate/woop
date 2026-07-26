@@ -13,7 +13,7 @@ import type {
 } from "@/types/agent";
 import type { LiveMessageState } from "@features/agent/store/chunk-result";
 import { STORAGE_KEYS } from "@/lib/constants";
-import { translate } from "@features/i18n";
+import { translate } from "@/lib/i18n";
 import { applyExternalSessionResolved } from "@features/agent/store/external-session";
 import { agentClient, listenToAgentChunks } from "@features/agent/store/agent-client";
 import {

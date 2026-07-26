@@ -1,20 +1,16 @@
 import { Component, ErrorInfo, ReactNode } from "react";
-import { translate, type AppLanguage } from "@features/i18n";
-import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
+import { translate, type AppLanguage, DEFAULT_APP_LANGUAGE } from "@/lib/i18n";
 
 interface ErrorBoundaryProps {
 	children: ReactNode;
 	fallback?: ReactNode;
+	language?: AppLanguage;
 	onError?: (error: Error, errorInfo: ErrorInfo) => void;
 }
 
 interface ErrorBoundaryState {
 	hasError: boolean;
 	error?: Error;
-}
-
-function getLanguage(): AppLanguage {
-	return useUserSettingsStore.getState().settings.language;
 }
 
 /**
@@ -45,7 +41,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 				return this.props.fallback;
 			}
 
-			const lang = getLanguage();
+			const lang = this.props.language ?? DEFAULT_APP_LANGUAGE;
 
 			return (
 				<div className="flex flex-col items-center justify-center h-full p-8 text-center">

@@ -18,7 +18,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
-import { useI18n, translate, type AppLanguage } from '@features/i18n';
+import {
+  useI18n,
+  translate,
+  type AppLanguage,
+  type I18nKey,
+  type I18nParams,
+} from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import {
   PRESETS,
@@ -249,7 +255,7 @@ function getMonthDays(viewMonth: Date): Array<{ date: Date; inMonth: boolean }> 
   });
 }
 
-function getMonthTitle(t: (key: any, params?: Record<string, string | number>) => string, date: Date): string {
+function getMonthTitle(t: (key: I18nKey, params?: I18nParams) => string, date: Date): string {
   return t('document.properties.monthTitle', {
     year: date.getFullYear(),
     month: date.getMonth() + 1,
@@ -534,10 +540,10 @@ export function NotePropertiesDialog({
   };
 
   // 自定义添加: name 是展示名, key 按固定 kebab-case 规则生成。
-  const addCustomField = (payload: { name: string; type: PropertyType; options?: string[] }) => {
+  const addCustomField = async (payload: { name: string; type: PropertyType; options?: string[] }) => {
     const name = payload.name.trim();
     if (!name) return;
-    const key = generatePropertyKey(name);
+    const key = await generatePropertyKey(name);
     const options = normalizeFieldOptions(payload.type, payload.options);
     setRows((current) => [
       ...current,
@@ -589,13 +595,13 @@ export function NotePropertiesDialog({
 
   // 编辑现有行: 自定义路径, 以展示名重新生成 key, 并更新 type/options。
   // 与 addCustomField 区别: 改的是已有行而不是 push 新行; preset 字段清掉。
-  const updateRowFromEdit = (
+  const updateRowFromEdit = async (
     id: string,
     payload: { name: string; type: PropertyType; options?: string[] }
   ) => {
     const name = payload.name.trim();
     if (!name) return;
-    const key = generatePropertyKey(name);
+    const key = await generatePropertyKey(name);
     const options = normalizeFieldOptions(payload.type, payload.options);
     const previousKey = rows.find((row) => row.id === id)?.key;
     setRows((current) => current.map((row) => {

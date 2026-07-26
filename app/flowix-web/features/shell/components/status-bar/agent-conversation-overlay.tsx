@@ -8,14 +8,17 @@ import { AGENT_TYPES, getAgentType, isAgentTypeComingSoon } from '@/lib/agent-ty
 import { cn } from '@/lib/utils';
 import { Kbd } from '@shared/ui/shortcut-kbd';
 import {
-  selectIsAgentConversationRunning,
   useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-store';
 import { useChatStore } from '@features/agent/store/chat-store';
+import {
+  isAgentConversationRunning,
+  useConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import { useDocumentStore } from '@features/document';
-import { useI18n } from '@features/i18n';
-import { openNoteByMemoId } from '@platform/open-target';
+import { useI18n } from '@/lib/i18n';
+import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 
 interface AgentConversationOverlayProps {
   initialAgentType: AgentTypeKey;
@@ -31,7 +34,7 @@ export function AgentConversationOverlay({
   const { language, t } = useI18n();
   const [activeType, setActiveType] = useState<AgentConversationFilter>(initialAgentType);
   const instancesMap = useAgentConversationStore((state) => state.instances);
-  const threadStates = useChatStore((state) => state.threadStates);
+  const conversationRunIndex = useConversationRunIndex(instancesMap);
   const instancesByType = useMemo(() => {
     const result = {} as Record<AgentTypeKey, AgentConversationInstance[]>;
     for (const type of AGENT_TYPES) {
@@ -161,7 +164,7 @@ export function AgentConversationOverlay({
               <div>
                 {activeInstances.map((instance) => {
                   const canOpen = Boolean(instance.source.memoId || instance.source.documentPath);
-                  const running = selectIsAgentConversationRunning(instance, threadStates);
+                  const running = isAgentConversationRunning(instance, conversationRunIndex);
                   return (
                     <button
                       key={instance.instanceId}

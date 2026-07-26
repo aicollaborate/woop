@@ -40,6 +40,8 @@ export interface AgentConversationInstance {
   title: string;
   threadId: string | null;
   runtimeConfig?: RuntimeConfig | null;
+  /** Observability only. The backend is the sole writer and runtime authority. */
+  readonly frozenCwd?: string | null;
   source: AgentConversationSource;
   role?: AgentConversationRole | null;
   createdAt: number;
@@ -186,8 +188,9 @@ function normalizeBackendInstance(
 function toBackendInstance(
   instance: AgentConversationInstance,
 ): BackendAgentConversationInstance {
+  const { frozenCwd: _backendOwnedCwd, ...frontendOwned } = instance;
   return {
-    ...instance,
+    ...frontendOwned,
     runtimeConfig: serializeRuntimeConfigSnapshot(instance.runtimeConfig),
   };
 }
@@ -740,7 +743,6 @@ export function selectRunningAgentConversationThreadIds(
   }
   return Array.from(threadIds);
 }
-
 
 
 

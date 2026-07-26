@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { displayTitleFromFilename } from '@/lib/utils';
 import { sanitizeFileName, stripFrontmatter } from '@/lib/export-utils';
 import { memos as memosClient, dialogs, type SaveFileFilter } from '@platform/tauri/client';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import type { MemoColor, MemoItem } from '@features/memo';
@@ -222,7 +222,8 @@ export function useDocumentCommands({
       return;
     }
 
-    const ok = await dialogs.writeExportFile(target, exportModule.buildWordHtml(doc.title, bodyHtml));
+    const language = useUserSettingsStore.getState().settings.language;
+    const ok = await dialogs.writeExportFile(target, exportModule.buildWordHtml(doc.title, bodyHtml, language));
     toast[ok ? 'success' : 'error'](tCmd(ok ? 'document.command.exportWord.success' : 'document.command.exportWord.failed'));
   }, [promptExportTarget, requireExportableDocument]);
 

@@ -9,6 +9,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['app/flowix-web/**/*.test.ts'],
+    setupFiles: ['app/flowix-web/vitest.setup.ts'],
   },
   resolve: {
     alias: {

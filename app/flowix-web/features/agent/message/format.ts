@@ -5,7 +5,7 @@
 // formatRelativeTime 三个工具, 被 message-tool.tsx / message-user.tsx /
 // agent-message.ts 共用 ── 不归"工具元数据", 保留。
 
-import { translate, type AppLanguage, type I18nParams } from "@features/i18n";
+import { translate, type AppLanguage, type I18nParams } from "@/lib/i18n";
 
 export function truncateStart(path: string, maxChars: number = 20): string {
   if (path.length <= maxChars) return path;

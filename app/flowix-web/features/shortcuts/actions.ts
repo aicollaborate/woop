@@ -1,9 +1,9 @@
-import { defineAction } from '@features/shortcuts/registry';
-import { invokeHandler } from '@features/shortcuts/handler-registry';
+import { defineAction } from '@/lib/shortcuts/registry';
+import { invokeHandler } from '@/lib/shortcuts/handler-registry';
 import { windows } from '@platform/tauri/client';
-import { useSettingsStore } from '@features/shell/store/settings-store';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
-import { navigateDocumentHistory } from '@/lib/document-navigation';
+import { navigateDocumentHistory } from '@features/document/use-cases/document-navigation';
 import { resolveSystemTheme, type ResolvedThemeId, type ThemeId } from '@features/theme';
 
 /**

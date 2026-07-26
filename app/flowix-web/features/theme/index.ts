@@ -1,7 +1,13 @@
-/** 主题系统单一真源 — types / palette / sanitize / apply / options / provider 桶导出。 */
-export type { ThemeId, ResolvedThemeId } from '@features/theme/types';
-export { THEME_IDS, DEFAULT_THEME_ID } from '@features/theme/palette';
-export { sanitizeTheme, resolveSystemTheme } from '@features/theme/sanitize';
-export { applyTheme, type ApplyOptions } from '@features/theme/apply';
-export { THEME_OPTIONS, type ThemeOption } from '@features/theme/options';
+/** 主题桶 - 纯核心 re-export 自 @/lib/theme; React 绑定 (ThemeProvider) 本地提供。 */
+export type { ThemeId, ResolvedThemeId } from '@/lib/theme';
+export {
+  THEME_IDS,
+  DEFAULT_THEME_ID,
+  sanitizeTheme,
+  resolveSystemTheme,
+  applyTheme,
+  type ApplyOptions,
+  THEME_OPTIONS,
+  type ThemeOption,
+} from '@/lib/theme';
 export { ThemeProvider } from '@features/theme/provider';

@@ -21,7 +21,7 @@ import {
   OverlayScrollbar,
   type OverlayScrollbarHandle,
 } from '@shared/ui/overlay-scrollbar';
-import { translate, useI18n, type AppLanguage, type I18nKey } from '@features/i18n';
+import { translate, useI18n, type AppLanguage, type I18nKey } from '@/lib/i18n';
 
 export type SlashMenuItemId =
   | 'blockquote'

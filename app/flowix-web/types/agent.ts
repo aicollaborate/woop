@@ -143,15 +143,8 @@ export interface RuntimeConfig {
   tools?: string[];
   /** 旧版 cwd 显式覆盖；历史数据会迁移到 workspaceSnapshot。 */
   cwd?: string;
-  /** 首次运行时冻结的 cwd / add-dir / notebook 路径。 */
+  /** 首次运行时冻结的 add-dir / notebook 路径；cwd 仅用于旧数据迁移。 */
   workspaceSnapshot?: WorkspaceSnapshot;
-  /**
-   * 后端冻结的工作目录（权威）。首次 turn 由后端写入
-   * `agent_conversation_instances.runtime_config`，后续 turn 直接复用，
-   * 保证 cwd 不随当前笔记漂移。前端只透传（JSON round-trip 保留），
-   * 不主动读写。
-   */
-  frozenCwd?: string;
   /**
    * 创建该 instance 时所属 notebook 的 id 快照 (如 `nb_<ts>` / `nb_default`)。
    *

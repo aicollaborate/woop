@@ -3,7 +3,7 @@ import type {
   AgentToolDisplayKind,
   AgentTypeKey,
 } from "@/types/agent";
-import type { AppLanguage } from "@features/i18n";
+import type { AppLanguage } from "@/lib/i18n";
 
 type ToolDisplayFormatter = (
   input: Record<string, unknown>,

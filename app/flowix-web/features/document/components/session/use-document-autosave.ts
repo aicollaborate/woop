@@ -13,7 +13,7 @@ import {
   useDocumentStore,
   type DocumentIdentity,
 } from '@features/document';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { formatDateTime } from '@/lib/utils';
@@ -117,7 +117,7 @@ export function useDocumentAutosave({
           if (isMountedRef.current) {
             setState(prev => ({
               ...prev,
-              updatedAt: formatDateTime(now),
+              updatedAt: formatDateTime(now, useUserSettingsStore.getState().settings.language),
               updatedAtDate: new Date(now),
               error: null,
             }));

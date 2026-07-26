@@ -19,8 +19,8 @@ import {
 import { Button } from '@shared/ui/button';
 import { Field, SectionHeader, FIELD_INPUT_CLASS } from '@features/preferences/sections/primitives';
 import { Loader2, Check, XCircle } from 'lucide-react';
-import { useI18n } from '@features/i18n';
-import { useRegionStore } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
+import { useRegionStore } from '@/lib/i18n';
 import iconMinimax from '@/assets/icon-minimax.svg';
 import iconGlm from '@/assets/icon-glm.svg';
 import iconOpenai from '@/assets/icon-openai.svg';

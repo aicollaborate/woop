@@ -3,7 +3,7 @@ import type {
   AgentCodexReasoningEffort,
   AgentPermissionMode,
 } from "@/types/agent";
-import type { I18nKey } from "@features/i18n";
+import type { I18nKey } from "@/lib/i18n";
 
 export const CODEX_MODEL_OPTIONS: Array<{
   id: AgentCodexModel;

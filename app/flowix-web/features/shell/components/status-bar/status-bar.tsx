@@ -1,25 +1,22 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Hash, ListTodo, SlidersHorizontal } from 'lucide-react';
 import { Tooltip } from '@shared/ui/tooltip';
 import type { Notebook } from '@features/memo';
 import { NotebookSwitcher } from '@features/shell/components/status-bar/notebook-switcher';
 import { AgentRuntimeStatusMenu } from '@features/shell/components/status-bar/agent-runtime-status-menu';
 import { ProductUpdatePill } from '@features/shell/components/status-bar/product-update-pill';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
+import { useDocumentMetricsStore } from '@features/document';
+import { useMemoStore } from '@features/memo';
 
 interface StatusBarProps {
-  notebooks: Notebook[];
-  selectedNotebook: Notebook | null;
-  notebookPopupOpen: boolean;
-  setNotebookPopupOpen: (open: boolean) => void;
   onSelectNotebook: (notebook: Notebook) => void;
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
-  onRefreshNotebooks: (notebooks: Notebook[]) => void;
   todoCount: number;
   onOpenTodos: () => void;
-  charCount: number;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: () => void;
 }
@@ -39,21 +36,26 @@ interface StatusBarProps {
  * Renders no chrome of its own — it assumes it lives in a `h-[26px]` flex strip.
  */
 export function StatusBar({
-  notebooks,
-  selectedNotebook,
-  notebookPopupOpen,
-  setNotebookPopupOpen,
   onSelectNotebook,
   onEditNotebook,
   onDeleteNotebook,
-  onRefreshNotebooks,
   todoCount,
   onOpenTodos,
-  charCount,
   onToggleNoteNavigation,
   onOpenPreferences,
 }: StatusBarProps) {
   const { t } = useI18n();
+  const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
+  const notebooks = useMemoStore((state) => state.notebooks);
+  const selectedNotebook = useMemoStore((state) => state.selectedNotebook);
+  const setNotebooks = useMemoStore((state) => state.setNotebooks);
+  const charCount = useDocumentMetricsStore((state) => state.charCount);
+
+  useEffect(() => {
+    const handleToggle = () => setNotebookPopupOpen((open) => !open);
+    window.addEventListener('flowix:toggle-notebook-switcher', handleToggle);
+    return () => window.removeEventListener('flowix:toggle-notebook-switcher', handleToggle);
+  }, []);
   return (
     <div className="flex h-[26px] shrink-0 select-none items-stretch bg-[var(--statusbar-bg)] text-xs text-[var(--muted-foreground)]">
       {/* Left column: notebook switcher (fixed width by its own button content). */}
@@ -64,9 +66,15 @@ export function StatusBar({
           notebooks={notebooks}
           selectedNotebook={selectedNotebook}
           onSelect={onSelectNotebook}
-          onEdit={onEditNotebook}
-          onDelete={onDeleteNotebook}
-          onRefresh={onRefreshNotebooks}
+          onEdit={(notebook) => {
+            setNotebookPopupOpen(false);
+            onEditNotebook(notebook);
+          }}
+          onDelete={(notebook) => {
+            setNotebookPopupOpen(false);
+            onDeleteNotebook(notebook);
+          }}
+          onRefresh={setNotebooks}
         />
       </div>
       {/* Right column: full-width content area; carries the top border. */}

@@ -14,14 +14,16 @@ import { cn } from '@/lib/utils';
 import type { AgentTypeKey } from '@/types/agent';
 import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
 import {
-  selectIsAgentConversationRunning,
   useAgentConversationStore,
 } from '@features/agent/store/agent-conversation-store';
-import { useChatStore } from '@features/agent/store/chat-store';
+import {
+  isAgentConversationRunning,
+  useConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import { windows } from '@platform/tauri/client';
 import { getAgentRuntimeStatusText } from '@features/agent/components/agent-runtime-status-list';
 import { openAgentSetup } from '@features/agent/agent-setup';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { AgentConversationOverlay } from '@features/shell/components/status-bar/agent-conversation-overlay';
 
 export function AgentRuntimeStatusMenu() {
@@ -32,13 +34,13 @@ export function AgentRuntimeStatusMenu() {
   const isChecking = useAgentRuntimeStore((s) => s.isChecking);
   const refreshIfStale = useAgentRuntimeStore((s) => s.refreshIfStale);
   const instancesMap = useAgentConversationStore((s) => s.instances);
-  const threadStates = useChatStore((s) => s.threadStates);
+  const conversationRunIndex = useConversationRunIndex(instancesMap);
   const hasRunning = useMemo(
     () =>
       Object.values(instancesMap).some((instance) =>
-        selectIsAgentConversationRunning(instance, threadStates),
+        isAgentConversationRunning(instance, conversationRunIndex),
       ),
-    [instancesMap, threadStates],
+    [conversationRunIndex, instancesMap],
   );
   useEffect(() => {
     if (open) {

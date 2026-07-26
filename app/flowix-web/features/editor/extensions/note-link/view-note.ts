@@ -18,13 +18,13 @@
 
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { NodeView as ProseMirrorNodeView, EditorView } from '@tiptap/pm/view';
-import { Node, nodeInputRule, nodePasteRule, type InputRuleMatch, type PasteRuleMatch } from '@tiptap/core';
-import { NodeSelection, Plugin } from '@tiptap/pm/state';
+import { Node, nodeInputRule, nodePasteRule, type InputRuleMatch, type JSONContent, type MarkdownToken, type PasteRuleMatch } from '@tiptap/core';
+import { NodeSelection, Plugin, type EditorState } from '@tiptap/pm/state';
 
 import { readMarkdownLinkDestination } from '@features/editor/extensions/shared/markdown-link-destination';
 import { openNoteByMemoId, openNoteByPhysicalPath, resolveMemoById, resolveMemoByPath } from '@features/editor/extensions/note-link/memo-resolver';
 import { escapeHtml, parseBooleanAttr, pickAttr, splitDisplay, stripMdSuffix, unescapeHtml } from '@features/editor/extensions/note-link/markdown';
-import { translate, type I18nKey } from '@features/i18n';
+import { translate, type I18nKey } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createTerminalInlineAtomCaretDecorations } from '@features/editor/extensions/shared/terminal-inline-atom-caret';
 
@@ -185,7 +185,7 @@ function attrsFromMarkdownNoteLink(titleText: string, href: string): NoteReferen
  * 完全对照 fileAttachment 节点(`attachment-link/nodes/view-file.ts` 同名函数)
  * 的处理方式 — 二者都是 inline atom 节点,同样受 hardBreak 残留影响。
  */
-function removeHardBreaksAroundNoteReferences(state: any) {
+function removeHardBreaksAroundNoteReferences(state: EditorState) {
   const deletions: Array<{ from: number; to: number }> = [];
   const seen = new Set<string>();
 
@@ -618,7 +618,7 @@ export const NoteReference = Node.create({
       if (linkHrefIndex < 0) return noteIndex;
       return Math.min(noteIndex, Math.max(0, src.lastIndexOf('[', linkHrefIndex)));
     },
-    tokenize(src: string): any {
+    tokenize(src: string) {
       const link = parseMarkdownNoteLinkAtStart(src);
       if (link) {
         return {
@@ -635,7 +635,7 @@ export const NoteReference = Node.create({
     },
   },
 
-  parseMarkdown(token: any) {
+  parseMarkdown(token: MarkdownToken) {
     const href = String(token.href ?? '');
     if (FLOWIX_MEMO_URL_RE.test(href)) {
       return {
@@ -665,7 +665,7 @@ export const NoteReference = Node.create({
     };
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: JSONContent) {
     const a = (node?.attrs ?? {}) as NoteReferenceAttrs;
     if (!a.memoId) {
       // 物理路径粘贴刚生成、尚未异步反查出 memoId 时保留旧格式兜底,

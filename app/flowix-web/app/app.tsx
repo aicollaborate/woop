@@ -9,11 +9,14 @@ import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store"
 import { useApplyFontSettings } from "@features/preferences/hooks/use-apply-font-settings";
 import { ThemeProvider } from "@features/theme";
 import { ShortcutsProvider } from "@features/shortcuts";
-import { I18nProvider } from "@features/i18n";
+import { I18nProvider } from "@/lib/i18n";
 import { TooltipProvider } from "@shared/ui/tooltip";
 import "@features/shortcuts/actions";
 import { listenToUserConfigChanges, windows } from "@platform/tauri/client";
 import { syncUserConfigChange } from "./user-config-sync";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger("app");
 
 const MainLayout = lazy(() =>
   import("@features/shell").then((module) => ({ default: module.MainLayout }))
@@ -49,7 +52,7 @@ function AppToaster() {
 function MainWindowReadySignal() {
   useEffect(() => {
     void windows.showMain().catch((error) => {
-      console.error("Failed to show main window", error);
+      logger.error("show main window failed", { error });
     });
   }, []);
 
@@ -58,11 +61,13 @@ function MainWindowReadySignal() {
 
 function App() {
   const [hash, setHash] = useState(() => window.location.hash);
-  const { settings } = useUserSettings();
+  const language = useUserSettings((settings) => settings.language);
+  const format = useUserSettings((settings) => settings.format);
+  const shortcutOverrides = useUserSettings((settings) => settings.shortcuts);
   const loadInitial = useUserSettingsStore((s) => s.loadInitial);
   const flushPending = useUserSettingsStore((s) => s.flushPending);
   const refreshAgentRuntime = useAgentRuntimeStore((s) => s.refresh);
-  useApplyFontSettings(settings.format);
+  useApplyFontSettings(format);
 
   useEffect(() => {
     loadInitial();
@@ -99,15 +104,15 @@ function App() {
 
   if (isTabWindow) {
     return (
-      <ErrorBoundary>
+      <ErrorBoundary language={language}>
         <AppToaster />
-        <I18nProvider language={settings.language}>
+        <I18nProvider language={language}>
           <ThemeProvider>
             <Suspense fallback={null}>
               <AgentWindowEffects />
             </Suspense>
             <TooltipProvider>
-              <ShortcutsProvider overrides={settings.shortcuts}>
+              <ShortcutsProvider overrides={shortcutOverrides}>
                 <Suspense fallback={null}>
                   <TabWindow />
                 </Suspense>
@@ -122,12 +127,12 @@ function App() {
   if (isPreferencesWindow) {
     const tab = hash.split("/")[1] || undefined;
     return (
-      <ErrorBoundary>
+      <ErrorBoundary language={language}>
         <AppToaster />
-        <I18nProvider language={settings.language}>
+        <I18nProvider language={language}>
           <ThemeProvider>
             <TooltipProvider>
-              <ShortcutsProvider overrides={settings.shortcuts}>
+              <ShortcutsProvider overrides={shortcutOverrides}>
                 <Suspense fallback={null}>
                   <PreferencesView initialTab={tab} />
                 </Suspense>
@@ -140,9 +145,9 @@ function App() {
   }
 
   return (
-    <ErrorBoundary>
+    <ErrorBoundary language={language}>
       <AppToaster />
-      <I18nProvider language={settings.language}>
+      <I18nProvider language={language}>
         <ThemeProvider>
           <Suspense fallback={null}>
             <AgentWindowEffects />
@@ -151,7 +156,7 @@ function App() {
             <MainWindowEffects />
           </Suspense>
           <TooltipProvider>
-            <ShortcutsProvider overrides={settings.shortcuts}>
+            <ShortcutsProvider overrides={shortcutOverrides}>
               <Suspense fallback={null}>
                 <MainLayout />
                 <MainWindowReadySignal />

@@ -1,6 +1,7 @@
 'use client';
 
-import { pinyin } from 'pinyin-pro';
+import { useSyncExternalStore } from 'react';
+import { getPinyin, isPinyinLoaded, subscribePinyinReady } from '@/lib/pinyin';
 import { cn } from '@/lib/utils';
 
 export interface NotebookIconOption {
@@ -9,7 +10,7 @@ export interface NotebookIconOption {
 }
 
 // 笔记本图标统一来源: app/flowix-web/assets/notebook-icons/。
-// 相对路径: components → memo → features → flowix-web (3 个 `..`) → assets/notebook-icons。
+// 相对路径: components -> memo -> features -> flowix-web (3 个 `..`) -> assets/notebook-icons。
 const NOTEBOOK_ICON_MODULES = import.meta.glob<string>('../../../assets/notebook-icons/*.svg', {
   eager: true,
   import: 'default',
@@ -103,6 +104,9 @@ export function getNotebookIconMarkup(icon: string | null | undefined): string |
   return option ? NOTEBOOK_ICON_MARKUP_BY_ID[option.id] ?? null : null;
 }
 
+// 保持同步签名 (NotebookIcon 组件 / agent-role-picker-controller 命令式调用 /
+// 测试 mock 都依赖同步返回)。pinyin-pro 动态加载, 未就绪时降级返回原字符占位;
+// NotebookIcon 经 usePinyinReady 在加载后重渲染刷新为拼音首字母。
 export function getNotebookIconLetter(name: string | undefined | null, fallback: string = 'N'): string {
   if (!name) return fallback;
   const trimmed = name.trim();
@@ -113,9 +117,23 @@ export function getNotebookIconLetter(name: string | undefined | null, fallback:
     return first.toUpperCase();
   }
 
+  const pinyin = getPinyin();
+  if (!pinyin) return first;
+
   const py = pinyin(trimmed, { pattern: 'first' }).trim();
   if (!py) return fallback;
   return py.charAt(0).toUpperCase();
+}
+
+// 订阅 pinyin 加载完成, 触发 fallback 字母刷新。仅 PinyinAwareLetter 使用,
+// 把订阅开销限制在无自定义 icon 的笔记本上。
+function usePinyinReady(): boolean {
+  return useSyncExternalStore(subscribePinyinReady, isPinyinLoaded, () => true);
+}
+
+function PinyinAwareLetter({ name, fallback }: { name?: string | null; fallback?: string }) {
+  usePinyinReady();
+  return <>{getNotebookIconLetter(name, fallback)}</>;
 }
 
 interface NotebookIconProps {
@@ -159,7 +177,7 @@ export function NotebookIcon({
 
   return (
     <span className={cn('flex shrink-0 items-center justify-center', className, fallbackClassName)}>
-      {getNotebookIconLetter(name)}
+      <PinyinAwareLetter name={name} />
     </span>
   );
 }

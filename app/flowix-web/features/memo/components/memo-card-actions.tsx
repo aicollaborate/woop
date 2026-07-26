@@ -12,7 +12,7 @@ import { useContext } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { memos as memosClient } from '@platform/tauri/client';
-import { useI18n, translate, type AppLanguage, type I18nKey } from '@features/i18n';
+import { useI18n, translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
 import {
   ContextMenuContext,
 } from '@shared/ui/context-menu';

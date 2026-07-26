@@ -1,5 +1,5 @@
 import { memos, notebooks, type FilterType, type NotebookSortEntry, type SortType } from '@platform/tauri/client';
-import type { MemoColor, MemoItem, Notebook } from '@features/memo';
+import type { MemoColor, Notebook } from '@features/memo';
 
 export type { FilterType, SortType } from '@platform/tauri/client';
 
@@ -10,7 +10,7 @@ export const memoRepository = {
     sort?: SortType;
     tagId?: string;
   }) => memos.getMemos(params),
-  create: (tag?: string, notebookId?: string) => memos.addDocument(tag, notebookId) as Promise<MemoItem>,
+  create: (tag?: string, notebookId?: string) => memos.addDocument(tag, notebookId),
   delete: (id: string) => memos.deleteMemo(id),
   favorite: (id: string) => memos.favoriteMemo(id),
   unfavorite: (id: string) => memos.unfavoriteMemo(id),
@@ -18,11 +18,11 @@ export const memoRepository = {
 };
 
 export const notebookRepository = {
-  list: () => notebooks.getAll() as Promise<Notebook[]>,
+  list: (): Promise<Notebook[]> => notebooks.getAll(),
   create: (name: string, path: string, icon?: string | null) =>
-    notebooks.create(name, path, icon) as Promise<Notebook | null>,
+    notebooks.create(name, path, icon),
   update: (id: string, name?: string, icon?: string | null) =>
-    notebooks.update(id, name, icon) as Promise<Notebook | null>,
+    notebooks.update(id, name, icon),
   /**
    * Reorder notebooks by submitting (id, sort) pairs to the backend.
    * `order` is the desired final sequence (id in the order it should appear);

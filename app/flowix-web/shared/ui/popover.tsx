@@ -53,6 +53,12 @@ interface PopoverTriggerProps {
 	render?: React.ReactNode;
 }
 
+interface PopoverTriggerChildProps {
+	ref?: React.Ref<HTMLElement>;
+	onClick?: React.MouseEventHandler<HTMLElement>;
+	"data-state"?: "open" | "closed";
+}
+
 function PopoverTrigger({ children, asChild, className, render }: PopoverTriggerProps) {
 	const { open, setOpen, triggerRef } = usePopoverContext();
 
@@ -62,8 +68,8 @@ function PopoverTrigger({ children, asChild, className, render }: PopoverTrigger
 	};
 
 	// Support render prop pattern like shadcn
-	if (render) {
-		const renderElement = render as React.ReactElement<any>;
+	if (React.isValidElement<PopoverTriggerChildProps>(render)) {
+		const renderElement = render;
 		return React.cloneElement(renderElement, {
 			ref: (el: HTMLElement | null) => {
 				triggerRef.current = el;
@@ -74,7 +80,7 @@ function PopoverTrigger({ children, asChild, className, render }: PopoverTrigger
 	}
 
 	if (asChild && React.Children.count(children) === 1) {
-		const child = React.Children.only(children) as React.ReactElement<any>;
+		const child = React.Children.only(children) as React.ReactElement<PopoverTriggerChildProps>;
 		return React.cloneElement(child, {
 			ref: (el: HTMLElement | null) => {
 				triggerRef.current = el;

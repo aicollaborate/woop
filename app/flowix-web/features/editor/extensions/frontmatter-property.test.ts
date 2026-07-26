@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
-import type { I18nKey } from '@features/i18n';
+import type { I18nKey } from '@/lib/i18n';
 
 import Frontmatter from './frontmatter';
 import {
@@ -126,8 +126,8 @@ describe('frontmatter property helpers', () => {
     )).toThrow(/Tags must be a list/);
   });
 
-  it('canonicalizes the singular tag key to tags', () => {
-    expect(generatePropertyKey('tag')).toBe('tags');
+  it('canonicalizes the singular tag key to tags', async () => {
+    expect(await generatePropertyKey('tag')).toBe('tags');
     const next = updateVisibleFrontmatterProperty(
       'key: ra61em97\ntag: [legacy]',
       'tag',

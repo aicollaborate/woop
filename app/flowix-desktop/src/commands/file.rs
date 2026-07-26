@@ -1,6 +1,6 @@
-//! File IPC 鈥?浠绘剰 in-notebook 鏂囦欢鐨?tree / read / write / create銆?//!
-//! 璺?`memo.rs::read_document` / `write_document` 鐨勫尯鍒? 閭ｄ袱涓蛋鍗曟枃浠惰矾寰?//! (`can_access_document_path` 瀹堝崼, 鍖呮嫭 `.md` 鍚庣紑缁曡繃), 杩欏叓涓蛋
-//! `space_path` 浣滅敤鍩?(`can_access_scoped_file` 瀹堝崼, 蹇呴』钀藉湪澹版槑鐨?//! notebook 鏍逛笅)銆?
+//! File IPC —任意 in-notebook 文件�?tree / read / write / create�?//!
+//! �?`memo.rs::read_document` / `write_document` 的区�? 那两�?��单文件路�?//! (`can_access_document_path` 守卫, 包括 `.md` 后缀绕过), 这八�?��
+//! `space_path` 作用�?(`can_access_scoped_file` 守卫, 必须落在声明�?//! notebook 根下)�?
 use std::fs;
 use std::path::Path;
 

@@ -37,9 +37,9 @@ pub fn get_all_tags(notebook_id: Option<String>, state: State<AppState>) -> GetA
     }
 }
 
-/// 绉诲姩 subtag: 鎶?`old_path` 鏁存５瀛愭爲閲嶅懡鍚?(鍚?prefix 鏇挎崲),
-/// 鎵归噺鏀瑰啓鎵€鏈夊彈褰卞搷 memo 鐨?`.md` body + 鍚屾 memo index銆?///
-/// 杩斿洖 `MoveTagReport { affectedMemos, renamedTags }` 鈥?鍓嶇鎷垮埌
+/// 移动 subtag: �?`old_path` 整棵子树重命�?(�?prefix 替换),
+/// 批量改写所有受影响 memo �?`.md` body + 同�? memo index�?///
+/// 返回 `MoveTagReport { affectedMemos, renamedTags }` —前�?拿到
 /// `renamedTags` 鍚庡彲绮剧‘鍒锋柊 dropdown / 鏍囩闈㈡澘缂撳瓨, 閬垮厤閲嶆柊鎷夊叏琛ㄣ€?
 #[tauri::command]
 pub fn move_memo_tag(
@@ -132,9 +132,9 @@ pub fn delete_memo_tag(
 }
 
 
-/// 璺緞寮?tag 鏍戝墠缂€璁℃暟: 姣忎釜 prefix (e.g. `涓浗`, `涓浗/婀栧崡`) 瀵瑰簲
-/// 鎸備簡"浠ヨ prefix 璧峰鐨?tag"鐨勫幓閲?memo 鏁般€傜敤浜庝晶鏍忔爲鑺傜偣涓?/// 鏄剧ず鐨勬暟瀛?鈥?蹇呴』鎸?memo 鏁? 涓嶈兘鎸?tag 鏁扮疮鍔?(鍚屼竴 memo 澶氫釜
-/// 瀛?tag 鍦ㄧ埗 prefix 涓嬪彧绠?1)銆?
+/// �?���?tag 树前缀计数: 每个 prefix (e.g. `�?��`, `�?��/湖南`) 对应
+/// 挂了"以�? prefix 起�?�?tag"的去�?memo 数。用于侧栏树节点�?/// 显示的数�?—必须�?memo �? 不能�?tag 数累�?(同一 memo 多个
+/// �?tag 在父 prefix 下只�?1)�?
 #[tauri::command]
 pub fn get_tag_prefix_counts(
     notebook_id: Option<String>,

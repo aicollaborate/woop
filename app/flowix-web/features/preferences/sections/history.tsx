@@ -1,7 +1,7 @@
 'use client';
 
 import { SectionHeader } from '@features/preferences/sections/primitives';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 export function HistorySection() {
   const { t } = useI18n();

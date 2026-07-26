@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
 import {
   computeNotebookDropPosition,
@@ -227,7 +227,7 @@ export function NotebookList({
                       ? 'cursor-grabbing opacity-40'
                       : notebookListCollapsed
                         ? 'cursor-default'
-                        : 'cursor-pointer hover:bg-[var(--muted)]',
+                        : 'cursor-pointer',
                     !isNotebookDragging && 'text-[var(--foreground)]',
                     isMissing && 'opacity-70',
                   )}
@@ -263,7 +263,9 @@ export function NotebookList({
                       )}
                     </span>
                   </div>
-                  {isActive && (
+                  {/* 选中对勾 ── 折叠态下列表只剩选中行这一条, 对勾已无标识
+                      意义, 故折叠时不渲染。展开态多行并存时才显示。 */}
+                  {isActive && !notebookListCollapsed && (
                     <div className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center transition-opacity group-hover:opacity-0 z-10 pointer-events-none">
                       <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
                     </div>
@@ -280,7 +282,7 @@ export function NotebookList({
                         event.stopPropagation();
                         onEditNotebook(notebook);
                       }}
-                      className="flex h-6 w-6 items-center justify-center rounded bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
+                      className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--agent-bg)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
                       aria-label={t('status.editNotebook')}
                     >
                       <Pencil className="h-3 w-3" />

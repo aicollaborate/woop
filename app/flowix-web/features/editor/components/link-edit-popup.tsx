@@ -1,7 +1,7 @@
 import { Editor, posToDOMRect } from '@tiptap/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { linkSelectionHighlightPluginKey, normalizePlainLinkHref } from '@features/editor/extensions/markdown-link';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface SavedLinkSelection {
   from: number;

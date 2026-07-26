@@ -1,12 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
-import type { Editor } from '@tiptap/core';
+import { invoke } from '@platform/tauri/core';
+import type { Editor, RawCommands } from '@tiptap/core';
 import { buildUploadContent, insertUploadContent, normalizeUploadContentForInsert } from '@features/editor/extensions/attachment-link/upload/build-content';
 import { handleFileUpload } from '@features/editor/extensions/attachment-link/upload/plugin';
 import { createAttachmentUploadFromPaths } from '@features/editor/extensions/attachment-link/upload/storage';
 import type { OpenFileDialogParams } from '@features/editor/extensions/attachment-link/upload/file-source';
 import { isTauriApp } from '@features/editor/extensions/attachment-link/upload/file-source';
 
-export function createAttachmentCommands() {
+export function createAttachmentCommands(): Partial<RawCommands> {
     return {
         openFileDialog:
             (params?: OpenFileDialogParams) =>
@@ -95,5 +95,5 @@ export function createAttachmentCommands() {
                 void handleFileUpload(editor.view, params.files, params.position);
                 return true;
             },
-    } as any;
+    };
 }

@@ -9,7 +9,7 @@ import iconLinear from '@/assets/icon-linear.svg';
 import iconJira from '@/assets/icon-jira.svg';
 import iconFigma from '@/assets/icon-figma.png';
 import iconGdrive from '@/assets/icon-gdrive.svg';
-import { useI18n, type I18nKey } from '@features/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 
 interface ConnectionItem {
   name: string;

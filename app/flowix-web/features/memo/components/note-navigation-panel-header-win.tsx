@@ -3,7 +3,7 @@
 import { CaretDoubleLeftIcon } from '@phosphor-icons/react';
 
 import { Tooltip } from '@shared/ui/tooltip';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface NoteNavigationPanelHeaderWinProps {
   onTogglePanel: () => void;

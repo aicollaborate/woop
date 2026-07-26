@@ -1,8 +1,19 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { NodeView as ProseMirrorNodeView, EditorView, Decoration } from '@tiptap/pm/view';
 import type { ViewMutationRecord } from '@tiptap/pm/view';
-import { Node, InputRule, mergeAttributes } from '@tiptap/core';
+import { Node, InputRule, mergeAttributes, type JSONContent, type MarkdownToken } from '@tiptap/core';
 import { assetMarkdownUrl, assetUrl, decodeStorageKey, isVideoUrl } from '@features/editor/extensions/attachment-link/utils';
+
+type VideoAttributes = Record<string, unknown> & {
+    src?: unknown;
+    title?: unknown;
+    storageMode?: unknown;
+    storageKey?: unknown;
+};
+
+function stringAttribute(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -55,7 +66,7 @@ class VideoView implements ProseMirrorNodeView {
         video.className = 'editor-video-attachment__video';
         video.controls = true;
         video.preload = 'metadata';
-        if (title) video.title = title;
+        if (typeof title === 'string' && title) video.title = title;
         // No poster generation, no currentTime seek: a poster would force a
         // synchronous JPEG encode + base64 string on the main thread, and the
         // seek would force the browser to download media data even though we
@@ -66,7 +77,7 @@ class VideoView implements ProseMirrorNodeView {
         wrapper.appendChild(video);
         this.dom = wrapper;
 
-        this.applySrc(video, node.attrs as Record<string, any>);
+        this.applySrc(video, node.attrs);
     }
 
     /**
@@ -74,10 +85,11 @@ class VideoView implements ProseMirrorNodeView {
      * `video.src = ...` assignment is scheduled on a future idle frame so we
      * never block the current task (which is typically the editor's setContent).
      */
-    private applySrc(video: HTMLVideoElement, attrs: Record<string, any>): void {
-        const nextSrc = attrs.storageMode === 'attachment' && attrs.storageKey
-            ? assetUrl(attrs.storageKey)
-            : (attrs.src ?? '');
+    private applySrc(video: HTMLVideoElement, attrs: VideoAttributes): void {
+        const storageKey = stringAttribute(attrs.storageKey);
+        const nextSrc = attrs.storageMode === 'attachment' && storageKey
+            ? assetUrl(storageKey)
+            : stringAttribute(attrs.src);
 
         if (nextSrc === this.appliedSrc) return;
         this.appliedSrc = nextSrc;
@@ -116,11 +128,11 @@ class VideoView implements ProseMirrorNodeView {
         const video = this.dom.querySelector('video');
         if (!video) return true;
         if (node.attrs.title) video.title = node.attrs.title;
-        this.applySrc(video, node.attrs as Record<string, any>);
+        this.applySrc(video, node.attrs);
         return true;
     }
 
-    updateAttributes(attributes: Record<string, any>): void {
+    updateAttributes(attributes: Record<string, unknown>): void {
         const video = this.dom.querySelector('video');
         if (video) {
             Object.entries(attributes).forEach(([key, value]) => {
@@ -306,7 +318,7 @@ export const VideoAttachment = Node.create({
             }
             return -1;
         },
-        tokenize(src: string): any {
+        tokenize(src: string) {
             // src should start with '[' — if not, this isn't a video link
             if (!src.startsWith('[')) return undefined;
             const closeBracket = src.indexOf(']');
@@ -336,18 +348,19 @@ export const VideoAttachment = Node.create({
         },
     },
 
-    parseMarkdown(token: any) {
-        if (token.raw.startsWith('!')) return { type: 'text', text: token.raw };
-        const firstBracket = token.raw.indexOf('[');
-        if (firstBracket === -1) return { type: 'text', text: token.raw };
-        const closeBracket = token.raw.indexOf(']', firstBracket + 1);
-        const openParen = token.raw.indexOf('(', firstBracket);
+    parseMarkdown(token: MarkdownToken) {
+        const raw = typeof token.raw === 'string' ? token.raw : '';
+        if (raw.startsWith('!')) return { type: 'text', text: raw };
+        const firstBracket = raw.indexOf('[');
+        if (firstBracket === -1) return { type: 'text', text: raw };
+        const closeBracket = raw.indexOf(']', firstBracket + 1);
+        const openParen = raw.indexOf('(', firstBracket);
         if (closeBracket === -1 || openParen === -1 || closeBracket !== openParen - 1) {
-            return { type: 'text', text: token.raw };
+            return { type: 'text', text: raw };
         }
-        const title = token.raw.slice(firstBracket + 1, closeBracket);
+        const title = raw.slice(firstBracket + 1, closeBracket);
         let closePos = -1;
-        const remaining = token.raw.slice(openParen + 1);
+        const remaining = raw.slice(openParen + 1);
         for (let i = 0; i < remaining.length; i++) {
             if (remaining[i] === '%' && i + 2 < remaining.length && remaining[i + 1] === '2' && remaining[i + 2] === '9') {
                 i += 2;
@@ -359,9 +372,9 @@ export const VideoAttachment = Node.create({
                 break;
             }
         }
-        if (closePos === -1) return { type: 'text', text: token.raw };
-        const src = token.raw.slice(openParen + 1, closePos);
-        if (!isVideoUrl(src)) return { type: 'text', text: token.raw };
+        if (closePos === -1) return { type: 'text', text: raw };
+        const src = raw.slice(openParen + 1, closePos);
+        if (!isVideoUrl(src)) return { type: 'text', text: raw };
         return {
             type: 'videoAttachment',
             attrs: {
@@ -373,7 +386,7 @@ export const VideoAttachment = Node.create({
         };
     },
 
-    renderMarkdown(node: any) {
+    renderMarkdown(node: JSONContent) {
         const { title, storageMode, storageKey, src } = node.attrs || {};
         const videoSrc = storageMode === 'attachment' && storageKey
             ? assetMarkdownUrl(String(storageKey))

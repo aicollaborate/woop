@@ -3,7 +3,7 @@ import { Hash, LoaderCircle } from 'lucide-react';
 import { useSelectedItemScroll } from '@features/editor/extensions/shared/use-selected-item-scroll';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import type { MentionTagItem } from '@features/editor/extensions/tag-mention/tag-mention-data';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 export interface TagMentionDropdownProps {
   items: MentionTagItem[];

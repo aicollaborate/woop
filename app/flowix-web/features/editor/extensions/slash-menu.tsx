@@ -14,7 +14,7 @@ import {
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
 import { windows } from '@platform/tauri/client';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import type { AgentTypeKey } from '@/types/agent';
 import { isAgentTypeComingSoon } from '@/lib/agent-types';
 

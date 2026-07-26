@@ -9,7 +9,7 @@ import {
   useDocumentStore,
   type DocumentIdentity,
 } from '@features/document';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { formatDateTime } from '@/lib/utils';
 import {
@@ -75,8 +75,8 @@ export function useDocumentContent({
       const startedAt = performance.now();
       const buf = applyLoadedDocumentContent(identity, path, fullContent, { preservePending: options?.preservePending });
       const memo = isExternalDocument ? null : getMemoSnapshot(memoId);
-      const createdAt = memo?.createdAt ? formatDateTime(memo.createdAt) : '';
-      const updatedAt = memo?.updatedAt ? formatDateTime(memo.updatedAt) : '';
+      const createdAt = memo?.createdAt ? formatDateTime(memo.createdAt, useUserSettingsStore.getState().settings.language) : '';
+      const updatedAt = memo?.updatedAt ? formatDateTime(memo.updatedAt, useUserSettingsStore.getState().settings.language) : '';
       const updatedAtDate = memo?.updatedAt ? new Date(memo.updatedAt) : null;
       const isFavorited = memo?.favorited || false;
       const isNew = fullContent.trimStart().startsWith('# ');

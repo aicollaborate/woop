@@ -2,7 +2,6 @@
 /* 代码块高亮由 shiki 内联样式负责（codeblock-shiki 扩展），无 .hljs 类消费，不再引入 highlight.js CSS 主题 */
 
 .markdown-editor {
-  --document-tag-height: calc(0.936rem + 4px);
   display: block;
   height: 100%;
   width: 100%;
@@ -554,11 +553,10 @@
 }
 
 .markdown-editor .tag-node {
-  display: inline-flex;
-  height: var(--document-tag-height);
-  box-sizing: border-box;
-  align-items: center;
-  vertical-align: baseline;
+  /* Tag decorations wrap live editable text. Keep them in the native inline
+   * formatting context so WebKit can derive caret and IME geometry from the
+   * text run instead of treating it as a flex container. */
+  display: inline;
   color: var(--document-tag-foreground, var(--primary-foreground));
   font-weight: 400;
   font-size: 0.78rem;
@@ -567,7 +565,9 @@
   border-radius: 8px;
   line-height: 1.2;
   padding: 2px 6px;
-  caret-color: var(--document-tag-foreground, var(--primary-foreground));
+  caret-color: currentColor;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .markdown-editor .tag-node:hover {

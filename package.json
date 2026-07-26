@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "clean": "rm -rf .build dist app/target app/flowix-desktop/binaries",
     "test": "vitest run",
+    "check:layers": "node scripts/check-layer-boundaries.mjs",
+    "check:frontend-debt": "node scripts/check-frontend-debt.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "cli:build": "bash scripts/build-cli.sh",

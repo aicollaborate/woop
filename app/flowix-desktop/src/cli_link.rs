@@ -1,30 +1,30 @@
-//! 棣栨鍚姩鏃跺湪 `~/.local/bin/` 寤?`flowix` symlink,
-//! 鎶婂唴宓?sidecar 鏆撮湶鍒扮敤鎴?`$PATH`, 杩欐牱瑁呭畬妗岄潰搴旂敤鍚庣粓绔兘鐩存帴
+//! 首�?�?��时在 `~/.local/bin/` �?`flowix` symlink,
+//! 把内�?sidecar 暴露到用�?`$PATH`, 这样装完桌面应用后终�?��直接
 //! `flowix ...`銆?//!
 //! ## 璁捐
 //!
-//! - **骞傜瓑**: 姣忔鍚姩閮借窇, 浣嗗彧鍦?symlink 涓嶅瓨鍦?/ 鎸囧悜閿欒鐩爣 /
-//!   宸叉崯鍧忔椂瀹為檯鍐欑洏銆?鐢ㄦ埛鎵嬪姩鍒犱簡涓嬫鍚姩鑷姩鎭㈠ 鈹€鈹€ 姣?"marker file
-//!   鍙窇涓€娆? 椴佹銆?//! - **澶辫触瀹藉**: 浠讳綍 I/O 閿欒 (鏉冮檺 / 纾佺洏婊?/ 鍙 fs) 閮藉彧
-//!   `tracing::warn!`, 涓?panic / 涓?propagate 鈹€鈹€ CLI 瑁呬笉涓婁笉褰卞搷 GUI銆?//! - **鑼冨洿**: macOS + Linux 鍚姩鏃跺缓 symlink銆?Windows 涓婄殑绛夋晥瀹炵幇
-//!   鍦?`app/flowix-desktop/nsis/flowix-cli-path.nsh` 鈹€鈹€ 瑁呭寘鏃跺缓 .cmd shim
+//! - **幂等**: 每�?�?��都跑, 但只�?symlink 不存�?/ 指向错�?�?�� /
+//!   已损坏时实际写盘�?用户手动删了下�?�?���?��恢�? ── �?"marker file
+//!   �?��一�? 鲁�?�?//! - **失败宽�?**: 任何 I/O 错�? (权限 / 磁盘�?/ �?? fs) 都只
+//!   `tracing::warn!`, �?panic / �?propagate ── CLI 装不上不影响 GUI�?//! - **范围**: macOS + Linux �?��时建 symlink�?Windows 上的等效实现
+//!   �?`app/flowix-desktop/nsis/flowix-cli-path.nsh` ── 装包时建 .cmd shim
 //!   鍒?`$LOCALAPPDATA\Flowix\bin\`銆?//!
 //! ## 璺緞閫夋嫨
 //!
-//! - **閾炬帴婧?(target)**: `current_exe().parent().join("flowix-cli")` 鈹€鈹€
-//!   Tauri 2 鐨?`externalBin` 鏈哄埗鎶?sidecar 鏀惧湪涓讳簩杩涘埗鏃佽竟, dev
+//! - **链接�?(target)**: `current_exe().parent().join("flowix-cli")` ──
+//!   Tauri 2 �?`externalBin` 机制�?sidecar 放在主二进制旁边, dev
 //!   (`app/target/<host>/debug/flowix-cli`) 璺?prod
-//!   (`/Applications/Flowix.app/Contents/MacOS/flowix-cli`) 閮芥槸鍚?//!   layout銆?璺?`commands::cli::resolve_sidecar_path` 鐨?prod 鍒嗘敮涓€鑷淬€?//! - **閾炬帴浣嶇疆 (link)**: `$HOME/.local/bin/flowix` 鈹€鈹€ XDG
-//!   鐢ㄦ埛绾?bin 鐩綍銆?macOS / 澶氭暟 Linux 鍙戣鐗堢殑 zsh / bash **榛樿**
-//!   涓嶅湪 `$PATH`, 鐢ㄦ埛闇€瑕?`export PATH="$HOME/.local/bin:$PATH"` 鍔犺繘
-//!   `~/.zshrc`銆?鍚姩 hook 涓嶈嚜鍔ㄦ敼 shell config; 鍋忓ソ璁剧疆閲岀殑鏄惧紡
-//!   "瀹夎" 鎿嶄綔鎵嶄細鍐欏叆銆?//!
+//!   (`/Applications/Flowix.app/Contents/MacOS/flowix-cli`) 都是�?//!   layout�?�?`commands::cli::resolve_sidecar_path` �?prod 分支一致�?//! - **链接位置 (link)**: `$HOME/.local/bin/flowix` ── XDG
+//!   用户�?bin �?���?macOS / 多数 Linux 发�?版的 zsh / bash **默�?**
+//!   不在 `$PATH`, 用户需�?`export PATH="$HOME/.local/bin:$PATH"` 加进
+//!   `~/.zshrc`�?�?�� hook 不自动改 shell config; 偏好设置里的显式
+//!   "安�?" 操作才会写入�?//!
 //! ## 閲嶅悕瀹夊叏
 //!
 //! - macOS: 妗岄潰 binary 瑁呭湪 `.app` 鍖呭唴 (`/Applications/Flowix.app/...`),
-//!   **涓嶅湪** `$PATH`, 鎵€浠?`~/.local/bin/flowix` 涓嶄細琚畠閬斀銆?//! - Linux: 鑻?`.deb` 鎶婃闈?binary 瑁呭埌 `/usr/bin/flowix`, 鑰岀敤鎴?//!   `$PATH` 閲?`~/.local/bin` 鍦?`/usr/bin` **涔嬪墠** (澶氭暟鍙戣鐗堥粯璁?,
-//!   symlink 鑳滃嚭銆?閫€涓€姝ヨ, 鐢ㄦ埛瑁呮垜浠繖搴旂敤鏃? `/usr/bin/flowix` 鍏垚
-//!   灏辨槸鎴戜滑瑁呯殑鍚屼竴涓?sidecar 鈹€鈹€ 鍗充究涓や釜 entry 閮藉湪 PATH, 鎸囧悜鍚屼竴浠?//!   inode 涔熸棤瀹炽€?
+//!   **不在** `$PATH`, 所�?`~/.local/bin/flowix` 不会�?���?���?//! - Linux: �?`.deb` 把�?�?binary 装到 `/usr/bin/flowix`, 而用�?//!   `$PATH` �?`~/.local/bin` �?`/usr/bin` **之前** (多数发�?版默�?,
+//!   symlink 胜出�?退一步�?, 用户装我�?��应用�? `/usr/bin/flowix` �?��
+//!   就是我们装的同一�?sidecar ── 即便两个 entry 都在 PATH, 指向同一�?//!   inode 也无害�?
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -45,8 +45,8 @@ pub struct CliLinkStatus {
     pub message: Option<String>,
 }
 
-/// 鍦ㄧ敤鎴风骇 bin 鐩綍閲屽缓 `flowix` symlink銆?浠讳綍姝ラ澶辫触閮?`warn!` 鍚庤繑鍥?
-/// 涓?panic / 涓?propagate 閿欒銆?
+/// 在用户级 bin �?��里建 `flowix` symlink�?任何步�?失败�?`warn!` 后返�?
+/// �?panic / �?propagate 错�?�?
 pub fn ensure_cli_symlink() {
     #[cfg(windows)]
     {
@@ -73,8 +73,8 @@ pub fn ensure_cli_symlink() {
         return;
     }
 
-    // 鐩綍涓嶅瓨鍦ㄥ氨寤恒€?`~/.local/bin` 鍦?macOS 榛樿涓嶅瓨鍦?鈹€鈹€ 鍒涗簡
-    // 鎵嶈兘鏀?symlink銆?寤鸿繃涓€娆″け璐ュ氨鍒噸璇? 鍚庣画 link 鍏ㄩ儴璺宠繃銆?
+    // �?��不存在就建�?`~/.local/bin` �?macOS 默�?不存�?── 创了
+    // 才能�?symlink�?建过一次失败就�?���? 后续 link 全部跳过�?
     if !bin_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&bin_dir) {
             tracing::warn!(
@@ -153,19 +153,19 @@ pub fn install_cli_path() -> Result<CliLinkStatus, String> {
     Ok(cli_link_status())
 }
 
-/// 鍗曚釜 symlink 鐨勫箓绛夊垱寤恒€?澶辫触鍙?warn, 涓嶅奖鍝嶅叾浠?symlink銆?
+/// 单个 symlink 的幂等创建�?失败�?warn, 不影响其�?symlink�?
 fn ensure_one_symlink(bin_dir: &Path, name: &str, target: &Path) {
     let link = bin_dir.join(name);
 
-    // 宸叉湁 symlink 鈹€鈹€ 鐪嬫寚鍚戝摢銆?
+    // 已有 symlink ── 看指向哪�?
     match std::fs::read_link(&link) {
         Ok(existing) if paths_match(&existing, target) => {
             tracing::debug!("[cli-link] {} already points to sidecar", link.display());
             return;
         }
         Ok(existing) => {
-            // 鎸囧悜鍒 鈹€鈹€ 鍒犳帀閲嶅缓銆?鐢ㄦ埛鎵嬪姩鏀硅繃 symlink 鎴戜滑涔熷皧閲?
-            // (鍐欏埌璺?Flowix 鍚屾鏇存柊鐨勭湡婧?, 浣?log 涓€涓嬨€?
+            // 指向�?? ── 删掉重建�?用户手动改过 symlink 我们也尊�?
+            // (写到�?Flowix 同�?更新的真�?, �?log 一下�?
             tracing::info!(
                 "[cli-link] {} pointed to {}; rewriting to {}",
                 link.display(),
@@ -181,12 +181,12 @@ fn ensure_one_symlink(bin_dir: &Path, name: &str, target: &Path) {
             }
         }
         Err(_) => {
-            // 涓嶆槸 symlink (鍙兘涓嶅瓨鍦? 涔熷彲鑳芥槸鏅€氭枃浠? 鈹€鈹€ 钀藉埌涓嬮潰鐨?
+            // 不是 symlink (�?��不存�? 也可能是�?��文�? ── 落到下面�?
             // is_file() 鍒嗘敮鍘诲垽鍒€?
         }
     }
 
-    // 閾炬帴浣嶇疆琚竴涓櫘閫氭枃浠跺崰浜?鈹€鈹€ 涓嶈兘瑕嗙洊, 鎬曟妸鐢ㄦ埛鑴氭湰鍒犱簡銆?
+    // 链接位置�?���?��通文件占�?── 不能覆盖, 怕把用户脚本删了�?
     if link.is_file() {
         tracing::warn!(
             "[cli-link] {} exists and is a regular file; not overwriting. \
@@ -209,7 +209,7 @@ fn ensure_one_symlink(bin_dir: &Path, name: &str, target: &Path) {
         }
     }
 
-    // Windows 涓婁笉鍋氫簨 鈹€鈹€ `.cmd` shim 鐢?NSIS hook 澶勭悊
+    // Windows 上不做事 ── `.cmd` shim �?NSIS hook 处理
     // (`app/flowix-desktop/nsis/flowix-cli-path.nsh`)銆?
     #[cfg(not(unix))]
     {
@@ -226,12 +226,12 @@ fn link_points_to(link: &Path, target: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 璺?`commands::cli::resolve_sidecar_path` 瀵归綈 鈹€鈹€ 涓ゆ潯鍊欓€夎矾寰?
-/// 鍛戒腑浠讳竴鍗冲彲銆?Prod 浼樺厛 (璺熶富浜岃繘鍒跺悓鐩綍), 鐒跺悗 dev fallback
-/// (`CARGO_MANIFEST_DIR/binaries/flowix-cli`)銆?鍚庤€呰 dev 妯″紡涓?/// 涔熻兘楠岃瘉 symlink 琛屼负 鈹€鈹€ 閾炬帴浼氭寚鍚戠敤鎴?checkout 閲岀殑 cargo 浜х墿,
+/// �?`commands::cli::resolve_sidecar_path` 对齐 ── 两条候选路�?
+/// 命中任一即可�?Prod 优先 (跟主二进制同�?��), 然后 dev fallback
+/// (`CARGO_MANIFEST_DIR/binaries/flowix-cli`)�?后者�? dev 模式�?/// 也能验证 symlink 行为 ── 链接会指向用�?checkout 里的 cargo 产物,
 /// 鍒囧洖 prod 瀹夎鍖呮椂, 涓嬫鍚姩浼氳 `paths_match` 妫€娴嬪埌閿欐寚骞堕噸寤恒€?
 fn current_sidecar_path() -> Option<PathBuf> {
-    // 1. prod: sidecar 璺熶富浜岃繘鍒跺悓鐩綍 (Tauri 2 `externalBin` 甯冨眬)銆?
+    // 1. prod: sidecar 跟主二进制同�?�� (Tauri 2 `externalBin` 布局)�?
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let prod = parent.join("flowix-cli");
@@ -247,7 +247,7 @@ fn current_sidecar_path() -> Option<PathBuf> {
             }
         }
     }
-    // 2. dev fallback: `app/flowix-desktop/binaries/flowix-cli` (鏋勫缓鏃?    //    纭紪鐮佽繘浜岃繘鍒剁殑 manifest 璺緞, build-cli.sh 缁存姢鐨?symlink)銆?
+    // 2. dev fallback: `app/flowix-desktop/binaries/flowix-cli` (构建�?    //    �?��码进二进制的 manifest �?��, build-cli.sh 维护�?symlink)�?
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
         .join("flowix-cli");
@@ -849,9 +849,9 @@ fn ensure_shell_path_config(home: &Path, bin_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("failed to update {}: {e}", path.display()))
 }
 
-/// 姣斾袱涓矾寰勬槸鍚︽寚鍚戝悓涓€鏂囦欢銆?鐩存帴 `==` 涓嶉潬璋?(鐩稿 / 缁濆 / 涓棿
-/// 娈?`./` 涔嬬被), 閫€鍒?`canonicalize` 鎷跨湡瀹炶矾寰勫啀姣?鈹€鈹€ 浠讳綍涓€杈?/// resolve 澶辫触 (broken symlink / 涓嶅瓨鍦? 閮藉綋 "涓嶅悓", 鐢?caller 鍐冲畾
-/// 閲嶅啓銆?
+/// 比两�?��径是否指向同一文件�?直接 `==` 不靠�?(相�? / 绝�? / �?��
+/// �?`./` 之类), 退�?`canonicalize` 拿真实路径再�?── 任何一�?/// resolve 失败 (broken symlink / 不存�? 都当 "不同", �?caller 决定
+/// 重写�?
 fn paths_match(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;

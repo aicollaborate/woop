@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Check, ExternalLink } from 'lucide-react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@platform/tauri/opener';
 import { CheckSquareIcon, PushPin, StarFourIcon } from '@phosphor-icons/react';
 import {
   Select,
@@ -24,7 +24,7 @@ import {
   FIELD_INPUT_CLASS,
   FIELD_TITLE_CLASS,
 } from '@features/preferences/sections/primitives';
-import { LANGUAGE_OPTIONS, useI18n, type AppLanguage, type Region } from '@features/i18n';
+import { LANGUAGE_OPTIONS, useI18n, type AppLanguage, type Region } from '@/lib/i18n';
 import type { MemoCardVariant } from '@/lib/constants';
 
 interface GeneralSectionProps {

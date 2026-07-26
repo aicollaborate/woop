@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { MouseEvent } from 'react';
 import { X } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@shared/ui/popover';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import {
   PROPERTY_ICON_OPTIONS,
   getPropertyIconOption,

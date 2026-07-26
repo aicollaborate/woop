@@ -35,7 +35,6 @@ export interface DocumentContainerProps {
     isFavorited: boolean;
     frontmatterMeta: Record<string, unknown>;
   }) => void;
-  onCharCountChange?: (count: number) => void;
   isExternalDocument?: boolean;
   // Controlled by main-layout so the titlebar button and Ctrl+F share one state.
   searchPanelOpen?: boolean;

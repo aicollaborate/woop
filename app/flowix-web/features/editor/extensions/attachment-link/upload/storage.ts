@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '@platform/tauri/core';
 import type { StoredAsset } from '@features/editor/extensions/attachment-link/upload/file-source';
 import { assetUrl, safeFileName } from '@features/editor/extensions/attachment-link/utils';
 import { fileNameFromPath, getFileKind, getFileKindFromName, mimeTypeFromName } from '@features/editor/extensions/attachment-link/upload/file-source';

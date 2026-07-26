@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { Input } from '@shared/ui/input';
-import { useI18n, translate, type AppLanguage, type I18nKey } from '@features/i18n';
+import { useI18n, translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
   isReservedKey,

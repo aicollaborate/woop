@@ -1,7 +1,7 @@
 import type { AgentTypeKey } from "@/types/agent";
 import type { ThreadListItem } from "@/types";
 import { getAgentType } from "@/lib/agent-types";
-import { translate, type AppLanguage } from "@features/i18n";
+import { translate, type AppLanguage } from "@/lib/i18n";
 import { stripSystemBlock } from "@features/agent/message";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
 

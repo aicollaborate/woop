@@ -33,6 +33,13 @@ interface DropdownMenuProps {
 	onOpenChange?: (open: boolean) => void;
 }
 
+interface DropdownTriggerChildProps {
+	ref?: React.Ref<HTMLElement>;
+	onClick?: React.MouseEventHandler<HTMLElement>;
+	className?: string;
+	"data-state"?: "open" | "closed";
+}
+
 interface DropdownMenuContentProps {
 	children: React.ReactNode;
 	align?: DropdownAlign;
@@ -118,11 +125,11 @@ function DropdownMenuTrigger({
 
 	// If asChild, expect a single child element that we can clone with merged props
 	if (asChild && React.Children.count(children) === 1) {
-		const child = React.Children.only(children) as React.ReactElement<any>;
+		const child = React.Children.only(children) as React.ReactElement<DropdownTriggerChildProps>;
 		return React.cloneElement(child, {
 			ref: (el: HTMLElement | null) => {
 				triggerRef.current = el;
-				const childRef = (child as any).ref;
+				const childRef = child.props.ref;
 				if (typeof childRef === "function") childRef(el);
 				else if (childRef && typeof childRef === "object") childRef.current = el;
 			},

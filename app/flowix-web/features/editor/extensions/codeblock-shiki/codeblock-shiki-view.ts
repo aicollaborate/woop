@@ -1,7 +1,7 @@
 import type { NodeView, ViewMutationRecord } from '@tiptap/pm/view'
 import type { NodeViewRendererProps } from '@tiptap/core'
 import svgPanZoom from 'svg-pan-zoom'
-import { translate, type I18nKey } from '@features/i18n'
+import { translate, type I18nKey } from '@/lib/i18n'
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store'
 
 // svg-pan-zoom 实例类型 ── 库本身没有导出类型, 用 ReturnType 推断。

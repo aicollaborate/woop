@@ -45,6 +45,10 @@ interface TooltipProps extends Omit<React.HTMLAttributes<HTMLElement>, "content"
   className?: string
 }
 
+interface TooltipChildProps extends React.HTMLAttributes<HTMLElement> {
+  ref?: React.Ref<HTMLElement>
+}
+
 function composeRefs<T>(...refs: Array<React.Ref<T> | undefined>) {
   return (node: T | null) => {
     for (const ref of refs) {
@@ -85,10 +89,10 @@ const Tooltip = React.forwardRef<HTMLElement, TooltipProps>(function Tooltip({
   onKeyDown,
   ...triggerProps
 }, forwardedRef) {
-  const child = children as React.ReactElement<any>
+  const child = children as React.ReactElement<TooltipChildProps>
   const trigger = React.cloneElement(child, {
     ...triggerProps,
-    ref: composeRefs((child as any).ref, forwardedRef),
+    ref: composeRefs(child.props.ref, forwardedRef),
     onClick: composeHandlers(child.props.onClick, onClick),
     onMouseDown: composeHandlers(child.props.onMouseDown, onMouseDown),
     onPointerDown: composeHandlers(child.props.onPointerDown, onPointerDown),

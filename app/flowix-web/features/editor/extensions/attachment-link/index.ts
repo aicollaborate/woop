@@ -10,6 +10,7 @@ declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         attachmentLink: {
             openFileDialog: (params?: OpenFileDialogParams) => ReturnType;
+            insertFiles: (params: { files: File[]; position?: number }) => ReturnType;
         };
     }
 }

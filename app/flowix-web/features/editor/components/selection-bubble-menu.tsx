@@ -15,7 +15,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useReducer } from 'rea
 import type { BubbleMenuProps } from '@tiptap/react/menus';
 import { openLinkEditPopup } from '@features/editor/components/link-edit-popup';
 import { hasFormattableTextSelection } from '@features/editor/components/selection-bubble-menu-state';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { Tooltip } from '@shared/ui/tooltip';
 
 interface SelectionBubbleMenuProps {

@@ -1,4 +1,4 @@
-import { translate, type AppLanguage } from '@features/i18n';
+import { translate, type AppLanguage } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 
 export type StoredAsset = {

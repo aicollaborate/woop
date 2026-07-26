@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { Check, Download, Loader2 } from 'lucide-react';
 import { SectionHeader } from '@features/preferences/sections/primitives';
-import { useI18n, type I18nKey } from '@features/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import { useCliLinkStatusStore } from '@features/preferences/store';
 import { Button } from '@shared/ui/button';
 

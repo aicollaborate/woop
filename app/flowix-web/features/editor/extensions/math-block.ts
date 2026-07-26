@@ -1,8 +1,26 @@
-import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
-import katex from 'katex';
-import 'katex/dist/katex.min.css';
-import { translate, type I18nKey } from '@features/i18n';
+import { Node as TiptapNode, mergeAttributes, type JSONContent, type MarkdownToken } from '@tiptap/core';
+import { translate, type I18nKey } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+
+// katex + 其 CSS 动态 import (独立 chunk, 首个数学块渲染时加载)。
+// 参照 codeblock-shiki/mermaid-renderer.ts 的懒加载模式。
+type KatexModule = typeof import('katex');
+let katexPromise: Promise<KatexModule> | null = null;
+let katexLoaded: KatexModule | null = null;
+
+function ensureKatex(): Promise<KatexModule> {
+  if (katexLoaded) return Promise.resolve(katexLoaded);
+  if (!katexPromise) {
+    katexPromise = Promise.all([
+      import('katex'),
+      import('katex/dist/katex.min.css'),
+    ]).then(([module]) => {
+      katexLoaded = module;
+      return module;
+    });
+  }
+  return katexPromise;
+}
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -28,15 +46,33 @@ function normalizeLatex(value: unknown): string {
 function renderKatex(target: HTMLElement, latex: string) {
   const source = latex || PLACEHOLDER_LATEX;
 
-  try {
-    katex.render(source, target, {
-      displayMode: true,
-      throwOnError: false,
-      strict: false,
-    });
-  } catch {
-    target.textContent = source;
+  // katex 已加载: 同步渲染 (NodeView 创建 / 输入热路径, 避免异步抖动)。
+  if (katexLoaded) {
+    try {
+      katexLoaded.default.render(source, target, {
+        displayMode: true,
+        throwOnError: false,
+        strict: false,
+      });
+    } catch {
+      target.textContent = source;
+    }
+    return;
   }
+
+  // 未加载: 先放原文兜底, 首个 chunk 加载完再渲染。
+  target.textContent = source;
+  void ensureKatex().then((module) => {
+    try {
+      module.default.render(source, target, {
+        displayMode: true,
+        throwOnError: false,
+        strict: false,
+      });
+    } catch {
+      target.textContent = source;
+    }
+  });
 }
 
 export const MathBlock = TiptapNode.create({
@@ -197,7 +233,7 @@ export const MathBlock = TiptapNode.create({
     },
   },
 
-  parseMarkdown(token: any) {
+  parseMarkdown(token: MarkdownToken) {
     return {
       type: 'mathBlock',
       attrs: {
@@ -206,7 +242,7 @@ export const MathBlock = TiptapNode.create({
     };
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: JSONContent) {
     const latex = normalizeLatex(node.attrs?.latex);
     return `$$\n${latex}\n$$`;
   },

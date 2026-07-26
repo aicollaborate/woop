@@ -10,13 +10,16 @@ import {
   detectConflicts,
   listActions,
   resolveBinding,
-} from '@features/shortcuts/registry';
-import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
+} from '@/lib/shortcuts/registry';
+import {
+  useUserSettings,
+  useUserSettingsActions,
+} from '@features/preferences/hooks/use-user-settings';
 import { Button } from '@shared/ui/button';
 import { KbdChord } from '@shared/ui/kbd-chord';
-import { ShortcutRecorder } from '@shared/ui/shortcut-recorder';
+import { ShortcutRecorder } from '@features/shortcuts/shortcut-recorder';
 import { SectionHeader } from '@features/preferences/sections/primitives';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import {
   getShortcutActionDescription,
   getShortcutActionTitle,
@@ -42,9 +45,9 @@ const GROUP_ORDER_LAST = 'editor';
  */
 export function ShortcutsSection() {
   const { t } = useI18n();
-  const { settings, setShortcutOverride, resetShortcutOverride, resetAllShortcutOverrides } =
-    useUserSettings();
-  const overrides = settings.shortcuts;
+  const overrides = useUserSettings((settings) => settings.shortcuts);
+  const { setShortcutOverride, resetShortcutOverride, resetAllShortcutOverrides } =
+    useUserSettingsActions();
 
   // 当前正在编辑的 actionId (recorder 打开时非空)
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -125,6 +128,7 @@ export function ShortcutsSection() {
                 overrides={overrides}
                 isConflicting={conflictChordSet.has(resolveBinding(action.id, overrides).chordString ?? '')}
                 onEdit={() => setEditingId(action.id)}
+                onReset={resetShortcutOverride}
                 t={t}
               />
             ))}
@@ -176,17 +180,18 @@ function ShortcutRow({
   overrides,
   isConflicting,
   onEdit,
+  onReset,
   t,
 }: {
   action: ActionDefinition;
   overrides: Record<string, string>;
   isConflicting: boolean;
   onEdit: () => void;
+  onReset: (actionId: string) => void;
   t: ReturnType<typeof useI18n>['t'];
 }) {
   const { chordString, isDefault } = resolveBinding(action.id, overrides);
   const hasOverride = action.id in overrides;
-  const { resetShortcutOverride } = useUserSettings();
   const actionTitle = getShortcutActionTitle(action, t);
   const actionDescription = getShortcutActionDescription(action, t);
 
@@ -243,7 +248,7 @@ function ShortcutRow({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => resetShortcutOverride(action.id)}
+            onClick={() => onReset(action.id)}
             className="h-7 px-2 text-xs text-[var(--muted-foreground)]"
             aria-label={t('preferences.shortcuts.resetOneAria').replace('{title}', actionTitle)}
           >

@@ -1,6 +1,5 @@
 'use client';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Editor } from '@tiptap/core';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { X, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Replace, ReplaceAll } from 'lucide-react';
@@ -8,7 +7,7 @@ import { Button } from '@shared/ui/button';
 import { Input } from '@shared/ui/input';
 import { Tooltip } from '@shared/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface SearchReplacePanelProps {
   editor: Editor | null;
@@ -30,7 +29,7 @@ export function SearchReplacePanel({ editor, visible, onClose }: SearchReplacePa
 
   useEffect(() => {
     if (!editor) return;
-    const storage = editor.storage.searchAndReplace as any;
+    const storage = editor.storage.searchAndReplace;
     setSearchTerm(storage.searchTerm || '');
     setReplaceTerm(storage.replaceTerm || '');
     setMatchCount(storage.results?.length || 0);
@@ -47,7 +46,7 @@ export function SearchReplacePanel({ editor, visible, onClose }: SearchReplacePa
     if (!editor) return;
 
     const updateFromStorage = () => {
-      const storage = editor.storage.searchAndReplace as any;
+      const storage = editor.storage.searchAndReplace;
       setMatchCount(storage.results?.length || 0);
       setCurrentIndex(storage.resultIndex || 0);
     };
@@ -62,21 +61,21 @@ export function SearchReplacePanel({ editor, visible, onClose }: SearchReplacePa
     setSearchTerm(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      (editor?.commands as any).setSearchTerm(value);
+      editor?.commands.setSearchTerm(value);
     }, 150);
   };
 
   const handleReplaceChange = (value: string) => {
     setReplaceTerm(value);
-    (editor?.commands as any).setReplaceTerm(value);
+    editor?.commands.setReplaceTerm(value);
   };
 
   const handlePrev = () => {
-    (editor?.commands as any).previousSearchResult();
+    editor?.commands.previousSearchResult();
   };
 
   const handleNext = () => {
-    (editor?.commands as any).nextSearchResult();
+    editor?.commands.nextSearchResult();
   };
 
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -98,22 +97,22 @@ export function SearchReplacePanel({ editor, visible, onClose }: SearchReplacePa
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
-      (editor?.commands as any).setSearchTerm(searchTerm);
+      editor?.commands.setSearchTerm(searchTerm);
     }
 
-    (editor?.commands as any).nextSearchResult();
+    editor?.commands.nextSearchResult();
   };
 
   const handleReplace = () => {
-    (editor?.commands as any).replace();
+    editor?.commands.replace();
   };
 
   const handleReplaceAll = () => {
-    (editor?.commands as any).replaceAll();
+    editor?.commands.replaceAll();
   };
 
   const handleClose = () => {
-    (editor?.commands as any).closeSearch();
+    editor?.commands.closeSearch();
     onClose();
   };
 

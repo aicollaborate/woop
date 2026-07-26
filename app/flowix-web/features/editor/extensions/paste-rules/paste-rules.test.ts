@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { JSONContent } from '@tiptap/core';
 
 vi.mock('@features/editor/extensions/attachment-link/upload/plugin', () => ({
   handleFileUpload: () => undefined,
@@ -24,8 +25,8 @@ import {
 import { mergeFrontmatterYaml, parseVisibleFrontmatter } from '@features/document/properties/frontmatter-model';
 import { createManagedPasteRules } from '@features/editor/extensions/paste-rules/rules';
 
-function cellText(table: any, row: number, cell: number): string {
-  return table.content[row].content[cell].content[0].content?.[0]?.text ?? '';
+function cellText(table: JSONContent | null, row: number, cell: number): string {
+  return table?.content?.[row]?.content?.[cell]?.content?.[0]?.content?.[0]?.text ?? '';
 }
 
 describe('paste rule helpers', () => {

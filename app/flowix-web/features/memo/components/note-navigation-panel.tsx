@@ -10,7 +10,7 @@ import { NotebookList } from '@features/memo/components/notebook-list';
 import { NavFilterButtons } from '@features/memo/components/nav-filter-buttons';
 import { TagTree } from '@features/memo/components/tag-tree';
 import { type Notebook } from '@features/memo';
-import { isWindowsPlatform } from '@features/shortcuts/platform';
+import { isWindowsPlatform } from '@/lib/shortcuts/platform';
 
 interface NoteNavigationPanelProps {
   notebooks: Notebook[];

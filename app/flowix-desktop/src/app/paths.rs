@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-/// 鐢ㄦ埛閰嶇疆鐩綍鍚?(~/.<NAME>/ 涓嬫斁 index.db / boot/preference.json /
+/// 用户配置�?���?(~/.<NAME>/ 下放 index.db / boot/preference.json /
 /// agent-config.toml / boot/system.json 绛?銆?
 pub const USER_CONFIG_DIR_NAME: &str = ".flowix";
 
-/// 妗岄潰搴旂敤鏁版嵁鐩綍鍚?(鍦?`dirs::data_dir()` 涔嬩笅, macOS:
+/// 桌面应用数据�?���?(�?`dirs::data_dir()` 之下, macOS:
 /// `~/Library/Application Support/<NAME>/`)銆?
 pub const APP_DATA_DIR_NAME: &str = "flowix";
 

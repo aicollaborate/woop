@@ -385,7 +385,7 @@ pub fn update_memo_db(
             }
         }
     }
-    // 婵?content 闂佸搫娲ら悺銊╁蓟?
+    // �?content 闁哄洤鐡ㄩ弻?
     if let Some(body) = content {
         match MemoService::new(&read_lock(&state.memo_file, "memo_file"))
             .save_memo_preserving_filename(&id, &body)

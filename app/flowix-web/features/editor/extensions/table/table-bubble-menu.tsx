@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { hasFormattableTextSelection } from '@features/editor/components/selection-bubble-menu-state';
 import { Tooltip } from '@shared/ui/tooltip';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface TableBubbleMenuProps {
   editor: Editor;

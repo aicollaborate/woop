@@ -1,66 +1,44 @@
 'use client';
 
-import type { ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { SidebarToggleIcon } from '@shared/icons/sidebar-toggle-icon';
 import { Tooltip } from '@shared/ui/tooltip';
-import type { MemoColor, MemoItem } from '@features/memo';
 import { MemoListHoverPreview } from '@features/memo/components/memo-list-hover-preview';
 import {
+  type DocumentTitlebarProps,
   type DocumentState,
   ExternalTitlebarBadge,
   MemoActions,
 } from '@features/document/components/document-titlebar-shared';
-import { useI18n } from '@features/i18n';
-
-interface DocumentTitlebarWinProps {
-  currentMemo: MemoItem | null;
-  isSidebarHidden: boolean;
-  onToggleSidebar: () => void;
-  canNavigateBack: boolean;
-  canNavigateForward: boolean;
-  onNavigateBack: () => void;
-  onNavigateForward: () => void;
-  showNavigationButtons?: boolean;
-  onOpenSearch: () => void;
-  onCopyLink: () => void;
-  onCopyFullText: () => void;
-  onOpenProperties: () => void;
-  onTogglePin: () => void;
-  onExportMarkdown: () => void;
-  onSaveAsTemplate: () => void;
-  onExportWord: () => void;
-  onRequestDeleteMemo: () => void;
-  onColorsChange?: (next: MemoColor[]) => void;
-  externalFilePath?: string | null;
-  windowTabs?: ReactNode;
-}
+import { useI18n } from '@/lib/i18n';
 
 const ICON_BTN =
   'w-8 h-8 flex enabled:!cursor-pointer disabled:!cursor-not-allowed items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-colors';
 
 export function DocumentTitlebarWin({
-  currentMemo,
-  isSidebarHidden,
-  onToggleSidebar,
-  canNavigateBack,
-  canNavigateForward,
-  onNavigateBack,
-  onNavigateForward,
-  showNavigationButtons = true,
-  onOpenSearch,
-  onCopyLink,
-  onCopyFullText,
-  onOpenProperties,
-  onTogglePin,
-  onExportMarkdown,
-  onSaveAsTemplate,
-  onExportWord,
-  onRequestDeleteMemo,
-  onColorsChange,
-  externalFilePath = null,
+  document: { currentMemo, externalFilePath = null },
+  sidebar: { hidden: isSidebarHidden, onToggle: onToggleSidebar },
+  navigation: {
+    canNavigateBack,
+    canNavigateForward,
+    onNavigateBack,
+    onNavigateForward,
+    visible: showNavigationButtons = true,
+  },
+  actions: {
+    onOpenSearch,
+    onCopyLink,
+    onCopyFullText,
+    onOpenProperties,
+    onTogglePin,
+    onExportMarkdown,
+    onSaveAsTemplate,
+    onExportWord,
+    onRequestDeleteMemo,
+    onColorsChange,
+  },
   windowTabs,
-}: DocumentTitlebarWinProps) {
+}: DocumentTitlebarProps) {
   const { t } = useI18n();
   const documentState: DocumentState = currentMemo
     ? 'memo'

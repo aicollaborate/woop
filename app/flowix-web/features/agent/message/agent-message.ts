@@ -3,7 +3,7 @@ import { getToolLabel } from "@features/agent/message/tools";
 import { stripSystemBlock } from "@features/agent/message/system";
 import { isEmptyAssistantMessage } from "@features/agent/message/empty";
 import { formatAgentErrorMessage } from "@features/agent/message/error-format";
-import { translate, type AppLanguage } from "@features/i18n";
+import { translate, type AppLanguage } from "@/lib/i18n";
 import { getAgentToolInputSummary as getFallbackAgentToolInputSummary } from "@features/agent/tool-display";
 
 export interface AgentMessageViewModel {

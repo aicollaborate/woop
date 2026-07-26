@@ -1,7 +1,7 @@
-import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { Node as TiptapNode, mergeAttributes, type JSONContent, type MarkdownToken } from '@tiptap/core';
+import { openUrl } from '@platform/tauri/opener';
 import { web, type WebPageMetadata } from '@platform/tauri/client';
-import { translate, type I18nKey } from '@features/i18n';
+import { translate, type I18nKey } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 
 declare module '@tiptap/core' {
@@ -342,11 +342,11 @@ export const WebCard = TiptapNode.create({
     },
   },
 
-  parseMarkdown(token: any) {
+  parseMarkdown(token: MarkdownToken) {
     try {
       return {
         type: 'webCard',
-        attrs: normalizeAttrs(JSON.parse(token.text)),
+        attrs: normalizeAttrs(JSON.parse(token.text ?? '')),
       };
     } catch {
       return {
@@ -356,7 +356,7 @@ export const WebCard = TiptapNode.create({
     }
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: JSONContent) {
     const attrs = normalizeAttrs(node.attrs);
     return `::webcard${JSON.stringify(attrs, null, 2)}`;
   },

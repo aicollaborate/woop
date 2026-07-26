@@ -3,7 +3,7 @@ import { NodeSelection } from 'prosemirror-state'
 import { menuPinPluginKey } from '@features/editor/extensions/menu-pin'
 import { getCurrentBlockInfo, type CurrentBlockInfo } from '@features/editor/components/drag-context-menu/block-info'
 import type { BlockMenuItem } from '@features/editor/components/drag-context-menu/items'
-import { terminateAgentThreadCardRuntime } from '@features/editor/extensions/agent-thread-card/agent-thread-card-cleanup'
+import { terminateAgentThreadCardRuntime } from '@features/agent/thread-card/agent-thread-card-cleanup'
 
 /**
  * Editor command dispatchers used by the drag handle. Kept separate from

@@ -1,7 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@platform/tauri/window";
 import { Tooltip } from "@shared/ui/tooltip";
-import { useI18n } from "@features/i18n";
+import { useI18n } from "@/lib/i18n";
 
 function isWindowsPlatform(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);

@@ -1,15 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@platform/tauri/opener';
 import { ArrowUp } from 'lucide-react';
 import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
-import { useI18n } from '@features/i18n';
+import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { product, type ProductUpdateNotice } from '@platform/tauri/client';
+import { createLogger } from '@/lib/logger';
 
 const STARTUP_DELAY_MS = 7_000;
+const logger = createLogger('product-update');
 
 /**
  * Status-bar update notice.
@@ -20,32 +23,33 @@ const STARTUP_DELAY_MS = 7_000;
  */
 export function ProductUpdatePill() {
   const { t } = useI18n();
-  const { settings, isLoading } = useUserSettings();
+  const enabled = useUserSettings((settings) => settings.productUpdates.enabled);
+  const language = useUserSettings((settings) => settings.language);
+  const region = useUserSettings((settings) => settings.region);
+  const isLoading = useUserSettingsStore((state) => state.isLoading);
   const [notice, setNotice] = useState<ProductUpdateNotice | null>(null);
   const [isOpening, setIsOpening] = useState(false);
 
   useEffect(() => {
-    if (isLoading || !settings.productUpdates.enabled) return;
+    if (isLoading || !enabled) return;
     if (window.location.hash.startsWith('#preferences') || window.location.hash.startsWith('#tab-window')) {
       return;
     }
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          setNotice(await product.checkUpdateNotice(settings.language, settings.region));
+          setNotice(await product.checkUpdateNotice(language, region));
         } catch (error) {
-          if (import.meta.env.DEV) {
-            console.warn('[ProductUpdatePill] update check failed', error);
-          }
+          logger.debug('update check failed', { error });
         }
       })();
     }, STARTUP_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [
     isLoading,
-    settings.productUpdates.enabled,
-    settings.language,
-    settings.region,
+    enabled,
+    language,
+    region,
   ]);
 
   async function handleClick() {

@@ -1,8 +1,8 @@
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@platform/tauri/opener';
 import type { Editor } from '@tiptap/core';
 import { normalizePlainLinkHref } from '@features/editor/extensions/markdown-link';
 import { isLinkEditPopupOpen, openLinkEditPopup } from '@features/editor/components/link-edit-popup';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 
 interface LinkRange {

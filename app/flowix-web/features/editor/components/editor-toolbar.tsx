@@ -12,7 +12,7 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import { openLinkEditPopup } from '@features/editor/components/link-edit-popup';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface EditorToolbarProps {
   editor: Editor | null;

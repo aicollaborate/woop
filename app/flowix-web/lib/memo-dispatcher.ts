@@ -25,6 +25,7 @@
 import { subscribe } from '@platform/tauri/event-bus';
 import { EventDispatcher, type DispatcherMiddleware } from '@/lib/event-dispatcher';
 import { createMemoDedupMiddleware } from '@/lib/memo-dispatcher-dedup';
+import { createLogger } from '@/lib/logger';
 import type { MemoEvent } from '@/types/memo';
 
 // Current windowing model: the main window and each tab-host window import
@@ -36,6 +37,7 @@ import type { MemoEvent } from '@/types/memo';
  * dispatch，不共享订阅者。
  */
 export const memoDispatcher = new EventDispatcher<MemoEvent>();
+const logger = createLogger('memo-event');
 
 // ---- 模块级: 单一 Tauri 订阅 → dispatcher 入口 -------------------------------
 //
@@ -52,9 +54,7 @@ function installMemoEventBridge(): void {
     // DEBUG: 打印后端 emit 到前端的所有 memo-event (dedup 之前的原始事件)。
     // 排查"外部修改"提示链路时, 用这个日志看 fs_watcher 是否真的发了
     // `updated` + `source=external_tool` 事件, 路径是否匹配当前文档。
-    if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
-      console.log('[memo-event] raw <- tauri', {
+    logger.debug('received raw Tauri event', {
         at: new Date().toISOString(),
         kind: payload.kind,
         source: payload.kind === 'created' || payload.kind === 'updated' ? payload.source : null,
@@ -64,12 +64,6 @@ function installMemoEventBridge(): void {
             : payload.kind === 'created'
               ? payload.memo.id
               : null,
-        path:
-          payload.kind === 'created'
-            ? payload.memo.filename
-            : payload.kind === 'updated' || payload.kind === 'deleted'
-              ? payload.path
-              : null,
         // tags_renamed / tags_deleted 是 metadata 事件, 顺手把 affected
         // memo 数打到日志, 排查"重命名 / 删除影响范围"时不用再看 IPC 抓包。
         affectedMemos:
@@ -77,7 +71,6 @@ function installMemoEventBridge(): void {
             ? payload.affectedMemoIds.length
             : null,
       });
-    }
     memoDispatcher.dispatch(payload);
   });
 }

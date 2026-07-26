@@ -1,9 +1,9 @@
-//! 鍚姩璁惧鐧昏 鈹€鈹€ 鎶?杩欏彴鏈哄櫒"鐨勮交閲忔寚绾逛笂鎶ュ埌 Supabase銆?//!
+//! �?��设�?登�? ── �?这台机器"的轻量指纹上报到 Supabase�?//!
 //! 璁捐瑕佺偣:
-//! - 浠呭熀浜庢湰鍦板彲璇汇€佷笉闇€浠讳綍鏉冮檺鐨勫瓧娈?(`std::env::consts` / `gethostname` /
-//!   `machine-uid` / `LANG` / `TZ`), 瑙?`collect_payload`銆?//! - 涓嶉樆濉炰富鍚姩: `bootstrap::run().setup()` 閲?`Arc::clone().spawn_startup_registration()`
-//!   鍚庣珛鍒昏繑鍥? 缃戠粶璋冪敤鏄?fire-and-forget銆?//! - 鍚姩鍚庣瓑 `REGISTRATION_DELAY_SECS` 绉? 閬垮紑鍚姩鏃╂湡鐨勮祫婧愮珵浜?//!   (浜у搧鏇存柊妫€鏌ュ湪 7s 鏃舵墦, 鎴戜滑鎺掑湪 10s 鍚?銆?//! - 鏈湴鐘舵€佸啓鍦?`~/.flowix/boot/boot.json`, 涓?`system.json` (tag 甯冨眬) 骞崇骇浣?//!   鏂囦欢鐙珛, 鑱岃矗鏇存竻鏅般€?//! - 姣忔鍚姩閮戒笂鎶ヤ竴娆°€傝繙绔寜 `device_id` upsert: 棣栨鍚姩鎻掑叆鐧昏琛?
-//!   鍚庣画鍚姩鍒锋柊鍚屼竴琛岀殑 `last_seen_at` / app_version / locale / timezone銆?//! - `registered=true` 鍙〃绀烘湰鏈鸿嚦灏戞垚鍔熺櫥璁拌繃涓€娆? 涓嶅啀浣滀负璺宠繃缃戠粶鐨?//!   fast-path銆?
+//! - 仅基于本地可读、不需任何权限的字�?(`std::env::consts` / `gethostname` /
+//!   `machine-uid` / `LANG` / `TZ`), �?`collect_payload`�?//! - 不阻塞主�?��: `bootstrap::run().setup()` �?`Arc::clone().spawn_startup_registration()`
+//!   后立刻返�? 网络调用�?fire-and-forget�?//! - �?��后等 `REGISTRATION_DELAY_SECS` �? 避开�?��早期的资源竞�?//!   (产品更新检查在 7s 时打, 我们排在 10s �?�?//! - �?��状态写�?`~/.flowix/boot/boot.json`, �?`system.json` (tag 布局) 平级�?//!   文件�?��, 职责更清晰�?//! - 每�?�?��都上报一欰��远�?�� `device_id` upsert: 首�?�?��插入登�?�?
+//!   后续�?��刷新同一行的 `last_seen_at` / app_version / locale / timezone�?//! - `registered=true` �?��示本机至少成功登记过一�? 不再作为跳过网络�?//!   fast-path�?
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -14,27 +14,27 @@ use machine_uid::get as get_machine_uid;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// `~/.flowix/boot/` 鐩綍鍐呯殑鏂囦欢鍚? 涓?`system.json` 骞崇骇銆?
+/// `~/.flowix/boot/` �?��内的文件�? �?`system.json` 平级�?
 const BOOT_FILE_NAME: &str = "boot.json";
-/// 褰撳墠鏂囦欢缁撴瀯鐗堟湰銆傝鍒颁笉鍖归厤灏卞綋鏃犳晥澶勭悊 (钀藉埌 `fresh()`)銆?
-/// v2: 宓屽缁撴瀯 鈹€鈹€ 椤跺眰 `{schemaVersion, userInfo}`, `userInfo` 鍐呮斁鏈ā鍧?
-/// 鐨勫叏閮ㄥ瓧娈点€?鍚庣画鑻ユ湁鏇村鍚姩鏈熷厓鏁版嵁, 鍔?sibling 鍗冲彲 (渚嬪
+/// 当前文件结构版本。�?到不匹配就当无效处理 (落到 `fresh()`)�?
+/// v2: 嵌�?结构 ── 顶层 `{schemaVersion, userInfo}`, `userInfo` 内放�?���?
+/// 的全部字段�?后续若有更�?�?��期元数据, �?sibling 即可 (例�?
 /// `featureFlags: {...}`), 涓嶄簰鐩歌鐩栥€?
 const BOOT_SCHEMA_VERSION: u32 = 2;
-/// 鍚姩鍚庣瓑澶氫箙鍐嶄笂鎶? 璁╁叾瀹冭祫婧?(鏃ュ織銆佺洰褰曞璐︺€乻idecar spawn) 鍏堢ǔ瀹氥€?
+/// �?��后等多久再上�? 让其它资�?(日志、目录�?账、sidecar spawn) 先稳定�?
 const REGISTRATION_DELAY_SECS: u64 = 10;
-/// 鍗曟 HTTP 璇锋眰瓒呮椂銆?
+/// 单�? HTTP 请求超时�?
 const REQUEST_TIMEOUT_SECS: u64 = 8;
-/// 榛樿 Supabase Edge Function URL (涓?`commands/product.rs` 鍚屼竴 project)銆?
-/// 涓庝骇鍝佹洿鏂扮鐐逛竴鏍锋敮鎸?`FLOWIX_DEVICE_REGISTRATION_URL` env 瑕嗙洊銆?
+/// 默�? Supabase Edge Function URL (�?`commands/product.rs` 同一 project)�?
+/// 与产品更新�?点一样支�?`FLOWIX_DEVICE_REGISTRATION_URL` env 覆盖�?
 const DEFAULT_REGISTRATION_ENDPOINT: &str =
     "https://fqvruyesgivjlwhojyya.supabase.co/functions/v1/register-device";
-/// 榛樿 anon key銆?涓?`commands/product.rs::supabase_anon_key()` 鍚屾 鈹€鈹€
-/// 鍚庣画鑻ユ娊鍒?`supabase.rs` 鍏叡妯″潡, 杩欒竟鐩存帴澶嶇敤鍗冲彲銆?
+/// 默�? anon key�?�?`commands/product.rs::supabase_anon_key()` 同�? ──
+/// 后续若抽�?`supabase.rs` �?��模块, 这边直接复用即可�?
 const DEFAULT_SUPABASE_ANON_KEY: &str = "sb_publishable_l6AmH0K0Uq8_roThQHSnnQ_2xxxl0o1";
 
-/// `~/.flowix/boot/boot.json` 椤跺眰缁撴瀯銆?///
-/// 澶氶」骞跺瓨 鈹€鈹€ 鍚庣画鑻ユ湁鏇村鍚姩鏈熷厓鏁版嵁 (渚嬪 `featureFlags`銆乣firstRunHints`銆?/// 鏌愮鍚姩鏈?cache), 鍔?sibling 鍗冲彲, 涓嶄簰鐩歌鐩栥€?璁惧鐧昏鐨勬墍鏈夊瓧娈垫敹鏁?/// 鍒?`userInfo` 瀛愬璞￠噷銆?
+/// `~/.flowix/boot/boot.json` 顶层结构�?///
+/// 多项并存 ── 后续若有更�?�?��期元数据 (例�? `featureFlags`、`firstRunHints`�?/// 某�?�?���?cache), �?sibling 即可, 不互相�?盖�?设�?登�?的所有字段收�?/// �?`userInfo` 子�?象里�?
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootFile {
@@ -43,7 +43,7 @@ pub struct BootFile {
     pub user_info: UserInfo,
 }
 
-/// 璁惧鐧昏瀛愬璞?鈹€鈹€ 鍚姩寮傛涓婃姤鐨勬湰鏈烘寚绾硅褰?+ 灏濊瘯鐘舵€併€?
+/// 设�?登�?子�?�?── �?��异�?上报的本机指纹�?�?+ 尝试状态�?
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfo {
@@ -63,7 +63,7 @@ pub struct UserInfo {
     pub app_version_at_install: String,
 }
 
-/// 杩涚▼鍐呭崟渚? 鎸?`BootFile` 鐨?`RwLock` 鍓湰鍜岃矾寰勩€?
+/// 进程内单�? �?`BootFile` �?`RwLock` �?��和路径�?
 pub struct DeviceRegistry {
     path: PathBuf,
     app_version: String,
@@ -71,12 +71,12 @@ pub struct DeviceRegistry {
 }
 
 impl DeviceRegistry {
-    /// 鍔犺浇鎴栨柊寤?boot.json銆傚鏋滄枃浠朵笉瀛樺湪鎴栬В鏋愬け璐? 鐩存帴钀藉洖 `fresh()`銆?    /// 涓嶈鍦ㄩ敊璇笂 panic 鈹€鈹€ 鍚姩澶辫触姣旂櫥璁板け璐ヤ弗閲嶅緱澶氥€?
+    /// 加载或新�?boot.json。�?果文件不存在或解析失�? 直接落回 `fresh()`�?    /// 不�?在错�?�� panic ── �?��失败比登记失败严重得多�?
     pub fn load(user_config_dir: &Path, app_version: impl Into<String>) -> Self {
         let path = user_config_dir.join("boot").join(BOOT_FILE_NAME);
         let app_version = app_version.into();
         if let Some(parent) = path.parent() {
-            // best-effort, 鏂囦欢宸插瓨鍦ㄥ氨鑳芥甯歌鍒? 涓嶅瓨鍦ㄦ椂 `read_from_disk` 杩斿洖 None
+            // best-effort, 文件已存在就能�?常�?�? 不存在时 `read_from_disk` 返回 None
             let _ = std::fs::create_dir_all(parent);
         }
         let boot = Self::read_from_disk(&path).unwrap_or_else(|| {
@@ -93,7 +93,7 @@ impl DeviceRegistry {
         }
     }
 
-    /// 寮傛涓婃姤鍏ュ彛銆?Fire-and-forget: 鍚姩 `tauri::async_runtime::spawn`,
+    /// 异�?上报入口�?Fire-and-forget: �?�� `tauri::async_runtime::spawn`,
     /// 涓荤嚎绋嬬户缁€?
     pub fn spawn_startup_registration(self: Arc<Self>) {
         tauri::async_runtime::spawn(async move {
@@ -102,7 +102,7 @@ impl DeviceRegistry {
         });
     }
 
-    /// 鐪熸鐨勪笂鎶ユ祦绋? 鏀堕泦鏈満瀛楁 鈫?POST 鈫?鏍规嵁缁撴灉鍐欏洖 boot.json銆?    /// 澶辫触鍙湪鏃ュ織 / boot.json 閲岀暀鐥? 涓嶆姏鍥炲惎鍔ㄩ摼銆?
+    /// 真�?的上报流�? 收集�?��字�? �?POST �?根据结果写回 boot.json�?    /// 失败�?��日志 / boot.json 里留�? 不抛回启动链�?
     async fn try_register_once(&self) {
         let payload = {
             let boot = self.read();
@@ -218,7 +218,7 @@ impl DeviceRegistry {
         Some(boot)
     }
 
-    /// 鍘熷瓙鍐? tmp 鈫?fsync 鈫?rename 鈫?chmod 600銆傚拰 `system_data.rs` 涓€鑷淬€?
+    /// 原子�? tmp �?fsync �?rename �?chmod 600。和 `system_data.rs` 一致�?
     fn flush(&self, boot: &BootFile) -> std::io::Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -241,7 +241,7 @@ impl DeviceRegistry {
         Ok(())
     }
 
-    /// 鍏ㄦ柊棣栨鍚姩鐨勫垵濮?record銆俙installed_at` 閿佸畾涓哄綋涓? 涓婃姤鎴愬姛鍚?    /// 鏈嶅姟绔?upsert 鐢ㄥ畠杩樺師鍘熷瀹夎鏃堕棿銆?
+    /// 全新首�?�?��的初�?record。`installed_at` 锁定为当�? 上报成功�?    /// 服务�?upsert 用它还原原�?安�?时间�?
     fn fresh() -> BootFile {
         BootFile {
             schema_version: BOOT_SCHEMA_VERSION,
@@ -260,19 +260,19 @@ impl DeviceRegistry {
     }
 }
 
-/// 涓婃姤 payload 缁撴瀯 鈹€鈹€ Edge Function 绔寜杩欎釜 schema 鍙嶅簭鍒楀寲銆?
+/// 上报 payload 结构 ── Edge Function �?��这个 schema 反序列化�?
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DevicePayload {
     device_id: Uuid,
     os: String,
     arch: String,
-    /// FNV-1a 64-bit hash of hostname, 16 hex chars銆備粎鎸囩汗鐢ㄩ€? 涓嶈惤鍘熷 hostname銆?
+    /// FNV-1a 64-bit hash of hostname, 16 hex chars。仅指纹用�? 不落原�? hostname�?
     hostname_hash: Option<String>,
-    /// `machine_uid::get()` 鐨勭ǔ瀹?per-machine ID (macOS IOPlatformUUID /
-    /// Windows MachineGuid / Linux /etc/machine-id)銆傚け璐ユ椂 None銆?
+    /// `machine_uid::get()` 的稳�?per-machine ID (macOS IOPlatformUUID /
+    /// Windows MachineGuid / Linux /etc/machine-id)。失败时 None�?
     machine_id: Option<String>,
-    /// FNV-1a 64-bit hash of `os:arch:hostname`, 16 hex chars, 鐢ㄤ簬鏈嶅姟绔法瀛楁鍘婚噸銆?
+    /// FNV-1a 64-bit hash of `os:arch:hostname`, 16 hex chars, 用于服务�?��字�?去重�?
     machine_fingerprint: String,
     app_version: String,
     locale: Option<String>,
@@ -371,7 +371,7 @@ async fn post_registration(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        // 409 浠ｈ〃 device_id 閲嶅, 绛夊悓鎴愬姛銆?
+        // 409 代表 device_id 重�?, 等同成功�?
         if status.as_u16() == 409 {
             return Ok(RegistrationResponse {
                 row_id: None,
@@ -386,8 +386,8 @@ async fn post_registration(
         .map_err(|e| format!("parse: {e}"))
 }
 
-/// `gethostname(2)` / `GetComputerNameEx` 鍖呰銆傚け璐ヨ繑鍥炵┖涓? 涓婃姤瀛楁
-/// 閫€鍖栦负 None銆?
+/// `gethostname(2)` / `GetComputerNameEx` 包�?。失败返回空�? 上报字�?
+/// 退化为 None�?
 fn get_hostname() -> Option<String> {
     let raw = match hostname::get() {
         Ok(name) => name,
@@ -401,7 +401,7 @@ fn get_hostname() -> Option<String> {
     }
 }
 
-/// `machine-uid` crate 鍦ㄦ墍鏈夊钩鍙伴兘杩斿洖绋冲畾 per-machine ID; 浣嗗皯鏁扮‖鍖栭暅鍍?/// 涓婂彲鑳?IO 澶辫触, 杩欓噷鐢?`catch_unwind` 鍏滀竴涓? 閬垮厤鍚姩浠诲姟 panic銆?
+/// `machine-uid` crate 在所有平台都返回稳定 per-machine ID; 但少数硬化镜�?/// 上可�?IO 失败, 这里�?`catch_unwind` 兜一�? 避免�?��任务 panic�?
 fn get_machine_id_safe() -> Option<String> {
     let result = std::panic::catch_unwind(|| get_machine_uid().ok().map(|s| s.trim().to_string()));
     match result {
@@ -414,7 +414,7 @@ fn get_machine_id_safe() -> Option<String> {
     }
 }
 
-/// FNV-1a 64-bit, 杈撳嚭 16 hex 瀛楃銆傞浂渚濊禆銆佽法 Rust 鐗堟湰绋冲畾 鈹€鈹€ 涓嶉渶瑕?/// 瀵嗙爜瀛﹀己搴? 浠呭仛鏈嶅姟绔幓閲嶆寚绾广€?
+/// FNV-1a 64-bit, 输出 16 hex 字�?。零依赖、跨 Rust 版本稳定 ── 不需�?/// 密码学强�? 仅做服务�?��重指纹�?
 fn fnv1a_hex(input: &str) -> String {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in input.as_bytes() {
@@ -424,8 +424,8 @@ fn fnv1a_hex(input: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// (鍗犱綅) 鈹€鈹€ 褰撳墠瀹為檯璧?FNV-1a, 杩欓噷鏈潵鎯崇敤 `DefaultHasher` 浣嗚法 Rust
-/// 鐗堟湰涓嶇ǔ瀹氥€?淇濈暀绌鸿閬垮厤鍚庣画璇敼銆?
+/// (占位) ── 当前实际�?FNV-1a, 这里�?��想用 `DefaultHasher` 但跨 Rust
+/// 版本不稳定�?保留空�?避免后续�?���?
 #[allow(dead_code)]
 fn _placeholder() {}
 
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn old_v1_flat_schema_is_rejected() {
-        // 鏃х増 flat 椤跺眰瀛楁缁撴瀯 (v1) 鈹€鈹€ 鍗囩骇鍒?v2 鍚庢棫鏂囦欢搴旇鎷? 璧?fresh()銆?
+        // 旧版 flat 顶层字�?结构 (v1) ── 升级�?v2 后旧文件应�?�? �?fresh()�?
         let tmp = tempdir_path();
         std::fs::write(
             &tmp,
@@ -507,7 +507,7 @@ mod tests {
         assert!(json.contains("\"schemaVersion\""));
         assert!(json.contains("\"userInfo\""));
         assert!(json.contains("\"deviceId\""));
-        // 纭 userInfo 鏄祵濂楀璞? 瀛楁涓嶅湪椤跺眰銆?
+        // �?? userInfo �?��套�?�? 字�?不在顶层�?
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(
             parsed.get("deviceId").is_none(),

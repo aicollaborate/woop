@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@platform/tauri/opener';
 import { AgentRuntimeStatusList } from '@features/agent/components/agent-runtime-status-list';
 import { openAgentSetup } from '@features/agent/agent-setup';
 import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { FieldRow, SectionHeader } from '@features/preferences/sections/primitives';
 import { AgentSection } from '@features/preferences/sections/agent';
 import { ExternalPathRow } from '@features/preferences/sections/external-path-row';

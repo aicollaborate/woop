@@ -3,7 +3,7 @@
   openNoteByPhysicalPath,
   resolveMemoById,
   resolveMemoByPath,
-} from '@platform/open-target';
+} from '@features/memo/use-cases/open-by-target';
 
 // 鐗╃悊璺緞绮樿创 鈫?noteReference 鍗＄墖銆?//
 // 鐢ㄦ埛浠?Finder / 缁堢澶嶅埗涓€浠?`~/Documents/flowix/<notebook>/<title>.md`
@@ -51,7 +51,7 @@ function fetchNotebooks(): Promise<CacheEntry[]> {
   return notebooks.getAll().then(async (list) => {
     const arr = Array.isArray(list) ? list : [];
     const lite: NotebookLite[] = arr
-      .map((n: any) => ({
+      .map((n) => ({
         id: String(n?.id ?? ''),
         name: String(n?.name ?? ''),
         path: String(n?.path ?? ''),

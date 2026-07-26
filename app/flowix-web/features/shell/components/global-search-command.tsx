@@ -36,13 +36,17 @@ import { useTagStore } from '@features/memo/store/tag-store';
 import { NotebookIcon } from '@features/memo/components/notebook-icon';
 import type { MemoItem } from '@/types/memo-item';
 import { useDocumentStore } from '@features/document/store/document-store';
-import { openNoteByMemoId } from '@platform/open-target';
+import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import {
-  selectRunningAgentConversationInstances,
   useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-store';
 import { useChatStore } from '@features/agent/store/chat-store';
+import {
+  getConversationRunSummary,
+  selectRunningAgentConversations,
+  useConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import { getAgentType } from '@/lib/agent-types';
 import {
   memos,
@@ -53,7 +57,10 @@ import {
 } from '@platform/tauri/client';
 import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
 import { ShortcutKbd } from '@shared/ui/shortcut-kbd';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('global-search');
 
 interface GlobalSearchCommandProps {
   open: boolean;
@@ -77,7 +84,7 @@ const PROPERTY_FILTER_FIELDS = [
   'tags',
 ];
 
-const PROPERTY_FILTER_OPERATOR_KEYS: Record<PropertyFilterCondition['operator'], import("@features/i18n").I18nKey> = {
+const PROPERTY_FILTER_OPERATOR_KEYS: Record<PropertyFilterCondition['operator'], import("@/lib/i18n").I18nKey> = {
   equals: "shell.commandPalette.operator.equals",
   notEquals: "shell.commandPalette.operator.notEquals",
   contains: "shell.commandPalette.operator.contains",
@@ -86,7 +93,7 @@ const PROPERTY_FILTER_OPERATOR_KEYS: Record<PropertyFilterCondition['operator'],
 
 function getPropertyFilterOperatorLabel(
   operator: PropertyFilterCondition['operator'],
-  t: (key: import("@features/i18n").I18nKey) => string,
+  t: (key: import("@/lib/i18n").I18nKey) => string,
 ): string {
   return t(PROPERTY_FILTER_OPERATOR_KEYS[operator]);
 }
@@ -157,7 +164,7 @@ export function GlobalSearchCommand({ open, onOpenChange }: GlobalSearchCommandP
         setHits(res.hits);
         setIndexReady(res.indexReady);
       } catch (err) {
-        console.error('[GlobalSearchCommand] search failed:', err);
+        logger.error('search failed', { error: err });
         if (myReq !== reqIdRef.current) return;
         setHits([]);
       }
@@ -339,10 +346,10 @@ interface RunningAgentConversationsGroupProps {
 function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGroupProps) {
   const { t } = useI18n();
   const instances = useAgentConversationStore((s) => s.instances);
-  const threadStates = useChatStore((s) => s.threadStates);
+  const conversationRunIndex = useConversationRunIndex(instances);
   const runningInstances = useMemo(
-    () => selectRunningAgentConversationInstances({ instances }, threadStates),
-    [instances, threadStates],
+    () => selectRunningAgentConversations({ instances }, conversationRunIndex),
+    [conversationRunIndex, instances],
   );
 
   if (runningInstances.length === 0) return null;
@@ -371,11 +378,11 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
       {runningInstances.map((instance) => {
         const agent = getAgentType(instance.agentType);
         const canOpen = Boolean(instance.source.memoId || instance.source.documentPath);
-        const threadState = instance.threadId ? threadStates[instance.threadId] : undefined;
-        const activeRun = threadState?.activeRunId
-          ? threadState.runs[threadState.activeRunId]
-          : undefined;
-        const runId = activeRun?.runId ?? instance.instanceId;
+        const runSummary = getConversationRunSummary(
+          conversationRunIndex,
+          instance.threadId,
+        );
+        const runId = runSummary.runId ?? instance.instanceId;
         return (
           <CommandItem
             key={runId}
@@ -397,7 +404,7 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
               <span className="truncate">{instance.title?.trim() || t('common.untitled')}</span>
               <span className="truncate text-xs text-[var(--muted-foreground)]">
                 {agent.name}
-                {activeRun?.currentTool ? ` - ${activeRun.currentTool}` : ''}
+                {runSummary.currentTool ? ` - ${runSummary.currentTool}` : ''}
               </span>
             </div>
             <CommandShortcut className="shrink-0 text-[var(--primary)]">
@@ -553,7 +560,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
           if (!cancelled) setTagList(res.tags);
         })
         .catch((err) => {
-          if (!cancelled) console.warn('[GlobalSearchCommand] tags.getAll failed:', err);
+          if (!cancelled) logger.warn('load tags failed', { error: err });
         }),
       memos
         .listTemplates()
@@ -561,7 +568,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
           if (!cancelled) setTemplateList(templates);
         })
         .catch((err) => {
-          if (!cancelled) console.warn('[GlobalSearchCommand] listTemplates failed:', err);
+          if (!cancelled) logger.warn('load templates failed', { error: err });
         }),
     ]);
     return () => {
@@ -611,7 +618,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
       const memo = await createMemo(undefined, state.selectedNotebook.id);
       openMemoSession({ ...memo, isOpen: true }, state.selectedNotebook);
     } catch (err) {
-      console.error('[GlobalSearchCommand] createMemo failed:', err);
+      logger.error('create memo failed', { error: err });
     }
     onClose();
   };
@@ -626,7 +633,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
       handleMemoCreated(memo, { select: true });
       openMemoSession({ ...memo, isOpen: true }, state.selectedNotebook);
     } catch (err) {
-      console.error('[GlobalSearchCommand] createFromTemplate failed:', err);
+      logger.error('create from template failed', { error: err });
     }
     onClose();
   };
@@ -640,7 +647,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
     try {
       await windows.openPreferences();
     } catch (err) {
-      console.error('[GlobalSearchCommand] openPreferences failed:', err);
+      logger.error('open preferences failed', { error: err });
     }
     onClose();
   };

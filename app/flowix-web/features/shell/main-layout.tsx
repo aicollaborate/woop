@@ -17,7 +17,7 @@ import { notebookDeleteErrorMessage } from '@platform/tauri/errors';
 import { WindowsTitlebarControls } from '@shared/window-titlebar-controls';
 import { toast } from '@/lib/toast';
 import { canonicalPath, getDocumentInstanceKey } from '@/lib/path';
-import { navigateDocumentHistory } from '@/lib/document-navigation';
+import { navigateDocumentHistory } from '@features/document/use-cases/document-navigation';
 import { StatusBar } from '@features/shell/components/status-bar/status-bar';
 import { NotebookDeleteDialog } from '@features/shell/components/notebook-delete-dialog';
 import { MarkdownFileDropOverlay } from '@features/shell/components/drag-overlay/markdown-file-drop-overlay';
@@ -26,13 +26,15 @@ import { useNotebookTodoCount } from '@features/memo/components/use-notebook-tod
 import { useResizablePanels } from '@features/shell/hooks/use-resizable-panels';
 import { useMacosTrackpadSwipe, type MacosTrackpadSwipeDirection } from '@features/shell/hooks/use-macos-trackpad-swipe';
 import backgroundImage from '@/assets/bg.document.png';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
+import { createLogger } from '@/lib/logger';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 192;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
 const NOTE_NAVIGATION_PANEL_MAX_WIDTH = 420;
 const DOCUMENT_PANEL_MIN_WIDTH = 420;
 const PANEL_DIVIDER_WIDTH = 1;
+const logger = createLogger('main-layout');
 
 function isWindowsPlatform(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -147,10 +149,8 @@ export function MainLayout() {
   const canNavigateForward = useDocumentHistoryStore((s) => (
     s.forwardStack.some((entry) => isDifferentHistoryTarget(entry, activeMemoSession))
   ));
-  const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
   const [notebookToDelete, setNotebookToDelete] = useState<Notebook | null>(null);
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
-  const [charCount, setCharCount] = useState(0);
   const [noteNavigationPanelWidth, setNoteNavigationPanelWidth] = useState(NOTE_NAVIGATION_PANEL_WIDTH);
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
   const currentDocumentContentRef = useRef('');
@@ -180,7 +180,7 @@ export function MainLayout() {
     syncedNotebookIdRef.current = notebookId;
 
     void notebooksClient.setCurrent(notebookId).catch((error) => {
-      console.warn('[MainLayout] Failed to sync current notebook:', error);
+      logger.warn('sync current notebook failed', { error });
       syncedNotebookIdRef.current = undefined;
     });
   }, [selectedNotebook?.id]);
@@ -346,15 +346,6 @@ export function MainLayout() {
     setIsSearchPanelOpen(false);
   }, [currentDocumentInstanceKey]);
 
-  // 监听 ⌘⇧N 切换笔记本下拉面板 — 状态留在 MainLayout 内部,
-  // 走与 memo-list.tsx 的 `flowix:toggle-palette` 同款 CustomEvent 解耦模式。
-  // setNotebookPopupOpen 用 prev 回调实现 toggle 语义, 二次触发即关闭。
-  useEffect(() => {
-    const handleToggle = () => setNotebookPopupOpen(prev => !prev);
-    window.addEventListener('flowix:toggle-notebook-switcher', handleToggle);
-    return () => window.removeEventListener('flowix:toggle-notebook-switcher', handleToggle);
-  }, []);
-
   // 监听 Edit notebook 弹窗内「移除笔记本」按钮 — 派发
   // `flowix:request-delete-notebook` 即可复用下方 NotebokDeleteDialog
   // 走标准的删除确认流程。 Edit 弹窗自己会先关掉, 这里只需要 set 一次。
@@ -400,9 +391,8 @@ export function MainLayout() {
 
   const handleEditNotebook = useCallback(
     (notebook: Notebook) => {
-      // Close the dropdown first so it doesn't overlap the dialog.
-      setNotebookPopupOpen(false);
-      // Defer to next tick so the dropdown finishes closing before the dialog opens.
+      // StatusBar closes its dropdown before invoking this callback. Defer the
+      // dialog one tick so the close transition can start first.
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent<Notebook>('flowix:open-edit-notebook', { detail: notebook }));
       }, 0);
@@ -412,10 +402,7 @@ export function MainLayout() {
 
   const handleDeleteNotebook = useCallback(
     (notebook: Notebook) => {
-      // Close the dropdown so the confirmation dialog isn't visually stacked
-      // on top of the popup, then open the confirmation dialog on the next
-      // tick (the dropdown needs a frame to start its close transition).
-      setNotebookPopupOpen(false);
+      // StatusBar already closed the popup; wait one tick before the dialog.
       setTimeout(() => {
         setNotebookToDelete(notebook);
       }, 0);
@@ -445,8 +432,8 @@ export function MainLayout() {
         toast.error(t('shell.notebook.deleteFailed'));
       }
     } catch (error) {
-      console.warn('[MainLayout] Failed to delete notebook:', error);
-      toast.error(notebookDeleteErrorMessage(error));
+      logger.warn('delete notebook failed', { error });
+      toast.error(notebookDeleteErrorMessage(error, t));
     } finally {
       setNotebookToDelete(null);
     }
@@ -469,6 +456,35 @@ export function MainLayout() {
       new CustomEvent('flowix:open-note-properties', { detail: { memoId: currentMemo.id } })
     );
   }, [currentMemo]);
+
+  const documentTitlebarProps = {
+    document: {
+      currentMemo,
+      externalFilePath: isExternalDocument ? currentDocumentPath : null,
+    },
+    sidebar: {
+      hidden: isMemoListHidden,
+      onToggle: handleToggleMemoList,
+    },
+    navigation: {
+      canNavigateBack,
+      canNavigateForward,
+      onNavigateBack: handleNavigateBack,
+      onNavigateForward: handleNavigateForward,
+    },
+    actions: {
+      onOpenSearch: () => setIsSearchPanelOpen(true),
+      onCopyLink: handleCopyLink,
+      onCopyFullText: handleCopyFullText,
+      onOpenProperties: handleOpenNoteProperties,
+      onTogglePin: handleTogglePin,
+      onExportMarkdown: handleExportMarkdown,
+      onSaveAsTemplate: handleSaveAsTemplate,
+      onExportWord: handleExportWord,
+      onRequestDeleteMemo: handleRequestDeleteMemo,
+      onColorsChange: handleColorsChange,
+    },
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ backgroundColor: 'var(--document-bg)' }}>
@@ -552,47 +568,9 @@ export function MainLayout() {
             <div className="h-full min-w-0 relative flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
             {/* Fixed top navigation bar */}
             {isWindowsPlatform() ? (
-              <DocumentTitlebarWin
-                currentMemo={currentMemo}
-                isSidebarHidden={isMemoListHidden}
-                onToggleSidebar={handleToggleMemoList}
-                canNavigateBack={canNavigateBack}
-                canNavigateForward={canNavigateForward}
-                onNavigateBack={handleNavigateBack}
-                onNavigateForward={handleNavigateForward}
-                onOpenSearch={() => setIsSearchPanelOpen(true)}
-                onCopyLink={handleCopyLink}
-                onCopyFullText={handleCopyFullText}
-                onOpenProperties={handleOpenNoteProperties}
-                onTogglePin={handleTogglePin}
-                onExportMarkdown={handleExportMarkdown}
-                onSaveAsTemplate={handleSaveAsTemplate}
-                onExportWord={handleExportWord}
-                onRequestDeleteMemo={handleRequestDeleteMemo}
-                onColorsChange={handleColorsChange}
-                externalFilePath={isExternalDocument ? currentDocumentPath : null}
-              />
+              <DocumentTitlebarWin {...documentTitlebarProps} />
             ) : (
-              <DocumentTitlebarMac
-                currentMemo={currentMemo}
-                isSidebarHidden={isMemoListHidden}
-                onToggleSidebar={handleToggleMemoList}
-                canNavigateBack={canNavigateBack}
-                canNavigateForward={canNavigateForward}
-                onNavigateBack={handleNavigateBack}
-                onNavigateForward={handleNavigateForward}
-                onOpenSearch={() => setIsSearchPanelOpen(true)}
-                onCopyLink={handleCopyLink}
-                onCopyFullText={handleCopyFullText}
-                onOpenProperties={handleOpenNoteProperties}
-                onTogglePin={handleTogglePin}
-                onExportMarkdown={handleExportMarkdown}
-                onSaveAsTemplate={handleSaveAsTemplate}
-                onExportWord={handleExportWord}
-                onRequestDeleteMemo={handleRequestDeleteMemo}
-                onColorsChange={handleColorsChange}
-                externalFilePath={isExternalDocument ? currentDocumentPath : null}
-              />
+              <DocumentTitlebarMac {...documentTitlebarProps} />
             )}
 
             {/* Content area */}
@@ -613,7 +591,6 @@ export function MainLayout() {
                   onMetainfoData={(data) => {
                     currentDocumentContentRef.current = data.memoContent;
                   }}
-                  onCharCountChange={setCharCount}
                 />
               ) : (
                 <div className="relative flex h-full w-full items-center justify-center">
@@ -644,17 +621,11 @@ export function MainLayout() {
           </div>
           {/* Status bar */}
           <StatusBar
-            notebooks={notebooks}
-            selectedNotebook={selectedNotebook}
-            notebookPopupOpen={notebookPopupOpen}
-            setNotebookPopupOpen={setNotebookPopupOpen}
             onSelectNotebook={handleSelectNotebook}
             onEditNotebook={handleEditNotebook}
             onDeleteNotebook={handleDeleteNotebook}
-            onRefreshNotebooks={(nbList) => setNotebooks(nbList)}
             todoCount={todoCount}
             onOpenTodos={handleOpenTodos}
-            charCount={charCount}
             onToggleNoteNavigation={handleToggleNoteNavigation}
             onOpenPreferences={() => windows.openPreferences()}
           />

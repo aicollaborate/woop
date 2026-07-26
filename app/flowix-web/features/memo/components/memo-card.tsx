@@ -8,7 +8,7 @@ import { MEMO_COLOR_HEX, type MemoColor, type MemoItem } from '@features/memo';
 import { cn } from '@/lib/utils';
 import { getAgentType } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
-import { useI18n, type I18nParams } from '@features/i18n';
+import { useI18n, type I18nParams } from '@/lib/i18n';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -70,7 +70,7 @@ interface MemoCardShellProps {
 
 function formatTimeAgo(
   timestamp: number,
-  t: (key: import('@features/i18n').I18nKey, params?: I18nParams) => string,
+  t: (key: import('@/lib/i18n').I18nKey, params?: I18nParams) => string,
 ): string {
   const now = Date.now();
   const diff = now - timestamp;
@@ -131,11 +131,11 @@ function AgentTodoIcons({
   );
 }
 
-function ColorDots({ colors, limit }: { colors: MemoItem['colors']; limit?: number }) {
+function ColorDots({ colors, limit, className }: { colors: MemoItem['colors']; limit?: number; className?: string }) {
   const visibleColors = limit ? colors.slice(0, limit) : colors;
   if (visibleColors.length === 0) return null;
   return (
-    <span aria-hidden="true" className="inline-flex shrink-0 items-center gap-0.5">
+    <span aria-hidden={true} className={cn('inline-flex shrink-0 items-center gap-0.5', className)}>
       {visibleColors.map((color) => (
         <span
           key={color}
@@ -150,6 +150,7 @@ function ColorDots({ colors, limit }: { colors: MemoItem['colors']; limit?: numb
 function MemoCardMoreMenu({
   memo,
   isDropdownOpen,
+  isSelected,
   moreLabel,
   onOpenDropdown,
   onFavoriteToggle,
@@ -157,7 +158,7 @@ function MemoCardMoreMenu({
   onColorsChange,
 }: Pick<
   MemoCardShellProps,
-  'memo' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
+  'memo' | 'isDropdownOpen' | 'isSelected' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
 >) {
   return (
     <div className="absolute right-3 z-100 shrink-0 items-center gap-1">
@@ -172,7 +173,15 @@ function MemoCardMoreMenu({
           <button
             type="button"
             aria-label={moreLabel}
-            className="rounded p-1 opacity-0 transition-opacity hover:bg-[var(--muted)] group-hover:opacity-100"
+            className={cn(
+              'rounded p-1 opacity-0 transition-[opacity,background-color] group-hover:opacity-100',
+              // 背景与外层 memo card 同步: 选中 = accent (与选中卡片同色,
+              // 视觉上与卡片融为一体); 未选中 = card (与列表底色一致,
+              // 视觉上"浮"在卡片之上)。仅 hover memo card 时才显形。
+              isSelected
+                ? 'bg-[var(--accent)]'
+                : 'bg-[var(--card)]',
+            )}
           >
             <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
           </button>
@@ -235,6 +244,7 @@ function MemoCardShell({
             <MemoCardMoreMenu
               memo={memo}
               isDropdownOpen={isDropdownOpen}
+              isSelected={isSelected}
               moreLabel={moreLabel}
               onOpenDropdown={onOpenDropdown}
               onFavoriteToggle={onFavoriteToggle}
@@ -265,7 +275,6 @@ function CompactMemoCardBody({
 }: MemoCardBodyProps) {
   return (
     <div className="flex h-5 min-w-0 items-center gap-1.5">
-      <ColorDots colors={memo.colors} limit={1} />
       {runningAgentType && (
         <AgentTodoIcons
           hasTodos={false}
@@ -275,12 +284,13 @@ function CompactMemoCardBody({
       {memo.favorited && (
         <PushPin weight="fill" className="h-3.5 w-3.5 shrink-0 text-[var(--foreground)]" />
       )}
-      <h3 className="mr-3 min-w-0 truncate text-sm font-medium text-[var(--foreground)]">
+      <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">
         {title}
       </h3>
+      <ColorDots colors={memo.colors} limit={1} className="mr-1" />
       {hasTodos && (
         <CheckSquareIcon
-          className="ml-auto h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] transition-opacity group-hover:opacity-0"
+          className="mr-1 h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] transition-opacity group-hover:opacity-0"
           weight="regular"
         />
       )}
@@ -317,7 +327,7 @@ function DetailedMemoCardBody({
           <span className="min-w-0">{title}</span>
         </h3>
         {thumbnail && !thumbnailFailed ? (
-          <div className="h-16 w-[114px] overflow-hidden rounded-md bg-[var(--muted)]">
+          <div className="relative h-16 w-[114px] overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-[var(--muted)] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[transform,box-shadow] group-hover:scale-[1.01] group-hover:shadow-[0_2px_6px_rgba(0,0,0,0.08)]">
             <img
               src={thumbnail}
               alt=""

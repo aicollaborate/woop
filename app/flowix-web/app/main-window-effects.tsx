@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useI18n } from "@features/i18n";
+import { useI18n } from "@/lib/i18n";
 import { windows } from "@platform/tauri/client";
 import { useDocumentStore } from "@features/document/store/document-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
@@ -20,7 +20,11 @@ import type { MemoEvent } from "@/types/memo";
 import {
   mountOpenTargetListener,
   unmountOpenTargetListener,
-} from "@platform/open-target";
+} from "@features/memo/use-cases/open-target-listener";
+import { restorePersistedMemoSession } from '@features/memo/use-cases/open-memo-session';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('main-window-effects');
 
 export function MainWindowEffects() {
   const { t } = useI18n();
@@ -33,6 +37,23 @@ export function MainWindowEffects() {
     return () => {
       setNotebookIdProvider(() => null);
     };
+  }, []);
+
+  useEffect(() => {
+    void restorePersistedMemoSession();
+
+    let previousSelectedMemoId = useMemoStore.getState().selectedMemo?.id ?? null;
+    return useMemoStore.subscribe((state) => {
+      const selectedMemoId = state.selectedMemo?.id ?? null;
+      if (selectedMemoId === previousSelectedMemoId) return;
+      previousSelectedMemoId = selectedMemoId;
+      if (selectedMemoId !== null) return;
+
+      const documentState = useDocumentStore.getState();
+      if (documentState.currentDocumentSource !== 'external') {
+        void documentState.clearDocument();
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -57,7 +78,7 @@ export function MainWindowEffects() {
           },
           openNoteTab: windows.openNoteTab,
           reportOpenFailure: (error) => {
-            console.warn("[MainWindowEffects] open created note window failed", error);
+            logger.warn('open created note window failed', { error });
             toast.error(error instanceof Error ? error.message : String(error));
           },
           handleMemoCreated: (memo) => useMemoStore.getState().handleMemoCreated(memo),

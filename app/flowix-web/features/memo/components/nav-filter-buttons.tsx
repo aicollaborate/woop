@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/lib/utils';
 import { useMemoStore } from '@features/memo';
 import { useTagStore } from '@features/memo';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface NavFilterButtonsProps {
   totalMemoCount: number;

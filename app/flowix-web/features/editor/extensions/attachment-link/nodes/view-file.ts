@@ -2,7 +2,7 @@
 import type { NodeView as ProseMirrorNodeView, EditorView, Decoration } from '@tiptap/pm/view';
 import type { ViewMutationRecord } from '@tiptap/pm/view';
 import { Node, mergeAttributes } from '@tiptap/core';
-import { NodeSelection, Plugin } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, type EditorState } from '@tiptap/pm/state';
 import { assetUrl } from '@features/editor/extensions/attachment-link/utils';
 import { readMarkdownLinkDestination } from '@features/editor/extensions/shared/markdown-link-destination';
 import { setInlineAtomTextSelectionFromMouse } from '@features/editor/extensions/shared/inline-atom-selection';
@@ -22,7 +22,7 @@ const ATTACHMENT_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="15" 
 
 // 鈹€鈹€鈹€ FileView (Pure Render) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-function removeHardBreaksAroundFileAttachments(state: any) {
+function removeHardBreaksAroundFileAttachments(state: EditorState) {
     const deletions: Array<{ from: number; to: number }> = [];
     const seen = new Set<string>();
 
@@ -397,7 +397,7 @@ export const FileAttachment = Node.create({
             const assetLink = /\[[^\]]*\]\((?:asset:\/\/|https?:\/\/asset\.localhost\/)/.exec(src);
             return assetLink?.index ?? -1;
         },
-        tokenize(src: string): any {
+        tokenize(src: string) {
             const closeBracket = src.indexOf(']');
             if (!src.startsWith('[') || closeBracket === -1 || src[closeBracket + 1] !== '(') {
                 return undefined;

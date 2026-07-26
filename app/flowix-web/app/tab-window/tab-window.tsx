@@ -18,7 +18,7 @@ import { MarkdownFileDropOverlay } from '@features/shell/components/drag-overlay
 import { WindowsTitlebarControls } from '@shared/window-titlebar-controls';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@shared/ui/dialog';
 import { Kbd } from '@shared/ui/kbd';
-import { useI18n, type I18nParams } from '@features/i18n';
+import { useI18n, type I18nParams } from '@/lib/i18n';
 import type { MemoEvent } from '@/types/memo';
 import { TabStrip } from './tab-strip';
 import { FLOWIX_TAB_DRAG_TYPE } from './tab-tear-off';
@@ -537,25 +537,33 @@ export function TabWindow() {
     });
   };
   const titlebarProps = {
-    currentMemo,
-    isSidebarHidden: false,
-    onToggleSidebar: NOOP,
-    canNavigateBack: false,
-    canNavigateForward: false,
-    onNavigateBack: NOOP,
-    onNavigateForward: NOOP,
-    showNavigationButtons: false,
-    onOpenSearch: () => setIsSearchPanelOpen(true),
-    onCopyLink: commands.handleCopyLink,
-    onCopyFullText: commands.handleCopyFullText,
-    onOpenProperties: () => currentMemo && window.dispatchEvent(new CustomEvent('flowix:open-note-properties', { detail: { memoId: currentMemo.id } })),
-    onTogglePin: commands.handleTogglePin,
-    onExportMarkdown: commands.handleExportMarkdown,
-    onSaveAsTemplate: commands.handleSaveAsTemplate,
-    onExportWord: commands.handleExportWord,
-    onRequestDeleteMemo: () => currentMemo && setDeleteDialogOpen(true),
-    onColorsChange: commands.handleColorsChange,
-    externalFilePath: currentDocumentSource === 'external' ? currentDocumentPath : null,
+    document: {
+      currentMemo,
+      externalFilePath: currentDocumentSource === 'external' ? currentDocumentPath : null,
+    },
+    sidebar: {
+      hidden: false,
+      onToggle: NOOP,
+    },
+    navigation: {
+      canNavigateBack: false,
+      canNavigateForward: false,
+      onNavigateBack: NOOP,
+      onNavigateForward: NOOP,
+      visible: false,
+    },
+    actions: {
+      onOpenSearch: () => setIsSearchPanelOpen(true),
+      onCopyLink: commands.handleCopyLink,
+      onCopyFullText: commands.handleCopyFullText,
+      onOpenProperties: () => currentMemo && window.dispatchEvent(new CustomEvent('flowix:open-note-properties', { detail: { memoId: currentMemo.id } })),
+      onTogglePin: commands.handleTogglePin,
+      onExportMarkdown: commands.handleExportMarkdown,
+      onSaveAsTemplate: commands.handleSaveAsTemplate,
+      onExportWord: commands.handleExportWord,
+      onRequestDeleteMemo: () => currentMemo && setDeleteDialogOpen(true),
+      onColorsChange: commands.handleColorsChange,
+    },
     windowTabs: tabStrip,
   };
 

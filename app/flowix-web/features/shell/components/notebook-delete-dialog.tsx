@@ -7,7 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@shared/ui/dialog';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface NotebookDeleteDialogProps {
   /** When non-null, the dialog is open and confirming will delete this notebook. */

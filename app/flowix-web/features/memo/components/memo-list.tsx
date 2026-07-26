@@ -8,11 +8,13 @@ import { useShortcutScope, pushHandler } from '@features/shortcuts';
 import { SquarePen, Search, ChevronDown, Check, ChevronRight, Loader2 } from 'lucide-react';
 import { useDocumentStore } from '@features/document';
 import {
-  selectRunningAgentConversationInstances,
   useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store';
-import { useChatStore } from '@features/agent/store/chat-store';
+import {
+  selectRunningAgentConversations,
+  useConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import {
   getVisibleCreateFilter,
   getNotebookIconOption,
@@ -59,8 +61,11 @@ import {
   shouldShowMemoListLoading,
 } from '@features/memo/components/memo-list-loading-state';
 import { memoRepository, notebookRepository } from '@features/memo/services/memo-repository';
-import { useI18n, type I18nParams } from '@features/i18n';
+import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('memo-list');
 
 const LazyNotebookDialogs = lazy(() =>
   import('@features/memo/components/notebook-dialogs').then((module) => ({
@@ -91,7 +96,7 @@ interface ColorFilterSubmenuProps {
   onSelect: (value: ColorFilterValue) => void;
 }
 
-const COLOR_LABEL_KEYS: Record<MemoColor, import('@features/i18n').I18nKey> = {
+const COLOR_LABEL_KEYS: Record<MemoColor, import('@/lib/i18n').I18nKey> = {
   red: 'document.color.red',
   orange: 'document.color.orange',
   yellow: 'document.color.yellow',
@@ -358,14 +363,14 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   const selectedTagId = useTagStore((s) => s.selectedTagId);
   const tagMetadataRefreshVersion = useTagStore((s) => s.metadataRefreshVersion);
   const agentConversationInstances = useAgentConversationStore((s) => s.instances);
-  const threadStates = useChatStore((s) => s.threadStates);
+  const conversationRunIndex = useConversationRunIndex(agentConversationInstances);
   const runningAgentInstances = useMemo(
     () =>
-      selectRunningAgentConversationInstances(
+      selectRunningAgentConversations(
         { instances: agentConversationInstances },
-        threadStates,
+        conversationRunIndex,
       ),
-    [agentConversationInstances, threadStates],
+    [agentConversationInstances, conversationRunIndex],
   );
   const getRunningAgentForMemo = useCallback(
     (memo: MemoItem): AgentConversationInstance | null => {
@@ -428,33 +433,11 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   const [visibleMemoCount, setVisibleMemoCount] = useState(MEMO_LIST_INITIAL_RENDER_COUNT);
   const loadDataSeqRef = useRef(0);
   const emptyNotebookPromptedRef = useRef(false);
-  const activeDocumentMemoId = useDocumentStore((store) => store.activeMemoSession?.memoId ?? null);
-  const currentDocumentSource = useDocumentStore((store) => store.currentDocumentSource);
-
   const { blockingLoadingText, createNotebook } = useCreateNotebookFlow({
     onMemoListReloadNeeded: triggerRefresh,
     onMemoListQueryReset: () => setLoadedMemoListQueryKey(null),
     onMemoListLoadingChange: setIsMemoListLoading,
   });
-
-  useEffect(() => {
-    const { selectedMemo: latestSelectedMemo } = useMemoStore.getState();
-    const { currentDocumentSource, clearDocument } = useDocumentStore.getState();
-    if (!selectedMemo && !latestSelectedMemo && currentDocumentSource !== 'external') {
-      clearDocument();
-    }
-  }, [selectedMemo]);
-
-  // 挂载期同步: selectedMemo 由 zustand/persist 从 localStorage 恢复,
-  // activeMemoSession 没被持久化、重启后永远是 null, 列表选中态与文档区会脱钩。
-  // 主动开一次 session, 解决"列表有选中但文档区空"。
-  useEffect(() => {
-    if (!selectedMemo) return;
-    if (currentDocumentSource === 'external') return;
-    if (activeDocumentMemoId === selectedMemo.id) return;
-    openMemoSession(selectedMemo, useMemoStore.getState().selectedNotebook);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // 全局事件监听器 ── 跨组件 shortcut / dispatchEvent 解耦点。
   // 主列表始终挂载（侧栏收起时只是宽度变为 0），所以只让主列表持有这些监听器。
@@ -586,7 +569,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
 
   useEffect(() => {
     void loadData().catch((error) => {
-      console.warn('[MemoList] Failed to load memo list data:', error);
+      logger.warn('load list metadata failed', { error });
       toast.error(t('memo.list.loadFailed'));
     });
   }, [loadData, refreshTrigger, selectedNotebookId]);
@@ -626,7 +609,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
         }
       } catch (error) {
         if (!cancelled) {
-          console.warn('[MemoList] Failed to load memos:', error);
+          logger.warn('load memos failed', { error });
           toast.error(t('memo.list.loadFailed'));
         }
       } finally {
@@ -730,7 +713,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
       const nextCount = Math.max(count, minimumVisibleMemoCount) + MEMO_LIST_RENDER_BATCH_SIZE;
       return Math.min(filteredMemos.length, nextCount);
     });
-  }, [memos.length, minimumVisibleMemoCount]);
+  }, [filteredMemos.length, minimumVisibleMemoCount]);
 
   const handleMemoListScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     if (!hasMoreMemos) return;
@@ -786,7 +769,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
 
   const handleOpenMemoWindow = useCallback((memo: MemoItem) => {
     void tauriWindows.openNoteTab(memo.id).catch((error) => {
-      console.warn('[MemoList] open note window failed', error);
+      logger.warn('open note window failed', { error });
       toast.error(String(error));
     });
   }, []);
@@ -850,7 +833,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     }
     setSelectedMemo(null);
 
-    let result: any;
+    let result: MemoItem;
     try {
       result = await memoRepository.create(activeTagId ?? undefined, selectedNotebook.id);
     } catch (error) {
@@ -863,7 +846,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
       return;
     }
 
-    const newMemo = result as MemoItem;
+    const newMemo = result;
     const shouldSelectNewMemo =
       createFilter === 'all' ||
       (createFilter === 'tagged' && Boolean(activeTagId)) ||
@@ -958,7 +941,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
         toast.error(t('memo.list.updateFailed'));
       }
     } catch (error) {
-      console.warn('[MemoList] Failed to update notebook:', error);
+      logger.warn('update notebook failed', { error });
       toast.error(t('memo.list.updateFailed'));
     }
   };

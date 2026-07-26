@@ -1,25 +1,25 @@
-//! 绗旇鐩綍鏂囦欢鐩戝惉 鈥?鍖呰 `notify::RecommendedWatcher` 鐩戝惉鍏ㄩ儴宸查厤缃?notebook
-//! 鐩綍, 鎶婂閮ㄧ紪杈戝櫒 / 鍏朵粬 AI 鐨勭鐩樺彉鏇磋浆涓?`MemoEvent::Updated` 鎴?//! `MemoEvent::Deleted` emit 缁欏墠绔€?//!
+//! 笔�?�?��文件监听 —包�? `notify::RecommendedWatcher` 监听全部已配�?notebook
+//! �?��, 把�?部编辑器 / 其他 AI 的�?盘变更转�?`MemoEvent::Updated` �?//! `MemoEvent::Deleted` emit 给前�?�?//!
 //! ## 鑷啓鎶戝埗 (self-write suppression)
 //!
-//! 鍚庣鑷韩鍐欏叆 (鐢ㄦ埛 UI / Agent / import 璺緞) 鍦?*鍐欑洏涔嬪墠**璋冪敤
+//! 后�?�?��写入 (用户 UI / Agent / import �?��) �?*写盘之前**调用
 //! `MemoWatcher::mark_self_write(path)` 鎶婅矾寰勫鍏ユ姂鍒堕泦鍚堛€倃atcher 鍥炶皟
-//! 鐪嬪埌鍚岃矾寰勪簨浠? 鍛戒腑鍗冲悶銆傝繖涓€椤哄簭寰堝叧閿?鈥?鍐欑洏鍓?mark 鎵嶈兘鍏虫帀
-//! "notify 浜嬩欢鍏堜簬 mark 鍒拌揪"鐨?race window, 鍚﹀垯 IPC 鍛戒护鍒氭妸鏂囦欢钀界洏
-//! 杩樻病鏉ュ緱鍙婂鎶戝埗琛? watcher 灏卞厛鐪嬪埌 Create 浜嬩欢, 瑙﹀彂 reload/re-register
-//! 浜屾 emit銆?//!
-//! 璁捐: 鍚庣 emit 鏄悓姝ョ殑, 鍏堜簬 notify 鍥炶皟鍒拌揪鍓嶇; UI 姘歌繙鍏堢湅鍒拌嚜瀹?//! "Created" / "Updated" 浜嬩欢, 涓嶄細闂儊銆倃atcher 150ms 鍐呯殑鍥炲搷琚悶, 鏉滅粷
-//! "澶栭儴鐪嬭捣鏉ユ敼浜嗕袱娆?銆?//!
+//! 看到同路径事�? 命中即吞。这一顺序很关�?—写盘�?mark 才能关掉
+//! "notify 事件先于 mark 到达"�?race window, 否则 IPC 命令刚把文件落盘
+//! 还没来得及�?抑制�? watcher 就先看到 Create 事件, 触发 reload/re-register
+//! 二�? emit�?//!
+//! 设�?: 后�? emit �?��步的, 先于 notify 回调到达前�?; UI 永远先看到自�?//! "Created" / "Updated" 事件, 不会�?��。watcher 150ms 内的回响�?��, 杜绝
+//! "外部看起来改了两�?�?//!
 //! ## Rename 妫€娴嬶細frontmatter-key-first
 //!
-//! 鏃х増鐢?`inode_tracker`锛圲nix ino / Windows NTFS MFT file_index + vol_serial锛?//! 閰嶅 From + To 浜嬩欢璇嗗埆 rename銆傞噸鏋勫悗**瀹屽叏涓嶉渶瑕?inode / file_index**锛?//! processor 璇荤鐩?frontmatter 鐨?`key` 瀛楁鐩存帴浣滀负 id 鐪熸簮銆俧s::rename
-//! 鎷嗗嚭鐨?From + To 涓ゆ潯浜嬩欢涓? To 浜嬩欢璇诲埌鐨?frontmatter key 璺熸棫 entry 鐨?//! id 涓€鑷?鈫?`rename_memo_file` 鑷姩淇濈暀 id 鏀?entry.filename銆?//!
-//! 璺ㄥ钩鍙拌涓虹粺涓€ 鈥?鍦?NTFS / FAT32 / exFAT / 缃戠粶鐩?/ symlink / 璺ㄥ嵎 涓?//! 琛屼负涓€鑷? 涓嶅啀鏈?Plan A 閭ｅ Windows-only `windows-sys` 渚濊禆銆?//!
-//! ## 璺ㄥ钩鍙?//!
+//! 旧版�?`inode_tracker`（Unix ino / Windows NTFS MFT file_index + vol_serial�?//! 配�? From + To 事件识别 rename。重构后**完全不需�?inode / file_index**�?//! processor 读�?�?frontmatter �?`key` 字�?直接作为 id 真源。fs::rename
+//! 拆出�?From + To 两条事件�? To 事件读到�?frontmatter key 跟旧 entry �?//! id 一�?�?`rename_memo_file` �?��保留 id �?entry.filename�?//!
+//! 跨平台�?为统一 —�?NTFS / FAT32 / exFAT / 网络�?/ symlink / 跨卷 �?//! 行为一�? 不再�?Plan A 那�? Windows-only `windows-sys` 依赖�?//!
+//! ## 跨平�?//!
 //! `notify::RecommendedWatcher` 鑷姩閫?macOS FSEvents / Linux inotify /
 //! Windows ReadDirectoryChangesW, 宸茬敱 `notify` 6.0 鐨勪緷璧栧浘鑷寘鍚€?//!
-//! 璺緞姣旇緝涓や晶 (`mark_self_write` 鍏ュ弬 / watcher 鏀跺埌鐨?`event.paths`) 閮?//! 璧?[`normalize_for_compare`] 褰掍竴: macOS 涓?`/var` 鈫?`/private/var` symlink
-//! 鎶樺彔, Windows 涓?`\\?\C:\...` 鍓嶇紑鍘绘帀銆傚惁鍒?HashMap 绮剧‘鍖归厤浼?miss銆?
+//! �?��比较两侧 (`mark_self_write` 入参 / watcher 收到�?`event.paths`) �?//! �?[`normalize_for_compare`] 归一: macOS �?`/var` �?`/private/var` symlink
+//! 折叠, Windows �?`\\?\C:\...` 前缀去掉。否�?HashMap 精�匹配�?miss�?
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -40,9 +40,9 @@ const REMOVE_TOMBSTONE_DELAY: Duration = Duration::from_millis(450);
 
 /// 绗旇鏈洰褰曠殑鏂囦欢鐩戝惉鍣ㄣ€?///
 /// 瀛楁璇箟:
-/// - `_watcher`: 鎸佹湁 `RecommendedWatcher` 鏈熼棿鎸佺画鐩戝惉銆侱rop 鏃惰嚜鍔ㄥ仠姝€?/// - `watched_roots`: 褰撳墠缁戝畾鐨?notebook 鏍圭洰褰曢泦鍚堛€?/// - `recent_self_writes`: 鑷啓鎶戝埗琛? `(normalized path, 鏍囪鏃堕棿)`銆?///   鍥炶皟鏌ヨ〃, 鍛戒腑鍗冲悶; 琛ㄩ」閫氳繃 TTL 娓呯悊, 淇濊瘉 macOS FSEvents 涓€娆″啓鍏?///   浜х敓澶氭潯浜嬩欢鏃惰兘鍏ㄩ儴鎶戝埗銆傞敭閮借蛋 [`normalize_for_compare`] 褰掍竴銆?/// - `last_emit`: 璺緞闃叉姈琛? `(normalized path, 涓婃 emit 鏃堕棿)`銆?50ms
-///   鍐呭悓璺緞浜嬩欢鍚炴帀, 澶勭悊缂栬緫鍣ㄤ繚瀛樻椂鐨勯噸澶?notify銆?/// - `remove_coalescer`: 澶栭儴 rename 鍙兘鍏堝埌 Remove(old), 杩欓噷鐭殏淇濈暀
-///   tombstone, 绛夊緟闅忓悗 Create/Modify(new) 閫氳繃 frontmatter key 鍚堝苟銆?/// - `whitelist`: 杩愯鏃跺彲鐑洿鏂扮殑 watcher 鐧?榛戝悕鍗曢厤缃€?
+/// - `_watcher`: 持有 `RecommendedWatcher` 期间持续监听。Drop 时自动停�?�?/// - `watched_roots`: 当前绑定�?notebook 根目录集合�?/// - `recent_self_writes`: �?��抑制�? `(normalized path, 标�?时间)`�?///   回调查表, 命中即吞; 表项通过 TTL 清理, 保证 macOS FSEvents 一次写�?///   产生多条事件时能全部抑制。键都走 [`normalize_for_compare`] 归一�?/// - `last_emit`: �?��防抖�? `(normalized path, 上�? emit 时间)`�?50ms
+///   内同�?��事件吞掉, 处理编辑器保存时的重�?notify�?/// - `remove_coalescer`: 外部 rename �?��先到 Remove(old), 这里�?��保留
+///   tombstone, 等待随后 Create/Modify(new) 通过 frontmatter key 合并�?/// - `whitelist`: 运�?时可�?��新的 watcher �?黑名单配�?�?
 pub struct MemoWatcher {
     _watcher: Option<RecommendedWatcher>,
     watched_roots: Arc<std::sync::RwLock<Vec<NotebookWatchContext>>>,
@@ -51,6 +51,13 @@ pub struct MemoWatcher {
     remove_coalescer: Option<RemoveCoalescer>,
     memo_file: Arc<std::sync::RwLock<MemoFile>>,
     whitelist: Arc<std::sync::RwLock<WhitelistConfig>>,
+    /// notify 共享事件线程 -> 单 worker 线程的派发通道。notify 回调只做廉价的
+    /// filter / debounce / 自写抑制 + 入队, 重 `process` (含 `wait_for_markdown_copy_to_settle`
+    /// 最长 400ms + 磁盘读写) 交给 worker 串行 drain ── 避免阻塞 notify 共享线程 (此前
+    /// 所有 notebook 的事件投递会被单次 settle 卡住)。单 worker 保 FIFO, 不破坏同路径
+    /// 事件顺序。Drop 时 `worker_tx` 先落, 通道关闭, worker `recv` 返回 Err 后自然退出。
+    worker_tx: Option<std::sync::mpsc::Sender<(RawFsEvent, NotebookWatchContext)>>,
+    _worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MemoWatcher {
@@ -63,11 +70,13 @@ impl MemoWatcher {
             remove_coalescer: None,
             memo_file,
             whitelist: Arc::new(std::sync::RwLock::new(WhitelistConfig::load_or_default())),
+            worker_tx: None,
+            _worker: None,
         }
     }
 
     /// 鏇挎崲鐧藉悕鍗曢厤缃€?`lib.rs::setup` 浼氬湪鍚姩 + 鐑洿鏂版椂璋冪敤,
-    /// 涓棿浠?`Arc<RwLock<WhitelistConfig>>` 鍏变韩銆?
+    /// �?���?`Arc<RwLock<WhitelistConfig>>` 共享�?
     pub fn set_whitelist(&self, new_cfg: WhitelistConfig) {
         if let Ok(mut g) = self.whitelist.write() {
             *g = new_cfg;
@@ -75,11 +84,14 @@ impl MemoWatcher {
     }
 
     pub fn rebind_all(&mut self, app: AppHandle, configs: Vec<NotebookConfig>) {
-        // Drop 鏃?watcher 鈥?姝よ祴鍊?`take` 鍑?Option, 鏃?RecommendedWatcher 绔嬪嵆鏋愭瀯
+        // Drop �?watcher —此赋�?`take` �?Option, �?RecommendedWatcher 立即析构
         let _ = self._watcher.take();
         if let Some(coalescer) = self.remove_coalescer.take() {
             coalescer.cancel_all();
         }
+        // 旧 worker_tx drop -> 旧通道关闭 -> 旧 worker `recv` 返回 Err 退出。
+        let _ = self.worker_tx.take();
+        let _ = self._worker.take();
 
         let roots: Vec<NotebookWatchContext> = configs
             .into_iter()
@@ -115,19 +127,26 @@ impl MemoWatcher {
         let whitelist = self.whitelist.clone();
         let watched_roots = self.watched_roots.clone();
 
+        // notify 共享事件线程 -> 单 worker 线程的派发通道。notify 回调只做廉价的
+        // filter / debounce / 自写抑制 + 入队 (`send` 非阻塞), 重 `process` 交给 worker。
+        // tx 给回调, rx 留给下方 watched_count>0 后 spawn 的 worker。
+        let (worker_tx, worker_rx) =
+            std::sync::mpsc::channel::<(RawFsEvent, NotebookWatchContext)>();
+        let worker_tx_for_callback = worker_tx.clone();
+
         let mut watcher: RecommendedWatcher =
             match notify::recommended_watcher(move |res: notify::Result<Event>| {
                 let Ok(event) = res else {
                     return;
                 };
                 handle_notify_event(
-                    &app,
                     &memo_file,
                     &recent,
                     &last_emit,
                     &remove_coalescer_for_callback,
                     &whitelist,
                     &watched_roots,
+                    &worker_tx_for_callback,
                     event,
                 );
             }) {
@@ -155,17 +174,47 @@ impl MemoWatcher {
             return;
         }
 
+        // 单 worker 串行 drain -> 保 FIFO (同路径事件顺序不乱)。`process` 含
+        // `wait_for_markdown_copy_to_settle` (≤400ms) + 磁盘读写, 跑在这里而非 notify
+        // 共享线程, 解放后者继续投递其它 notebook 的事件。通道关闭 (MemoWatcher drop /
+        // rebind 取走 worker_tx) 时 `recv` 返回 Err, worker 自然退出。
+        let worker_app = app.clone();
+        let worker_memo_file = self.memo_file.clone();
+        let worker = std::thread::Builder::new()
+            .name("memo-watcher-processor".into())
+            .spawn(move || {
+                while let Ok((raw, ctx)) = worker_rx.recv() {
+                    // catch_unwind: 单个事件处理 panic 不能永久杀死 worker (否则后续事件
+                    // 静默不处理)。panic 本身是 bug (见技术债务「unwrap panic」节), 这里只做
+                    // 隔离 + 记录, 让 worker 继续处理后续事件。
+                    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || MemoEventProcessor::process(&raw, &worker_app, &worker_memo_file, &ctx),
+                    )) {
+                        tracing::error!(
+                            thread = "memo-watcher-processor",
+                            path = %raw.path.display(),
+                            kind = ?raw.kind,
+                            "MemoEventProcessor::process panicked; worker recovered. payload={:?}",
+                            payload
+                        );
+                    }
+                }
+            })
+            .expect("spawn memo-watcher-processor");
+
         self.remove_coalescer = Some(remove_coalescer);
         self._watcher = Some(watcher);
+        self.worker_tx = Some(worker_tx);
+        self._worker = Some(worker);
     }
 
-    /// 鍚庣鑷韩鍐欏叆璺緞鍦?*鍐欑洏涔嬪墠**璋冪敤, 鎶?path 濉炴姂鍒惰〃銆?    ///
-    /// 璺緞鍏ヨ〃鍓嶅厛璧?[`normalize_for_compare`] 褰掍竴, 璺?watcher 绔煡琛ㄥ彛寰勪竴鑷淬€?    /// 琛ㄩ」涓嶅湪鍛戒腑鏃剁珛鍗冲垹闄? 鑰屾槸鐢?2s TTL 娓呯悊, 浠ュ悶鎺夊悓涓€娆″啓鐩樹骇鐢熺殑
-    /// 澶氭潯 notify 浜嬩欢銆?
+    /// 后�?�?��写入�?���?*写盘之前**调用, �?path 塞抑制表�?    ///
+    /// �?��入表前先�?[`normalize_for_compare`] 归一, �?watcher �?��表口径一致�?    /// 表项不在命中时立即删�? 而是�?2s TTL 清理, 以吞掉同一次写盘产生的
+    /// 多条 notify 事件�?
     pub fn mark_self_write(&self, path: &Path) {
         let key = normalize_for_compare(path);
         if let Ok(mut map) = self.recent_self_writes.lock() {
-            // 椤烘墜鍓灊杩囪€佹潯鐩? 鎶戝埗琛ㄥ皬 (<鍑犲崄椤? 鍓灊 < 1碌s
+            // 顺手�?��过老条�? 抑制表小 (<几十�? �?�� < 1µs
             map.retain(|_, t| t.elapsed() < SELF_WRITE_TTL);
             tracing::debug!(
                 "[mark_self_write] path={} key={} table_size={}",
@@ -178,13 +227,12 @@ impl MemoWatcher {
     }
 }
 
-/// notify 鍥炶皟涓讳綋 鈥?杩囨护 + 鑷啓鎶戝埗 + 闃叉姈 + 瑙﹀彂 `MemoFile` 閲嶆淳鐢?+ emit銆?///
-/// 娉ㄦ剰: 杩欎釜鍑芥暟鍦?notify 鑷繁鐨勭嚎绋嬩笂璺? 璺?ReAct 涓诲惊鐜苟鍙戙€?/// `MemoFile` 鏄?`Arc<StdRwLock<MemoFile>>`, 鎴戜滑璇婚攣鎷? 璋冪敤鏂硅礋璐ｄ笉鎸侀攣璺?await銆?///
-/// 鎶戝埗涓ら亾闂? 閫愮骇涓嬫矇:
-/// 1. `recent_self_writes` (璺緞) 鈥?`mark_self_write` 鍦ㄥ啓鐩樺墠璋冪敤
-/// 2. `last_emit` (璺緞) 鈥?150ms 鍐呭悓璺緞浜嬩欢鍚? 澶勭悊 FSEvents 鍙岃Е鍙?
+/// notify 回调主体 —过滤 + �?��抑制 + 防抖 + 触发 `MemoFile` 重派�?+ emit�?///
+/// 注意: 这个函数�?notify �?��的线程上�? �?ReAct 主循�?��发�?/// `MemoFile` �?`Arc<StdRwLock<MemoFile>>`, 我们读锁�? 调用方负责不持锁�?await�?///
+/// 抑制两道�? 逐级下沉:
+/// 1. `recent_self_writes` (�?��) —`mark_self_write` 在写盘前调用
+/// 2. `last_emit` (�?��) —150ms 内同�?��事件�? 处理 FSEvents 双触�?
 fn handle_notify_event(
-    app: &AppHandle,
     memo_file: &Arc<std::sync::RwLock<MemoFile>>,
     recent: &Arc<
         std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>>,
@@ -195,6 +243,7 @@ fn handle_notify_event(
     remove_coalescer: &RemoveCoalescer,
     whitelist: &Arc<std::sync::RwLock<WhitelistConfig>>,
     watched_roots: &Arc<std::sync::RwLock<Vec<NotebookWatchContext>>>,
+    worker_tx: &std::sync::mpsc::Sender<(RawFsEvent, NotebookWatchContext)>,
     event: notify::Event,
 ) {
     let path_filter = PathFilter {
@@ -205,7 +254,7 @@ fn handle_notify_event(
             tracing::debug!("[MemoWatcher] no notebook root for {}", path.display());
             continue;
         };
-        // 璺戜笁娈?filter pipeline: whitelist / self-write / debounce銆?
+        // 跑三�?filter pipeline: whitelist / self-write / debounce�?
         let fs_kind = FsEventKind::from_notify(&event.kind);
         if matches!(fs_kind, FsEventKind::Create | FsEventKind::Modify) {
             // A rename can arrive as Remove(old) followed by Create/Modify(new).
@@ -228,8 +277,8 @@ fn handle_notify_event(
             }
         }
 
-        // manager 鍙仛閲囬泦 + 杩囨护, 涓氬姟鍒嗘祦浜ょ粰 MemoEventProcessor銆?        // processor 鑷繁璇荤鐩樻娊 frontmatter key 鍋?rename / reload /
-        // register 鍒嗘祦, 杩欓噷涓嶉渶瑕?stat 浠讳綍 metadata銆?
+        // manager �?��采集 + 过滤, 业务分流交给 MemoEventProcessor�?        // processor �?��读�?盘抽 frontmatter key �?rename / reload /
+        // register 分流, 这里不需�?stat 任何 metadata�?
         match fs_kind {
             FsEventKind::Remove => {
                 if schedule_pending_remove(remove_coalescer, memo_file, ctx.clone(), &path) {
@@ -240,7 +289,9 @@ fn handle_notify_event(
             FsEventKind::Other => {}
         }
 
-        MemoEventProcessor::process(&raw, app, memo_file, &ctx);
+        // 重 `process` (含 `wait_for_markdown_copy_to_settle` ≤400ms + 磁盘读写) 移到
+        // worker 线程串行 drain, 不阻塞 notify 共享线程。`send` 非阻塞 (unbounded channel)。
+        let _ = worker_tx.send((raw, ctx));
     }
 }
 
@@ -381,7 +432,7 @@ mod tests {
 
     #[test]
     fn normalize_for_compare_falls_back_when_path_missing() {
-        // 鍐欑洏鍓?mark 鐨勫吀鍨嬪満鏅? 鏂囦欢杩樻病鍒涘缓, canonicalize 蹇呯劧澶辫触銆?        // 搴斿綋閫€鍒板師 path 瀛楃涓? 涓嶄涪鎶戝埗銆?
+        // 写盘�?mark 的典型场�? 文件还没创建, canonicalize 必然失败�?        // 应当退到原 path 字�?�? 不丢抑制�?
         let p = Path::new("/definitely/does/not/exist/foo.md");
         let normalized = normalize_for_compare(p);
         assert_eq!(normalized, p.to_path_buf());
@@ -389,8 +440,8 @@ mod tests {
 
     #[test]
     fn normalize_for_compare_joins_canonical_parent_when_only_parent_exists() {
-        // 鐖剁洰褰曞瓨鍦?(notebook dir 宸插缓), 鏂囦欢涓嶅瓨鍦?鈥?canonicalize 鐖剁洰褰?        // 鎴愬姛, 搴斿綋 join 鍥炲幓銆傝繖鏄啓鐩樺墠 mark 鏈熸湜璧扮殑鍥為€€璺緞銆?        // pid + nano 鍚庣紑闃茶窡鍏跺畠娴嬭瘯鐨?tempdir 鎾炲悕, 閬垮厤 cargo test 骞惰
-        // 璺戞椂鐨勫伓鍙?flake銆?
+        // 父目录存�?(notebook dir 已建), 文件不存�?—canonicalize 父目�?        // 成功, 应当 join 回去。这�?��盘前 mark 期望走的回退�?���?        // pid + nano 后缀防跟其它测试�?tempdir 撞名, 避免 cargo test 并�?
+        // 跑时的偶�?flake�?
         let tmp = std::env::temp_dir().join(format!(
             "flowix-fs-watcher-norm-{}-{}",
             std::process::id(),
@@ -402,7 +453,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let file_path = tmp.join("not-yet-created.md");
         let normalized = normalize_for_compare(&file_path);
-        // 鐖剁洰褰曡蛋 canonicalize, 璺熷師 parent 绛変环 (鏈満鏃?symlink 鏃?
+        // 父目录走 canonicalize, 跟原 parent 等价 (�?���?symlink �?
         assert_eq!(
             normalized.parent().unwrap().canonicalize().unwrap(),
             tmp.canonicalize().unwrap()

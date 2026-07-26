@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { toast } from '@/lib/toast';
 import { markdownPaths as filterMarkdownPaths, useMarkdownFileDrop } from '@features/document/components/use-markdown-file-drop';
 import { windows } from '@platform/tauri/client';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { errorMessage } from '@/lib/error-message';
 import { FullscreenDragOverlay } from './fullscreen-drag-overlay';
 

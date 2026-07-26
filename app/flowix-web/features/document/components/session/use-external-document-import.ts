@@ -3,7 +3,7 @@ import { useCallback, useState } from 'react';
 import { memos as memosClient } from '@platform/tauri/client';
 import type { MemoItem, Notebook } from '@features/memo';
 import { getActiveDocumentDraft, setActiveDocumentPath } from '@features/document';
-import { translate } from '@features/i18n';
+import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { resolveMemoDocumentPath } from '@features/document/components/session/document-utils';
 

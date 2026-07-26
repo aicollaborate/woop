@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { WindowPosition, WindowRegion, WindowTab } from '@platform/tauri/client';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { displayTitleFromFilename } from '@/lib/utils';
 import {
   DropdownMenu,

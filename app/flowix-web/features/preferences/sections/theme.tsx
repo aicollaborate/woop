@@ -5,7 +5,7 @@ import { Button } from '@shared/ui/button';
 import { DEFAULT_THEME_ID, THEME_OPTIONS, type ThemeId } from '@features/theme';
 import { cn } from '@/lib/utils';
 import { SectionHeader, FIELD_TITLE_CLASS, FIELD_DESC_CLASS } from '@features/preferences/sections/primitives';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 interface ThemeSectionProps {
   settings: { theme: ThemeId };

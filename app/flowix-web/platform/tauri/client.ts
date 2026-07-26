@@ -15,8 +15,8 @@ import type {
   RunInfo,
 } from '@/types/agent';
 import type { AgentAccessConfig, AgentAccessEntry } from '@/lib/types/agent-access';
-import type { MemoColor, MemoItem } from '@features/memo';
-import type { ThemeId } from '@features/theme';
+import type { MemoColor, MemoItem } from '@/types/memo-item';
+import type { ThemeId } from '@/lib/theme';
 
 // ============================================
 // Types
@@ -30,13 +30,19 @@ export type { ChatMessage } from '@/types/agent';
 
 type RpcRequest = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 
+declare global {
+  interface Window {
+    __tauriRpc?: RpcRequest;
+  }
+}
+
 let rpcInstance: RpcRequest | null = null;
 
 export function initTauriClient(): void {
   rpcInstance = async <T = unknown>(method: string, params?: unknown): Promise<T> => {
     return await invoke<T>(method, params as Record<string, unknown> || {});
   };
-  (window as any).__tauriRpc = rpcInstance;
+  window.__tauriRpc = rpcInstance;
 }
 
 // ============================================
@@ -205,7 +211,7 @@ export const memos = {
     filter?: FilterType;
     sort?: SortType;
     tagId?: string;
-  }) => invoke<{ memos: any[] }>('get_memos', {
+  }) => invoke<{ memos: MemoItem[] }>('get_memos', {
     notebookId: params?.notebookId,
     filter: params?.filter || 'all',
     sort: params?.sort || 'createdAt',
@@ -228,7 +234,7 @@ export const memos = {
     }>('get_used_memo_tag_ids', { notebookId }),
   getTodoCount: (notebookId?: string) =>
     invoke<number>('get_memo_todo_count', { notebookId }),
-  readMemo: (id: string) => invoke<any | null>('read_memo', { id }),
+  readMemo: (id: string) => invoke<MemoItem | null>('read_memo', { id }),
   openMemoSession: (id: string) =>
     invoke<OpenMemoSession | null>('open_memo_session', { id }),
   readDocument: (filePath: string) => invoke<string | null>('read_document', { filePath }),
@@ -250,16 +256,16 @@ export const memos = {
     expectedContent: params.expectedContent,
   }),
   getLaunchOpenFiles: () => invoke<string[]>('get_launch_open_files'),
-  addDocument: (tag?: string, notebookId?: string) => invoke<any>('add_document', { tag, notebookId }),
+  addDocument: (tag?: string, notebookId?: string) => invoke<MemoItem>('add_document', { tag, notebookId }),
   listTemplates: () => invoke<MemoTemplate[]>('list_memo_templates'),
   saveTemplate: (title: string, content: string) =>
     invoke<MemoTemplate>('save_memo_template', { title, content }),
   deleteTemplate: (templateId: string) =>
     invoke<boolean>('delete_memo_template', { templateId }),
   createFromTemplate: (templateId: string, notebookId?: string) =>
-    invoke<any>('create_memo_from_template', { templateId, notebookId }),
+    invoke<MemoItem>('create_memo_from_template', { templateId, notebookId }),
   importExternalDocumentToMemo: (filePath: string, content: string, notebookId?: string) =>
-    invoke<any | null>('import_external_document_to_memo', { filePath, content, notebookId }),
+    invoke<MemoItem | null>('import_external_document_to_memo', { filePath, content, notebookId }),
   deleteMemo: (id: string) => invoke<boolean>('delete_memo', { id }),
   clearMemos: (notebookId?: string) => invoke<boolean>('clear_memos', { notebookId }),
   favoriteMemo: (id: string) => invoke<boolean>('favorite_memo', { id }),
@@ -356,12 +362,24 @@ export interface NotebookSortEntry {
   sort: number;
 }
 
+export interface NotebookRecord {
+  id: string;
+  name: string;
+  icon?: string | null;
+  path: string;
+  createdAt: number;
+  updatedAt: number;
+  isDefault: boolean;
+  sort?: number;
+  missing?: boolean;
+}
+
 export const notebooks = {
-  getAll: () => invoke<any[]>('get_notebooks'),
+  getAll: () => invoke<NotebookRecord[]>('get_notebooks'),
   create: (name: string, path: string, icon?: string | null) =>
-    invoke<any>('create_notebook', { name, path, icon }),
+    invoke<NotebookRecord>('create_notebook', { name, path, icon }),
   update: (id: string, name?: string, icon?: string | null) =>
-    invoke<any | null>('update_notebook', { id, name, icon }),
+    invoke<NotebookRecord | null>('update_notebook', { id, name, icon }),
   delete: (id: string) => invoke<boolean>('delete_notebook', { id }),
   clearAll: () => invoke<boolean>('clear_notebooks'),
   setCurrent: (notebookId: string | null) => invoke<void>('set_current_notebook', { notebookId }),
@@ -372,21 +390,30 @@ export const notebooks = {
    * local cache without re-querying.
    */
   reorder: (order: NotebookSortEntry[]) =>
-    invoke<any[]>('reorder_notebooks', { order }),
+    invoke<NotebookRecord[]>('reorder_notebooks', { order }),
 };
 
 // Files
+export interface DocTreeItem {
+  id: string;
+  fullPath: string;
+  name: string;
+  type: 'folder' | 'document';
+  parentId: string | null;
+  children: DocTreeItem[] | null;
+}
+
 export const files = {
-  getTree: (spacePath: string) => invoke<any[] | null>('get_file_tree', { spacePath }),
-  getDirChildren: (dirPath: string) => invoke<any[]>('get_dir_children', { dirPath }),
+  getTree: (spacePath: string) => invoke<DocTreeItem[] | null>('get_file_tree', { spacePath }),
+  getDirChildren: (dirPath: string) => invoke<DocTreeItem[]>('get_dir_children', { dirPath }),
   read: (filePath: string, spacePath?: string) => invoke<string | null>('read_file', { filePath, spacePath }),
   write: (filePath: string, content: string, skipValidation?: boolean, spacePath?: string) =>
     invoke<boolean>('write_file', { filePath, content, skipValidation, spacePath }),
   delete: (filePath: string, spacePath?: string) => invoke<boolean>('delete_file', { filePath, spacePath }),
   createFolder: (spacePath: string, name: string, parentId?: string) =>
-    invoke<any | null>('create_folder', { spacePath, name, parentId }),
+    invoke<DocTreeItem | null>('create_folder', { spacePath, name, parentId }),
   createDocument: (spacePath: string, name: string, parentId?: string) =>
-    invoke<any | null>('create_document', { spacePath, name, parentId }),
+    invoke<DocTreeItem | null>('create_document', { spacePath, name, parentId }),
 };
 
 // Dialogs
@@ -397,7 +424,7 @@ export interface SaveFileFilter {
 
 export const dialogs = {
   selectDirectory: () => invoke<string | null>('select_directory'),
-  selectFiles: () => invoke<any[] | null>('select_files'),
+  selectFiles: () => invoke<string[] | null>('select_files'),
   saveFile: (suggestedName?: string, filters?: SaveFileFilter[]) =>
     invoke<string | null>('save_file_dialog', {
       suggestedName,
@@ -635,6 +662,8 @@ export interface AgentConversationInstance {
   title: string;
   threadId: string | null;
   runtimeConfig?: string | null;
+  /** Backend-owned cwd; omitted from conversation upsert requests. */
+  readonly frozenCwd?: string | null;
   source: AgentConversationSource;
   role?: AgentConversationRole | null;
   createdAt: number;

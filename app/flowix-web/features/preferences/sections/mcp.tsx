@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { useCliLinkStatusStore } from '@features/preferences/store';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { Button } from '@shared/ui/button';
 import { toast } from '@/lib/toast';
 

@@ -1,4 +1,4 @@
-import { pinyin } from 'pinyin-pro';
+import { ensurePinyin, type PinyinFn } from '@/lib/pinyin';
 
 const KNOWN_PROPERTY_KEYS: Readonly<Record<string, string>> = {
   type: 'type',
@@ -43,7 +43,7 @@ export function canonicalizePropertyKey(key: string): string {
   return trimmed.toLowerCase() === 'tag' ? 'tags' : trimmed;
 }
 
-function normalizeKnownKeyInput(value: string) {
+function normalizeKnownKeyInput(value: string, pinyin: PinyinFn): string[] {
   const trimmed = value.trim();
   const withoutSpaces = trimmed.replace(/\s+/g, '');
   const pinyinKey = pinyin(withoutSpaces, { toneType: 'none' })
@@ -67,11 +67,15 @@ function splitAsciiToken(token: string): string[] {
     .filter(Boolean);
 }
 
-export function generatePropertyKey(displayName: string): string {
+// 改为 async: 中文属性名需 pinyin-pro 转写, 模块动态加载 (独立 chunk)。
+// 调用方 (note-properties-dialog 的 addCustomField / updateRowFromEdit) 已改 async。
+export async function generatePropertyKey(displayName: string): Promise<string> {
   const name = displayName.trim();
   if (!name) return '';
 
-  for (const candidate of normalizeKnownKeyInput(name)) {
+  const pinyin = await ensurePinyin();
+
+  for (const candidate of normalizeKnownKeyInput(name, pinyin)) {
     const known = KNOWN_PROPERTY_KEYS[candidate];
     if (known) return known;
   }

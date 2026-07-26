@@ -1,0 +1,152 @@
+import { Marked } from "marked";
+import { normalizeAgentTypeKey } from "@/lib/agent-types";
+import type { AgentThreadCardInputImage } from "@features/agent/thread-card/composer/composer-image-controller";
+
+export const DEFAULT_AGENT_THREAD_CARD_TITLE = "";
+
+export function escapeAgentThreadCardAttr(
+  value: string | null | undefined,
+): string {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
+function unescapeAgentThreadCardAttr(value: string): string {
+  return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+
+export function parseAgentThreadCardAttrs(
+  rawAttrs: string,
+): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const attrRe = /(\w+)="((?:\\"|\\\\|[^"])*)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = attrRe.exec(rawAttrs))) {
+    attrs[match[1]] = unescapeAgentThreadCardAttr(match[2]);
+  }
+
+  return attrs;
+}
+
+export function encodeAgentThreadCardInputDraft(
+  value: string | null | undefined,
+): string {
+  return encodeURIComponent(value ?? "");
+}
+
+export function decodeAgentThreadCardInputDraft(
+  value: string | null | undefined,
+): string {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function encodeAgentThreadCardInputImages(
+  images: AgentThreadCardInputImage[] | null | undefined,
+): string {
+  return encodeURIComponent(JSON.stringify(images ?? []));
+}
+
+export function decodeAgentThreadCardInputImages(
+  value: string | null | undefined,
+): AgentThreadCardInputImage[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (image): image is AgentThreadCardInputImage =>
+        !!image &&
+        typeof image.path === "string" &&
+        typeof image.mimeType === "string" &&
+        typeof image.name === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+const cardMarked = new Marked({
+  async: false,
+  gfm: true,
+  breaks: true,
+});
+
+export function renderAgentThreadCardMarkdownToHtml(content: string): string {
+  if (!content || !content.trim()) return "";
+  return cardMarked.parse(content) as string;
+}
+
+export function fillWithAgentThreadCardMarkdownHtml(
+  container: HTMLElement,
+  html: string,
+): void {
+  container.replaceChildren();
+  if (!html) return;
+
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  container.append(template.content.cloneNode(true));
+}
+
+export function parseAgentThreadCardMarkdown(token: unknown) {
+  const rawAttrs =
+    typeof token === "object" &&
+    token !== null &&
+    "attrs" in token &&
+    typeof token.attrs === "string"
+      ? token.attrs
+      : "";
+  const attrs = parseAgentThreadCardAttrs(
+    rawAttrs,
+  );
+  return {
+    type: "agentThreadCard",
+    attrs: {
+      threadId: attrs.threadId || null,
+      instanceId: attrs.instanceId || null,
+      title: attrs.title || DEFAULT_AGENT_THREAD_CARD_TITLE,
+      typeKey: normalizeAgentTypeKey(attrs.agentType as string | undefined),
+      agentRoleMemoId: attrs.agentRoleMemoId || null,
+      agentRoleName: attrs.agentRoleName || null,
+      collapsed: attrs.collapsed === "true",
+      fullscreen: attrs.fullscreen === "true",
+      inputDraft: attrs.inputDraft
+        ? decodeAgentThreadCardInputDraft(attrs.inputDraft)
+        : null,
+      inputImages: decodeAgentThreadCardInputImages(attrs.inputImages),
+    },
+  };
+}
+
+export function renderAgentThreadCardMarkdown(node: {
+  attrs?: Record<string, unknown>;
+}): string {
+  const threadId = escapeAgentThreadCardAttr(node.attrs?.threadId as string);
+  const instanceId = escapeAgentThreadCardAttr(node.attrs?.instanceId as string);
+  const title = escapeAgentThreadCardAttr(node.attrs?.title as string);
+  const typeKey = normalizeAgentTypeKey(
+    node.attrs?.typeKey as string | undefined,
+  );
+  const agentRoleMemoId = escapeAgentThreadCardAttr(
+    node.attrs?.agentRoleMemoId as string,
+  );
+  const agentRoleName = escapeAgentThreadCardAttr(
+    node.attrs?.agentRoleName as string,
+  );
+  const collapsed = !!node.attrs?.collapsed;
+  const fullscreen = !!node.attrs?.fullscreen;
+  const inputDraft = escapeAgentThreadCardAttr(
+    encodeAgentThreadCardInputDraft(node.attrs?.inputDraft as string),
+  );
+  const inputImages = escapeAgentThreadCardAttr(
+    encodeAgentThreadCardInputImages(node.attrs?.inputImages as AgentThreadCardInputImage[]),
+  );
+  return `::agent-thread-card{instanceId="${instanceId}" threadId="${threadId}" title="${title}" agentType="${typeKey}" agentRoleMemoId="${agentRoleMemoId}" agentRoleName="${agentRoleName}" collapsed="${collapsed}" fullscreen="${fullscreen}" inputDraft="${inputDraft}" inputImages="${inputImages}"}\n`;
+}

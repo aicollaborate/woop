@@ -1,8 +1,7 @@
 // Markdown export utilities for Markdown / Word (DOC) outputs.
 
 import { Marked } from 'marked';
-import { translate, type AppLanguage } from '@features/i18n';
-import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { translate, type AppLanguage } from '@/lib/i18n';
 
 const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 const MAX_FILE_NAME_LENGTH = 120;
@@ -118,11 +117,10 @@ function escapeHtml(text: string): string {
  * Wrap rendered HTML in a Word-compatible HTML document (saved with a `.doc` extension).
  * Word treats these files as native documents and renders them with the declared styles.
  *
- * `language` 由调用方传入 (避免在 lib/util 引入 React hook); 不传则直读
- * user-settings-store (与 errors.ts / view-note.ts 等同源)。
+ * `language` 由调用方传入 (lib/util 不引入 React hook / user-settings-store)。
  */
-export function buildWordHtml(title: string, bodyHtml: string, language?: AppLanguage): string {
-  const lang = language ?? useUserSettingsStore.getState().settings.language;
+export function buildWordHtml(title: string, bodyHtml: string, language: AppLanguage): string {
+  const lang = language;
   const fallback = translate(lang, 'common.untitled');
   return `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -150,10 +148,9 @@ export function buildWordHtml(title: string, bodyHtml: string, language?: AppLan
 
 /** Strip characters that are illegal in file names on common desktop file systems.
  *
- * `language` 由调用方传入 (避免在 lib/util 引入 React hook); 不传则直读
- * user-settings-store。空名回落当前语言下的 common.untitled。
+ * `language` 由调用方传入 (lib/util 不引入 React hook / user-settings-store)。空名回落当前语言下的 common.untitled。
  */
-export function sanitizeFileName(name: string, language?: AppLanguage): string {
+export function sanitizeFileName(name: string, language: AppLanguage): string {
   const cleaned = (name || '')
     .split('')
     .map((ch) => (ILLEGAL_FILENAME_CONTROLS.has(ch) || ILLEGAL_FILENAME_CHARS.has(ch) ? '_' : ch))
@@ -162,6 +159,6 @@ export function sanitizeFileName(name: string, language?: AppLanguage): string {
     .trim()
     .slice(0, MAX_FILE_NAME_LENGTH);
   if (cleaned) return cleaned;
-  const lang = language ?? useUserSettingsStore.getState().settings.language;
+  const lang = language;
   return translate(lang, 'common.untitled');
 }

@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Extension } from '@tiptap/core';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import type { Range } from '@tiptap/core';
@@ -40,7 +40,7 @@ interface ProcessedSearches {
 }
 
 function processSearches(
-  doc: any,
+  doc: ProseMirrorNode,
   searchTerm: string,
   searchResultClass: string,
   resultIndex: number,
@@ -54,7 +54,7 @@ function processSearches(
   const decorations: Decoration[] = [];
   const results: Range[] = [];
 
-  doc.descendants((node: any, pos: number) => {
+  doc.descendants((node, pos) => {
     if (!node.isText || !node.text) return true;
 
     const text = node.text;
@@ -118,6 +118,7 @@ declare module '@tiptap/core' {
       closeSearch: () => ReturnType;
       setSearchTerm: (searchTerm: string) => ReturnType;
       setReplaceTerm: (replaceTerm: string) => ReturnType;
+      toggleSearch: () => ReturnType;
       nextSearchResult: () => ReturnType;
       previousSearchResult: () => ReturnType;
       replace: () => ReturnType;
@@ -163,7 +164,7 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
           },
 
           apply: (tr, value, _, newState) => {
-            const storage = (this as any).editor.storage.searchAndReplace;
+            const storage = this.editor.storage.searchAndReplace;
             const searchTerm = storage.searchTerm;
             const resultIndex = storage.resultIndex;
 
@@ -210,7 +211,7 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
 
         props: {
           decorations(state) {
-            return (this as any).getState(state)?.decorations ?? DecorationSet.empty;
+            return searchAndReplacePluginKey.getState(state)?.decorations ?? DecorationSet.empty;
           },
         },
       }),
@@ -219,29 +220,29 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
 
   addCommands() {
     return {
-      setSearchTerm: (searchTerm: string) => ({ editor, tr }: any) => {
+      setSearchTerm: (searchTerm: string) => ({ editor, tr }) => {
         editor.storage.searchAndReplace.searchTerm = searchTerm;
         editor.storage.searchAndReplace.resultIndex = 0;
         tr.setMeta(searchAndReplacePluginKey, { searchTerm });
         return true;
       },
 
-      setReplaceTerm: (replaceTerm: string) => ({ editor }: any) => {
+      setReplaceTerm: (replaceTerm: string) => ({ editor }) => {
         editor.storage.searchAndReplace.replaceTerm = replaceTerm;
         return true;
       },
 
-      toggleSearch: () => ({ editor }: any) => {
+      toggleSearch: () => ({ editor }) => {
         editor.storage.searchAndReplace.isActive = !editor.storage.searchAndReplace.isActive;
         return true;
       },
 
-      openSearch: () => ({ editor }: any) => {
+      openSearch: () => ({ editor }) => {
         editor.storage.searchAndReplace.isActive = true;
         return true;
       },
 
-      closeSearch: () => ({ editor, tr }: any) => {
+      closeSearch: () => ({ editor, tr }) => {
         editor.storage.searchAndReplace.isActive = false;
         editor.storage.searchAndReplace.searchTerm = '';
         editor.storage.searchAndReplace.results = [];
@@ -249,7 +250,7 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
         return true;
       },
 
-      nextSearchResult: () => ({ editor, tr }: any) => {
+      nextSearchResult: () => ({ editor, tr }) => {
         const storage = editor.storage.searchAndReplace;
         if (storage.results.length === 0) return true;
         storage.resultIndex = (storage.resultIndex + 1) % storage.results.length;
@@ -257,7 +258,7 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
         return true;
       },
 
-      previousSearchResult: () => ({ editor, tr }: any) => {
+      previousSearchResult: () => ({ editor, tr }) => {
         const storage = editor.storage.searchAndReplace;
         if (storage.results.length === 0) return true;
         storage.resultIndex =
@@ -266,16 +267,16 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
         return true;
       },
 
-      replace: () => ({ editor, state, dispatch }: any) => {
+      replace: () => ({ editor, state, dispatch }) => {
         const storage = editor.storage.searchAndReplace;
         if (storage.results.length === 0) return false;
         const { from, to } = storage.results[0];
         const replaceTerm = storage.replaceTerm;
-        dispatch(state.tr.insertText(replaceTerm, from, to));
+        dispatch?.(state.tr.insertText(replaceTerm, from, to));
         return true;
       },
 
-      replaceAll: () => ({ editor, tr, dispatch }: any) => {
+      replaceAll: () => ({ editor, tr, dispatch }) => {
         const storage = editor.storage.searchAndReplace;
         if (storage.results.length === 0) return false;
         let offset = 0;
@@ -289,10 +290,10 @@ export const SearchAndReplace = Extension.create<SearchAndReplaceOptions>({
           if (!rebaseResponse) continue;
           offset = rebaseResponse[0];
         }
-        dispatch(tr);
+        dispatch?.(tr);
         return true;
       },
-    } as any;
+    };
   },
 
   addKeyboardShortcuts() {

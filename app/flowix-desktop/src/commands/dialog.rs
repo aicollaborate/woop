@@ -1,11 +1,11 @@
-//! Dialog IPC 鈥?鍘熺敓 dialog + 闄勪欢淇濆瓨 + 瀵煎嚭鏂囦欢銆?//!
+//! Dialog IPC —原生 dialog + 附件保存 + 导出文件�?//!
 //! 7 涓?IPC:
 //! - `select_directory` / `select_files` / `save_file_dialog` 鈥?璧?tauri-plugin-dialog
-//! - `save_attachment` / `save_attachment_content` 鈥?鎷疯礉鍒?`<notebook>/attachments/`
-//! - `copy_attachment_file` 鈥?鎶婇檮浠跺鍒跺埌淇濆瓨瀵硅瘽妗嗛€変腑鐨勭洰鏍囪矾寰?//! - `write_export_file` 鈥?鍐欎换鎰忚矾寰?(鏃?scope guard, 椋庨櫓鐐?
+//! - `save_attachment` / `save_attachment_content` —拷贝�?`<notebook>/attachments/`
+//! - `copy_attachment_file` —把附件�?制到保存对话框选中的目标路�?//! - `write_export_file` —写任意路�?(�?scope guard, 风险�?
 //!
 //! 4 涓煙鍐?helper: `sanitize_attachment_file_name` / `unique_attachment_path`
-//! (娉ㄦ剰: 杩欎袱涓?*涓嶆槸**璺ㄥ煙, 鎵€浠ユ斁鍦ㄦ湰鏂囦欢鑰屼笉鏄?helpers.rs) /
+//! (注意: 这两�?*不是**跨域, 所以放在本文件而不�?helpers.rs) /
 //! `base64_decode` / `write_bytes_to_path`銆?
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -355,7 +355,7 @@ pub async fn open_attachment_file(
 
 // ==================== IPC: 瀵煎嚭 ====================
 
-/// 鍐欎换鎰忚矾寰?(鏃?scope guard) 鈥?鍘嗗彶閬楃暀: 瀵煎嚭鍔熻兘涓嶈蛋 notebook 闄愬埗銆?/// 椋庨櫓: 鍓嶇鍙互浼犱换鎰忚矾寰勩€傚凡鍦?caller 渚у姞 `expectedDirectory` 绛夊急鏍￠獙銆?
+/// 写任意路�?(�?scope guard) —历史遗留: 导出功能不走 notebook 限制�?/// 风险: 前�?�?��传任意路径。已�?caller 侧加 `expectedDirectory` 等弱校验�?
 #[tauri::command]
 pub fn write_export_file(file_path: String, content: String) -> bool {
     write_bytes_to_path(&file_path, content.as_bytes())

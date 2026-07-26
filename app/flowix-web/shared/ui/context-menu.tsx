@@ -2,6 +2,8 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
+interface ContextMenuTriggerChildProps extends React.HTMLAttributes<HTMLElement> {}
+
 // Context for managing context-menu state. Position is captured at the moment
 // of the right-click, so the menu opens exactly at the cursor.
 interface ContextMenuContextValue {
@@ -66,7 +68,7 @@ function ContextMenuTrigger({ children, className, onContextMenu, asChild, ...pr
 	};
 
 	if (asChild && React.Children.count(children) === 1) {
-		const child = React.Children.only(children) as React.ReactElement<any>;
+		const child = React.Children.only(children) as React.ReactElement<ContextMenuTriggerChildProps>;
 		return React.cloneElement(child, {
 			onContextMenu: handleContextMenu,
 			className: cn(child.props.className, className),

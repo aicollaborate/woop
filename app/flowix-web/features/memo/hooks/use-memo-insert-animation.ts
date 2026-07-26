@@ -1,7 +1,24 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
-import gsap from 'gsap';
+import { useCallback, useEffect, useRef } from 'react';
+
+// gsap 动态 import (独立 chunk, ~168KB)。memo-list 挂载时预热, 入场动画多数
+// 命中已加载路径 (useLayoutEffect 内同步 fromTo, 与懒加载前体验一致); 极少数
+// 未就绪时先隐藏 animEl 防 paint 闪烁, 加载后 fromTo 接管 (clearProps 清理)。
+type GsapApi = typeof import('gsap')['default'];
+let gsapPromise: Promise<GsapApi> | null = null;
+let gsapLoaded: GsapApi | null = null;
+
+function ensureGsap(): Promise<GsapApi> {
+  if (gsapLoaded) return Promise.resolve(gsapLoaded);
+  if (!gsapPromise) {
+    gsapPromise = import('gsap').then((module) => {
+      gsapLoaded = module.default;
+      return module.default;
+    });
+  }
+  return gsapPromise;
+}
 
 const ENTRANCE_DURATION = 0.3;
 const ENTRANCE_EASE = 'power2.out';
@@ -13,6 +30,22 @@ const prefersReducedMotion = () =>
 interface PendingInsert {
   newId: string;
   attempts: number;
+}
+
+function runEntrance(gsap: GsapApi, animEl: HTMLElement) {
+  gsap.killTweensOf(animEl);
+  gsap.fromTo(
+    animEl,
+    { autoAlpha: 0, x: -36, scale: 0.985 },
+    {
+      autoAlpha: 1,
+      x: 0,
+      scale: 1,
+      duration: ENTRANCE_DURATION,
+      ease: ENTRANCE_EASE,
+      clearProps: 'opacity,visibility,transform',
+    }
+  );
 }
 
 /**
@@ -30,6 +63,11 @@ interface PendingInsert {
 export function useMemoInsertAnimation() {
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const pendingRef = useRef<PendingInsert | null>(null);
+
+  // 预热: memo-list 挂载后立即拉 gsap chunk, 让用户新建 memo 时多数命中同步路径。
+  useEffect(() => {
+    void ensureGsap();
+  }, []);
 
   const registerCard = useCallback((id: string) => (el: HTMLDivElement | null) => {
     if (el) cardRefs.current.set(id, el);
@@ -65,19 +103,19 @@ export function useMemoInsertAnimation() {
 
     if (prefersReducedMotion()) return;
 
-    gsap.killTweensOf(animEl);
-    gsap.fromTo(
-      animEl,
-      { autoAlpha: 0, x: -36, scale: 0.985 },
-      {
-        autoAlpha: 1,
-        x: 0,
-        scale: 1,
-        duration: ENTRANCE_DURATION,
-        ease: ENTRANCE_EASE,
-        clearProps: 'opacity,visibility,transform',
-      }
-    );
+    // gsap 已加载: 同步跑 (useLayoutEffect 内, paint 前, 与懒加载前一致)。
+    if (gsapLoaded) {
+      runEntrance(gsapLoaded, animEl);
+      return;
+    }
+
+    // 未加载: 同步隐藏防 paint 闪烁, 加载后 fromTo 接管 (clearProps 清理内联样式)。
+    animEl.style.opacity = '0';
+    void ensureGsap()
+      .then((gsap) => runEntrance(gsap, animEl))
+      .catch(() => {
+        animEl.style.opacity = '';
+      });
   }, []);
 
   return { registerCard, prepareForInsert, onListRendered };

@@ -6,9 +6,9 @@
  */
 
 import { SUPPORTED_TEXT_EXTENSIONS } from '@/types';
-import { DEFAULT_THEME_ID, type ThemeId } from '@features/theme';
-import type { ShortcutOverrides } from '@features/shortcuts';
-import { DEFAULT_APP_LANGUAGE, type AppLanguage, type Region } from '@features/i18n';
+import { DEFAULT_THEME_ID, type ThemeId } from '@/lib/theme';
+import type { ShortcutOverrides } from '@/lib/shortcuts';
+import { DEFAULT_APP_LANGUAGE, type AppLanguage, type Region } from '@/lib/i18n';
 import type { AgentTypeKey } from '@/types/agent';
 
 // 文件类型

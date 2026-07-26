@@ -553,6 +553,14 @@ ENVIRONMENT:
     FLOWIX_HOME        Override config dir (default: ~/.flowix; contains index.db)
     FLOWIX_DATA        Override data dir (default: <OS data dir>/flowix)
 
+ENCODING:
+    Notes are always written as UTF-8; stdin is read as UTF-8.
+    On Windows the CLI sets its console to UTF-8 at startup. When piping
+    non-ASCII content from PowerShell 5.1, also set
+      $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+    (or run `chcp 65001`). PowerShell 7+ and the MCP transport are UTF-8
+    by default.
+
 EXAMPLES:
     flowix --version
     flowix notebooks

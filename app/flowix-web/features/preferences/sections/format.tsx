@@ -22,7 +22,7 @@ import {
   DEFAULT_USER_SETTINGS,
 } from '@/lib/constants';
 import { FieldRow, SectionHeader } from '@features/preferences/sections/primitives';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import {
   ensureDownloadedFontRegistered,

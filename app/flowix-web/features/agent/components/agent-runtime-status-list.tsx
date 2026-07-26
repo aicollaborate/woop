@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { AGENT_TYPES, isAgentTypeComingSoon } from '@/lib/agent-types';
 import { cn } from '@/lib/utils';
-import { useI18n, type I18nKey } from '@features/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import type { AgentTypeKey } from '@/types/agent';
 import type { AgentRuntimeAvailability } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';

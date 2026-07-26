@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronRight, Ellipsis, Loader2, Palette, Search } from 'lucide-react';
 import {
   LinkSimpleIcon,
@@ -44,15 +44,51 @@ import {
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
 import { toast } from '@/lib/toast';
 import {
-  selectIsAgentConversationRunning,
   useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-store';
-import { useChatStore } from '@features/agent/store/chat-store';
-import type { ThreadsMap } from '@features/agent/store/thread-runtime-state';
+import {
+  isAgentConversationRunning,
+  useConversationRunIndex,
+  type ConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import { getAgentType, DEFAULT_AGENT_TYPE_KEY } from '@/lib/agent-types';
 import { canonicalPath } from '@/lib/path';
-import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@features/i18n';
+import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('document-titlebar');
+
+export interface DocumentTitlebarProps {
+  document: {
+    currentMemo: MemoItem | null;
+    externalFilePath?: string | null;
+  };
+  sidebar: {
+    hidden: boolean;
+    onToggle: () => void;
+  };
+  navigation: {
+    canNavigateBack: boolean;
+    canNavigateForward: boolean;
+    onNavigateBack: () => void;
+    onNavigateForward: () => void;
+    visible?: boolean;
+  };
+  actions: {
+    onOpenSearch: () => void;
+    onCopyLink: () => void;
+    onCopyFullText: () => void;
+    onOpenProperties: () => void;
+    onTogglePin: () => void;
+    onExportMarkdown: () => void;
+    onSaveAsTemplate: () => void;
+    onExportWord: () => void;
+    onRequestDeleteMemo: () => void;
+    onColorsChange?: (next: MemoColor[]) => void;
+  };
+  windowTabs?: ReactNode;
+}
 
 const AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT =
   'flowix:agent-thread-card-fullscreen-change';
@@ -309,7 +345,7 @@ function isConversationForCurrentDocument(
 function getAgentThreadTitlebarItemsFromConversations(
   t: (key: I18nKey, params?: I18nParams) => string,
   instances: Record<string, AgentConversationInstance>,
-  threadStates: ThreadsMap,
+  conversationRunIndex: ConversationRunIndex,
   currentDocumentSource: 'memo' | 'external' | null,
   currentDocumentPath: string | null,
   activeMemoSession: { memoId: string; path: string } | null,
@@ -337,7 +373,7 @@ function getAgentThreadTitlebarItemsFromConversations(
         type: instance.agentType || DEFAULT_AGENT_TYPE_KEY,
         threadId: instance.threadId,
         element,
-        isRunning: selectIsAgentConversationRunning(instance, threadStates),
+        isRunning: isAgentConversationRunning(instance, conversationRunIndex),
         updatedAt: instance.updatedAt,
         createdAt: instance.createdAt,
       };
@@ -428,7 +464,7 @@ function AgentThreadNavigator({
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AgentThreadTitlebarItem[]>([]);
   const conversationInstances = useAgentConversationStore((state) => state.instances);
-  const threadStates = useChatStore((state) => state.threadStates);
+  const conversationRunIndex = useConversationRunIndex(conversationInstances);
   const currentDocumentPath = useDocumentStore((state) => state.currentDocumentPath);
   const currentDocumentSource = useDocumentStore((state) => state.currentDocumentSource);
   const activeMemoSession = useDocumentStore((state) => state.activeMemoSession);
@@ -439,18 +475,25 @@ function AgentThreadNavigator({
   const triggerItem = items.find((item) => item.isRunning) ?? items[0] ?? null;
   const triggerAgentType = getAgentType(triggerItem?.type ?? DEFAULT_AGENT_TYPE_KEY);
 
-  const refreshItems = () => {
+  const refreshItems = useCallback(() => {
     const nextItems = getAgentThreadTitlebarItemsFromConversations(
       t,
       conversationInstances,
-      threadStates,
+      conversationRunIndex,
       currentDocumentSource,
       currentDocumentPath,
       activeMemoSession,
     );
     setItems(nextItems);
     return nextItems;
-  };
+  }, [
+    activeMemoSession,
+    conversationInstances,
+    conversationRunIndex,
+    currentDocumentPath,
+    currentDocumentSource,
+    t,
+  ]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -461,7 +504,7 @@ function AgentThreadNavigator({
 
   useEffect(() => {
     refreshItems();
-  }, [conversationInstances, currentDocumentPath, currentDocumentSource, activeMemoSession]);
+  }, [refreshItems]);
 
   return (
     <div className="inline-flex shrink-0 items-center">
@@ -605,7 +648,7 @@ function VersionHistorySubmenu({
       })
       .catch((err) => {
         if (!mountedRef.current || requestSeqRef.current !== requestSeq) return;
-        console.error('[VersionHistorySubmenu] listVersions failed', err);
+        logger.error('list versions failed', { error: err, memoId });
         setError(t("document.version.loadFailed"));
       })
       .finally(() => {
@@ -795,7 +838,7 @@ export function MemoActions({
       setVersionRefreshKey((key) => key + 1);
       toast.success(t("document.version.restored"));
     } catch (err) {
-      console.error('[MemoActions] restore version failed', err);
+      logger.error('restore version failed', { error: err, memoId: memo.id });
       toast.error(t("document.version.restoreFailed"));
     } finally {
       setRestoringVersionId(null);

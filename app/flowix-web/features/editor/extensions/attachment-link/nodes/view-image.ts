@@ -1,9 +1,16 @@
 ﻿import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { NodeView as ProseMirrorNodeView, EditorView, Decoration } from '@tiptap/pm/view';
-import { Node, InputRule, mergeAttributes } from '@tiptap/core';
-import { invoke } from '@tauri-apps/api/core';
+import {
+    Node,
+    InputRule,
+    mergeAttributes,
+    type JSONContent,
+    type MarkdownParseHelpers,
+    type MarkdownToken,
+} from '@tiptap/core';
+import { invoke } from '@platform/tauri/core';
 import { assetMarkdownUrl, assetUrl, decodeStorageKey } from '@features/editor/extensions/attachment-link/utils';
-import { translate, type I18nKey } from '@features/i18n';
+import { translate, type I18nKey } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 
 export { decodeStorageKey };
@@ -13,6 +20,20 @@ const ASSET_IMAGE_RE = /^(asset:\/\/|https?:\/\/asset\.localhost\/)/i;
 const DEFAULT_IMAGE_WIDTH_PERCENT = 100;
 const MIN_IMAGE_WIDTH_PERCENT = 20;
 const MAX_IMAGE_WIDTH_PERCENT = 100;
+
+type ImageAttributes = Record<string, unknown> & {
+    src?: unknown;
+    alt?: unknown;
+    title?: unknown;
+    fileName?: unknown;
+    storageMode?: unknown;
+    storageKey?: unknown;
+    widthPercent?: unknown;
+};
+
+function stringAttribute(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
 
 // NodeView 不在 React 树内, 不能用 useI18n, 走 user-settings-store 直读当前语言。
 function tKey(key: I18nKey, params?: Record<string, string | number>): string {
@@ -74,11 +95,11 @@ class ImageView implements ProseMirrorNodeView {
 
         const img = document.createElement('img');
         img.className = 'editor-image-attachment__image';
-        img.alt = alt ?? '';
+        img.alt = stringAttribute(alt);
         img.loading = 'lazy';
         img.decoding = 'async';
         img.setAttribute('fetchpriority', 'low');
-        if (title) img.title = title;
+        if (typeof title === 'string' && title) img.title = title;
 
         const fallback = document.createElement('div');
         fallback.className = 'editor-image-attachment__fallback';
@@ -96,9 +117,9 @@ class ImageView implements ProseMirrorNodeView {
         wrapper.appendChild(this.createResizeHandle('right'));
 
         this.dom = wrapper;
-        this.applySizing(node.attrs as Record<string, any>);
+        this.applySizing(node.attrs);
         this.applySrc(img, { src, storageMode, storageKey });
-        this.applyOpenableState(node.attrs as Record<string, any>);
+        this.applyOpenableState(node.attrs);
     }
 
     private createResizeHandle(side: 'left' | 'right'): HTMLButtonElement {
@@ -110,19 +131,20 @@ class ImageView implements ProseMirrorNodeView {
         return handle;
     }
 
-    private getSource(attrs: Record<string, any>): string {
-        return attrs.storageMode === 'attachment' && attrs.storageKey
-            ? assetUrl(attrs.storageKey)
-            : (attrs.src ?? '');
+    private getSource(attrs: ImageAttributes): string {
+        const storageKey = stringAttribute(attrs.storageKey);
+        return attrs.storageMode === 'attachment' && storageKey
+            ? assetUrl(storageKey)
+            : stringAttribute(attrs.src);
     }
 
-    private getOpenablePath(attrs: Record<string, any>): string | null {
+    private getOpenablePath(attrs: ImageAttributes): string | null {
         if (attrs.storageMode !== 'attachment' || typeof attrs.storageKey !== 'string') return null;
         const storageKey = attrs.storageKey.trim();
         return storageKey ? storageKey : null;
     }
 
-    private applyOpenableState(attrs: Record<string, any>): void {
+    private applyOpenableState(attrs: ImageAttributes): void {
         this.dom.toggleAttribute('data-openable', this.getOpenablePath(attrs) !== null);
     }
 
@@ -137,7 +159,7 @@ class ImageView implements ProseMirrorNodeView {
             return;
         }
 
-        const path = this.getOpenablePath(this.node.attrs as Record<string, any>);
+        const path = this.getOpenablePath(this.node.attrs);
         if (!path) return;
         void invoke('open_attachment_file', { sourcePath: path }).catch((error) => {
             console.error('[ImageAttachment] Failed to open image in system viewer:', error);
@@ -174,7 +196,7 @@ class ImageView implements ProseMirrorNodeView {
         if (fallback) fallback.hidden = !visible;
     }
 
-    private applySrc(img: HTMLImageElement, attrs: Record<string, any>): void {
+    private applySrc(img: HTMLImageElement, attrs: ImageAttributes): void {
         const nextSrc = this.getSource(attrs);
         if (nextSrc === this.appliedSrc) return;
         this.appliedSrc = nextSrc;
@@ -216,7 +238,7 @@ class ImageView implements ProseMirrorNodeView {
         this.observer.observe(img);
     }
 
-    private applySizing(attrs: Record<string, any>): void {
+    private applySizing(attrs: ImageAttributes): void {
         const widthPercent = normalizeWidthPercent(attrs.widthPercent) ?? DEFAULT_IMAGE_WIDTH_PERCENT;
         this.dom.style.width = `${widthPercent}%`;
         this.dom.dataset.widthPercent = String(widthPercent);
@@ -296,15 +318,15 @@ class ImageView implements ProseMirrorNodeView {
         this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, undefined, attrs));
     }
 
-    updateAttributes(attributes: Record<string, any>): void {
+    updateAttributes(attributes: ImageAttributes): void {
         const img = this.dom.querySelector('img');
         if (img) {
             if (attributes.storageMode === 'attachment' && attributes.storageKey) {
-                attributes.src = assetUrl(attributes.storageKey);
+                attributes.src = assetUrl(String(attributes.storageKey));
             }
             Object.entries(attributes).forEach(([key, value]) => {
                 if (key === 'src') return;
-                img.setAttribute(key, value);
+                img.setAttribute(key, String(value));
             });
             this.applySizing(attributes);
             this.applySrc(img, attributes);
@@ -324,9 +346,9 @@ class ImageView implements ProseMirrorNodeView {
         } else {
             img.removeAttribute('title');
         }
-        this.applySizing(node.attrs as Record<string, any>);
-        this.applySrc(img, node.attrs as Record<string, any>);
-        this.applyOpenableState(node.attrs as Record<string, any>);
+        this.applySizing(node.attrs);
+        this.applySrc(img, node.attrs);
+        this.applyOpenableState(node.attrs);
         return true;
     }
 
@@ -389,7 +411,7 @@ export const ImageAttachment = Node.create({
             widthPercent: {
                 default: null,
                 parseHTML: (element: HTMLElement) => normalizeWidthPercent(element.getAttribute('data-width-percent')),
-                renderHTML: (attributes: Record<string, any>) => {
+                renderHTML: (attributes: ImageAttributes) => {
                     const widthPercent = normalizeWidthPercent(attributes.widthPercent);
                     return widthPercent ? { 'data-width-percent': String(widthPercent), style: `width: ${widthPercent}%` } : {};
                 },
@@ -495,14 +517,14 @@ export const ImageAttachment = Node.create({
         start(src: string) {
             return src.indexOf('![');
         },
-        tokenize(src: string): any {
+        tokenize(src: string) {
             const match = MARKDOWN_IMAGE_RE.exec(src);
             if (!match) return undefined;
             return { type: 'image', raw: match[0], href: match[2], text: match[1], title: null, widthPercent: normalizeWidthPercent(match[3]) };
         },
     },
 
-    parseMarkdown(token: any, helpers: any) {
+    parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
         if (!token.href) {
             return { type: 'text', text: token.raw || '' };
         }
@@ -526,7 +548,7 @@ export const ImageAttachment = Node.create({
         });
     },
 
-    renderMarkdown(node: any) {
+    renderMarkdown(node: JSONContent) {
         const { alt, title, fileName, storageMode, storageKey, src, widthPercent } = node.attrs || {};
         const imageSrc = storageMode === 'attachment' && storageKey
             ? assetMarkdownUrl(storageKey)

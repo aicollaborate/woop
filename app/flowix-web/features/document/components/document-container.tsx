@@ -6,6 +6,7 @@ import {
   applyLoadedDocumentContent,
   consumeSelfDocumentPathUpdate,
   hasDocumentUnsavedChanges,
+  useDocumentMetricsStore,
   useDocumentStore,
   type DocumentIdentity,
 } from '@features/document';
@@ -29,7 +30,7 @@ import { LazyDocumentEditor } from '@features/document/components/lazy-document-
 import { NotePropertiesDialog } from '@features/document/components/note-properties-dialog';
 import type { MarkdownEditorHandle } from '@features/editor/markdown-editor';
 import backgroundImage from '@/assets/bg.document.png';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 
 export function DocumentContainer({
   filePath,
@@ -38,7 +39,6 @@ export function DocumentContainer({
   notebookPath = null,
   transitionId = null,
   onMetainfoData,
-  onCharCountChange,
   isExternalDocument = false,
   searchPanelOpen = false,
   onSearchPanelOpenChange,
@@ -104,6 +104,18 @@ export function DocumentContainer({
   });
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [propertiesContentSnapshot, setPropertiesContentSnapshot] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!filePath) {
+      useDocumentMetricsStore.getState().clear(documentInstanceKey);
+      return;
+    }
+    useDocumentMetricsStore.getState().setCharCount(documentInstanceKey, state.charCount);
+  }, [documentInstanceKey, filePath, state.charCount]);
+
+  useEffect(() => () => {
+    useDocumentMetricsStore.getState().clear(documentInstanceKey);
+  }, [documentInstanceKey]);
 
   useEffect(() => {
     const handleNavigateToMemo = async (e: Event) => {
@@ -263,9 +275,8 @@ export function DocumentContainer({
   useEffect(() => {
     if (filePath) {
       onMetainfoData?.(metaInfo);
-      onCharCountChange?.(state.charCount);
     }
-  }, [filePath, metaInfo, onMetainfoData, onCharCountChange, state.charCount]);
+  }, [filePath, metaInfo, onMetainfoData]);
 
   if (!filePath) {
     return (

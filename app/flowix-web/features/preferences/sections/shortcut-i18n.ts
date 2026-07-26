@@ -1,5 +1,5 @@
 import type { ActionDefinition } from '@features/shortcuts';
-import type { I18nKey } from '@features/i18n';
+import type { I18nKey } from '@/lib/i18n';
 
 type Translate = (key: I18nKey) => string;
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { toast } from '@/lib/toast';
 import { useDocumentStore } from '@features/document';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { notebookCreateErrorMessage } from '@platform/tauri/errors';
 import { listenToNotebookImportStatus } from '@platform/tauri/client';
 import { notebookRepository } from '@features/memo/services/memo-repository';
@@ -118,7 +118,7 @@ export function useCreateNotebookFlow({
         return created;
       } catch (error) {
         console.warn('[MemoList] Failed to create notebook:', error);
-        const message = notebookCreateErrorMessage(error);
+        const message = notebookCreateErrorMessage(error, t);
         toast.error(message);
         setCreationState({ status: 'failed', message });
         return null;

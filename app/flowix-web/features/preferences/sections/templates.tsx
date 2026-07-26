@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileText, Trash2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { memos, type MemoTemplate } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';

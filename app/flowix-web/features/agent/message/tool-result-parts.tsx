@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { TOOL_ICON_PATHS } from "@features/agent/message/tool-icon-paths";
 import { truncateStart } from "@features/agent/message/format";
-import { useI18n, type I18nParams } from "@features/i18n";
+import { useI18n, type I18nParams } from "@/lib/i18n";
 
 /* TOOL_ICON_PATHS 来自 ./tool-icon-paths.ts ── 直接依赖避免与
  * ./tools.tsx 形成循环 (本文件 → tool-icon-paths 走 path 字符串,
@@ -110,7 +110,14 @@ export function FileList({ paths }: { paths: string[] }) {
 }
 
 /* ── EntriesList ── ls 目录条目列表 ────────────────────────────────── */
-export function EntriesList({ entries }: { entries: any[] }) {
+interface DirectoryEntry {
+  name?: unknown;
+  path?: unknown;
+  is_dir?: unknown;
+  size?: unknown;
+}
+
+export function EntriesList({ entries }: { entries: DirectoryEntry[] }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? entries : entries.slice(0, 10);
@@ -169,7 +176,13 @@ export function EntriesList({ entries }: { entries: any[] }) {
 }
 
 /* ── GrepResult ── grep 匹配结果 ───────────────────────────────────── */
-export function GrepResult({ matches }: { matches: any[] }) {
+interface GrepMatch {
+  path?: unknown;
+  line?: string | number | null;
+  text?: unknown;
+}
+
+export function GrepResult({ matches }: { matches: GrepMatch[] }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? matches : matches.slice(0, 6);

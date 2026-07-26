@@ -1,8 +1,10 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+
+interface SelectTriggerChildProps extends React.HTMLAttributes<HTMLElement> {}
 import { ChevronDown, Check } from "lucide-react";
-import { useI18n } from "@features/i18n";
+import { useI18n } from "@/lib/i18n";
 
 // Context for managing select state
 interface SelectContextValue {
@@ -102,7 +104,7 @@ function SelectTrigger({ children, className, asChild }: SelectTriggerProps) {
 	}
 
 	if (asChild && React.Children.count(children) === 1) {
-		const child = React.Children.only(children) as React.ReactElement<any>;
+		const child = React.Children.only(children) as React.ReactElement<SelectTriggerChildProps>;
 		return React.cloneElement(child, {
 			onClick: handleClick,
 			'data-state': open ? 'open' : 'closed',

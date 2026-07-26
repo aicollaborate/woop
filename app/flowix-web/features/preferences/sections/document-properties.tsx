@@ -6,7 +6,7 @@ import { toast } from '@/lib/toast';
 import type { PropertyFieldConfig, PropertyFieldType } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { PROPERTY_KINDS, type PropertyKind } from '@features/document/properties/presets';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { Button } from '@shared/ui/button';

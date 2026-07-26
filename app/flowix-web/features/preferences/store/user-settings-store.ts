@@ -23,7 +23,10 @@ import {
   sanitizeRegion,
   useRegionStore,
   type AppLanguage,
-} from '@features/i18n';
+} from '@/lib/i18n';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('user-settings');
 
 const LEGACY_SERIF_FONT_FAMILY =
   "'Noto Serif CJK SC', 'Songti SC', 'SimSun', 'Times New Roman', serif, Georgia";
@@ -227,6 +230,55 @@ function sanitizeSettings(settings: UserSettings): UserSettings {
   };
 }
 
+/**
+ * Reuse unchanged branches from the previous settings tree.
+ *
+ * Settings are JSON-shaped and small, while updates are comparatively rare.
+ * Preserving references here lets Zustand selectors subscribe to a complete
+ * settings section (for example `format`) without rerendering when an
+ * unrelated section changes. It also turns semantic no-op updates into a
+ * true store no-op.
+ */
+function shareUnchangedSettings<T>(previous: T, next: T): T {
+  if (Object.is(previous, next)) return previous;
+
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    if (previous.length !== next.length) return next;
+    let unchanged = true;
+    const shared = next.map((value, index) => {
+      const sharedValue = shareUnchangedSettings(previous[index], value);
+      if (!Object.is(sharedValue, previous[index])) unchanged = false;
+      return sharedValue;
+    });
+    return (unchanged ? previous : shared) as T;
+  }
+
+  if (
+    previous !== null
+    && next !== null
+    && typeof previous === 'object'
+    && typeof next === 'object'
+  ) {
+    const previousRecord = previous as Record<string, unknown>;
+    const nextRecord = next as Record<string, unknown>;
+    const previousKeys = Object.keys(previousRecord);
+    const nextKeys = Object.keys(nextRecord);
+    if (previousKeys.length !== nextKeys.length) return next;
+
+    let unchanged = true;
+    const shared: Record<string, unknown> = {};
+    for (const key of nextKeys) {
+      if (!(key in previousRecord)) return next;
+      const sharedValue = shareUnchangedSettings(previousRecord[key], nextRecord[key]);
+      shared[key] = sharedValue;
+      if (!Object.is(sharedValue, previousRecord[key])) unchanged = false;
+    }
+    return (unchanged ? previous : shared) as T;
+  }
+
+  return next;
+}
+
 /** updateSettings 接受的 patch 形状 — 每个分组都是 Partial, 顶层 theme 是可选。 */
 export interface UserSettingsUpdate {
   personalize?: Partial<PersonalizeConfig>;
@@ -272,7 +324,7 @@ async function writeToBackend(settings: UserSettings): Promise<void> {
   try {
     await tauriPreferences.set(settings);
   } catch (error) {
-    console.error('Failed to persist settings:', error);
+    logger.error('persist failed', { error });
   }
 }
 
@@ -313,7 +365,10 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
         theme,
         language,
       });
-      const sanitized = sanitizeSettings({ ...merged, region });
+      const sanitized = shareUnchangedSettings(
+        get().settings,
+        sanitizeSettings({ ...merged, region }),
+      );
       set({ settings: sanitized, isLoading: false });
 
       // 同步给 useRegionStore (非 React 代码 / 旧订阅者读这里)
@@ -325,14 +380,15 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
         await writeToBackend(sanitized);
       }
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      logger.error('load failed', { error });
       set({ isLoading: false });
     }
   },
 
   updateSettings: (updates) => {
     const prev = get().settings;
-    const next = sanitizeSettings(mergeSettings(prev, updates));
+    const next = shareUnchangedSettings(prev, sanitizeSettings(mergeSettings(prev, updates)));
+    if (next === prev) return Promise.resolve();
     set({ settings: next });
     scheduleFlush(next);
     // 主题变更: 立即通知后端更新原生窗口 chrome (set_theme + 背景色), 不等 200ms 防抖落盘。

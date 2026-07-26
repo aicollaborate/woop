@@ -1,5 +1,5 @@
-//! 鍋忓ソ / AI 閰嶇疆 IPC 鈥?`~/.flowix/boot/preference.json` + `~/.flowix/agent-config.toml`銆?//!
-//! 涓や釜 JSON 鏂囦欢鐢?`crate::config::UserConfigStore` 绠＄悊 (鍘熷瓙鍐? 0o600)銆?//! 鍐欏叆鎴愬姛鍚?emit `user-config-changed` 浜嬩欢, 璁╁绐楀彛 React 鏍戦噸鏂?load銆?
+//! 偏好 / AI 配置 IPC —`~/.flowix/boot/preference.json` + `~/.flowix/agent-config.toml`�?//!
+//! 两个 JSON 文件�?`crate::config::UserConfigStore` 管理 (原子�? 0o600)�?//! 写入成功�?emit `user-config-changed` 事件, 让�?窗口 React 树重�?load�?
 use crate::events as dispatcher;
 use tauri::{AppHandle, State};
 
@@ -8,11 +8,11 @@ use crate::config::{AiConfigFile, AiModelConfig, PreferenceFile};
 
 use crate::app::state::AppState;
 
-/// 璺ㄧ獥鍙ｅ悓姝ヤ簨浠?鈥?浠讳竴绐楀彛鎴愬姛鍐欏叆鍋忓ソ / AI 閰嶇疆鍚?emit, 鍏跺畠绐楀彛
-/// (涓荤獥鍙?/ 鍋忓ソ绐楀彛 / 鏈潵鐨勫绐楀彛) 鏀跺埌鍚庝粠纾佺洏閲嶆柊 load銆?/// 瑙ｅ喅: 涓や釜 Tauri 绐楀彛鍚勮窇鐙珛 React 鏍?+ 鐙珛 zustand store, 涓€杈?/// 鏀瑰姩鍙︿竴杈圭湅涓嶅埌鐨勯棶棰樸€?
+/// 跨窗口同步事�?—任一窗口成功写入偏好 / AI 配置�?emit, 其它窗口
+/// (主窗�?/ 偏好窗口 / �?��的�?窗口) 收到后从磁盘重新 load�?/// 解决: 两个 Tauri 窗口各跑�?�� React �?+ �?�� zustand store, 一�?/// 改动另一边看不到的问题�?
 pub(super) const USER_CONFIG_CHANGED_EVENT: &str = "user-config-changed";
 
-/// 鐢ㄦ埛鍋忓ソ (preference.json) 鈥?璧?~/.flowix/boot/preference.json
+/// 用户偏好 (preference.json) —�?~/.flowix/boot/preference.json
 #[tauri::command]
 pub fn get_preference(state: State<AppState>) -> PreferenceFile {
     state.user_config.get_preference()
@@ -34,7 +34,7 @@ pub fn set_preference(
         .map_err(|e| e.to_string())?
 }
 
-/// AI 妯″瀷閰嶇疆 (agent-config.toml) 鈥?璧?~/.flowix/agent-config.toml
+/// AI 模型配置 (agent-config.toml) —�?~/.flowix/agent-config.toml
 #[tauri::command]
 pub fn get_ai_config(state: State<AppState>) -> AiConfigFile {
     state.user_config.get_ai_config()
@@ -56,7 +56,7 @@ pub fn set_ai_config(
         .map_err(|e| e.to_string())?
 }
 
-/// 鏂囦欢鐩戝惉鐧?榛戝悕鍗?(PR2) 鈥?璧?`preference.json::watcher` 瀛楁銆?///
+/// 文件监听�?黑名�?(PR2) —�?`preference.json::watcher` 字�?�?///
 /// 鎻愪緵鐙珛 IPC, 閬垮厤鍓嶇涓烘敼涓€涓瓧娈典紶瀹屾暣 PreferenceFile; 鍐欏悗
 /// emit `user-config-changed` 瑙﹀彂 `MemoWatcher::set_whitelist` 鐑洿鏂般€?
 #[tauri::command]

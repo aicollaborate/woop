@@ -2,8 +2,11 @@
 
 import { useState, type JSX } from 'react';
 import { Check, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
-import { useI18n, type I18nKey } from '@features/i18n';
+import {
+  useUserSettings,
+  useUserSettingsActions,
+} from '@features/preferences/hooks/use-user-settings';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import { Button } from '@shared/ui/button';
 import { Input } from '@shared/ui/input';
 import { Textarea } from '@shared/ui/textarea';
@@ -63,14 +66,14 @@ function validateDraft(
  *    致, 用户一眼能识别"哪个标题对应哪个输入"
  *  - 底部 action bar 含「取消 / 保存」+ 状态文字 ── 写盘后显示「已保存」
  *
- * 数据源: useUserSettings().settings.agents.quickPhrases, 写回通过
+ * 数据源: user settings 的 agents.quickPhrases 切片, 写回通过
  * updateSettings({ agents: { quickPhrases: next } }) 触发 200ms debounce
  * 落盘到 ~/.flowix/boot/preference.json。
  */
 export function QuickPhrasesSection() {
   const { t } = useI18n();
-  const { settings, updateSettings } = useUserSettings();
-  const phrases = settings.agents.quickPhrases;
+  const phrases = useUserSettings((settings) => settings.agents.quickPhrases);
+  const { updateSettings } = useUserSettingsActions();
 
   const [newDraft, setNewDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);

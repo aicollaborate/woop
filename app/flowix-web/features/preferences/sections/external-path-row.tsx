@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useI18n } from '@features/i18n';
+import { useI18n } from '@/lib/i18n';
 import { agent, type AgentExternalEntry } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';
 import { Input } from '@shared/ui/input';
