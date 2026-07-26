@@ -1,9 +1,13 @@
-<a href="README.md">简体中文</a> · <a href="docs/README.en.md">English</a> · <a href="https://flowix-memo.com/roadmap">Roadmap</a> · <a href="https://flowix-memo.com/updates">What's New</a>
+<p align="center">
+  <img src="./docs/images/app-icon.png" width="120" alt="Flowix Memo" />
+</p>
 
-# Flowix Memo
+<h1 align="center">Flowix Memo</h1>
 
-[![支持平台](https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4)](https://github.com/text2future/flowix/releases)
-[![最新版本](https://img.shields.io/github/v/release/text2future/flowix)](https://github.com/text2future/flowix/releases)
+<p align="center">
+  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="支持平台" /></a>
+  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/github/v/release/text2future/flowix" alt="最新版本" /></a>
+</p>
 
 ![Flowix Memo](./docs/images/readme-banner.png)
 
