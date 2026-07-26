@@ -398,7 +398,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       initialImages: this.inputImages,
       onChange: (images) => this.updateAttrs({ inputImages: images }),
       onStateChange: () => this.composerController?.setSendButtonState(),
-      onError: (message) => this.setError(message),
+      onError: (message) => toast.error(message),
       onLimitExceeded: (kind) => {
         toast.warning(
           this.t(
