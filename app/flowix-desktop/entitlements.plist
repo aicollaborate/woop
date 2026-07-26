@@ -9,7 +9,7 @@
       由 codesign 使用 runtime options 和本 entitlements 文件完成签名。
       见 `scripts/sign-cli.sh`。
 
-      v3 rationale:
+      v4 rationale:
       - allow-jit / allow-unsigned-executable-memory ── rllm crate 跟部分 Rust
         动态库需要运行时生成可执行内存, Apple notarization 允许这两条
         entitlement 配合 hardened runtime。
@@ -34,11 +34,37 @@
     <key>com.apple.security.network.server</key>
     <true/>
 
-    <!-- Native Sign in with Apple via AuthenticationServices. -->
+    <!--
+      Native Sign in with Apple via AuthenticationServices.
+
+      DISABLED for v1.1.6 packaging: Apple Developer Portal profile
+      generation for App ID `com.flowix.app` (Team `9FJ9ZD86C2`) is
+      returning a cached .provisionprofile whose Entitlements dictionary
+      does not include `com.apple.developer.applesignin`, even though
+      the App ID has the capability enabled in the Portal UI and the
+      Profile UI lists "Sign In with Apple" as an Enabled Capability.
+      Delete + regenerate returns the identical cached payload (same
+      ExpirationDate, same file size), confirming an Apple backend
+      stale-state issue.
+
+      With hardened runtime + the binary claiming this Apple-only
+      entitlement, amfid rejects at launch with `Failure validating
+      against provisioning profiles` (amfid log), surfacing to the
+      user as `RBSRequestErrorDomain Code=5 / NSPOSIXErrorDomain
+      Code=163 "Launchd job spawn failed"`.
+
+      TODO before re-enabling: contact Apple Developer Support to
+      force-push the Sign in with Apple capability registration, then
+      regenerate the provisioning profile and verify the Entitlements
+      dictionary contains `com.apple.developer.applesignin`. Uncomment
+      the block below once verified.
+    -->
+    <!--
     <key>com.apple.developer.applesignin</key>
     <array>
         <string>Default</string>
     </array>
+    -->
 
     <!--
       User-selected directories are persisted with security-scoped bookmarks
