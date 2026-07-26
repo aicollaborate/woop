@@ -1,6 +1,6 @@
-//! Agent IPC 鈥?LLM 娴佸紡 chat + abort銆?//!
-//! Agent 鐨勯厤缃湡婧愭槸 `~/.flowix/agent-config.toml` (缁?`set_ai_config` 鍛戒护钀界洏)銆?//! 鍚庣鎸夐渶浠?`UserConfigStore` 鎷夊彇骞跺湪 `AgentManager` 閲岀紦瀛?provider 瀹炰緥,
-//! 鍓嶇涓嶅啀 init agent / 鎻愪氦妯″瀷淇℃伅, 鍙彂璧?chat / thread 鎿嶄綔銆?
+//! Agent IPC —LLM 流式 chat + abort�?//!
+//! Agent 的配�?��源是 `~/.flowix/agent-config.toml` (�?`set_ai_config` 命令落盘)�?//! 后�?按需�?`UserConfigStore` 拉取并在 `AgentManager` 里缓�?provider 实例,
+//! 前�?不再 init agent / 提交模型信息, �?���?chat / thread 操作�?
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -14,10 +14,7 @@ use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::agent_external::claude::ClaudeCliManager;
-use crate::agent_external::codex::CodexCliManager;
-use crate::agent_external::hermes::HermesCliManager;
-use crate::agent_external::simple_cli::SimpleCliManager;
+use crate::agent_external::runtime_registry::ExternalCliRuntime;
 use crate::agent_external_config::{AgentExternalEntry, AgentExternalSource};
 use crate::agent_flowix::{AgentChatResponse, AgentManager, AgentUserMessage, RunInfo};
 use crate::agent_session::AgentExternalEvent;
@@ -210,11 +207,7 @@ impl AgentRuntime {
 
 enum RuntimeHandle<'a> {
     Flowix(&'a Arc<AgentManager>),
-    Codex(&'a Arc<CodexCliManager>),
-    Claude(&'a Arc<ClaudeCliManager>),
-    Gemini(&'a Arc<SimpleCliManager>),
-    Hermes(&'a Arc<HermesCliManager>),
-    OpenClaw(&'a Arc<SimpleCliManager>),
+    External(&'a dyn ExternalCliRuntime),
 }
 
 #[async_trait]
@@ -231,7 +224,6 @@ trait ChatRuntime {
         run_id: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) -> bool;
-    async fn running_threads(&self) -> HashMap<String, RunInfo>;
 }
 
 #[async_trait]
@@ -247,11 +239,7 @@ impl ChatRuntime for RuntimeHandle<'_> {
                 .chat_stream(thread_id, message, app_handle)
                 .await
                 .map_err(|e| e.to_string()),
-            Self::Codex(manager) => manager.chat_stream(thread_id, message, app_handle).await,
-            Self::Claude(manager) => manager.chat_stream(thread_id, message, app_handle).await,
-            Self::Gemini(manager) => manager.chat_stream(thread_id, message, app_handle).await,
-            Self::Hermes(manager) => manager.chat_stream(thread_id, message, app_handle).await,
-            Self::OpenClaw(manager) => manager.chat_stream(thread_id, message, app_handle).await,
+            Self::External(runtime) => runtime.chat_stream(thread_id, message, app_handle).await,
         }
     }
 
@@ -263,24 +251,9 @@ impl ChatRuntime for RuntimeHandle<'_> {
     ) -> bool {
         match self {
             // Flowix 鍐呴儴 agent 鑷甫 cancel token + select!, stop 淇″彿鑳借娴佸紡
-            // 浠诲姟鍗虫椂鍝嶅簲, 涓嶉渶瑕佽繖閲岃ˉ鍙?StreamEnd, 鏁呬笉浼?app_handle銆?
+            // 任务即时响应, 不需要这里补�?StreamEnd, 故不�?app_handle�?
             Self::Flowix(manager) => manager.stop_chat(thread_id, run_id).await,
-            Self::Codex(manager) => manager.stop_chat(thread_id, run_id, app_handle).await,
-            Self::Claude(manager) => manager.stop_chat(thread_id, run_id, app_handle).await,
-            Self::Gemini(manager) => manager.stop_chat(thread_id, run_id, app_handle).await,
-            Self::Hermes(manager) => manager.stop_chat(thread_id, run_id, app_handle).await,
-            Self::OpenClaw(manager) => manager.stop_chat(thread_id, run_id, app_handle).await,
-        }
-    }
-
-    async fn running_threads(&self) -> HashMap<String, RunInfo> {
-        match self {
-            Self::Flowix(manager) => manager.running_threads().await,
-            Self::Codex(manager) => manager.running_threads().await,
-            Self::Claude(manager) => manager.running_threads().await,
-            Self::Gemini(manager) => manager.running_threads().await,
-            Self::Hermes(manager) => manager.running_threads().await,
-            Self::OpenClaw(manager) => manager.running_threads().await,
+            Self::External(runtime) => runtime.stop_chat(thread_id, run_id, app_handle).await,
         }
     }
 }
@@ -288,23 +261,13 @@ impl ChatRuntime for RuntimeHandle<'_> {
 fn runtime_handle<'a>(state: &'a AppState, runtime: AgentRuntime) -> RuntimeHandle<'a> {
     match runtime {
         AgentRuntime::Flowix => RuntimeHandle::Flowix(&state.agent_manager),
-        AgentRuntime::Codex => RuntimeHandle::Codex(&state.codex_cli_manager),
-        AgentRuntime::Claude => RuntimeHandle::Claude(&state.claude_cli_manager),
-        AgentRuntime::Gemini => RuntimeHandle::Gemini(&state.gemini_cli_manager),
-        AgentRuntime::Hermes => RuntimeHandle::Hermes(&state.hermes_cli_manager),
-        AgentRuntime::OpenClaw => RuntimeHandle::OpenClaw(&state.openclaw_cli_manager),
+        external => RuntimeHandle::External(
+            state
+                .external_runtimes
+                .get(external.key())
+                .expect("every external AgentRuntime must be registered"),
+        ),
     }
-}
-
-fn all_runtime_handles(state: &AppState) -> [RuntimeHandle<'_>; 6] {
-    [
-        RuntimeHandle::Flowix(&state.agent_manager),
-        RuntimeHandle::Codex(&state.codex_cli_manager),
-        RuntimeHandle::Claude(&state.claude_cli_manager),
-        RuntimeHandle::Gemini(&state.gemini_cli_manager),
-        RuntimeHandle::Hermes(&state.hermes_cli_manager),
-        RuntimeHandle::OpenClaw(&state.openclaw_cli_manager),
-    ]
 }
 
 async fn stop_any_runtime_chat(
@@ -312,11 +275,11 @@ async fn stop_any_runtime_chat(
     state: &AppState,
     app_handle: &tauri::AppHandle,
 ) -> bool {
-    let mut signalled = false;
-    for runtime in all_runtime_handles(state) {
-        signalled |= runtime.stop_chat(thread_id, None, app_handle).await;
-    }
-    signalled
+    let (flowix, external) = tokio::join!(
+        state.agent_manager.stop_chat(thread_id, None),
+        state.external_runtimes.stop_chat_all(thread_id, app_handle),
+    );
+    flowix || external
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -351,8 +314,8 @@ fn executable_available(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 鍩轰簬 `agent-external-config` 閲岃褰曠殑 path 绠楀崟涓?external agent 鐨勫彲鐢ㄦ€с€?/// `path = None` -> 鏈厤缃?(鍚姩鎺㈡祴娌℃帰鍒?; `path = Some` 浣嗗け鏁?-> not found;
-/// 鍙敤 -> `None` (璋冪敤鏂瑰啀鍙犲姞 preflight 閿欒, 濡?codex 鐨?Node 渚濊禆)銆?
+/// 基于 `agent-external-config` 里�?录的 path 算单�?external agent 的可用性�?/// `path = None` -> �?���?(�?��探测没探�?; `path = Some` 但失�?-> not found;
+/// �?�� -> `None` (调用方再叠加 preflight 错�?, �?codex �?Node 依赖)�?
 fn external_availability(entry: AgentExternalEntry, label: &str) -> AgentRuntimeAvailability {
     let available = entry
         .path
@@ -399,7 +362,7 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
     }
 }
 
-/// 鍋忓ソ璁剧疆灞曠ず鐢ㄧ殑 external agent 鏉＄洰瑙嗗浘銆?
+/// 偏好设置展示用的 external agent 条目视图�?
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentExternalEntryView {
@@ -423,7 +386,7 @@ impl AgentExternalEntryView {
     }
 }
 
-/// 璇诲彇鍏ㄩ儴 external agent 鐨勮矾寰勯厤缃?(渚涘亸濂借缃睍绀?銆?
+/// 读取全部 external agent 的路径配�?(供偏好�?�?���?�?
 #[tauri::command]
 pub fn get_agent_external_config(
     state: State<'_, AppState>,
@@ -436,7 +399,7 @@ pub fn get_agent_external_config(
         .collect()
 }
 
-/// 鐢ㄦ埛鎵嬫敼 path: 鍐?`source = user` 骞跺悓姝ユ敞鍐岃〃銆?
+/// 用户手改 path: �?`source = user` 并同步注册表�?
 #[tauri::command]
 pub fn set_agent_external_path(
     agent_type: String,
@@ -448,8 +411,8 @@ pub fn set_agent_external_path(
         return Err("path must not be empty".to_string());
     }
     let path_buf = PathBuf::from(trimmed);
-    // 鏍￠獙: 蹇呴』鏄湡瀹炲瓨鍦ㄧ殑鍙墽琛屾枃浠?鈹€鈹€ 鎷掔粷鐩綍/鏂囨。/鏃犳墽琛屾潈闄愮殑鏂囦欢,
-    // 閬垮厤鎶婃棤鏁堣矾寰勫啓杩?agent-external-config.json 瀵艰嚧鍚庣画 spawn 澶辫触銆?
+    // 校验: 必须�?��实存在的�?��行文�?── 拒绝�?��/文档/无执行权限的文件,
+    // 避免把无效路径写�?agent-external-config.json 导致后续 spawn 失败�?
     if !crate::agent_external::cli_resolver::is_executable_file(&path_buf) {
         return Err(format!(
             "not a valid executable file: {}",
@@ -463,7 +426,7 @@ pub fn set_agent_external_path(
     Ok(AgentExternalEntryView::from_entry(entry))
 }
 
-/// 閲嶆柊鎺㈡祴鍗曚釜 agent: 娓呮敞鍐岃〃璇ラ」 -> 璺戞帰娴嬮摼 -> 鍐?`source = auto` -> 鍥炲～娉ㄥ唽琛ㄣ€?
+/// 重新探测单个 agent: 清注册表该项 -> 跑探测链 -> �?`source = auto` -> 回填注册表�?
 #[tauri::command]
 pub fn redetect_agent_external(
     agent_type: String,
@@ -478,7 +441,7 @@ pub fn redetect_agent_external(
     ))
 }
 
-/// 鎵撳紑鏂囦欢娴忚鍣ㄨ鐢ㄦ埛閫変竴涓?CLI 鍙墽琛屾枃浠? 杩斿洖鍏剁粷瀵硅矾寰勩€?/// 渚涘亸濂借缃?鍒囨崲"鎸夐挳璋冪敤 鈹€鈹€ 璺緞鍙兘閫氳繃鏂囦欢閫夋嫨鍣ㄦ寚瀹? 涓嶅厑璁告墜杈撱€?
+/// 打开文件浏�?器�?用户选一�?CLI �?��行文�? 返回其绝对路径�?/// 供偏好�?�?切换"按钮调用 ── �?���?��通过文件选择器指�? 不允许手输�?
 #[tauri::command]
 pub async fn select_external_cli_path(app: tauri::AppHandle) -> Option<String> {
     use std::sync::mpsc;
@@ -666,7 +629,7 @@ pub async fn chat_with_agent_stream(
         .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|value| !value.is_empty())
     {
-        let manager = state.thread_manager.read().await;
+        let manager = &state.thread_manager;
         manager
             .update_title(
                 &threadId,
@@ -708,12 +671,12 @@ pub async fn chat_with_agent_stream(
         }
     }
 
-    // `agent_manager` 鏄?`Arc<AgentManager>`, `chat_stream` 鍐呴儴宸茬粡
-    // `tokio::spawn` 鈹€鈹€ IPC 绔嬪嵆杩斿洖, 涓嶅啀 await 鏁翠釜 stream 璺戝畬銆?    // 鐪熸鐨勫姪鎵嬪洖绛旈€氳繃 `agent-chunk` 浜嬩欢 (`Text` / `Reasoning` 鍙樹綋)
-    // 鎺ㄥ埌鍓嶇, 鎸?`thread_id` 娲惧彂鍒?`threadStates[tid]`銆?    //
-    // Tauri IPC 杈圭晫浠嶈姹?`Result<T, String>` 鈹€鈹€ `AgentError` 鍦ㄦ
-    // `.map_err(|e| e.to_string())` 閫忎紶銆傚綋鍓?spawn 鍚庝笉浼氳蛋鍒?Err 鍒嗘敮
-    // (閿欒淇″彿宸插叏閮ㄨ蛋 `Error` chunk), 浣嗕繚鐣?Result 褰㈢姸涓嶇牬 IPC 濂戠害銆?
+    // `agent_manager` �?`Arc<AgentManager>`, `chat_stream` 内部已经
+    // `tokio::spawn` ── IPC 立即返回, 不再 await 整个 stream 跑完�?    // 真�?的助手回答通过 `agent-chunk` 事件 (`Text` / `Reasoning` 变体)
+    // 推到前�?, �?`thread_id` 派发�?`threadStates[tid]`�?    //
+    // Tauri IPC 边界仍�?�?`Result<T, String>` ── `AgentError` 在�?
+    // `.map_err(|e| e.to_string())` 透传。当�?spawn 后不会走�?Err 分支
+    // (错�?信号已全部走 `Error` chunk), 但保�?Result 形状不破 IPC 契约�?
     let result = runtime_handle(&state, runtime)
         .chat_stream(&threadId, message, &app_handle)
         .await;
@@ -774,21 +737,22 @@ fn run_id_for_kill(provided: Option<&str>) -> Option<&str> {
     provided.map(str::trim).filter(|value| !value.is_empty())
 }
 
-/// 鏌ヨ褰撳墠鎵€鏈?in-flight chat 鈹€鈹€ 鍓嶇鍚姩鏃惰皟涓€娆? seed
-/// `threadStates[].isLoading`, 璁?杩涚▼鍐呭凡鏈夊悗鍙拌窇 chat"鍦ㄩ噸鍚悗
-/// 浠嶇劧鍙銆傝繑鍥?`HashMap<thread_id, RunInfo>`; 绌?map 琛ㄧず褰撳墠
-/// 娌℃湁 in-flight chat (绋虫€?銆?///
-/// 杩涚▼閫€鍑?in-flight chat 鑷劧姝? 杩欐槸"鐬€?淇℃伅; A5 鍚姩娓呯悊
-/// 鍏滃簳 `is_loading=1` 鐨?SQLite 娈嬬暀琛? 浜岃€呯粍鍚堜繚璇?UI 鐘舵€佷竴鑷淬€?
+/// 查�?当前所�?in-flight chat ── 前�?�?��时调一�? seed
+/// `threadStates[].isLoading`, �?进程内已有后台跑 chat"在重�?��
+/// 仍然�??。返�?`HashMap<thread_id, RunInfo>`; �?map 表示当前
+/// 没有 in-flight chat (稳�?�?///
+/// 进程退�?in-flight chat �?���? 这是"�?�?信息; A5 �?��清理
+/// 兜底 `is_loading=1` �?SQLite 残留�? 二者组合保�?UI 状态一致�?
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn agent_running_threads(
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, RunInfo>, String> {
-    let mut running = HashMap::new();
-    for runtime in all_runtime_handles(&state) {
-        running.extend(runtime.running_threads().await);
-    }
+    let (mut running, external) = tokio::join!(
+        state.agent_manager.running_threads(),
+        state.external_runtimes.running_threads(),
+    );
+    running.extend(external);
     Ok(running)
 }
 
@@ -800,9 +764,9 @@ pub async fn agent_external_events(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AgentExternalEvent>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     let mut product_thread_id = threadId.clone();
-    for runtime in ["codex", "claude", "gemini", "hermes", "openclaw"] {
+    for runtime in state.external_runtimes.iter().map(ExternalCliRuntime::key) {
         if let Ok(Some(local_thread_id)) = manager
             .find_thread_by_external_session(&threadId, runtime)
             .await
@@ -821,14 +785,14 @@ pub async fn agent_external_events(
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Codex 妯″瀷鍒楄〃 / 榛樿妯″瀷
 //
-// 杩欎袱涓?IPC 鍛戒护鍘熸湰鏀惧湪 `commands/thread.rs`, 浣嗚涔変笂灞炰簬 agent 閰嶇疆,
-// 涓?`agent.*` 鍛藉悕绌洪棿瀵归綈鎸埌杩欓噷銆傚懡浠ゅ悕 (codex_default_model /
-// agent_supported_models) 涓庡墠绔?invoke 涓嶅彉銆?// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// 这两�?IPC 命令原本放在 `commands/thread.rs`, 但�?义上属于 agent 配置,
+// �?`agent.*` 命名空间对齐�?��这里。命令名 (codex_default_model /
+// agent_supported_models) 与前�?invoke 不变�?// ─────────────────────────────────────────────────────────────────────────
 
-/// 杩斿洖 Codex 榛樿 model id, 浼樺厛绾?
+/// 返回 Codex 默�? model id, 优先�?
 ///   1. `~/.codex/config.toml` 椤跺眰 `model = "..."`;
-///   2. `codex debug models` 鍒楄〃绗竴椤?
-///   3. 鍏滃簳纭紪鐮?`"gpt-5.5"`銆?/// 浠呯敤浜庡墠绔?UI label 鏄剧ず; 鐪熸杩愯 Codex 鏃?`model == "inherit"` / 绌?/// 浼氳蛋 `codex_cli::normalized_codex_model` 涓嶄紶 `-m`銆?
+///   2. `codex debug models` 列表�?���?
+///   3. 兜底�?���?`"gpt-5.5"`�?/// 仅用于前�?UI label 显示; 真�?运�? Codex �?`model == "inherit"` / �?/// 会走 `codex_cli::normalized_codex_model` 不传 `-m`�?
 #[tauri::command]
 pub async fn codex_default_model() -> Result<String, String> {
     if let Some(model) = read_codex_config_model() {
@@ -842,7 +806,7 @@ pub async fn codex_default_model() -> Result<String, String> {
     Ok("gpt-5.5".to_string())
 }
 
-/// 鎸?agent type 杩斿洖鍚庣鏀寔鐨?model id 鍒楄〃銆傚綋鍓嶅彧鏈?`codex` 璧板姩鎬?/// 鏌ヨ (鏈満 `codex debug models`); 鍏朵綑 type 杩斿洖绌?鈹€鈹€ 鍓嶇浼氬洖钀藉埌
+/// �?agent type 返回后�?�?���?model id 列表。当前只�?`codex` 走动�?/// 查�? (�?�� `codex debug models`); 其余 type 返回�?── 前�?会回落到
 /// 纭紪鐮?fallback (CODEX_MODEL_OPTIONS / CLAUDE_MODEL_OPTIONS)銆?
 #[tauri::command]
 pub async fn agent_supported_models(agent_type: String) -> Result<Vec<String>, String> {
@@ -897,7 +861,7 @@ fn read_codex_config_model() -> Option<String> {
     parse_codex_config_model(&content)
 }
 
-/// 杞婚噺瑙ｆ瀽 `~/.codex/config.toml` 椤跺眰 `model = "..."`銆?/// 涓嶅紩鍏ュ畬鏁?TOML parser 鈹€鈹€ 鍙渶杩欎竴琛? 閫愯鎵弿鍗冲彲銆?
+/// 轻量解析 `~/.codex/config.toml` 顶层 `model = "..."`�?/// 不引入完�?TOML parser ── �?��这一�? 逐�?�?��即可�?
 fn parse_codex_config_model(content: &str) -> Option<String> {
     content.lines().find_map(|line| {
         let line = line.trim();

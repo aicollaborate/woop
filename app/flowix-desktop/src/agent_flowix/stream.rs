@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use rllm::chat::{ChatRole, MessageType};
+use rllm::ToolCall as LlmToolCall;
 
 use crate::agent_external::{emit_chunk_with_run_id, resolve_run_id};
 use crate::agent_flowix::providers::{OpenAICompatibleChatMessage, OpenAICompatibleStreamItem};
 use crate::runtime_log;
 
 use super::persistence::IsLoadingGuard;
+use super::provider::{AgentInstance, AgentTaggedStream};
 use super::state::{InFlightChat, STUCK_THRESHOLD};
 use super::wire::FLOWIX_AGENT_TYPE;
 use super::{AgentChunk, AgentError, AgentManager, AgentUserMessage, UsageInfo};
@@ -16,10 +18,29 @@ use super::{AgentChunk, AgentError, AgentManager, AgentUserMessage, UsageInfo};
 const MAX_LLM_RECOVERY_RETRIES: u32 = 2;
 const MAX_AUTO_RESUME_ATTEMPTS: u32 = 1;
 
+pub(super) trait AgentChunkEmitter: Send + Sync {
+    fn emit(&self, chunk: &AgentChunk, run_id: &str);
+}
+
+struct TauriAgentChunkEmitter<'a> {
+    app_handle: &'a tauri::AppHandle,
+}
+
+impl AgentChunkEmitter for TauriAgentChunkEmitter<'_> {
+    fn emit(&self, chunk: &AgentChunk, run_id: &str) {
+        emit_chunk_with_run_id(self.app_handle, chunk, FLOWIX_AGENT_TYPE, run_id);
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AssistantCheckpoint {
     message_id: String,
     content: String,
+}
+
+enum ProviderStreamStart {
+    Ready(AgentTaggedStream),
+    Finished(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,16 +250,14 @@ impl AgentManager {
         &self,
         thread_id: &str,
         msg: String,
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn AgentChunkEmitter,
         run_id: &str,
     ) -> Result<String, AgentError> {
-        emit_chunk_with_run_id(
-            app_handle,
+        emitter.emit(
             &AgentChunk::Text {
                 thread_id: thread_id.to_string(),
                 text: msg.clone(),
             },
-            FLOWIX_AGENT_TYPE,
             run_id,
         );
         self.flush_assistant_message(thread_id, &msg, None).await?;
@@ -255,12 +274,12 @@ impl AgentManager {
         &self,
         thread_id: &str,
         reason: &str,
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn AgentChunkEmitter,
         run_id: &str,
     ) -> Result<String, AgentError> {
         let synth_msg = format_llm_unavailable_message(reason);
         tracing::warn!("[Agent] LLM unavailable, synthesizing assistant message: {synth_msg}");
-        self.finalize_with_synthesized_message(thread_id, synth_msg, app_handle, run_id)
+        self.finalize_with_synthesized_message(thread_id, synth_msg, emitter, run_id)
             .await
     }
 
@@ -313,7 +332,7 @@ impl AgentManager {
         assistant_buffer: &mut String,
         assistant_checkpoint: &mut Option<AssistantCheckpoint>,
         full_response: &str,
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn AgentChunkEmitter,
         run_id: &str,
     ) -> Result<String, AgentError> {
         let synth_msg = format_llm_unavailable_message(reason);
@@ -324,13 +343,11 @@ impl AgentManager {
         }
 
         if assistant_checkpoint.is_some() || !assistant_buffer.is_empty() {
-            emit_chunk_with_run_id(
-                app_handle,
+            emitter.emit(
                 &AgentChunk::Text {
                     thread_id: thread_id.to_string(),
                     text: synth_msg.clone(),
                 },
-                FLOWIX_AGENT_TYPE,
                 run_id,
             );
 
@@ -358,7 +375,7 @@ impl AgentManager {
             return Ok(format!("{full_response}{synth_msg}"));
         }
 
-        self.synthesize_llm_unavailable(thread_id, reason, app_handle, run_id)
+        self.synthesize_llm_unavailable(thread_id, reason, emitter, run_id)
             .await
     }
 
@@ -397,10 +414,10 @@ impl AgentManager {
         let run_id = resolve_run_id(thread_id, message.run_id.as_deref());
         {
             let mut in_flight = self.in_flight.lock().await;
-            // 鑷墦鏂? 濡傛灉璇?thread 宸叉湁 in-flight chat, 鍏?set true
-            // 璁╂棫 chat 鍦ㄤ笅涓€涓?checkpoint 璧?flush_cancel, 鍐?install
-            // 鏂?run銆傛棫 task 閫€鍑烘椂鍙細閫氳繃 Arc::ptr_eq 娓呯悊鑷繁鐨?entry,
-            // 涓嶄細璇垹鏂?task 鐨?registry銆?
+            // �?���? 如果�?thread 已有 in-flight chat, �?set true
+            // 让旧 chat 在下一�?checkpoint �?flush_cancel, �?install
+            // �?run。旧 task 退出时�?��通过 Arc::ptr_eq 清理�?���?entry,
+            // 不会�?���?task �?registry�?
             if let Some(old) = in_flight.remove(thread_id) {
                 old.cancel.store(true, Ordering::Release);
                 tracing::info!(
@@ -418,11 +435,11 @@ impl AgentManager {
         }
 
         // 閫氱敤 metadata 鍗忚 鈹€鈹€ StreamStart 鎼哄甫 model / reasoning_effort,
-        // 璇?run 閿佸畾銆傚墠绔?hover card / 鐘舵€佹爮鍙杩欎袱涓瓧娈靛睍绀恒€?        // 鏃?provider 涓嶈瘑鍒椂涓?None,鍓嶇 fallback 鍒板叏灞€閰嶇疆 / 鏄剧ず "鈥斻€嶃€?        //
+        // �?run 锁定。前�?hover card / 状态栏�??这两�?��段展示�?        // �?provider 不识�?���?None,前�? fallback 到全局配置 / 显示 "—」�?        //
         // `run_id` 閫氳繃 `resolve_run_id` 缁熶竴鏉ユ簮 鈹€鈹€ 鍓嶇浼犲氨鐢ㄥ墠绔殑,
-        // 娌′紶灏?mint 涓€涓?(璺?CLI managers 鍚屽舰)銆傝繖淇濊瘉姣忎釜 chunk 閮藉甫
-        // run_id, 鍓嶇 mapper 涓嶅啀 fallback 鍒?`st.activeRunId`, self-interrupt
-        // 鏃舵棫 run 鐨?StreamEnd 涓嶄細琚褰掑埌鏂?run銆?
+        // 没传�?mint 一�?(�?CLI managers 同形)。这保证每个 chunk 都带
+        // run_id, 前�? mapper 不再 fallback �?`st.activeRunId`, self-interrupt
+        // 时旧 run �?StreamEnd 不会�??归到�?run�?
         let agent_type = message.agent_type.as_deref().unwrap_or("flowix");
         let model = message.model_for_runtime(agent_type).map(str::to_string);
         let reasoning_effort = message
@@ -439,11 +456,11 @@ impl AgentManager {
             &run_id,
         );
 
-        // spawn 鍚?IPC 绔嬪嵆杩斿洖, 涓嶅啀 await 鏁翠釜 stream 璺戝畬銆?        // 澶辫触 / 瀹屾垚 / 鍙栨秷淇″彿鍏ㄩ潬 `agent-chunk` 浜嬩欢 (鍖呮嫭 `Error`
-        // 鍜?`StreamEnd`), 鍓嶇 store 鎸?thread_id 娲惧彂鍒板搴?thread銆?        //
-        // `me: Arc<Self>` 鈹€鈹€ 鎶?self 鐨?Arc clone 涓€浠藉杺缁?spawn task,
-        // 浠诲姟鍦?self 涔嬪悗 (e.g. AppState drop) 鎵嶇粨鏉? refcount 鑷劧
-        // 鏀舵暃銆傝繖鏄€熺敤 self 缁欏紓姝ヤ换鍔＄殑鏍囧噯鍋氭硶, 閬垮厤鍦?struct 閲?        // 瀛?Weak<Self> 閭ｅ寰幆寮曠敤銆?
+        // spawn �?IPC 立即返回, 不再 await 整个 stream 跑完�?        // 失败 / 完成 / 取消信号全靠 `agent-chunk` 事件 (包括 `Error`
+        // �?`StreamEnd`), 前�? store �?thread_id 派发到�?�?thread�?        //
+        // `me: Arc<Self>` ── �?self �?Arc clone 一份喂�?spawn task,
+        // 任务�?self 之后 (e.g. AppState drop) 才结�? refcount �?��
+        // 收敛。这�?��用 self 给异步任务的标准做法, 避免�?struct �?        // �?Weak<Self> 那�?�?��引用�?
         let me: Arc<AgentManager> = Arc::clone(self);
         let tid_owned = thread_id.to_string();
         let app_handle_owned = app_handle.clone();
@@ -460,11 +477,11 @@ impl AgentManager {
                 )
                 .await;
 
-            // 浠讳綍璺緞閫€鍑洪兘瑕?unregister + emit StreamEnd銆備换鍔＄粨鏉熷墠
-            // 鍏堟竻 in_flight, 鏈€鍚?emit 鈹€鈹€ 鍓嶇鏀跺埌 StreamEnd 鏃? 鎴戜滑
-            // 鐨?in-memory 鐘舵€佸凡缁忓綊闆? 浠讳綍
-            // 绔嬪嵆瑙﹀彂鐨?`agent_running_threads` 鏌ヨ閮界湅涓嶅埌杩欎釜 thread
-            // (涓?stream 鐪熺粨鏉熶簡"鐨勮涔変竴鑷?銆?
+            // 任何�?��退出都�?unregister + emit StreamEnd。任务结束前
+            // 先清 in_flight, 最�?emit ── 前�?收到 StreamEnd �? 我们
+            // �?in-memory 状态已经归�? 任何
+            // 立即触发�?`agent_running_threads` 查�?都看不到这个 thread
+            // (�?stream 真结束了"的�?义一�?�?
             me.unregister_in_flight_if_current(&tid_owned, &cancel_for_task)
                 .await;
             let reason = match &result {
@@ -529,12 +546,345 @@ impl AgentManager {
             self.ensure_instance(&ai_config).await?
         };
 
+        let emitter = TauriAgentChunkEmitter { app_handle };
+        self.run_react_loop(thread_id, message, instance, &emitter, cancel, run_id)
+            .await
+    }
+
+    async fn open_provider_stream_with_recovery(
+        &self,
+        instance: &AgentInstance,
+        thread_id: &str,
+        llm_messages: &mut Vec<OpenAICompatibleChatMessage>,
+        emitter: &dyn AgentChunkEmitter,
+        run_id: &str,
+    ) -> Result<ProviderStreamStart, AgentError> {
+        let mut recovery_attempts: u32 = 0;
+        loop {
+            match instance
+                .provider
+                .chat_stream_tagged(llm_messages, Some(&instance.tools))
+                .await
+            {
+                Ok(stream) => return Ok(ProviderStreamStart::Ready(stream)),
+                Err(error) => {
+                    let reason = error.to_string();
+                    let failure_kind = classify_llm_failure(&reason);
+                    let can_retry = recovery_attempts < MAX_LLM_RECOVERY_RETRIES
+                        && failure_kind == LlmFailureKind::RecoverableHistory;
+                    if !can_retry {
+                        runtime_log::record_agent_event(
+                            "error",
+                            "llm_stream",
+                            "llm.stream_failed",
+                            format!("LLM stream request failed: {error}"),
+                            Some(thread_id),
+                            None,
+                            Some(serde_json::json!({
+                                "failure_kind": format!("{failure_kind:?}"),
+                                "is_recoverable_args_error": failure_kind == LlmFailureKind::RecoverableHistory,
+                                "recovery_attempts": recovery_attempts,
+                            })),
+                        );
+                        let message = self
+                            .synthesize_llm_unavailable(
+                                thread_id,
+                                &format!("Stream failed: {error}"),
+                                emitter,
+                                run_id,
+                            )
+                            .await?;
+                        return Ok(ProviderStreamStart::Finished(message));
+                    }
+
+                    match self.sanitize_persisted_tool_calls(thread_id).await {
+                        Ok(true) => {
+                            recovery_attempts += 1;
+                            let progress = format!(
+                                "LLM rejected turn due to malformed tool_calls; \
+                                 sanitized and retrying ({recovery_attempts}/{MAX_LLM_RECOVERY_RETRIES})"
+                            );
+                            tracing::warn!("[Agent] {progress}");
+                            runtime_log::record_agent_event(
+                                "warn",
+                                "recovery_retry",
+                                "llm.sanitize_retry",
+                                progress.clone(),
+                                Some(thread_id),
+                                None,
+                                Some(serde_json::json!({
+                                    "recovery_attempts": recovery_attempts,
+                                    "max_recovery_attempts": MAX_LLM_RECOVERY_RETRIES,
+                                })),
+                            );
+                            emitter.emit(
+                                &AgentChunk::Error {
+                                    thread_id: thread_id.to_string(),
+                                    message: progress,
+                                },
+                                run_id,
+                            );
+                            *llm_messages = self.load_thread_llm_messages(thread_id).await?;
+                        }
+                        Ok(false) | Err(_) => {
+                            runtime_log::record_agent_event(
+                                "error",
+                                "llm_stream",
+                                "llm.stream_failed",
+                                format!("LLM stream request failed: {error}"),
+                                Some(thread_id),
+                                None,
+                                Some(serde_json::json!({
+                                    "is_recoverable_args_error": true,
+                                    "sanitize_attempted": true,
+                                    "sanitize_result": "no_change_or_failed",
+                                    "recovery_attempts": recovery_attempts,
+                                })),
+                            );
+                            let message = self
+                                .synthesize_llm_unavailable(
+                                    thread_id,
+                                    &format!("Stream failed: {error}"),
+                                    emitter,
+                                    run_id,
+                                )
+                                .await?;
+                            return Ok(ProviderStreamStart::Finished(message));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn handle_usage_item(
+        &self,
+        thread_id: &str,
+        usage: UsageInfo,
+        total_tokens: u32,
+        token_budget: u32,
+        tokens_used: &mut u32,
+        emitter: &dyn AgentChunkEmitter,
+        run_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        emitter.emit(
+            &AgentChunk::Usage {
+                thread_id: thread_id.to_string(),
+                model_id: None,
+                last_run_at: None,
+                usage: Some(usage),
+                status_info: None,
+            },
+            run_id,
+        );
+        *tokens_used = tokens_used.saturating_add(total_tokens);
+        if token_budget == 0 || *tokens_used <= token_budget {
+            return Ok(None);
+        }
+
+        let error = AgentError::TokenBudget {
+            used: *tokens_used,
+            budget: token_budget,
+        };
+        let error_message = error.to_string();
+        tracing::warn!("[Agent] {error_message}");
+        runtime_log::record_agent_event(
+            "warn",
+            "token_budget",
+            "llm.token_budget_exceeded",
+            error_message.clone(),
+            Some(thread_id),
+            None,
+            Some(serde_json::json!({
+                "tokens_used": *tokens_used,
+                "token_budget": token_budget,
+            })),
+        );
+        emitter.emit(
+            &AgentChunk::Error {
+                thread_id: thread_id.to_string(),
+                message: error_message.clone(),
+            },
+            run_id,
+        );
+        let message = self
+            .finalize_with_synthesized_message(
+                thread_id,
+                format!(
+                    "(agent aborted — {error_message}). Split the request into smaller pieces \
+                     or raise `max_total_tokens` in Preferences → Agent."
+                ),
+                emitter,
+                run_id,
+            )
+            .await?;
+        Ok(Some(message))
+    }
+
+    async fn handle_tool_call_item(
+        &self,
+        thread_id: &str,
+        tool_call: LlmToolCall,
+        message: &AgentUserMessage,
+        reasoning_buffer: &mut String,
+        assistant_buffer: &mut String,
+        assistant_checkpoint: &mut Option<AssistantCheckpoint>,
+        last_tool_name: &mut Option<String>,
+        emitter: &dyn AgentChunkEmitter,
+        run_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        let reasoning_for_turn = if reasoning_buffer.trim().is_empty() {
+            None
+        } else {
+            Some(reasoning_buffer.clone())
+        };
+        self.flush_reasoning_message(thread_id, reasoning_buffer)
+            .await?;
+        reasoning_buffer.clear();
+
+        if let Some(mut checkpoint) = assistant_checkpoint.take() {
+            checkpoint.content.push_str(assistant_buffer);
+            self.update_assistant_checkpoint(
+                thread_id,
+                &checkpoint.message_id,
+                &checkpoint.content,
+                Some(true),
+                Some(std::slice::from_ref(&tool_call)),
+                reasoning_for_turn.as_deref(),
+            )
+            .await?;
+        } else {
+            self.flush_assistant_message_with_tool_calls(
+                thread_id,
+                assistant_buffer,
+                std::slice::from_ref(&tool_call),
+                reasoning_for_turn.as_deref(),
+            )
+            .await?;
+        }
+        assistant_buffer.clear();
+
+        let tool_input = match serde_json::from_str::<serde_json::Value>(
+            &tool_call.function.arguments,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    "[Agent] tool_call {} ({}): arguments not valid JSON ({error}); falling back to {{}}",
+                    tool_call.id,
+                    tool_call.function.name
+                );
+                serde_json::Value::Object(serde_json::Map::new())
+            }
+        };
+        emitter.emit(
+            &AgentChunk::ToolCall {
+                thread_id: thread_id.to_string(),
+                id: tool_call.id.clone(),
+                name: tool_call.function.name.clone(),
+                input: tool_input.clone(),
+            },
+            run_id,
+        );
+        self.persist_tool_call(
+            thread_id,
+            &tool_call.id,
+            &tool_call.function.name,
+            tool_input,
+        )
+        .await?;
+
+        let _loading_guard =
+            IsLoadingGuard::new(self.thread_manager.clone(), thread_id, &tool_call.id);
+        let tool_result = self
+            .execute_tool_for_thread(
+                thread_id,
+                &tool_call.function.name,
+                &tool_call.function.arguments,
+                message,
+            )
+            .await;
+        emitter.emit(
+            &AgentChunk::ToolResult {
+                thread_id: thread_id.to_string(),
+                id: tool_call.id.clone(),
+                name: tool_call.function.name.clone(),
+                result: serde_json::to_value(&tool_result).unwrap_or(serde_json::Value::Null),
+            },
+            run_id,
+        );
+        let result_json = serde_json::to_string_pretty(&tool_result)
+            .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
+        self.persist_tool_result(
+            thread_id,
+            &tool_call.id,
+            &tool_call.function.name,
+            &result_json,
+        )
+        .await?;
+
+        *last_tool_name = Some(tool_call.function.name.clone());
+        let stuck = self
+            .record_tool_call(
+                thread_id,
+                &tool_call.function.name,
+                &tool_call.function.arguments,
+            )
+            .await;
+        if !stuck {
+            return Ok(None);
+        }
+
+        let error = AgentError::Stuck {
+            tool: tool_call.function.name.clone(),
+            count: STUCK_THRESHOLD + 1,
+        };
+        let error_message = error.to_string();
+        tracing::warn!("[Agent] {error_message}");
+        runtime_log::record_agent_event(
+            "warn",
+            "stuck",
+            "agent.stuck",
+            error_message.clone(),
+            Some(thread_id),
+            Some(&tool_call.function.name),
+            Some(serde_json::json!({
+                "count": STUCK_THRESHOLD + 1,
+                "threshold": STUCK_THRESHOLD,
+            })),
+        );
+        let message = self
+            .finalize_with_synthesized_message(
+                thread_id,
+                format!(
+                    "(agent aborted — {error_message}). Try rephrasing the request \
+                     or check that the file path is correct."
+                ),
+                emitter,
+                run_id,
+            )
+            .await?;
+        Ok(Some(message))
+    }
+
+    /// ReAct state machine with provider and event output injected. Keeping
+    /// configuration/provider construction outside makes the transition logic
+    /// testable with scripted streams and a recording emitter.
+    pub(super) async fn run_react_loop(
+        &self,
+        thread_id: &str,
+        message: AgentUserMessage,
+        instance: AgentInstance,
+        emitter: &dyn AgentChunkEmitter,
+        cancel: &Arc<AtomicBool>,
+        run_id: String,
+    ) -> Result<String, AgentError> {
         self.persist_user_message(thread_id, &message).await?;
-        // 鍏滃簳娓呯┖璇?thread 鐨勫崱姝绘娴嬭鏁般€侺LM 缁欐渶缁堝洖绛旂殑姝ｅ父璺緞涔熶細娓?
+        // 兜底清空�?thread 的卡死�?测�?数。LLM 给最终回答的正常�?��也会�?
         // A user retry starts a fresh stuck-tool detection window.
         self.clear_tool_call_attempts(thread_id).await;
-        // 鐢ㄦ埛娑堟伅宸茶惤鐩? 涓嬮潰鐨?ReAct 寰幆绗竴杞?reload 浼氳鍒般€?        // load_thread_llm_messages 鐜板湪鐩存帴杩斿洖 rllm 鐨?ChatMessage 搴忓垪, 鍖呭惈
-        // tool_use / tool_result銆傛瘡杞?cycle 椤堕儴鍐?reload 涓€娆℃嬁鍒版渶鏂拌惤鐩樼姸鎬併€?
+        // 用户消息已落�? 下面�?ReAct �?���?���?reload 会�?到�?        // load_thread_llm_messages 现在直接返回 rllm �?ChatMessage 序列, 包含
+        // tool_use / tool_result。每�?cycle 顶部�?reload 一次拿到最新落盘状态�?
         // React loop with streaming
         let max_cycles = 100;
         let mut full_response = String::new();
@@ -547,9 +897,9 @@ impl AgentManager {
         // the last tool the LLM was stuck on.
         let mut last_tool_name: Option<String> = None;
 
-        // 鈹€鈹€ Token 棰勭畻: 璺?cycle 绱 total_tokens, 瓒呰繃閰嶇疆涓婇檺绔嬪埢鐔旀柇銆傗攢鈹€
-        // budget=0 琛ㄧず涓嶉檺 (鏃?config 琛屼负, 涔熸柟渚垮崟娴?銆俇sage chunk 鐢?        // provider 鍦ㄦ瘡涓祦鏈熬鍗曠嫭 push 涓€娆? 涓嶄細閲嶅璁℃暟 鈹€鈹€ 杩欐槸鎶?        // 涔嬪墠 "Usage 瑙ｆ瀽鍚庡畬鍏ㄦ病鐢? 鐨勬瀛楁浠?provider 灞傜┛閫忓嚭鏉ョ殑鐩殑銆?        // 娉ㄦ剰: OpenAI 鐨?`prompt_tokens` 鍦?stream+include_usage 妯″紡涓嬫槸
-        // **绱**鐨?(鏁翠釜 thread 鐨勮緭鍏?, 涓嶆槸鍗曡疆 鈹€鈹€ 鎴戜滑鐨勭疮璁℃槸鏈夋剰涓轰箣銆?
+        // ── Token 预算: �?cycle �?? total_tokens, 超过配置上限立刻熔断。──
+        // budget=0 表示不限 (�?config 行为, 也方便单�?。Usage chunk �?        // provider 在每�?���?��单独 push 一�? 不会重�?计数 ── 这是�?        // 之前 "Usage 解析后完全没�? 的�?字�?�?provider 层穿透出来的�?���?        // 注意: OpenAI �?`prompt_tokens` �?stream+include_usage 模式下是
+        // **�??**�?(整个 thread 的输�?, 不是单轮 ── 我们的累计是有意为之�?
         let token_budget = self.user_config.get_ai_config().model.max_total_tokens;
         let mut tokens_used: u32 = 0;
 
@@ -564,14 +914,14 @@ impl AgentManager {
                         reasoning_buffer,
                         assistant_buffer,
                         full_response,
-                        app_handle,
+                        emitter,
                         &run_id,
                     )
                     .await;
             }
 
-            // 姣忚疆浠庣洏涓?reload, 鎷垮埌鏈疆 (鍚笂杞? 鏂拌惤鐩樼殑 assistant(tool_calls) +
-            // tool(result) 琛? 浣滀负涓嬭疆 LLM 璋冪敤鐨勭湡瀹炰笂涓嬫枃銆傝繖鏍?disk 鏄敮涓€鐪熸簮,
+            // 每轮从盘�?reload, 拿到�?�� (�?���? 新落盘的 assistant(tool_calls) +
+            // tool(result) �? 作为下轮 LLM 调用的真实上下文。这�?disk �?��一真源,
             // The persisted thread is the source of truth for user,
             // assistant tool-call, and tool-result messages.
             // Keep the declaration at the point of reload. If this statement
@@ -589,129 +939,22 @@ impl AgentManager {
             reasoning_buffer.clear();
             assistant_buffer.clear();
             let mut hit_tool_call = false;
-            // Bounded retry loop for LLM-side 400 rejections. When the
-            // provider returns "invalid function arguments json string" it
-            // means a previous round's persisted `tool_calls[*].function.arguments`
-            // is unparseable JSON (root cause: the parallel-call parser
-            // collision 鈥?see `openai_compatible.rs`; the recovery exists
-            // as a safety net in case a future parser bug or a corrupted
-            // thread DB lands us in the same place). We sanitize the
-            // affected message in place and retry, up to N times.
-            let mut recovery_attempts: u32 = 0;
-            let mut stream = loop {
-                match instance
-                    .provider
-                    .chat_stream_tagged(&llm_messages, Some(&instance.tools))
-                    .await
-                {
-                    Ok(s) => break s,
-                    Err(e) => {
-                        let reason = e.to_string();
-                        let failure_kind = classify_llm_failure(&reason);
-                        // Two reasons to bail: (a) the error isn't a
-                        // recoverable tool-args error, or (b) we've
-                        // already retried the maximum number of times.
-                        let can_retry = recovery_attempts < MAX_LLM_RECOVERY_RETRIES
-                            && failure_kind == LlmFailureKind::RecoverableHistory;
-                        if !can_retry {
-                            // 鎸佷箙鍖?LLM 娴佹柇鍘熷洜 (auth / 4xx / 5xx / network
-                            // 绛?, 渚夸簬鎺掗殰: tracing 鏃ュ織鍦ㄨ繘绋嬮€€鍑哄悗鍗充涪,
-                            // 鍐?~/.flowix/logs/agent.log 鎵嶈兘鍦ㄧ敤鎴蜂簨鍚庡弽棣?
-                            // "鍒氭墠閭ｆ潯娑堟伅娌″洖" 鏃跺洖婧€?
-                            runtime_log::record_agent_event(
-                                "error",
-                                "llm_stream",
-                                "llm.stream_failed",
-                                format!("LLM stream request failed: {e}"),
-                                Some(thread_id),
-                                None,
-                                Some(serde_json::json!({
-                                    "failure_kind": format!("{failure_kind:?}"),
-                                    "is_recoverable_args_error": failure_kind == LlmFailureKind::RecoverableHistory,
-                                    "recovery_attempts": recovery_attempts,
-                                })),
-                            );
-                            return self
-                                .synthesize_llm_unavailable(
-                                    thread_id,
-                                    &format!("Stream failed: {}", e),
-                                    app_handle,
-                                    &run_id,
-                                )
-                                .await;
-                        }
-                        // Sanitize the corrupted row and retry once.
-                        match self.sanitize_persisted_tool_calls(thread_id).await {
-                            Ok(true) => {
-                                recovery_attempts += 1;
-                                let progress = format!(
-                                    "LLM rejected turn due to malformed tool_calls; \
-                                     sanitized and retrying ({recovery_attempts}/{MAX_LLM_RECOVERY_RETRIES})"
-                                );
-                                tracing::warn!("[Agent] {progress}");
-                                // 璁板綍 sanitize-and-retry 浜嬩欢 鈹€鈹€ 杩欐潯涓嶆槸
-                                // 缁堟€侀敊璇?(LLM 浠嶆湁鏈轰細姝ｅ父鏀跺彛), 浣?
-                                // 棰戠箒鍑虹幇鎰忓懗鐫€ tool_calls 鎸佷箙鍖栧眰鏈?bug
-                                // (瑙?`openai_compatible.rs` 鐨?parallel-call
-                                // 瑙ｆ瀽), 浜嬪悗鏌?agent.log 鑳藉畾浣嶅埌鍏蜂綋 thread銆?
-                                runtime_log::record_agent_event(
-                                    "warn",
-                                    "recovery_retry",
-                                    "llm.sanitize_retry",
-                                    progress.clone(),
-                                    Some(thread_id),
-                                    None,
-                                    Some(serde_json::json!({
-                                        "recovery_attempts": recovery_attempts,
-                                        "max_recovery_attempts": MAX_LLM_RECOVERY_RETRIES,
-                                    })),
-                                );
-                                emit_chunk_with_run_id(
-                                    app_handle,
-                                    &AgentChunk::Error {
-                                        thread_id: thread_id.to_string(),
-                                        message: progress,
-                                    },
-                                    FLOWIX_AGENT_TYPE,
-                                    &run_id,
-                                );
-                                llm_messages = self.load_thread_llm_messages(thread_id).await?;
-                                continue;
-                            }
-                            // Nothing to sanitize, or the sanitize itself
-                            // failed 鈥?either way the gateway's complaint
-                            // isn't fixable from the agent side.
-                            Ok(false) | Err(_) => {
-                                runtime_log::record_agent_event(
-                                    "error",
-                                    "llm_stream",
-                                    "llm.stream_failed",
-                                    format!("LLM stream request failed: {e}"),
-                                    Some(thread_id),
-                                    None,
-                                    Some(serde_json::json!({
-                                        "is_recoverable_args_error": true,
-                                        "sanitize_attempted": true,
-                                        "sanitize_result": "no_change_or_failed",
-                                        "recovery_attempts": recovery_attempts,
-                                    })),
-                                );
-                                return self
-                                    .synthesize_llm_unavailable(
-                                        thread_id,
-                                        &format!("Stream failed: {}", e),
-                                        app_handle,
-                                        &run_id,
-                                    )
-                                    .await;
-                            }
-                        }
-                    }
-                }
+            let mut stream = match self
+                .open_provider_stream_with_recovery(
+                    &instance,
+                    thread_id,
+                    &mut llm_messages,
+                    emitter,
+                    &run_id,
+                )
+                .await?
+            {
+                ProviderStreamStart::Ready(stream) => stream,
+                ProviderStreamStart::Finished(message) => return Ok(message),
             };
 
-            // Process stream items 鈥?OpenAICompatibleStreamItem 鍖哄垎 reasoning vs text,
-            // 鐩存帴鍙戠粨鏋勫寲 AgentChunk 缁欏墠绔? 璧?switch 璺緞鑰岄潪 startsWith銆?
+            // Process stream items —OpenAICompatibleStreamItem 区分 reasoning vs text,
+            // 直接发结构化 AgentChunk 给前�? �?switch �?��而非 startsWith�?
             while let Some(item_result) = stream.next().await {
                 // 鈹€鈹€ Checkpoint #2: mid-stream, before each poll. 鈹€鈹€
                 // Returning here drops `stream`, which aborts the in-flight
@@ -723,7 +966,7 @@ impl AgentManager {
                             reasoning_buffer,
                             assistant_buffer,
                             full_response,
-                            app_handle,
+                            emitter,
                             &run_id,
                         )
                         .await;
@@ -739,9 +982,6 @@ impl AgentManager {
                                 reasoning_output_tokens,
                                 model_context_window,
                             } => {
-                                // 閫氱敤 metadata 鍗忚 鈹€鈹€ 鎶?usage 鎺ㄧ粰鍓嶇,
-                                // 鍓嶇绱姞鍒?`AgentRunState.usage` / thread 绱銆?                                // 涓嶈鏄惁瑙﹀彂 budget 鐔旀柇, 閮?emit 涓€娆?
-                                // 璁╁墠绔兘鐪嬪埌姣?turn 鐨?token 澧為噺銆?
                                 let usage = UsageInfo {
                                     input_tokens,
                                     cached_input_tokens,
@@ -750,81 +990,28 @@ impl AgentManager {
                                     total_tokens: Some(total_tokens),
                                     model_context_window,
                                 };
-                                emit_chunk_with_run_id(
-                                    app_handle,
-                                    &AgentChunk::Usage {
-                                        thread_id: thread_id.to_string(),
-                                        model_id: None,
-                                        last_run_at: None,
-                                        usage: Some(usage),
-                                        status_info: None,
-                                    },
-                                    FLOWIX_AGENT_TYPE,
-                                    &run_id,
-                                );
-                                // saturating_add 闃插尽鎬? 鍗曟 Usage 瀛楁鏋佺澶ф椂
-                                // 涔熷彧鏄崱鍦?u32::MAX, 涓嶄細 panic / wrap 鎴愬皬鏁般€?
-                                tokens_used = tokens_used.saturating_add(total_tokens);
-                                if token_budget > 0 && tokens_used > token_budget {
-                                    let err = AgentError::TokenBudget {
-                                        used: tokens_used,
-                                        budget: token_budget,
-                                    };
-                                    let err_msg = err.to_string();
-                                    tracing::warn!("[Agent] {err_msg}");
-                                    // 鎸佷箙鍖?token 棰勭畻鐔旀柇 鈹€鈹€ 鐢ㄦ埛浜嬪悗鍙嶉
-                                    // "agent 鐢ㄤ竴鍗婂氨鍋滀簡" 绗竴鏃堕棿鏌?agent.log
-                                    // 瀹氫綅鏄笉鏄绠楀埌浜? 鑰屼笉鏄弽澶嶈窇鍚屾牱
-                                    // 鐨勫璇濊瘯閿欍€?
-                                    runtime_log::record_agent_event(
-                                        "warn",
-                                        "token_budget",
-                                        "llm.token_budget_exceeded",
-                                        err_msg.clone(),
-                                        Some(thread_id),
-                                        None,
-                                        Some(serde_json::json!({
-                                            "tokens_used": tokens_used,
-                                            "token_budget": token_budget,
-                                        })),
-                                    );
-                                    // 涓?Stuck 鐢ㄥ悓涓€鏉?finalize 璺緞: emit Error
-                                    // chunk (鍓嶇 switch 璧?error case), 鍐欎竴琛?
-                                    // 鍔╂墜鏂囨湰 (UI 鐪嬭捣鏉ユ甯告敹鍙ｈ€岄潪宕╂簝 toast),
-                                    // 鐒跺悗娓呮帀 stuck-detect 璁℃暟銆?
-                                    emit_chunk_with_run_id(
-                                        app_handle,
-                                        &AgentChunk::Error {
-                                            thread_id: thread_id.to_string(),
-                                            message: err_msg.clone(),
-                                        },
-                                        FLOWIX_AGENT_TYPE,
+                                if let Some(message) = self
+                                    .handle_usage_item(
+                                        thread_id,
+                                        usage,
+                                        total_tokens,
+                                        token_budget,
+                                        &mut tokens_used,
+                                        emitter,
                                         &run_id,
-                                    );
-                                    return self
-                                        .finalize_with_synthesized_message(
-                                            thread_id,
-                                            format!(
-                                                "(agent aborted — {err_msg}). \
-                                                 Split the request into smaller pieces \
-                                                 or raise `max_total_tokens` in \
-                                                 Preferences → Agent."
-                                            ),
-                                            app_handle,
-                                            &run_id,
-                                        )
-                                        .await;
+                                    )
+                                    .await?
+                                {
+                                    return Ok(message);
                                 }
                             }
                             OpenAICompatibleStreamItem::Text(text) => {
                                 tracing::debug!("[Agent] Emitting text chunk: {}", text);
-                                emit_chunk_with_run_id(
-                                    app_handle,
+                                emitter.emit(
                                     &AgentChunk::Text {
                                         thread_id: thread_id.to_string(),
                                         text: text.clone(),
                                     },
-                                    FLOWIX_AGENT_TYPE,
                                     &run_id,
                                 );
                                 assistant_buffer.push_str(&text);
@@ -832,200 +1019,37 @@ impl AgentManager {
                             }
                             OpenAICompatibleStreamItem::Reasoning(text) => {
                                 tracing::debug!("[Agent] Emitting reasoning chunk: {}", text);
-                                emit_chunk_with_run_id(
-                                    app_handle,
+                                emitter.emit(
                                     &AgentChunk::Reasoning {
                                         thread_id: thread_id.to_string(),
                                         text: text.clone(),
                                     },
-                                    FLOWIX_AGENT_TYPE,
                                     &run_id,
                                 );
                                 reasoning_buffer.push_str(&text);
                             }
                             OpenAICompatibleStreamItem::ToolUseComplete { tool_call } => {
-                                let reasoning_for_turn = if reasoning_buffer.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(reasoning_buffer.clone())
-                                };
-                                self.flush_reasoning_message(thread_id, &reasoning_buffer)
-                                    .await?;
-                                reasoning_buffer.clear();
-                                // 鎶?assistant_buffer 閲岀殑鍓嶅鏂囨湰涓庢湰杞?tool_call 鍚堝苟
-                                // 鍒板悓涓€琛?(OpenAI 鍗忚鏈潵灏辨槸涓€鏉?message 甯?content +
-                                // tool_calls)銆備笉璋?flush_assistant_message 鏄负浜嗛伩鍏?                                // 绱ф帴鐫€鍐嶅啓涓€鏉＄┖鐨?assistant 琛屻€?
-                                if let Some(mut checkpoint) = assistant_checkpoint.take() {
-                                    checkpoint.content.push_str(&assistant_buffer);
-                                    self.update_assistant_checkpoint(
+                                if let Some(message) = self
+                                    .handle_tool_call_item(
                                         thread_id,
-                                        &checkpoint.message_id,
-                                        &checkpoint.content,
-                                        Some(true),
-                                        Some(std::slice::from_ref(&tool_call)),
-                                        reasoning_for_turn.as_deref(),
-                                    )
-                                    .await?;
-                                } else {
-                                    self.flush_assistant_message_with_tool_calls(
-                                        thread_id,
-                                        &assistant_buffer,
-                                        std::slice::from_ref(&tool_call),
-                                        reasoning_for_turn.as_deref(),
-                                    )
-                                    .await?;
-                                }
-                                assistant_buffer.clear();
-
-                                // Parse the LLM-supplied JSON arguments. If they
-                                // are unparseable we still must ship valid JSON
-                                // to the LLM on the next round-trip; falling back
-                                // to the literal string would persist a
-                                // `Value::String(...)` and the gateway rejects
-                                // the next turn with 400 "invalid function
-                                // arguments". An empty `{}` is the safest
-                                // alternative: the LLM sees a tool call happened
-                                // with no args and can react to the synthesized
-                                // tool_result the recovery loop injects.
-                                let tool_input = match serde_json::from_str::<serde_json::Value>(
-                                    &tool_call.function.arguments,
-                                ) {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                                "[Agent] tool_call {} ({}): arguments not valid JSON ({e}); falling back to {{}}",
-                                                tool_call.id,
-                                                tool_call.function.name
-                                            );
-                                        serde_json::Value::Object(serde_json::Map::new())
-                                    }
-                                };
-                                emit_chunk_with_run_id(
-                                    app_handle,
-                                    &AgentChunk::ToolCall {
-                                        thread_id: thread_id.to_string(),
-                                        id: tool_call.id.clone(),
-                                        name: tool_call.function.name.clone(),
-                                        input: tool_input.clone(),
-                                    },
-                                    FLOWIX_AGENT_TYPE,
-                                    &run_id,
-                                );
-                                self.persist_tool_call(
-                                    thread_id,
-                                    &tool_call.id,
-                                    &tool_call.function.name,
-                                    tool_input,
-                                )
-                                .await?;
-
-                                // Drop guard: 鍖呬綇 execute_tool + emit + persist
-                                // 杩欐銆備换涓€姝?panic / 鎻愬墠 return / 鏂伴敊璇矾寰?                                // 瑙﹀彂 drop 鈹€鈹€ 鑷姩鎶婂搴?tool 琛岀殑 is_loading
-                                // 褰掗浂, 涓嶈 UI 杞湀鍗℃銆?
-                                let _loading_guard = IsLoadingGuard::new(
-                                    self.thread_manager.clone(),
-                                    thread_id,
-                                    &tool_call.id,
-                                );
-
-                                // Execute tool call
-                                let tool_result = self
-                                    .execute_tool_for_thread(
-                                        thread_id,
-                                        &tool_call.function.name,
-                                        &tool_call.function.arguments,
+                                        tool_call,
                                         &message,
+                                        &mut reasoning_buffer,
+                                        &mut assistant_buffer,
+                                        &mut assistant_checkpoint,
+                                        &mut last_tool_name,
+                                        emitter,
+                                        &run_id,
                                     )
-                                    .await;
-                                emit_chunk_with_run_id(
-                                    app_handle,
-                                    &AgentChunk::ToolResult {
-                                        thread_id: thread_id.to_string(),
-                                        id: tool_call.id.clone(),
-                                        name: tool_call.function.name.clone(),
-                                        result: serde_json::to_value(&tool_result)
-                                            .unwrap_or(serde_json::Value::Null),
-                                    },
-                                    FLOWIX_AGENT_TYPE,
-                                    &run_id,
-                                );
-                                let result_json = serde_json::to_string_pretty(&tool_result)
-                                    .unwrap_or_else(|_| {
-                                        r#"{"error":"serialization failed"}"#.to_string()
-                                    });
-                                self.persist_tool_result(
-                                    thread_id,
-                                    &tool_call.id,
-                                    &tool_call.function.name,
-                                    &result_json,
-                                )
-                                .await?;
-
-                                // Track for MaxCycles error message
-                                // (named when the loop bails).
-                                last_tool_name = Some(tool_call.function.name.clone());
-
-                                // 鍚屼竴 (tool, args) 杩炵画璋冪敤 STUCK_THRESHOLD 娆″氨鐔旀柇銆?                                // 璁℃暟 + 姣旇緝鏀句竴璧烽伩鍏嶇珵鎬併€傝Е鍙戞椂缁欏墠绔彂涓?Error 鍧?
-                                // 璁╃敤鎴风湅鍒颁腑鏂師鍥? 鍐?return Err 璧板墠绔?catch 璺緞銆?
-                                let stuck = self
-                                    .record_tool_call(
-                                        thread_id,
-                                        &tool_call.function.name,
-                                        &tool_call.function.arguments,
-                                    )
-                                    .await;
-                                if stuck {
-                                    let err = AgentError::Stuck {
-                                        tool: tool_call.function.name.clone(),
-                                        count: STUCK_THRESHOLD + 1,
-                                    };
-                                    let err_msg = err.to_string();
-                                    tracing::warn!("[Agent] {}", err_msg);
-                                    // 鎸佷箙鍖?stuck 浜嬩欢 鈹€鈹€ `tool` + `count`
-                                    // 涓€璧峰啓, 鎺掗殰鏃惰兘鐩存帴鐪嬪埌"鐢ㄦ埛鍦ㄥ摢涓伐鍏?
-                                    // 涓婃妸 LLM 鍗′綇浜?(e.g. 涓€鐩?read 鍚?
-                                    // 涓€涓枃浠?銆俙arguments` 涓嶅啓鏂囦欢 (鍙兘
-                                    // 寰堥暱涓斿惈鏁忔劅鏁版嵁), 鐪熻鍥炴函闈?
-                                    // thread.db 鐨?tool_calls 鍒椼€?
-                                    runtime_log::record_agent_event(
-                                        "warn",
-                                        "stuck",
-                                        "agent.stuck",
-                                        err_msg.clone(),
-                                        Some(thread_id),
-                                        Some(&tool_call.function.name),
-                                        Some(serde_json::json!({
-                                            "count": STUCK_THRESHOLD + 1,
-                                            "threshold": STUCK_THRESHOLD,
-                                        })),
-                                    );
-                                    // Flush a synthesized final assistant
-                                    // message to disk and return Ok so the
-                                    // user sees a normal-looking completion
-                                    // in the UI rather than an "Agent
-                                    // crashed" toast. The user can
-                                    // immediately send a new prompt.
-                                    let synth_msg = format!(
-                                        "(agent aborted — {}). Try rephrasing the request \
-                                         or check that the file path is correct.",
-                                        err_msg
-                                    );
-                                    return self
-                                        .finalize_with_synthesized_message(
-                                            thread_id, synth_msg, app_handle, &run_id,
-                                        )
-                                        .await;
+                                    .await?
+                                {
+                                    return Ok(message);
                                 }
-
-                                // tool_use / tool_result 宸查€氳繃 flush_assistant_message_with_tool_calls
-                                // + persist_tool_call / persist_tool_result 钀界洏, 涓嬭疆 cycle
-                                // 椤堕儴鐨?reload_thread_llm_messages 浼氳鍒? 杩欓噷涓嶅啀鎵嬪姩 push銆?
-                                // Continue to next iteration to get final response
                                 hit_tool_call = true;
                                 break;
                             }
                             OpenAICompatibleStreamItem::Done { .. } => {
-                                // Stream ended 鈥?no-op, 寰幆鑷劧閫€鍑?
+                                // Stream ended —no-op, �?���?��退�?
                             }
                         }
                     }
@@ -1036,12 +1060,12 @@ impl AgentManager {
                         // ToolUseComplete arm), so the thread state is
                         // consistent; we just need to end the cycle.
                         // Synthesize an assistant message and return Ok.
-                        // 涓庡垵濮?request 澶辫触涓嶅悓, 杩欐潯鏄祦鍒颁竴鍗婃柇鐨?鈹€鈹€
+                        // 与初�?request 失败不同, 这条�?��到一半断�?──
                         // 閮ㄥ垎 tokens 宸茬粡鑺卞湪 reasoning / text / 宸ュ叿
-                        // 璋冪敤涓? 鐢ㄦ埛閲嶅彂鏃朵細鎺ョ潃涓婃鐨勪腑鏂偣缁х画
-                        // (thread.db 鏄湡婧?銆?閿欒鏈韩浠嶇劧鏄?LLM
-                        // 涓嶅彲鐢? 璧板悓涓€鏉?synthesize 璺緞, 浣嗘棩蹇椾笂
-                        // kind 鏍?`llm_stream_mid` 鍖哄垎鍓嶅悗銆?
+                        // 调用�? 用户重发时会接着上�?的中�?��继续
+                        // (thread.db �?���?�?错�?�?��仍然�?LLM
+                        // 不可�? 走同一�?synthesize �?��, 但日志上
+                        // kind �?`llm_stream_mid` 区分前后�?
                         runtime_log::record_agent_event(
                             "error",
                             "llm_stream_mid",
@@ -1096,7 +1120,7 @@ impl AgentManager {
                                 &mut assistant_buffer,
                                 &mut assistant_checkpoint,
                                 &full_response,
-                                app_handle,
+                                emitter,
                                 &run_id,
                             )
                             .await;
@@ -1115,7 +1139,7 @@ impl AgentManager {
                         reasoning_buffer,
                         assistant_buffer,
                         full_response,
-                        app_handle,
+                        emitter,
                         &run_id,
                     )
                     .await;
@@ -1151,7 +1175,7 @@ impl AgentManager {
             }
         }
 
-        // 寰幆璺戞弧 max_cycles 杩樻病 return, 璇存槑 LLM 涓€鐩村湪璋冨伐鍏锋病缁欐渶缁堝洖绛斻€?        // 鍚堟垚涓€鏉℃渶缁堢殑 assistant 娑堟伅钀界洏骞?emit, 璁╃敤鎴风湅鍒版甯哥粨鏉熻€屼笉鏄?        // "agent crashed" 寮圭獥, 鐒跺悗杩斿洖 Ok銆?
+        // �?��跑满 max_cycles 还没 return, 说明 LLM 一直在调工具没给最终回答�?        // 合成一条最终的 assistant 消息落盘�?emit, 让用户看到�?常结束而不�?        // "agent crashed" 弹窗, 然后返回 Ok�?
         let last_tool = last_tool_name
             .as_deref()
             .map(|n| format!(" Last tool: `{}`.", n))
@@ -1161,8 +1185,8 @@ impl AgentManager {
              Try a more specific prompt."
         );
         tracing::warn!("[Agent] agent exceeded max cycles ({max_cycles})");
-        // 鎸佷箙鍖?max-cycles 鐔旀柇 鈹€鈹€ `last_tool` 涓€璧峰啓, 閰嶅悎 thread.db
-        // 閲岀殑 tool_calls 閾捐兘澶嶇洏 LLM 涓轰粈涔?涓€鐩磋皟宸ュ叿涓嶆敹鍙?銆?
+        // 持久�?max-cycles 熔断 ── `last_tool` 一起写, 配合 thread.db
+        // 里的 tool_calls 链能复盘 LLM 为什�?一直调工具不收�?�?
         runtime_log::record_agent_event(
             "warn",
             "max_cycles",
@@ -1175,47 +1199,45 @@ impl AgentManager {
             })),
         );
         return self
-            .finalize_with_synthesized_message(thread_id, synth_msg, app_handle, &run_id)
+            .finalize_with_synthesized_message(thread_id, synth_msg, emitter, &run_id)
             .await;
     }
 
-    /// 鍙栨秷 helper 鈥?`chat_stream_inner` 涓変釜 cancel 绔欑偣鍏辩敤鐨勯€€鍑哄舰鐘躲€?    /// 涓?`finalize_with_synthesized_message` 瀵圭О, 浣嗙敤銆岀敤鎴蜂富鍔ㄥ仠姝€嶇殑
-    /// 鏂囨 (`_(宸插仠姝㈢敓鎴?_`), 涓嶇敤 LLM 涓嶅彲鐢ㄧ殑妯℃澘銆?    ///
-    /// 鎶?suffix 鎷煎埌 `assistant_buffer` 鏈熬鍐?`flush_assistant_message`
-    /// 钀界洏, 鍚屾椂 emit 涓€涓嫭绔嬬殑 `Text` chunk 缁欏墠绔?(UI 鎶婂畠褰撴櫘閫?text
-    /// 杩藉姞, 璺熺敤鎴风湅鍒扮殑瀹炴椂娴佷綋楠屼竴鑷?鈹€鈹€ 涓嶅啀闇€瑕佹柊浜嬩欢绫诲瀷)銆?
+    /// 取消 helper —`chat_stream_inner` 三个 cancel 站点共用的退出形状�?    /// �?`finalize_with_synthesized_message` 对称, 但用「用户主动停�?��的
+    /// 文�? (`_(已停止生�?_`), 不用 LLM 不可用的模板�?    ///
+    /// �?suffix 拼到 `assistant_buffer` �?���?`flush_assistant_message`
+    /// 落盘, 同时 emit 一�?��立的 `Text` chunk 给前�?(UI 把它当普�?text
+    /// 追加, 跟用户看到的实时流体验一�?── 不再需要新事件类型)�?
     pub(super) async fn flush_cancel(
         &self,
         thread_id: &str,
         reasoning_buffer: String,
         assistant_buffer: String,
         full_response: String,
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn AgentChunkEmitter,
         run_id: &str,
     ) -> Result<String, AgentError> {
-        const STOPPED_SUFFIX: &str = "_(宸插仠姝㈢敓鎴?_";
+        const STOPPED_SUFFIX: &str = "_(已停止生�?_";
         tracing::info!(
             "[Agent] chat cancelled by user for thread_id: {}",
             thread_id
         );
-        // 鎺ㄧ悊妯″瀷浼氬厛 reasoning 鍐?text, 涓柇鏃惰淇濈暀鎬濊€冪棔杩广€?
+        // 推理模型会先 reasoning �?text, �?��时�?保留思考痕迹�?
         if !reasoning_buffer.is_empty() {
             self.flush_reasoning_message(thread_id, &reasoning_buffer)
                 .await?;
         }
-        // 钀界洏鏈€缁?assistant 琛?= 鍘熸祦寮忕疮绉?+ 鍋滄鏍囪; 鍚屼竴琛?emit 缁?UI銆?
+        // 落盘最�?assistant �?= 原流式累�?+ 停�?标�?; 同一�?emit �?UI�?
         let final_assistant = format!("{assistant_buffer}{STOPPED_SUFFIX}");
-        emit_chunk_with_run_id(
-            app_handle,
+        emitter.emit(
             &AgentChunk::Text {
                 thread_id: thread_id.to_string(),
                 text: STOPPED_SUFFIX.to_string(),
             },
-            FLOWIX_AGENT_TYPE,
             run_id,
         );
-        // 濮嬬粓钀戒竴鏉?(鍝€?assistant_buffer 涓虹┖), 璁?thread 閲屾湁鏄庣‘鐨?        // 鍔╂墜缁撴潫鏍囪; `flush_assistant_message` 鑷韩鏈?is_empty 鐭矾,
-        // 浣嗘垜浠繖閲屼紶鐨勬槸甯?suffix 鐨勯潪绌轰覆, 涓€瀹氳惤鐩樸€?
+        // 始终落一�?(�?�?assistant_buffer 为空), �?thread 里有明��?        // 助手结束标�?; `flush_assistant_message` �?���?is_empty �?��,
+        // 但我�?��里传的是�?suffix 的非空串, 一定落盘�?
         self.flush_assistant_message(thread_id, &final_assistant, None)
             .await?;
         self.clear_tool_call_attempts(thread_id).await;

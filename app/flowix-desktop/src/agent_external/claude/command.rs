@@ -10,20 +10,23 @@ pub(crate) fn resolve_claude_cwd(
     message: &crate::agent_flowix::AgentUserMessage,
     session_id: Option<&str>,
 ) -> Option<PathBuf> {
-    let from_ipc = message
-        .cwd_for_runtime(AGENT_TYPE)
-        .map(PathBuf::from)
-        .filter(|p| p.is_dir());
-    if let Some(cwd) = from_ipc {
-        return Some(cwd);
-    }
-
+    // Claude stores conversations under a cwd-derived project directory.
+    // Resuming from another valid IPC cwd makes the CLI report that the
+    // session does not exist, so the persisted session cwd is authoritative.
     if let Some(sid) = session_id.filter(|s| !s.trim().is_empty()) {
         if let Ok(Some(cwd)) = claude_session_cwd(sid) {
             if cwd.is_dir() {
                 return Some(cwd);
             }
         }
+    }
+
+    let from_ipc = message
+        .cwd_for_runtime(AGENT_TYPE)
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir());
+    if let Some(cwd) = from_ipc {
+        return Some(cwd);
     }
 
     None
@@ -70,7 +73,6 @@ pub(crate) fn build_claude_command(
         cmd.args(["--model", model]);
     }
     append_additional_workspace_dirs(&mut cmd, cwd, workspace_paths);
-    cmd.arg("");
     crate::agent_external::shared::configure_unix_process_group(&mut cmd);
     cmd
 }

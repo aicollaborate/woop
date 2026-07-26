@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::agent_types::{StatusInfo, UsageInfo};
 
 /// `agent-chunk` 浜嬩欢閲岀殑 `agent_type` 瀛楁 鈹€鈹€ Flowix 璺緞鍐欐 "flowix",
-/// 璺?CLI managers 鐨?`FlowixProviderKind::Flowix.key()` 瀵归綈銆傚墠绔?/// `dispatchAgentChunk` 鎷胯繖涓€煎仛鎸?runtime 璺敱鐨?fallback (e.g. Codex /
-/// Claude / Gemini 涓嶄細浼?`agent_type` 鏃? 鐢?`threadTypes[tid]` 鍏滃簳,
-/// Flowix 鐩存帴璧拌繖鏉′笉闇€瑕?fallback)銆?
+/// �?CLI managers �?`FlowixProviderKind::Flowix.key()` 对齐。前�?/// `dispatchAgentChunk` 拿这�?��做�?runtime �?���?fallback (e.g. Codex /
+/// Claude / Gemini 不会�?`agent_type` �? �?`threadTypes[tid]` 兜底,
+/// Flowix 直接走这条不需�?fallback)�?
 pub(super) const FLOWIX_AGENT_TYPE: &str = "flowix";
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -17,11 +17,11 @@ pub struct RuntimePathConfig {
     /// Sandbox / 鏉冮檺妗ｄ綅 鈹€鈹€ "read-only" / "workspace-write" /
     /// "danger-full-access" / "inherit"銆?鍚?CLI 鑷 normalize銆?
     pub permission_mode: Option<String>,
-    /// LLM model id(鑻ヨ provider 鏀寔鍙厤缃?銆?
+    /// LLM model id(若�? provider �?���?���?�?
     /// 閫氱敤 metadata 鍗忚瀛楁 鈹€鈹€ `StreamStart` chunk 閫氳繃 `model_for_runtime` 鍙栧€笺€?
     pub model: Option<String>,
-    /// 鎺ㄧ悊 effort("low" / "medium" / "high" / "xhigh")銆?
-    /// 閫氱敤 metadata 鍗忚瀛楁,Provider 涓嶆敮鎸佹椂涓?None銆?
+    /// 推理 effort("low" / "medium" / "high" / "xhigh")�?
+    /// 通用 metadata 协�?字�?,Provider 不支持时�?None�?
     pub reasoning_effort: Option<String>,
 }
 
@@ -46,8 +46,8 @@ pub struct AgentUserMessage {
     pub run_id: Option<String>,
     pub system_reminder_directory: Option<String>,
     /// 閫変腑 Agent 绫诲瀷 鈹€鈹€ `'flowix' | 'codex' | 'claude'` (JSON wire: `agentType`).
-    /// 鍓嶇 chat-store.ts `agent.chatStream()` 绗簩涓叆鍙?payload 瀛楁.
-    /// 鍚庣鎸夊€煎垎娴?(瑙?`commands/agent.rs:chat_with_agent_stream`).
+    /// 前�? chat-store.ts `agent.chatStream()` �?���?���?payload 字�?.
+    /// 后�?按值分�?(�?`commands/agent.rs:chat_with_agent_stream`).
     pub agent_type: Option<String>,
     pub runtime_config: Option<AgentRuntimeConfig>,
     pub permission_mode: Option<String>,
@@ -61,7 +61,7 @@ pub struct AgentUserMessage {
 }
 
 impl AgentUserMessage {
-    /// 鍏变韩 accessor 鈹€鈹€ 鎵€鏈?dispatch 鏂规硶閮戒粠杩欓噷鍙栬 runtime 鐨勯厤缃€?    /// 鏃╂湡瀹炵幇鏄?7 涓柟娉曞悇鑷?match typeKey, 鐜板湪缁熶竴涓€澶勩€?
+    /// 共享 accessor ── 所�?dispatch 方法都从这里取�? runtime 的配�?�?    /// 早期实现�?7 �?��法各�?match typeKey, 现在统一一处�?
     fn runtime_config_for(&self, runtime: &str) -> Option<&RuntimePathConfig> {
         let config = self.runtime_config.as_ref()?;
         match runtime {
@@ -106,14 +106,14 @@ impl AgentUserMessage {
         self.reasoning_effort_for_runtime("codex")
     }
 
-    /// 閫氱敤: 浠绘剰 provider 鐨?model 瀛楁(鐢?StreamStart chunk 浣跨敤)銆?    /// 浼樺厛浠?`runtime_config.{type}.model` 鍙? fallback 鍒伴《灞?`codex_model` 瀛楁銆?
+    /// 通用: 任意 provider �?model 字�?(�?StreamStart chunk 使用)�?    /// 优先�?`runtime_config.{type}.model` �? fallback 到顶�?`codex_model` 字�?�?
     pub fn model_for_runtime(&self, runtime: &str) -> Option<&str> {
         self.runtime_config_for(runtime)
             .and_then(|config| config.model.as_deref())
             .or(self.codex_model.as_deref())
     }
 
-    /// 閫氱敤: 浠绘剰 provider 鐨?reasoning effort銆?
+    /// 通用: 任意 provider �?reasoning effort�?
     pub fn reasoning_effort_for_runtime(&self, runtime: &str) -> Option<&str> {
         self.runtime_config_for(runtime)
             .and_then(|config| config.reasoning_effort.as_deref())
@@ -124,14 +124,14 @@ impl AgentUserMessage {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentChatResponse {
-    /// Fire-and-forget 鍚庢案杩滄槸绌轰覆 鈹€鈹€ `chat_stream` 鍐呴儴 spawn 鍚庣珛鍒?
-    /// `Ok(String::new())` 杩斿洖銆傜湡姝ｇ殑鍔╂墜鍥炵瓟璧?`agent-chunk` 浜嬩欢鐨?
-    /// `Text` / `Reasoning` 鍙樹綋銆備繚鐣欏瓧娈垫槸涓轰簡涓嶇牬鍧忔棦鏈?IPC 褰㈢姸銆?
+    /// Fire-and-forget 后永远是空串 ── `chat_stream` 内部 spawn 后立�?
+    /// `Ok(String::new())` 返回。真正的助手回答�?`agent-chunk` 事件�?
+    /// `Text` / `Reasoning` 变体。保留字段是为了不破坏既�?IPC 形状�?
     pub response: String,
 }
 
-/// `agent_running_threads` IPC 杩斿洖鍊?鈹€鈹€ 涓€涓?thread_id 鈫?鍏冧俊鎭殑蹇収銆?/// 鍚姩鏃跺墠绔媺涓€娆? seed `threadStates[].isLoading = true`銆?///
-/// `started_at` 鐢ㄩ€? UI 鏄剧ず"X 鍒嗛挓鍓嶅紑濮?; Phase 1 涓昏鐢?isLoading 甯冨皵銆?/// `current_tool` 鏆備负 None (瑙?[`AgentManager::running_threads`])銆?
+/// `agent_running_threads` IPC 返回�?── 一�?thread_id �?元信�?���?���?/// �?��时前�?��一�? seed `threadStates[].isLoading = true`�?///
+/// `started_at` 用�? UI 显示"X 分钟前开�?; Phase 1 主�?�?isLoading 布尔�?/// `current_tool` 暂为 None (�?[`AgentManager::running_threads`])�?
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RunInfo {
@@ -167,28 +167,28 @@ impl RunInfo {
     }
 }
 
-/// agent 娴佸紡鍗忚 鈥?emit 鍒?`agent-chunk` 浜嬩欢, 鍓嶇 `client.ts:listenToAgentStream`
-/// 鐢?`listen<AgentChunk>` 鎺ユ敹銆傚墠绔?TypeScript 闀滃儚瑙?/// `app/flowix-web/types/agent.ts` 鐨勫悓鍚嶇被鍨嬨€?///
-/// 鐢?`#[serde(tag = "kind")]` 鍐呴儴鏍囩, 鍓嶇 `switch (chunk.kind)` 鍒ゅ埆;
+/// agent 流式协�? —emit �?`agent-chunk` 事件, 前�? `client.ts:listenToAgentStream`
+/// �?`listen<AgentChunk>` 接收。前�?TypeScript 镜像�?/// `app/flowix-web/types/agent.ts` 的同名类型�?///
+/// �?`#[serde(tag = "kind")]` 内部标�?, 前�? `switch (chunk.kind)` 判别;
 /// 鏇挎崲涔嬪墠 `[REASONING]:` / `[TOOL_CALL]:` / `[TOOL_RESULT]:` / `[ERROR]:`
-/// 瀛楃涓插墠缂€鍗忚 鈹€鈹€ 閭ｇ鍗忚涓?[ERROR] chunk 浼氳鍓嶇 fallthrough 褰撴垚鏅€氭枃鏈?/// 鎷煎埌 assistant 姝ｆ枃, 杩欓噷鏄粨鏋勫寲閿欒浜嬩欢銆?///
-/// **姣忎釜鍙樹綋閮藉甫 `thread_id`** 鈥?澶氬璇濆悗鍙板苟琛屾椂, 鍓嶇 store 鎸?thread_id
-/// 娲惧彂鍒?`threadStates[tid]`, 浜掍笉涓插彴銆?///
-/// **Wire 褰㈢姸**: Tauri `app.emit("agent-chunk", &chunk)` 涓嶇粡杩?IPC 鍙傛暟
-/// camelCase 杞崲, 鐩存帴鐢?serde 搴忓垪鍖栫粨鏋溿€俙AgentChunk` 浣跨敤鍐呴儴 tag:
-/// `kind` 鎸?snake_case 杈撳嚭, 瀛楁鍚嶄繚鎸?snake_case 鈹€鈹€ `thread_id` 鍦?JSON 閲屽氨鏄?`thread_id`銆?/// TS 绔?listener 鎷垮埌鐨?`payload.thread_id` 涓?Rust 瀛楁鍚屽悕
-/// (涓庣幇鏈?`memo-event` 鐨?`payload.memo` / `payload.source` 鍛藉悕涔犳儻涓€鑷?銆?/// 杩欒窡 IPC command args/returns 鐨?`camelCase` 绾﹀畾鏄袱濂楄鍒?鈹€鈹€
-/// 鍚庤€呮湁 Tauri 鑷姩杞崲, 鍓嶈€呮病鏈? 涓嶈娣枫€?///
-/// `StreamStart` / `StreamEnd` 鏄敓鍛藉懆鏈熷彉浣? 鐢?`chat_stream` 澶栧眰鍦?/// insert / remove cancel_flag 鏃跺悇 emit 涓€娆?鈹€鈹€ 瑕嗙洊鎵€鏈夐€€鍑鸿矾寰?/// (Ok / Err / panic-via-drop)銆傚墠绔潬瀹冧滑鏀舵暃 `isLoading`, 涓嶅啀渚濊禆
-/// IPC `chat_with_agent_stream` 鐨?await finally 鍧?(璇?IPC 鍦ㄦ柊妯″瀷涓?/// 绔嬪嵆杩斿洖, 涓嶅啀绛夊緟 stream 璺戝畬)銆?
+/// 字�?串前缀协�? ── 那�?协�?�?[ERROR] chunk 会�?前�? fallthrough 当成�?��文�?/// 拼到 assistant 正文, 这里�?��构化错�?事件�?///
+/// **每个变体都带 `thread_id`** —多�?话后台并行时, 前�? store �?thread_id
+/// 派发�?`threadStates[tid]`, 互不串台�?///
+/// **Wire 形状**: Tauri `app.emit("agent-chunk", &chunk)` 不经�?IPC 参数
+/// camelCase �?��, 直接�?serde 序列化结果。`AgentChunk` 使用内部 tag:
+/// `kind` �?snake_case 输出, 字�?名保�?snake_case ── `thread_id` �?JSON 里就�?`thread_id`�?/// TS �?listener 拿到�?`payload.thread_id` �?Rust 字�?同名
+/// (与现�?`memo-event` �?`payload.memo` / `payload.source` 命名习惯一�?�?/// 这跟 IPC command args/returns �?`camelCase` 约定�?��套�?�?──
+/// 后者有 Tauri �?���?��, 前者没�? 不�?混�?///
+/// `StreamStart` / `StreamEnd` �?��命周期变�? �?`chat_stream` 外层�?/// insert / remove cancel_flag 时各 emit 一�?── 覆盖所有退出路�?/// (Ok / Err / panic-via-drop)。前�?��它们收敛 `isLoading`, 不再依赖
+/// IPC `chat_with_agent_stream` �?await finally �?(�?IPC 在新模型�?/// 立即返回, 不再等待 stream 跑完)�?
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentChunk {
     /// 鍔╂墜娴佸紡鍥炵瓟 (鏅€?content)
     Text { thread_id: String, text: String },
-    /// 鎺ㄧ悊妯″瀷鐨勬€濊€冭繃绋?(reasoning_content)
+    /// 推理模型的思考过�?(reasoning_content)
     Reasoning { thread_id: String, text: String },
-    /// LLM 鍙戝嚭鐨勫伐鍏疯皟鐢?
+    /// LLM 发出的工具调�?
     ToolCall {
         thread_id: String,
         id: String,
@@ -202,28 +202,28 @@ pub enum AgentChunk {
         name: String,
         result: serde_json::Value,
     },
-    /// 閿欒浜嬩欢 (鍗℃ / 瓒?cycle / stream error / not configured 绛?
+    /// 错�?事件 (卡�? / �?cycle / stream error / not configured �?
     // TODO: evolve into a structured variant ({ kind: "stuck" | "max_cycles" |
     // "stream" | "not_configured", ... }) when the frontend needs to discriminate
     // error sources. v1 keeps the message as opaque String 鈹€鈹€ the wire shape
     // crosses the IPC boundary as JSON and is parsed by `chat-store.ts:switch`.
     Error { thread_id: String, message: String },
-    /// Stream 寮€濮?鈹€鈹€ chat_stream 鍏ュ彛 insert cancel_flag 鍚?emit 涓€娆°€?
-    /// 鍓嶇鍊熸鎶婂搴?thread 鐨?`isLoading` 缃?true銆?
+    /// Stream 开�?── chat_stream 入口 insert cancel_flag �?emit 一欰�?
+    /// 前�?借�?把�?�?thread �?`isLoading` �?true�?
     ///
-    /// **`model` / `reasoning_effort` 鏄 run 閿佸畾鐨?LLM 閰嶇疆** 鈹€鈹€
-    /// 鐢卞悗绔湪 spawn 鏃剁‘瀹?浠庣敤鎴烽厤缃?CLI override 瑙ｆ瀽),涓嶄緷璧?
-    /// streaming 鍝嶅簲涓毚闇茬殑 model 瀛楁(閮ㄥ垎 provider 涓嶈繑鍥?銆?
-    /// 閫氱敤鍗忚: 瀵?OpenAI / Codex / Claude / Gemini 绛夋墍鏈?provider 涓€鑷淬€?
-    /// 瀛楁鍧囦负 Option,鏃?provider 鏆備笉璇嗗埆鏃朵负 None,鍓嶇 fallback 鍒?
-    /// 鍏ㄥ眬閰嶇疆鎴栨樉绀?"鈥?,涓嶇牬鍧忓崗璁€?
+    /// **`model` / `reasoning_effort` �?? run 锁定�?LLM 配置** ──
+    /// 由后�?�� spawn 时��?从用户配�?CLI override 解析),不依�?
+    /// streaming 响应�?��露的 model 字�?(部分 provider 不返�?�?
+    /// 通用协�?: �?OpenAI / Codex / Claude / Gemini 等所�?provider 一致�?
+    /// 字�?均为 Option,�?provider 暂不识别时为 None,前�? fallback �?
+    /// 全局配置或显�?"—,不破坏协�?�?
     StreamStart {
         thread_id: String,
         model: Option<String>,
         reasoning_effort: Option<String>,
     },
-    /// Stream 缁撴潫 鈹€鈹€ chat_stream 鍑哄彛 remove cancel_flag 鍓?emit 涓€娆°€?
-    /// 瑕嗙洊鎵€鏈夐€€鍑鸿矾寰?(Ok / Err / panic)銆俙reason` 鍙€? 鐣欎綔鏈潵
+    /// Stream 结束 ── chat_stream 出口 remove cancel_flag �?emit 一欰�?
+    /// 覆盖所有退出路�?(Ok / Err / panic)。`reason` �?�? 留作�?��
     /// 鍖哄垎 "鑷劧瀹屾垚" vs "鐢ㄦ埛涓诲姩 stop" vs "stuck 鐔旀柇" 绛夊満鏅€?
     StreamEnd {
         thread_id: String,
@@ -294,7 +294,7 @@ pub enum AgentError {
     NotConfigured,
     #[error("agent stuck: tool '{tool}' called {count} times with identical arguments")]
     Stuck { tool: String, count: u32 },
-    /// 鍗曟 `chat_stream` 璺ㄦ墍鏈?cycle 绱鐨?`total_tokens` 瓒呭嚭 ai_config 閲?    /// 鐨?`max_total_tokens` 涓婇檺 鈹€鈹€ 閰嶅悎 `finalize_with_synthesized_message` 璧?    /// "assistant 姝ｅ父鏀跺彛 + emit Error chunk" 璺緞, 涓?`Stuck` 鍚屽舰, UI 涓嶅脊
+    /// 单�? `chat_stream` 跨所�?cycle �??�?`total_tokens` 超出 ai_config �?    /// �?`max_total_tokens` 上限 ── 配合 `finalize_with_synthesized_message` �?    /// "assistant 正常收口 + emit Error chunk" �?��, �?`Stuck` 同形, UI 不弹
     /// 閿欒 toast銆俙used` / `budget` 涓€骞跺甫鍥炰究浜庡墠绔睍绀虹敤閲忋€?
     #[error("token budget exceeded: used {used} of {budget} total tokens")]
     TokenBudget { used: u32, budget: u32 },

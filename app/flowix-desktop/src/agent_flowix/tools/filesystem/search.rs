@@ -245,15 +245,15 @@ pub(super) async fn grep(arguments: &str, scope: &ToolScope) -> ToolResult {
     }
     scope.start_accessing_for_path(&root);
     let limit = clamp_limit(args.limit, DEFAULT_GREP_LIMIT, MAX_GREP_LIMIT);
-    // scope.is_allowed 璧?is_allowed(path) 鍦?blocking 闂寘閲岃皟 鈹€鈹€ scope
+    // scope.is_allowed �?is_allowed(path) �?blocking �?��里调 ── scope
     // move 杩涢棴鍖呫€?
     let scope_for_blocking = scope.clone();
     let root_for_blocking = root.clone();
     let blocking_result = tokio::task::spawn_blocking(move || -> Result<GrepOutcome, String> {
         let start = Instant::now();
         let mut out = GrepOutcome::default();
-        // WalkDir 璧版枃浠剁郴缁熷悓姝ラ亶鍘? MAX_GREP_FILES 鎴柇 + 鏂囦欢绾?+
-        // 鎬诲瓧鑺?+ 澧欓挓澶氶噸棰勭畻銆?
+        // WalkDir 走文件系统同步遍�? MAX_GREP_FILES �?�� + 文件�?+
+        // 总字�?+ 墙钟多重预算�?
         let files: Vec<PathBuf> = if root_for_blocking.is_file() {
             vec![root_for_blocking.clone()]
         } else {

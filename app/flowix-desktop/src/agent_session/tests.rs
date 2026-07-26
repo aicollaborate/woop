@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::agent_session::store::ThreadManager;
     use crate::agent_session::types::{
         AgentConversationSource, ChatMessage, NewAgentExternalEvent,
@@ -28,7 +30,7 @@ mod tests {
         }
     }
 
-    async fn seed_thread(manager: &ThreadManager, thread_id: &str, n_messages: usize) {
+    async fn seed_thread(manager: &Arc<ThreadManager>, thread_id: &str, n_messages: usize) {
         manager
             .create_thread(AgentId("test-agent".to_string()), "test thread".to_string())
             .await
@@ -73,7 +75,7 @@ mod tests {
             page.has_more,
             "25 rows, latest 10 returned, 15 older rows remain"
         );
-        assert_eq!(page.oldest_sequence, Some(16)); // msg-15 閺勵垳顑?16 閺?(sequence 娴?1 鐠?
+        assert_eq!(page.oldest_sequence, Some(16)); // msg-15 鏄�?16 �?(sequence �?1 �?
     }
 
     #[tokio::test]
@@ -112,10 +114,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(page.messages.len(), 8);
-        assert!(
-            !page.has_more,
-            "閸忋劑鍎撮幏澶婄暚鐏忚鲸鐥呴張澶嬫纯閺冣晛宸婚崣?"
-        );
+        assert!(!page.has_more, "鍏ㄩ儴鎷夊畬灏辨病鏈夋洿鏃╁巻鍙?");
         assert_eq!(page.oldest_sequence, Some(1));
     }
 
@@ -229,7 +228,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frozen_cwd_round_trips_and_preserves_other_runtime_config_fields() {
+    async fn frozen_cwd_round_trips_outside_frontend_runtime_config() {
         let manager = ThreadManager::for_tests();
         manager
             .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
@@ -276,7 +275,8 @@ mod tests {
             Some(cwd.as_path())
         );
 
-        // Other runtime_config fields the frontend persisted are preserved.
+        // Other runtime_config fields the frontend persisted are preserved,
+        // while the backend-owned cwd lives in its dedicated column.
         let instance = manager
             .find_agent_conversation_by_thread_id("thread-frozen-cwd")
             .await
@@ -286,7 +286,123 @@ mod tests {
             serde_json::from_str(instance.runtime_config.as_deref().unwrap()).unwrap();
         assert_eq!(rc["workspaceSnapshot"]["cwd"], "/old");
         assert_eq!(rc["model"]["key"], "sonnet");
-        assert_eq!(rc["frozenCwd"], "/tmp/flowix-frozen-cwd");
+        assert!(rc.get("frozenCwd").is_none());
+        assert_eq!(
+            instance.frozen_cwd.as_deref(),
+            Some("/tmp/flowix-frozen-cwd")
+        );
+
+        // A stale frontend upsert replaces runtime_config but cannot clear the
+        // server-owned cwd column.
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "inst-frozen-cwd".to_string(),
+                agent_type: "claude".to_string(),
+                title: "frontend refresh".to_string(),
+                thread_id: Some("thread-frozen-cwd".to_string()),
+                runtime_config: Some(
+                    r#"{"model":{"key":"opus"},"frozenCwd":"/stale/frontend"}"#.to_string(),
+                ),
+                source: AgentConversationSource {
+                    kind: "thread-card".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .read_frozen_cwd("thread-frozen-cwd")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(cwd.as_path())
+        );
+        let refreshed = manager
+            .find_agent_conversation_by_thread_id("thread-frozen-cwd")
+            .await
+            .unwrap()
+            .unwrap();
+        let refreshed_config: serde_json::Value =
+            serde_json::from_str(refreshed.runtime_config.as_deref().unwrap()).unwrap();
+        assert!(refreshed_config.get("frozenCwd").is_none());
+    }
+
+    #[tokio::test]
+    async fn external_session_binding_atomically_reconciles_authoritative_cwd() {
+        let manager = ThreadManager::for_tests();
+        manager
+            .update_title(
+                "claude-local-cwd",
+                "Claude cwd".to_string(),
+                AgentId("claude".to_string()),
+            )
+            .await
+            .unwrap();
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "inst-claude-cwd".to_string(),
+                agent_type: "claude".to_string(),
+                title: "Claude cwd".to_string(),
+                thread_id: Some("claude-local-cwd".to_string()),
+                runtime_config: None,
+                source: AgentConversationSource {
+                    kind: "thread-card".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+        manager
+            .upsert_frozen_cwd("claude-local-cwd", std::path::Path::new("/wrong/notebook"))
+            .await
+            .unwrap();
+
+        let sid = "e3c89515-4fdc-4952-becc-3988179cc89e";
+        manager
+            .upsert_external_session(
+                "claude-local-cwd",
+                "claude",
+                sid,
+                Some(serde_json::json!({ "cwd": "/project/flowix-main" })),
+            )
+            .await
+            .unwrap();
+        // A resumed process reports its canonical id as thread_id. This must
+        // update the existing product mapping rather than violate its UNIQUE
+        // external-session constraint.
+        manager
+            .upsert_external_session(
+                sid,
+                "claude",
+                sid,
+                Some(serde_json::json!({ "cwd": "/project/flowix-main" })),
+            )
+            .await
+            .unwrap();
+
+        for identity in ["claude-local-cwd", sid] {
+            assert_eq!(
+                manager.read_frozen_cwd(identity).await.unwrap().as_deref(),
+                Some(std::path::Path::new("/project/flowix-main"))
+            );
+        }
+        assert_eq!(
+            manager
+                .find_thread_by_external_session(sid, "claude")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("claude-local-cwd")
+        );
     }
 
     #[tokio::test]
@@ -416,7 +532,7 @@ mod tests {
             .expect("seed legacy table");
         }
 
-        let manager = ThreadManager::new(db_path).expect("migrate legacy db");
+        let manager = Arc::new(ThreadManager::new(db_path).expect("migrate legacy db"));
         let events = manager
             .list_agent_external_events_by_thread("thread-legacy", None, 10)
             .await
@@ -442,7 +558,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("read user_version");
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
     }
 
     #[test]
@@ -486,6 +602,62 @@ mod tests {
         assert!(columns
             .iter()
             .any(|column| column == "session_metadata_json"));
+    }
+
+    #[tokio::test]
+    async fn migration_backfills_dedicated_frozen_cwd_from_legacy_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open legacy db");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE agent_conversation_instances (
+                    instance_id TEXT PRIMARY KEY,
+                    agent_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    thread_id TEXT,
+                    runtime_config TEXT,
+                    source_kind TEXT NOT NULL DEFAULT 'thread-card',
+                    source_document_path TEXT,
+                    source_memo_id TEXT,
+                    role_memo_id TEXT,
+                    role_name TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO agent_conversation_instances (
+                    instance_id, agent_type, title, thread_id, runtime_config,
+                    source_kind, created_at, updated_at
+                ) VALUES
+                    ('legacy-frozen', 'claude', 'legacy', 'thread-legacy-frozen',
+                     '{"frozenCwd":"/legacy/frozen","workspaceSnapshot":{"cwd":"/snapshot/ignored"}}',
+                     'thread-card', 1, 1),
+                    ('snapshot-fallback', 'claude', 'snapshot', 'thread-snapshot-fallback',
+                     '{"workspaceSnapshot":{"cwd":"/snapshot/recovered"}}',
+                     'thread-card', 1, 1);
+                "#,
+            )
+            .expect("seed legacy conversation table");
+        }
+
+        let manager = Arc::new(ThreadManager::new(db_path).expect("migrate legacy db"));
+        let legacy = manager
+            .find_agent_conversation_by_thread_id("thread-legacy-frozen")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy.frozen_cwd.as_deref(), Some("/legacy/frozen"));
+        let legacy_config: serde_json::Value =
+            serde_json::from_str(legacy.runtime_config.as_deref().unwrap()).unwrap();
+        assert!(legacy_config.get("frozenCwd").is_none());
+
+        let recovered = manager
+            .find_agent_conversation_by_thread_id("thread-snapshot-fallback")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.frozen_cwd.as_deref(), Some("/snapshot/recovered"));
     }
 
     #[tokio::test]
@@ -613,7 +785,7 @@ mod tests {
             .expect("seed legacy identity tables");
         }
 
-        let manager = ThreadManager::new(db_path).expect("migrate db");
+        let manager = Arc::new(ThreadManager::new(db_path).expect("migrate db"));
 
         assert!(manager
             .get_thread_info("019f-test-canonical-migrate")

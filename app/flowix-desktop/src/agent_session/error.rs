@@ -9,4 +9,6 @@ pub enum ThreadError {
     Sqlite(#[from] rusqlite::Error),
     #[error("thread not found: {0}")]
     NotFound(String),
+    #[error("thread store join error: {0}")]
+    Join(String),
 }

@@ -10,8 +10,8 @@ use super::history::{get_rollout_tool_response_items_since, is_codex_session_id}
 use super::io::read_capped_line;
 use super::runtime::persist_and_emit_codex_chunk;
 use super::tool_events::nested_exec_tool_names;
-use super::{truncate_for_log, AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
-use crate::agent_external::ExternalRunRegistry;
+use super::{AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
+use crate::agent_external::{truncate_for_log, ExternalRunRegistry};
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
@@ -20,7 +20,7 @@ pub(crate) async fn read_codex_stdout<R>(
     thread_id: String,
     run_id: String,
     app_handle: tauri::AppHandle,
-    thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
     reader: BufReader<R>,
     stream_end_emitted: Arc<AtomicBool>,
@@ -117,8 +117,7 @@ where
                     Some(AGENT_TYPE),
                     Some(serde_json::json!({ "session_id": session_id })),
                 );
-                let manager = thread_manager.read().await;
-                if let Err(err) = manager
+                if let Err(err) = thread_manager
                     .upsert_external_session(
                         &thread_id,
                         AGENT_TYPE,

@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::RwLock;
 
-/// 杩涚▼绾?external CLI 璺緞娉ㄥ唽琛?鈹€鈹€ 鍚姩鏃剁敱 `agent_external_config` 妯″潡浠?/// `~/.flowix/agent-external-config.json` 鍔犺浇骞堕€氳繃 `set_external_cli_registry`
-/// 鐏屽叆銆俙None` = 鏈惎鐢?(鍐峰惎鍔ㄥ皻鏈姞杞?/ 鍗曟祴), 姝ゆ椂 `resolve_external_cli`
+/// 进程�?external CLI �?��注册�?── �?��时由 `agent_external_config` 模块�?/// `~/.flowix/agent-external-config.json` 加载并通过 `set_external_cli_registry`
+/// 灌入。`None` = �?���?(冷启动尚�?���?/ 单测), 此时 `resolve_external_cli`
 /// 閫€鍖栦负鍘熸帰娴嬮摼鐨勭函鍑芥暟琛屼负, 淇濊瘉鐜版湁鍗曟祴闆舵敼鍔ㄣ€?///
-/// "鍞竴鍙傜収"璇箟: 娉ㄥ唽琛ㄥ懡涓嵆鐢? 涓嶆牎楠屽彲鎵ц鎬с€佷笉鍥為€€鎺㈡祴銆俻ath 澶辨晥鐢?/// 涓婂眰 `executable_available` 鍒?false 鏍囩孩, 鐢卞亸濂借缃殑"閲嶆柊鎺㈡祴"鎸夐挳瑙﹀彂
-/// 閲嶆帰 鈹€鈹€ 杩愯鏃剁粷涓嶈嚜鍔?fallback銆俴ey = `ExternalCliSpec::binary_name`銆?
+/// "�?��参照"�?��: 注册表命�?���? 不校验可执�?性、不回退探测。path 失效�?/// 上层 `executable_available` �?false 标红, 由偏好�?�?��"重新探测"按钮触发
+/// 重探 ── 运�?时绝不自�?fallback。key = `ExternalCliSpec::binary_name`�?
 static REGISTRY: RwLock<Option<HashMap<String, PathBuf>>> = RwLock::new(None);
 
 pub(crate) struct ExternalCliSpec {
@@ -25,15 +25,15 @@ pub(crate) fn no_extra_candidates() -> Vec<PathBuf> {
 }
 
 pub(crate) fn resolve_external_cli(spec: &ExternalCliSpec) -> PathBuf {
-    // 鍞竴鍙傜収: 娉ㄥ唽琛ㄩ噷鏈夎 CLI 鐨勮褰曞氨鐩存帴鐢? 涓嶆牎楠屽彲鎵ц鎬с€佷笉鍥為€€鎺㈡祴銆?
+    // �?��参照: 注册表里有�? CLI 的�?录就直接�? 不校验可执�?性、不回退探测�?
     if let Some(path) = lookup_registry(spec.binary_name) {
         return path;
     }
     resolve_external_cli_uncached(spec)
 }
 
-/// 璺宠繃娉ㄥ唽琛ㄧ殑绾帰娴嬮摼 鈹€鈹€ 渚涘惎鍔ㄦ帰娴?/ 閲嶆柊鎺㈡祴 / 鍗曟祴浣跨敤銆?///
-/// 浼樺厛绾? env var > PATH `which` > 鍥哄畾鍊欓€夌洰褰?> 鐧诲綍 shell `command -v`銆?
+/// 跳过注册表的�?��测链 ── 供启动探�?/ 重新探测 / 单测使用�?///
+/// 优先�? env var > PATH `which` > 固定候选目�?> 登录 shell `command -v`�?
 pub(crate) fn resolve_external_cli_uncached(spec: &ExternalCliSpec) -> PathBuf {
     for env_var in spec.env_vars {
         if let Ok(path) = std::env::var(env_var) {
@@ -85,8 +85,8 @@ fn lookup_registry(binary_name: &str) -> Option<PathBuf> {
         .and_then(|map| map.get(binary_name).cloned())
 }
 
-/// 鍚姩鏃舵妸 JSON config 鐨勫唴瀛橀暅鍍忕亴杩涙敞鍐岃〃銆傛鍚?`resolve_external_cli`
-/// 鍛戒腑鍗崇敤, 涓嶅啀姣忔潯娑堟伅璺戞帰娴嬮摼銆?
+/// �?��时把 JSON config 的内存镜像灌进注册表。�?�?`resolve_external_cli`
+/// 命中即用, 不再每条消息跑探测链�?
 pub(crate) fn set_external_cli_registry(entries: HashMap<String, PathBuf>) {
     *REGISTRY.write().unwrap_or_else(|poisoned| {
         tracing::error!("external CLI registry lock poisoned, recovering");
@@ -94,7 +94,7 @@ pub(crate) fn set_external_cli_registry(entries: HashMap<String, PathBuf>) {
     }) = Some(entries);
 }
 
-/// 鏇存柊娉ㄥ唽琛ㄥ崟椤?鈹€鈹€ 鐢ㄦ埛鏀?path / 閲嶆柊鎺㈡祴鍚庤皟鐢ㄣ€?/// `path = None` 绉婚櫎璇ラ」, 浣?`resolve_external_cli` 鍥為€€鎺㈡祴 (閲嶆柊鎺㈡祴鐢?銆?
+/// 更新注册表单�?── 用户�?path / 重新探测后调用�?/// `path = None` 移除该项, �?`resolve_external_cli` 回退探测 (重新探测�?�?
 pub(crate) fn update_external_cli_path(binary_name: &str, path: Option<PathBuf>) {
     let mut guard = REGISTRY.write().unwrap_or_else(|poisoned| {
         tracing::error!("external CLI registry lock poisoned, recovering");
@@ -116,7 +116,7 @@ pub(crate) fn update_external_cli_path(binary_name: &str, path: Option<PathBuf>)
     }
 }
 
-/// 鍗曟祴涓撶敤: 鎶婃敞鍐岃〃娓呭洖 `None`, 鎭㈠绾嚱鏁版帰娴嬭涓? 闅旂娴嬭瘯闂村壇浣滅敤銆?
+/// 单测专用: 把注册表清回 `None`, 恢�?�?��数探测�?�? 隔�?测试间副作用�?
 #[cfg(test)]
 pub(crate) fn reset_external_cli_registry_for_test() {
     *REGISTRY

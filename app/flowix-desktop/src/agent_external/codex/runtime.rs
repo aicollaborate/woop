@@ -1,10 +1,8 @@
 //! Codex-specific runtime helpers kept inside the `codex` module because they
-//! gate on a Codex-named env var. The shared `emit_chunk_with_run_id` and
-//! `resolve_run_id` helpers now live in `crate::agent_external`; we re-export
-//! them here so existing `use crate::agent_external::codex::runtime::鈥 call
-//! sites stay compiling.
+//! gate on a Codex-named env var. Generic chunk emission lives in
+//! `crate::agent_external` and is reused by the Codex persistence adapter.
 
-pub use crate::agent_external::{emit_chunk_with_run_id, resolve_run_id};
+use crate::agent_external::emit_chunk_with_run_id;
 
 use std::sync::Arc;
 
@@ -21,7 +19,7 @@ pub fn diagnostics_enabled() -> bool {
 }
 
 pub async fn persist_codex_chunk(
-    thread_manager: &Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     chunk: &AgentChunk,
     run_id: &str,
     raw_json: Option<&str>,
@@ -38,7 +36,7 @@ pub async fn persist_codex_chunk(
 
 pub async fn persist_and_emit_codex_chunk(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     chunk: &AgentChunk,
     run_id: &str,
     raw_json: Option<&str>,

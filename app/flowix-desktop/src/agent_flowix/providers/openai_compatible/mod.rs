@@ -145,8 +145,8 @@ impl OpenAICompatibleConfig {
 }
 
 /// OpenAI-compatible provider using /v1/chat/completions endpoint.
-/// 娴佸紡鍏ュ彛璧?[`Self::chat_stream_tagged`] 鈹€鈹€ 鎷跨粨鏋勫寲 `OpenAICompatibleStreamItem`
-/// (reasoning / text 鍒嗙, 鏃?`[REASONING]:` 瀛楃涓插墠缂€)銆傞潪娴佸紡璧?/// [`Self::chat_with_tools`] 鈹€鈹€ `AgentChatProvider::chat_with_tools` 鍦?/// Rllm 娴佸紡涓嶆敮鎸佹椂闄嶇骇鍒伴潪娴佸紡鏃惰皟銆?
+/// 流式入口�?[`Self::chat_stream_tagged`] ── 拿结构化 `OpenAICompatibleStreamItem`
+/// (reasoning / text 分�?, �?`[REASONING]:` 字�?串前缀)。非流式�?/// [`Self::chat_with_tools`] ── `AgentChatProvider::chat_with_tools` �?/// Rllm 流式不支持时降级到非流式时调�?
 #[derive(Debug, Clone)]
 pub struct OpenAICompatibleProvider {
     config: Arc<OpenAICompatibleConfig>,
@@ -155,17 +155,17 @@ pub struct OpenAICompatibleProvider {
 
 impl OpenAICompatibleProvider {
     pub fn new(config: OpenAICompatibleConfig) -> Self {
-        // 鐢?`connect_timeout` 闄愬埗鎻℃墜, `read_timeout` 瀹瑰繊闀挎祦寮忕敓鎴愭湡闂?        // 鍗曞抚绌洪棽 鈥?涔嬪墠涓€涓?60s `Client::timeout()` 鏄?*鎬?*瓒呮椂, 鎺ㄧ悊
-        // 妯″瀷棣栧瓧鑺傛參 + 澶?payload write 宸ュ叿涓嬩竴杞?reload 涓夎€呬竴鍙犲姞灏?        // 瀹规槗鍦ㄦ祦杩樻病寮€濮嬫椂灏辫鎴柇, 閿欒杩樹細琚?reqwest 鐨?`Kind::Decode`
-        // 鍖呰鎴愯瀵兼€х殑 "error decoding response body"銆?        //
-        // 涓嶅啀璁炬€昏秴鏃? `read_timeout(120s)` 鍦ㄦ瘡涓?frame 鏀跺埌鏃堕噸缃? 闀?        // 鐢熸垚鍙鎸佺画鍚?chunk 灏变笉浼氳Е鍙? 鐪熻鍏滃簳鍙湪璋冪敤鏂规寜 cycle
-        // 鍔?wall-clock cap, 涓嶅簲璇ュ湪杩欎竴灞傜‖鍒囥€?
+        // �?`connect_timeout` 限制握手, `read_timeout` 容忍长流式生成期�?        // 单帧空闲 —之前一�?60s `Client::timeout()` �?*�?*超时, 推理
+        // 模型首字节慢 + �?payload write 工具下一�?reload 三者一叠加�?        // 容易在流还没开始时就�?�?��, 错�?还会�?reqwest �?`Kind::Decode`
+        // 包�?成�?导性的 "error decoding response body"�?        //
+        // 不再设总超�? `read_timeout(120s)` 在每�?frame 收到时重�? �?        // 生成�??持续�?chunk 就不会触�? 真�?兜底�?��调用方按 cycle
+        // �?wall-clock cap, 不应该在这一层硬切�?
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(std::time::Duration::from_secs(120))
-            // L1-a: 鍏虫帀 hyper 閫忔槑瑙ｅ帇 鈥?SSE 娴佺殑 chunked body 涓嶅簲琚?            //        gzip/brotli 涓棿灞傛敼鍐? 鍚﹀垯 zstd 澶磋В鏋愬け璐ヤ細鍐掓场涓?            //        Kind::Decode, 鏍瑰洜鍏跺疄鏄?缃戝叧娉ㄥ叆閫忔槑瑙ｅ帇"銆傚悓鏃?            //        閰?Accept-Encoding: identity 鏄惧紡澹版槑"涓嶅帇缂?,
+            // L1-a: 关掉 hyper 透明解压 —SSE 流的 chunked body 不应�?            //        gzip/brotli �?��层改�? 否则 zstd 头解析失败会冒泡�?            //        Kind::Decode, 根因其实�?网关注入透明解压"。同�?            //        �?Accept-Encoding: identity 显式声明"不压�?,
             .no_gzip()
-            // L1-b: 30s 蹇冭烦 鈥?涓棿缃戠粶璁惧 NAT / 闃茬伀澧?60-90s 闈欓粯鍒囨柇
+            // L1-b: 30s 心跳 —�?��网络设�? NAT / 防火�?60-90s 静默切断
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
@@ -184,9 +184,9 @@ impl OpenAICompatibleProvider {
         }
     }
 
-    /// 闈炴祦寮?chat completion 鈹€鈹€ 缁?`AgentChatProvider::chat_with_tools`
-    /// fallback 璺緞鐢?(Rllm 鍒嗘敮娴佸紡涓嶆敮鎸佹椂闄嶇骇鍒伴潪娴佸紡)銆俛gent.rs:192
-    /// 鐩存帴 `provider.chat_with_tools(...)` 璋冪敤, 涓嶈蛋 rllm trait dispatch銆?
+    /// 非流�?chat completion ── �?`AgentChatProvider::chat_with_tools`
+    /// fallback �?���?(Rllm 分支流式不支持时降级到非流式)。agent.rs:192
+    /// 直接 `provider.chat_with_tools(...)` 调用, 不走 rllm trait dispatch�?
     pub async fn chat_with_tools(
         &self,
         messages: &[OpenAICompatibleChatMessage],
@@ -300,7 +300,7 @@ impl OpenAICompatibleProvider {
     fn build_url(&self) -> String {
         let base = self.config.base_url.trim_end_matches('/');
         // 鍏煎涓ょ鍏ュ弬褰㈠紡:
-        //   - "base" (濡?OpenAI 鐨?https://api.openai.com/v1) 鈥斺€?        //     杩藉姞 /chat/completions銆?        //   - 瀹屾暣 endpoint (濡?DeepSeek 閿佸畾鐨?        //     https://api.deepseek.com/chat/completions) 鈥斺€?        //     宸茬粡鍖呭惈璺緞, 涓嶅啀杩藉姞, 閬垮厤鎷兼垚 ".../chat/completions/chat/completions"銆?
+        //   - "base" (�?OpenAI �?https://api.openai.com/v1) —�?        //     追加 /chat/completions�?        //   - 完整 endpoint (�?DeepSeek 锁定�?        //     https://api.deepseek.com/chat/completions) —�?        //     已经包含�?��, 不再追加, 避免拼成 ".../chat/completions/chat/completions"�?
         if base.ends_with("/chat/completions") {
             base.to_string()
         } else {
@@ -574,7 +574,7 @@ impl OpenAICompatibleProvider {
                     index += 1;
                 }
                 _ => {
-                    // Image/Audio/Pdf/ImageURL: 褰撳墠搴旂敤鏈娇鐢? 璺宠繃閬垮厤鎮勬倓涓㈡秷鎭€?
+                    // Image/Audio/Pdf/ImageURL: 当前应用�?���? 跳过避免悄悄丢消�?�?
                     tracing::warn!(
                         "[OpenAI] Skipping unsupported MessageType variant in prepare_messages"
                     );
@@ -596,9 +596,9 @@ impl OpenAICompatibleProvider {
             .map(str::to_string)
     }
 
-    /// 鍐呴儴鍒嗘祦寮忔柟娉? 浜?[`OpenAICompatibleStreamItem`]銆俛gent.rs 鐢ㄨ繖涓柟娉?鈥斺€?    /// 瀹冮渶瑕佹妸 `reasoning_content` 涓?`content` 鍖哄垎寮€, 鐒跺悗鏋勯€?    /// [`crate::agent_flowix::AgentChunk`] 鍙戠粰鍓嶇銆傝繖鏄?OpenAICompatibleProvider
-    /// 鍞竴淇濈暀鐨勬祦寮忓叆鍙? rllm trait 涓婄殑 `chat_stream_with_tools` 宸?    /// `unimplemented!()` (鏃犳椿璺冩秷璐硅€? 瑙?
-    /// impl 娉ㄩ噴)銆?
+    /// 内部分流式方�? �?[`OpenAICompatibleStreamItem`]。agent.rs 用这�?���?—�?    /// 它需要把 `reasoning_content` �?`content` 区分开, 然后构�?    /// [`crate::agent_flowix::AgentChunk`] 发给前�?。这�?OpenAICompatibleProvider
+    /// �?��保留的流式入�? rllm trait 上的 `chat_stream_with_tools` �?    /// `unimplemented!()` (无活跃消费�? �?
+    /// impl 注释)�?
     pub async fn chat_stream_tagged(
         &self,
         messages: &[OpenAICompatibleChatMessage],
@@ -658,7 +658,7 @@ impl OpenAICompatibleProvider {
                 .bearer_auth(&self.config.api_key)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                // L1-d: 鏄惧紡鎷掔粷鍘嬬缉 鈥?涓?builder.no_gzip() 鍙屽悜淇濋櫓,
+                // L1-d: 显式拒绝压缩 —�?builder.no_gzip() 双向保险,
                 .header("Accept-Encoding", "identity")
                 .timeout(timeout)
                 .body(body.clone());
@@ -805,11 +805,11 @@ impl OpenAICompatibleProvider {
                             }
                         }
 
-                        // Token 鐢ㄩ噺鍦ㄦ祦鏈熬鍗曠嫭閫?(椤跺眰 `usage`, 涓嶅湪 choices 閲?銆?                        // 涔嬪墠 `Usage` 瀛楁鍦?ApiStreamChunk 瑙ｆ瀽浣嗕粠鏈璇诲彇 鈹€鈹€
-                        // 鐜板湪閫忎紶缁?agent.rs 鍋氳法 cycle 绱姞 + 棰勭畻鐔旀柇銆?                        // total_tokens 涓?None (缃戝叧娌″～) 鏃朵笉 emit, 閬垮厤鎶?                        // `Some(Usage { total_tokens: 0, .. })` 褰撴垚 0 token 璁″叆銆?                        //
+                        // Token 用量在流�?��单独�?(顶层 `usage`, 不在 choices �?�?                        // 之前 `Usage` 字�?�?ApiStreamChunk 解析但从�??读取 ──
+                        // 现在透传�?agent.rs 做跨 cycle �?�� + 预算熔断�?                        // total_tokens �?None (网关没填) 时不 emit, 避免�?                        // `Some(Usage { total_tokens: 0, .. })` 当成 0 token 计入�?                        //
                         // Compatibility fallback: 鏃?provider 鍙姤
-                        // `prompt_tokens` / `completion_tokens` 鏃?鍦?SSE 瑙ｆ瀽灞?                        // 鎶婂畠浠?fallback 鍒?`input_tokens` / `output_tokens`,
-                        // 杩欐牱涓嬫父 chunk 鍗忚涓嶅啀鎼哄甫 prompt/completion 瀛楁銆?
+                        // `prompt_tokens` / `completion_tokens` �?�?SSE 解析�?                        // 把它�?fallback �?`input_tokens` / `output_tokens`,
+                        // 这样下游 chunk 协�?不再携带 prompt/completion 字�?�?
                         if let Some(usage) = response.usage {
                             if let Some(total) = usage.total_tokens {
                                 queue.push_back(Ok(OpenAICompatibleStreamItem::Usage {
@@ -1345,7 +1345,7 @@ mod tests {
         ));
         let message = LlmChatMessage {
             role: ChatRole::User,
-            content: format!("鎻忚堪杩欏紶鍥?![sample]({})", path.display()),
+            content: format!("描述这张�?![sample]({})", path.display()),
             message_type: MessageType::Text,
         };
         let messages = provider.prepare_messages(&[message.into()]).await.unwrap();
@@ -1367,7 +1367,7 @@ mod tests {
         );
         let message = LlmChatMessage {
             role: ChatRole::User,
-            content: format!("閹诲繗鍫潻娆忕炊閸?![sample]({})", path.display()),
+            content: format!("鎻忚�?��欏紶�?![sample]({})", path.display()),
             message_type: MessageType::Text,
         };
         let messages = provider.prepare_messages(&[message.into()]).await.unwrap();

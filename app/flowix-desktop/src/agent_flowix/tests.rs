@@ -8,12 +8,86 @@ use crate::agent_session::ChatMessage as ThreadChatMessage;
 
 use super::context::{build_llm_context_window, LLM_CONTEXT_RECENT_MESSAGES};
 use super::persistence::tool_call_row_id;
+use super::provider::{
+    AgentChatProvider, AgentInstance, ScriptedProviderTurn, ScriptedStreamEvent,
+};
+use super::providers::OpenAICompatibleStreamItem;
 use super::state::{compute_call_key, STUCK_THRESHOLD};
 use super::stream::{
     classify_llm_failure, extract_llm_error_message, format_llm_unavailable_message,
-    LlmFailureKind,
+    AgentChunkEmitter, LlmFailureKind,
 };
 use super::*;
+
+#[derive(Default)]
+struct RecordingAgentChunkEmitter {
+    chunks: std::sync::Mutex<Vec<AgentChunk>>,
+}
+
+impl AgentChunkEmitter for RecordingAgentChunkEmitter {
+    fn emit(&self, chunk: &AgentChunk, _run_id: &str) {
+        self.chunks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(chunk.clone());
+    }
+}
+
+impl RecordingAgentChunkEmitter {
+    fn chunks(&self) -> Vec<AgentChunk> {
+        self.chunks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+}
+
+fn scripted_user_message() -> AgentUserMessage {
+    AgentUserMessage {
+        content: "hello".to_string(),
+        llm_content: None,
+        image_paths: vec![],
+        run_id: Some("run-scripted".to_string()),
+        system_reminder_directory: None,
+        agent_type: Some("flowix".to_string()),
+        runtime_config: None,
+        permission_mode: None,
+        codex_model: None,
+        codex_reasoning_effort: None,
+        agent_role_memo_id: None,
+        agent_role_name: None,
+        conversation_title: None,
+    }
+}
+
+async fn run_scripted_react_loop(
+    turns: Vec<ScriptedProviderTurn>,
+    cancelled: bool,
+) -> (Result<String, AgentError>, Vec<AgentChunk>) {
+    let manager = AgentManager::for_tests();
+    let thread = manager
+        .thread_manager
+        .create_thread(default_agent_id(), "scripted test".to_string())
+        .await
+        .expect("create scripted test thread");
+    let instance = AgentInstance {
+        provider: AgentChatProvider::scripted(turns),
+        tools: vec![],
+    };
+    let emitter = RecordingAgentChunkEmitter::default();
+    let cancel = Arc::new(AtomicBool::new(cancelled));
+    let result = manager
+        .run_react_loop(
+            &thread.thread_id,
+            scripted_user_message(),
+            instance,
+            &emitter,
+            &cancel,
+            "run-scripted".to_string(),
+        )
+        .await;
+    (result, emitter.chunks())
+}
 
 fn test_thread_message(role: &str, content: &str) -> ThreadChatMessage {
     ThreadChatMessage {
@@ -59,6 +133,113 @@ fn test_tool_result(id: &str) -> ThreadChatMessage {
     message
 }
 
+#[tokio::test]
+async fn scripted_react_loop_streams_reasoning_and_text_to_completion() {
+    let (result, chunks) = run_scripted_react_loop(
+        vec![ScriptedProviderTurn::Stream(vec![
+            ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Reasoning(
+                "thinking".to_string(),
+            )),
+            ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Text("answer".to_string())),
+            ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Done {
+                stop_reason: "stop".to_string(),
+            }),
+        ])],
+        false,
+    )
+    .await;
+
+    assert_eq!(result.expect("scripted run should complete"), "answer");
+    assert!(matches!(
+        chunks.as_slice(),
+        [AgentChunk::Reasoning { text, .. }, AgentChunk::Text { text: answer, .. }]
+            if text == "thinking" && answer == "answer"
+    ));
+}
+
+#[tokio::test]
+async fn scripted_react_loop_auto_resumes_one_mid_stream_transport_failure() {
+    let (result, chunks) = run_scripted_react_loop(
+        vec![
+            ScriptedProviderTurn::Stream(vec![
+                ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Text("partial ".to_string())),
+                ScriptedStreamEvent::Error("connection reset by peer".to_string()),
+            ]),
+            ScriptedProviderTurn::Stream(vec![
+                ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Text("resumed".to_string())),
+                ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Done {
+                    stop_reason: "stop".to_string(),
+                }),
+            ]),
+        ],
+        false,
+    )
+    .await;
+
+    assert_eq!(
+        result.expect("transport failure should auto-resume"),
+        "partial resumed"
+    );
+    let texts = chunks
+        .iter()
+        .filter_map(|chunk| match chunk {
+            AgentChunk::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(texts, ["partial ", "resumed"]);
+}
+
+#[tokio::test]
+async fn scripted_react_loop_executes_tool_cycle_before_final_answer() {
+    let tool_call = LlmToolCall {
+        id: "call-1".to_string(),
+        call_type: "function".to_string(),
+        function: FunctionCall {
+            name: "unknown_test_tool".to_string(),
+            arguments: "{}".to_string(),
+        },
+    };
+    let (result, chunks) = run_scripted_react_loop(
+        vec![
+            ScriptedProviderTurn::Stream(vec![ScriptedStreamEvent::Item(
+                OpenAICompatibleStreamItem::ToolUseComplete { tool_call },
+            )]),
+            ScriptedProviderTurn::Stream(vec![
+                ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Text(
+                    "final answer".to_string(),
+                )),
+                ScriptedStreamEvent::Item(OpenAICompatibleStreamItem::Done {
+                    stop_reason: "stop".to_string(),
+                }),
+            ]),
+        ],
+        false,
+    )
+    .await;
+
+    assert_eq!(result.expect("tool cycle should converge"), "final answer");
+    assert!(
+        matches!(chunks.first(), Some(AgentChunk::ToolCall { name, .. }) if name == "unknown_test_tool")
+    );
+    assert!(
+        matches!(chunks.get(1), Some(AgentChunk::ToolResult { name, .. }) if name == "unknown_test_tool")
+    );
+    assert!(matches!(chunks.get(2), Some(AgentChunk::Text { text, .. }) if text == "final answer"));
+}
+
+#[tokio::test]
+async fn scripted_react_loop_cancellation_exits_before_provider_poll() {
+    let (result, chunks) = run_scripted_react_loop(vec![], true).await;
+
+    let result = result.expect("cancellation should be a graceful completion");
+    assert!(result.contains("已停止"));
+    assert!(matches!(
+        chunks.as_slice(),
+        [AgentChunk::Text { text, .. }] if text.contains("已停止")
+    ));
+}
+
 #[test]
 fn call_key_stable_for_same_inputs() {
     let k1 = compute_call_key("read", r#"{"path":"/a.md"}"#);
@@ -92,7 +273,7 @@ fn tool_call_row_id_uses_tool_call_id_when_present() {
 
 #[test]
 fn tool_call_row_id_falls_back_to_uuid_when_empty() {
-    // 鍏滃簳璺緞: LLM 鍋跺彂涓嶇粰 id,绌轰覆蹇呴』鍙樺敮涓€ id 鎵嶈兘閬垮紑 PRIMARY KEY 鎾炶溅銆?    // 涓ゆ璋冪敤閮芥嬁鍒?UUID,褰兼涓€瀹氫笉鍚屻€?
+    // 兜底�?��: LLM 偶发不给 id,空串必须变唯一 id 才能避开 PRIMARY KEY 撞车�?    // 两�?调用都拿�?UUID,彼�?一定不同�?
     let a = tool_call_row_id("");
     let b = tool_call_row_id("");
 
@@ -100,7 +281,7 @@ fn tool_call_row_id_falls_back_to_uuid_when_empty() {
     assert!(b.starts_with("tool_"));
     assert_ne!(a, b, "empty ids must generate distinct UUID-backed row ids");
 
-    // UUID v4 褰㈡€? 8-4-4-4-12 hex digits,甯﹁繛瀛楃 鈹€鈹€ 闃叉鏈潵鏇挎崲鎴?    // 鍒殑闅忔満婧愬悗 format 婕傜Щ銆?
+    // UUID v4 形�? 8-4-4-4-12 hex digits,带连字�? ── 防�?�?��替换�?    // �?��随机源后 format 漂移�?
     let uuid_part = a.strip_prefix("tool_").expect("prefix");
     assert_eq!(
         uuid_part.len(),
@@ -204,7 +385,10 @@ fn llm_unavailable_message_collapses_raw_response_json_to_message() {
     let reason = "Stream failed: Response format error: API error 400. Raw \
         response: {\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params, chat content is empty (2013)\",\"http_code\":\"400\"},\"request_id\":\"06b01abbde4a0eda83851fe9e7b584d7\"}";
     let msg = format_llm_unavailable_message(reason);
-    assert_eq!(msg, "(LLM 暂时不可用，原因: invalid params, chat content is empty (2013))");
+    assert_eq!(
+        msg,
+        "(LLM 暂时不可用，原因: invalid params, chat content is empty (2013))"
+    );
 
     // Extraction is pure and reusable: returns the message, or the reason
     // verbatim when there is no "Raw response:" JSON to parse.
@@ -286,13 +470,9 @@ async fn record_tool_call_threshold_triggers_on_sixth() {
     let args = r#"{"path":"/a.md"}"#;
     for i in 1..=STUCK_THRESHOLD {
         let stuck = mgr.record_tool_call("thread-1", "read", args).await;
-        assert!(
-            !stuck,
-            "绗?{i} 娆¤皟鐢ㄤ笉璇ヨЕ鍙戠啍鏂?(闃堝€?{})",
-            STUCK_THRESHOLD
-        );
+        assert!(!stuck, "�?{i} 欤��用不该触发熔�?(阈�?{})", STUCK_THRESHOLD);
     }
-    // 绗?STUCK_THRESHOLD + 1 娆″繀椤昏繑鍥?true
+    // �?STUCK_THRESHOLD + 1 次必须返�?true
     let stuck = mgr.record_tool_call("thread-1", "read", args).await;
     assert!(stuck, "same tool call should trigger stuck detection");
 }
@@ -305,7 +485,7 @@ async fn record_tool_call_isolates_threads() {
     for _ in 0..=STUCK_THRESHOLD {
         let _ = mgr.record_tool_call("thread-A", "read", args).await;
     }
-    // thread-B 搴斾笉鍙楀奖鍝? 璁℃暟鐙珛
+    // thread-B 应不受影�? 计数�?��
     let stuck = mgr.record_tool_call("thread-B", "read", args).await;
     assert!(!stuck, "stuck counters should be isolated per thread");
 }
@@ -318,7 +498,7 @@ async fn clear_tool_call_attempts_resets() {
         let _ = mgr.record_tool_call("thread-1", "read", args).await;
     }
     mgr.clear_tool_call_attempts("thread-1").await;
-    // 娓呯┖鍚庨噸鏂拌鏁? 涓嶅簲绔嬪嵆瑙﹀彂
+    // 清空后重新�?�? 不应立即触发
     let stuck = mgr.record_tool_call("thread-1", "read", args).await;
     assert!(!stuck, "clear should reset stuck counters");
 }
@@ -327,7 +507,7 @@ async fn clear_tool_call_attempts_resets() {
 async fn assistant_checkpoint_can_be_completed_in_place() {
     let mgr = AgentManager::for_tests();
     let thread_id = {
-        let manager = mgr.thread_manager.read().await;
+        let manager = &mgr.thread_manager;
         manager
             .create_thread(default_agent_id(), "checkpoint".to_string())
             .await
@@ -352,7 +532,7 @@ async fn assistant_checkpoint_can_be_completed_in_place() {
     .expect("complete checkpoint");
 
     let thread = {
-        let manager = mgr.thread_manager.read().await;
+        let manager = &mgr.thread_manager;
         manager
             .get_thread(&thread_id)
             .await
@@ -371,7 +551,7 @@ async fn assistant_checkpoint_can_be_completed_in_place() {
 async fn assistant_checkpoint_can_be_promoted_to_tool_call_message() {
     let mgr = AgentManager::for_tests();
     let thread_id = {
-        let manager = mgr.thread_manager.read().await;
+        let manager = &mgr.thread_manager;
         manager
             .create_thread(default_agent_id(), "checkpoint tool".to_string())
             .await
@@ -403,7 +583,7 @@ async fn assistant_checkpoint_can_be_promoted_to_tool_call_message() {
     .expect("promote checkpoint");
 
     let thread = {
-        let manager = mgr.thread_manager.read().await;
+        let manager = &mgr.thread_manager;
         manager
             .get_thread(&thread_id)
             .await
@@ -432,7 +612,7 @@ async fn assistant_checkpoint_can_be_promoted_to_tool_call_message() {
 async fn cleanup_thread_removes_read_snapshot() {
     let mgr = AgentManager::for_tests();
     // 鐩存帴閫氳繃鍏叡 API 瑙﹀彂, 杩欓噷鍙湅 HashMap 鐘舵€?
-    // 涓嶈兘璋冪敤 execute_tool_for_thread (瑕?memo_file), 浣?cleanup 鐨勮涔?
+    // 不能调用 execute_tool_for_thread (�?memo_file), �?cleanup 的�?�?
     // 浠呮槸 HashMap::remove, 鍗曠嫭楠岃瘉 read_snapshots 杩欎竴渚с€?
     {
         let mut snapshots = mgr.read_snapshots.write().await;
@@ -458,7 +638,7 @@ async fn cleanup_thread_removes_tool_call_attempts() {
         let _ = mgr.record_tool_call("thread-1", "read", args).await;
     }
     mgr.cleanup_thread("thread-1").await;
-    // 娓呯悊鍚庨噸鏂拌鏁? 涓嶅簲琚笂娆＄殑绱Н瑙﹀彂
+    // 清理后重新�?�? 不应�?��次的�?��触发
     let stuck = mgr.record_tool_call("thread-1", "read", args).await;
     assert!(!stuck, "cleanup should reset stuck counters");
 }
@@ -467,7 +647,7 @@ async fn cleanup_thread_removes_tool_call_attempts() {
 async fn cleanup_thread_isolates_threads() {
     let mgr = AgentManager::for_tests();
     let args = r#"{"path":"/a.md"}"#;
-    // thread-A 瑙﹀彂涓€娆¤鏁?
+    // thread-A 触发一欤?�?
     let _ = mgr.record_tool_call("thread-A", "read", args).await;
     // thread-B 娉ㄥ叆 read snapshot
     {
@@ -478,14 +658,14 @@ async fn cleanup_thread_isolates_threads() {
             .insert("/b.md".to_string(), "content".to_string());
     }
     mgr.cleanup_thread("thread-A").await;
-    // thread-A 鐘舵€佹竻绌?
+    // thread-A 状态清�?
     let attempts = mgr.tool_call_attempts.read().await;
     assert!(
         !attempts.contains_key("thread-A"),
         "thread-A 鍗℃璁℃暟搴旇娓呯┖"
     );
     drop(attempts);
-    // thread-B 鐨?read snapshot 涓嶅彈褰卞搷
+    // thread-B �?read snapshot 不受影响
     let snapshots = mgr.read_snapshots.read().await;
     assert!(
         snapshots.contains_key("thread-B"),
@@ -496,7 +676,7 @@ async fn cleanup_thread_isolates_threads() {
 #[tokio::test]
 async fn cleanup_thread_is_idempotent() {
     let mgr = AgentManager::for_tests();
-    // 瀵逛笉瀛樺湪鐨?thread_id 璋冪敤, 涓嶅簲 panic
+    // 对不存在�?thread_id 调用, 不应 panic
     mgr.cleanup_thread("nonexistent").await;
     mgr.cleanup_thread("nonexistent").await; // 浜屾璋冪敤鍚屾牱瀹夊叏
     let snapshots = mgr.read_snapshots.read().await;
@@ -582,11 +762,11 @@ async fn unregister_in_flight_does_not_remove_newer_run() {
     assert!(mgr.running_threads().await.is_empty());
 }
 
-// AgentChunk 搴忓垪鍖?鈹€鈹€ 楠岃瘉 wire 鍗忚褰㈢姸, 闃叉鏃ュ悗璇敼 serde tag 榛橀粯
-// 鐮村潖鍓嶅悗绔?IPC 绾﹀畾銆俙kind` 蹇呴』鏄?snake_case, 瀛楁鍛藉悕
+// AgentChunk 序列�?── 验证 wire 协�?形状, 防�?日后�?�� serde tag 默默
+// 破坏前后�?IPC 约定。`kind` 必须�?snake_case, 字�?命名
 // (threadId/text/id/name/input/result/message/reason) 鏄笌鍓嶇鐨勭‖
-// 濂戠害, 涓嶈闅忎究鏀广€俙thread_id` 璧?serde `rename_all = "snake_case"`,
-// 鍓嶇 TS 绔瓧娈垫槸 `threadId` (camelCase, serde 鍙屽悜鑷姩杞崲)銆?
+// 契约, 不�?随便改。`thread_id` �?serde `rename_all = "snake_case"`,
+// 前�? TS �?��段是 `threadId` (camelCase, serde 双向�?���?��)�?
 #[test]
 fn agent_chunk_text_serializes_with_snake_case_tag() {
     let chunk = AgentChunk::Text {
@@ -709,8 +889,8 @@ fn agent_chunk_usage_serializes_with_snake_case_tag() {
 
 #[test]
 fn agent_chunk_stream_end_serializes_with_snake_case_tag() {
-    // 涓や釜鍒嗘敮: 姝ｅ父瀹屾垚 (reason = null) / 寮傚父閫€鍑?(reason = "...")銆?    // run_id 宸插湪 #3 閲嶆瀯鍚庣Щ鍒?`emit_chunk_with_run_id` 鍦?JSON 灞傛敞鍏?
-    // 涓嶅啀鏄?AgentChunk 缁撴瀯浣撳瓧娈?鈹€鈹€ 瑙?external_run.rs::emit_chunk_with_run_id銆?
+    // 两个分支: 正常完成 (reason = null) / 异常退�?(reason = "...")�?    // run_id 已在 #3 重构后移�?`emit_chunk_with_run_id` �?JSON 层注�?
+    // 不再�?AgentChunk 结构体字�?── �?external_run.rs::emit_chunk_with_run_id�?
     let chunk = AgentChunk::StreamEnd {
         thread_id: "thread_1".to_string(),
         reason: None,
@@ -790,8 +970,8 @@ async fn runtime_config_applies_for_non_persisted_local_thread() {
 
 #[test]
 fn run_info_serializes_with_camel_case() {
-    // 楠岃瘉 `agent_running_threads` IPC 杩斿洖鍊煎舰鐘?鈹€鈹€ 璺?CLAUDE.md 鐨?    // 璺?IPC struct 蹇呴』 camelCase 涓€鑷淬€俙started_at` / `current_tool`
-    // 鏄?wire 纭绾? 鍓嶇 TS 绔?`runInfo.startedAt` / `runInfo.currentTool`銆?
+    // 验证 `agent_running_threads` IPC 返回值形�?── �?CLAUDE.md �?    // �?IPC struct 必须 camelCase 一致。`started_at` / `current_tool`
+    // �?wire �??�? 前�? TS �?`runInfo.startedAt` / `runInfo.currentTool`�?
     let info = RunInfo {
         started_at: 1_700_000_000_000,
         current_tool: Some("read".to_string()),
@@ -822,7 +1002,7 @@ fn run_info_serializes_with_camel_case() {
 
 #[test]
 fn default_agent_id_returns_stable_placeholder() {
-    // 鍗犱綅鍊煎簲绋冲畾涓?"default", 鍘嗗彶 schema 鍏煎瑕佹眰銆?
+    // 占位值应稳定�?"default", 历史 schema 兼�?要求�?
     let a = default_agent_id();
     let b = default_agent_id();
     assert_eq!(a, b);
@@ -846,7 +1026,7 @@ fn agent_id_from_string_and_str() {
 
 #[test]
 fn token_budget_error_message_includes_used_and_budget() {
-    // 鍓嶇 `agent-chunk` Error case 浼氭嬁鍒拌繖娈靛瓧绗︿覆, 鐢ㄤ簬 toast / 涓婁笅鏂囨彁绀恒€?    // 閿佷綇瀛楁鍚?(used / budget) 涓庡崟浣? 闃叉鏂囨婕傜Щ鐮村潖鍓嶇姝ｅ垯瑙ｆ瀽銆?
+    // 前�? `agent-chunk` Error case 会拿到这段字符串, 用于 toast / 上下文提示�?    // 锁住字�?�?(used / budget) 与单�? 防�?文�?漂移破坏前�?正则解析�?
     let err = AgentError::TokenBudget {
         used: 120_000,
         budget: 100_000,

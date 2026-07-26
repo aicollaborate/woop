@@ -1,5 +1,5 @@
-//! Thread IPC 鈥?瀵硅瘽绾跨▼ CRUD銆?//!
-//! `thread_delete` 椤哄甫娓?`AgentManager` 鐨?in-memory 鐘舵€?(涓庤 thread 鍏宠仈鐨?//! read 宸ュ叿蹇収 + 鍗℃妫€娴嬭鏁?, 鍚﹀垯浼氭棤闄愭硠闇层€?
+//! Thread IPC —对话线程 CRUD�?//!
+//! `thread_delete` 顺带�?`AgentManager` �?in-memory 状�?(与�? thread 关联�?//! read 工具�?�� + 卡�?检测�?�?, 否则会无限泄露�?
 use serde::Serialize;
 use tauri::State;
 
@@ -18,7 +18,7 @@ pub struct GetThreadResponse {
 
 #[tauri::command]
 pub async fn thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager.list_threads().await.map_err(|e| e.to_string())
 }
 
@@ -32,7 +32,7 @@ pub async fn local_agent_thread_list(
         return Err(format!("unsupported local agent type: {agent_type}"));
     }
 
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .list_threads_by_agent(&agent_type)
         .await
@@ -44,8 +44,8 @@ pub async fn thread_create(
     title: String,
     state: State<'_, AppState>,
 ) -> Result<ThreadInfo, String> {
-    let manager = state.thread_manager.read().await;
-    // 鎵€鏈?thread 閮界敤 default_agent_id() 鍗犱綅 鈹€鈹€ 瑙?agent.rs銆?
+    let manager = &state.thread_manager;
+    // 所�?thread 都用 default_agent_id() 占位 ── �?agent.rs�?
     manager
         .create_thread(default_agent_id(), title)
         .await
@@ -57,7 +57,7 @@ pub async fn thread_get(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     match manager
         .get_thread(&thread_id)
         .await
@@ -70,15 +70,15 @@ pub async fn thread_get(
     }
 }
 
-/// Layer 4: 鍒嗛〉鍔犺浇 thread 鍘嗗彶. 鍙栦唬 thread_get 鍦?1MB 绾?thread 涓婄殑鍏ㄩ噺
-/// 搴忓垪鍖栧紑閿€, IPC payload 浠?~1MB 闄嶅埌 ~100KB (100 鏉?脳 骞冲潎 1KB).
+/// Layer 4: 分页加载 thread 历史. 取代 thread_get �?1MB �?thread 上的全量
+/// 序列化开销, IPC payload �?~1MB 降到 ~100KB (100 �?× 平均 1KB).
 ///
 /// 鍙傛暟:
 ///   - thread_id: 鐩爣 thread
-///   - before_sequence: None 鈫?鍙栨渶杩?limit 鏉? Some(s) 鈫?鍙?sequence < s 鐨勬渶杩?limit 鏉?///   - limit: 鍗曟杩斿洖涓婇檺, 鏈嶅姟绔?clamp 鍒?[1, 1000], 榛樿寤鸿鍓嶇浼?100
+///   - before_sequence: None �?取最�?limit �? Some(s) �?�?sequence < s 的最�?limit �?///   - limit: 单�?返回上限, 服务�?clamp �?[1, 1000], 默�?建�?前�?�?100
 ///
 /// 杩斿洖 ThreadMessagesPage { messages (ASC), oldest_sequence, has_more }
-/// 鍓嶇鐢?oldest_sequence 浣滀负涓嬩竴椤?cursor, has_more 鍐冲畾椤堕儴 prefetch.
+/// 前�?�?oldest_sequence 作为下一�?cursor, has_more 决定顶部 prefetch.
 ///
 /// thread_get 淇濈暀 鈹€鈹€ 璋冭瘯 / 鍏ㄩ噺瀵煎嚭璺緞浠嶅彲鑳界敤鍒般€?
 #[tauri::command]
@@ -88,7 +88,7 @@ pub async fn thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .get_thread_messages_page(&thread_id, before_sequence, limit)
         .await
@@ -99,7 +99,7 @@ pub async fn thread_get_page(
 pub async fn agent_conversation_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<AgentConversationInstance>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .list_agent_conversation_instances()
         .await
@@ -111,7 +111,7 @@ pub async fn agent_conversation_get(
     instance_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<AgentConversationInstance>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .get_agent_conversation_instance(&instance_id)
         .await
@@ -123,7 +123,7 @@ pub async fn agent_conversation_find_by_thread(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<AgentConversationInstance>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .find_agent_conversation_by_thread_id(&thread_id)
         .await
@@ -135,7 +135,7 @@ pub async fn agent_conversation_upsert(
     instance: UpsertAgentConversationInstance,
     state: State<'_, AppState>,
 ) -> Result<AgentConversationInstance, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .upsert_agent_conversation_instance(instance)
         .await
@@ -147,7 +147,7 @@ pub async fn agent_conversation_delete(
     instance_id: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .delete_agent_conversation_instance(&instance_id)
         .await
@@ -159,7 +159,7 @@ pub async fn agent_conversation_delete_for_thread(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<u64, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .delete_agent_conversation_instances_for_thread(&thread_id)
         .await
@@ -168,7 +168,7 @@ pub async fn agent_conversation_delete_for_thread(
 
 #[tauri::command]
 pub async fn codex_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .list_external_threads("codex")
         .await
@@ -199,7 +199,7 @@ pub async fn codex_thread_session_id(
         return Ok(Some(thread_id));
     }
 
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .get_external_session(&thread_id, "codex")
         .await
@@ -208,7 +208,7 @@ pub async fn codex_thread_session_id(
 
 #[tauri::command]
 pub async fn claude_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .list_external_threads("claude")
         .await
@@ -230,7 +230,7 @@ pub async fn claude_thread_session_id(
         return Ok(Some(thread_id));
     }
 
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .get_external_session(&thread_id, "claude")
         .await
@@ -239,7 +239,7 @@ pub async fn claude_thread_session_id(
 
 #[tauri::command]
 pub async fn hermes_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .list_external_threads("hermes")
         .await
@@ -270,7 +270,7 @@ pub async fn hermes_thread_session_id(
         return Ok(Some(thread_id));
     }
 
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .get_external_session(&thread_id, "hermes")
         .await
@@ -284,53 +284,31 @@ pub async fn thread_delete(
     app_handle: tauri::AppHandle,
 ) -> Result<bool, String> {
     let flowix_stopped = state.agent_manager.stop_chat(&thread_id, None).await;
-    let codex_stopped = state
-        .codex_cli_manager
-        .stop_chat(&thread_id, None, &app_handle)
+    let external_stopped = state
+        .external_runtimes
+        .stop_chat_all(&thread_id, &app_handle)
         .await;
-    let claude_stopped = state
-        .claude_cli_manager
-        .stop_chat(&thread_id, None, &app_handle)
-        .await;
-    let gemini_stopped = state
-        .gemini_cli_manager
-        .stop_chat(&thread_id, None, &app_handle)
-        .await;
-    let hermes_stopped = state
-        .hermes_cli_manager
-        .stop_chat(&thread_id, None, &app_handle)
-        .await;
-    let openclaw_stopped = state
-        .openclaw_cli_manager
-        .stop_chat(&thread_id, None, &app_handle)
-        .await;
-    if flowix_stopped
-        || codex_stopped
-        || claude_stopped
-        || gemini_stopped
-        || hermes_stopped
-        || openclaw_stopped
-    {
+    if flowix_stopped || external_stopped {
         tracing::info!("[Thread] stopped running agent before deleting thread {thread_id}");
     }
 
-    // 鍏堟竻 AgentManager 鐨?in-memory 鐘舵€?鈹€鈹€ 涓庤 thread 鍏宠仈鐨?read 宸ュ叿蹇収
-    // (HashMap<thread_id, HashMap<path, full_file_content>>, 鏁存湰绗旇鏈ぇ灏?
-    // 涓庡崱姝绘娴嬭鏁? 鍚﹀垯浼氭棤闄愭硠闇层€備袱寮犺〃鐙珛 HashMap.remove, 鎬绘槸鎴愬姛銆?    //
-    // `agent_manager` 鏄?`Arc<AgentManager>`, `cleanup_thread` 鏄?`&self` 鏂规硶,
+    // 先清 AgentManager �?in-memory 状�?── 与�? thread 关联�?read 工具�?��
+    // (HashMap<thread_id, HashMap<path, full_file_content>>, 整本笔�?�?���?
+    // 与卡死�?测�?�? 否则会无限泄露。两张表�?�� HashMap.remove, 总是成功�?    //
+    // `agent_manager` �?`Arc<AgentManager>`, `cleanup_thread` �?`&self` 方法,
     // `agent_manager` is an `Arc<AgentManager>` and cleanup takes `&self`.
     state.agent_manager.cleanup_thread(&thread_id).await;
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .delete_thread_with_agent_conversations(&thread_id)
         .await
         .map_err(|e| e.to_string())
 }
 
-/// 閲嶅懡鍚?thread 鈹€鈹€ 鏀?SQLite `threads.title` 鍒? 椤哄甫 bump `updated_at`,
-/// 璁╁巻鍙插垪琛ㄦ寜"鏈€杩戞椿鍔?鎺掑簭鏃? 鍒氳鏀瑰悕鐨勫璇濊兘姝ｇ‘椤跺埌椤堕儴銆?///
-/// 杩斿洖 `None` 琛ㄧず thread 涓嶅瓨鍦?(UI 搴斿拷鐣?; 杩斿洖 `Some(info)` 鏃?info.title
-/// 宸茬粡鏄柊鍊? 鍙洿鎺ョ敤浜庢洿鏂版湰鍦?store銆傚墠绔?`sendMessageStream` 鍦ㄩ鏉＄敤鎴?/// 娑堟伅钀藉湴鍚庤皟涓€娆? 瑕嗙洊"鐐逛簡"鏂板缓瀵硅瘽"鍐嶅彂娑堟伅"鐨勬棭鏈熻矾寰?閭ｇ鎯呭喌涓?/// `ensureThread` 璧?early return, 涓嶄細鐢熸垚鏂版爣棰?銆?
+/// 重命�?thread ── �?SQLite `threads.title` �? 顺带 bump `updated_at`,
+/// 让历史列表按"最近活�?排序�? 刚�?改名的�?话能正�顶到顶部�?///
+/// 返回 `None` 表示 thread 不存�?(UI 应忽�?; 返回 `Some(info)` �?info.title
+/// 已经�?���? �?��接用于更新本�?store。前�?`sendMessageStream` 在�?条用�?/// 消息落地后调一�? 覆盖"点了"新建对话"再发消息"的早期路�?那�?情况�?/// `ensureThread` �?early return, 不会生成新标�?�?
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn thread_update_title(
@@ -353,7 +331,7 @@ pub async fn thread_update_title(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("default");
-    let manager = state.thread_manager.read().await;
+    let manager = &state.thread_manager;
     manager
         .update_title(
             &thread_id,

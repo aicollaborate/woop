@@ -6,7 +6,8 @@ use super::tool_events::{
     looks_like_unknown_tool_event, tool_event_definition, tool_event_id, tool_event_name,
     CodexToolEventDefinition, CodexToolEventMode,
 };
-use super::{truncate_chars, MAX_UI_OUTPUT_PREVIEW_CHARS};
+use super::MAX_UI_OUTPUT_PREVIEW_CHARS;
+use crate::agent_external::truncate_chars;
 
 // Codex stdout event policy.
 //
@@ -97,9 +98,9 @@ pub fn codex_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> 
     match parse_codex_event(value) {
         CodexEvent::Lifecycle { usage: None } | CodexEvent::Unknown => Vec::new(),
         CodexEvent::Lifecycle { usage: Some(usage) } => {
-            // 閫氱敤 metadata 鍗忚 鈹€鈹€ 閫忎紶缁欏墠绔? 绱姞鍒?run / thread銆?
-            // token 瀛楁璧板祵濂?`UsageInfo`,codex plan 淇℃伅璧板祵濂?`StatusInfo`,
-            // model_id / last_run_at 鐣欏湪椤跺眰銆?
+            // 通用 metadata 协�? ── 透传给前�? �?���?run / thread�?
+            // token 字�?走嵌�?`UsageInfo`,codex plan 信息走嵌�?`StatusInfo`,
+            // model_id / last_run_at 留在顶层�?
             vec![AgentChunk::Usage {
                 thread_id: thread_id.to_string(),
                 model_id: usage.model_id,

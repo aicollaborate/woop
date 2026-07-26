@@ -6,9 +6,12 @@
 //! - `error` 鈥?`ThreadError` enum
 //! - `types` 鈥?pure data: `ChatMessage`, `ThreadInfo`, `Thread`, `ThreadMessagesPage`,
 //!   plus the `AgentConversation*` family
-//! - `store` 鈥?`ThreadManager` + every SQL
-//!   impl + migrations + row mappers
-//!   (kept as one `impl` block because all tables share the same connection)
+//! - `store` — `ThreadManager`, its single connection, and shared blocking boundary
+//! - `store/threads` — thread CRUD and title management
+//! - `store/messages` — history pagination, messages, tools, and checkpoints
+//! - `store/external` — external-session mappings and normalized event log
+//! - `store/conversations` — conversation metadata, frozen cwd, and lifecycle cleanup
+//! - `migrations` -- schema setup (`run_migrations`), a second `impl ThreadManager` block
 //! - `tests` 鈥?unit tests against an in-memory `ThreadManager`
 //!
 //! The split was driven by `threads.rs` reaching 1456 lines as a single
@@ -19,6 +22,7 @@
 //! any new coupling.
 
 pub mod error;
+mod migrations;
 pub mod store;
 pub mod types;
 

@@ -29,8 +29,8 @@ impl From<&str> for AgentId {
     }
 }
 
-/// 绾跨▼琛?`agent_id` 鍒楃殑鍥哄畾鍗犱綅鍊笺€傛墍鏈夋柊寤?thread 閮藉啓鍏?`"default"`銆?///
-/// 鐢ㄥ嚱鏁拌€岄潪 `pub const` 鏄洜涓?`String` 涓嶈兘鍦?const 涓婁笅鏂囨瀯閫? 璋冪敤鏂?/// 搴旂紦瀛樿繑鍥炲€? 涓嶈姣忓閮介噸鏂板垎閰嶃€?
+/// 线程�?`agent_id` 列的固定占位值。所有新�?thread 都写�?`"default"`�?///
+/// 用函数而非 `pub const` �?���?`String` 不能�?const 上下文构�? 调用�?/// 应缓存返回�? 不�?每�?都重新分配�?
 pub fn default_agent_id() -> AgentId {
     AgentId::new("default")
 }

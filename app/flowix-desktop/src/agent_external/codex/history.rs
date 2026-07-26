@@ -90,7 +90,7 @@ fn parse_rollout_tool_response_items_since(text: &str, started_at_millis: i64) -
 
 pub fn is_codex_session_id(text: &str) -> bool {
     // 蹇呴』鏄惧紡鎷掔粷 "codex-local-agent-inst-<ts>-<seq>" 绛夊墠绔崰浣嶇 鈹€鈹€
-    // 杩欎簺瀛楃涓查暱搴?鈮?32 涓斿寘鍚?5 涓?dash, 鑰佺増瀹芥澗鍒ゆ柇浼氭妸瀹冨綋鎴?    // session id 浼犵粰 Codex CLI 鐨?resume, 浣?CLI 涓嶈 鈹€鈹€ 涓?    // claude_history 鍚岀梾鍚屾不銆?
+    // 这些字�?串长�?�?32 且包�?5 �?dash, 老版宽松判断会把它当�?    // session id 传给 Codex CLI �?resume, �?CLI 不�? ── �?    // claude_history 同病同治�?
     let value = text.trim();
     if value.is_empty() || value.starts_with("codex-local-") {
         return false;
@@ -810,7 +810,7 @@ fn content_parts_to_text(content: Option<&Value>) -> Option<String> {
     }
 }
 
-/// Codex 浼氭妸杩愯鐜鍜屾彃浠舵帹鑽愪綔涓?user 娑堟伅鍐欏叆 rollout JSONL銆?/// 杩欎簺娑堟伅鏄繍琛屾椂涓婁笅鏂囷紝涓嶆槸鐢ㄦ埛杈撳叆锛屼笉搴旇繘鍏ヨ亰澶╄褰曟垨浼氳瘽鏍囬銆?
+/// Codex 会把运�?�??和插件推荐作�?user 消息写入 rollout JSONL�?/// 这些消息�?��行时上下文，不是用户输入，不应进入聊天�?录或会话标�?�?
 fn is_hidden_codex_user_message(content: &str) -> bool {
     let content = content.trim_start();
     content.starts_with("<recommended_plugins>") || content.starts_with("<environment_context>")
@@ -865,11 +865,11 @@ fn session_id_from_filename(path: &Path) -> Option<String> {
     }
 }
 
-/// 浠?Codex CLI 鐨?session jsonl 閲岃鍑哄師濮?cwd 鈹€鈹€ Codex rollout 鏂囦欢
-/// 绗竴琛岄€氬父鏄?`session_meta` 浜嬩欢, 鍐呭祵 `payload.cwd` 瀛楁.
+/// �?Codex CLI �?session jsonl 里�?出原�?cwd ── Codex rollout 文件
+/// �?��行通常�?`session_meta` 事件, 内嵌 `payload.cwd` 字�?.
 ///
-/// 鐢ㄩ€? 鍚庣 `codex_cli.rs` 鐨?cwd 鍏滃簳閾?鈹€鈹€ IPC 鍏ュ弬鎷夸笉鍒?cwd 鏃?
-/// 鐢?session 鏂囦欢鑷韩鐨?cwd 浣滀负鐪熸簮銆?涓?claude 淇鍚屽舰 (瑙?/// `claude_history::claude_session_cwd` 娉ㄩ噴).
+/// 用�? 后�? `codex_cli.rs` �?cwd 兜底�?── IPC 入参拿不�?cwd �?
+/// �?session 文件�?���?cwd 作为真源�?�?claude �??同形 (�?/// `claude_history::claude_session_cwd` 注释).
 pub fn codex_session_cwd(session_id: &str) -> Result<Option<PathBuf>, String> {
     let Some(home) = dirs::home_dir() else {
         return Ok(None);
@@ -991,8 +991,8 @@ mod tests {
 
     #[test]
     fn rejects_local_codex_thread_ids() {
-        // 鍚?claude 鐨勪慨澶?鈹€鈹€ "codex-local-agent-inst-..." 鍓嶇紑鐩存帴鎷掓帀,
-        // 閬垮厤璇妸鍓嶇鍗犱綅绗﹀綋 Codex CLI session id銆?
+        // �?claude 的修�?── "codex-local-agent-inst-..." 前缀直接拒掉,
+        // 避免�?��前�?占位符当 Codex CLI session id�?
         assert!(!is_codex_session_id(
             "codex-local-agent-inst-1783828675847-3"
         ));
@@ -1341,8 +1341,8 @@ mod tests {
         )
     }
 
-    /// Codex rollout session_meta 浜嬩欢甯?`payload.cwd`. 楠岃瘉
-    /// `codex_session_cwd_in` 鑳戒粠璇ュ瓧娈佃鍑虹湡鍊?鈹€鈹€ 鍚庣 cwd 鍏滃簳閾?    /// 鍦?IPC 鍏ュ弬绌烘椂, 鐢ㄨ繖涓€兼晳鍥?"閲嶅惎鍚?resume cwd 缂哄け"銆?
+    /// Codex rollout session_meta 事件�?`payload.cwd`. 验证
+    /// `codex_session_cwd_in` 能从该字段�?出真�?── 后�? cwd 兜底�?    /// �?IPC 入参空时, 用这�?��救�?"重启�?resume cwd 缺失"�?
     #[test]
     fn codex_session_cwd_reads_payload_cwd() {
         let tmp = codex_session_cwd_tempdir();
@@ -1360,13 +1360,13 @@ mod tests {
         )
         .expect("write rollout jsonl");
 
-        // 涓嶄緷璧?dirs::home_dir / HOME env. 鐩存帴浼?home.
+        // 不依�?dirs::home_dir / HOME env. 直接�?home.
         let cwd = codex_session_cwd_in(&tmp, sid).expect("read cwd");
         let resolved = cwd.expect("cwd should be present");
         assert_eq!(resolved, tmp);
     }
 
-    /// 瀛楁缂哄け鏃惰繑鍥?None 鈹€鈹€ 涓嶅厑璁告倓鎮勫厹搴曞埌 "."
+    /// 字�?缺失时返�?None ── 不允许悄悄兜底到 "."
     #[test]
     fn codex_session_cwd_returns_none_when_missing() {
         let tmp = codex_session_cwd_tempdir();

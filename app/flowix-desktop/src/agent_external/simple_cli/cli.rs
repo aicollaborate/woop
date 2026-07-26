@@ -6,12 +6,13 @@ use tokio::io::{AsyncReadExt, BufReader};
 use tokio::process::Command;
 use uuid::Uuid;
 
+use super::super::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::cli_resolver::{
     no_extra_candidates, resolve_external_cli, ExternalCliSpec,
 };
 use crate::agent_external::{
-    append_workspace_context, emit_chunk_with_run_id, emit_stream_end_once, kill_child_tree,
-    resolve_and_freeze_runtime_cwd, resolve_run_id, ExternalRunRegistry, USER_STOPPED_REASON,
+    append_workspace_context, default_thread_title, emit_chunk_with_run_id, read_to_string,
+    resolve_and_freeze_runtime_cwd, truncate_for_log, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -82,21 +83,39 @@ const OPENCLAW_CLI_SPEC: ExternalCliSpec = ExternalCliSpec {
 
 pub struct SimpleCliManager {
     kind: SimpleCliKind,
-    thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
 }
 
+#[async_trait::async_trait]
+impl ExternalLifecycleEmitter for SimpleCliManager {
+    fn lifecycle_agent_type(&self) -> &'static str {
+        self.kind.key()
+    }
+
+    async fn emit_and_persist_lifecycle_chunk(
+        &self,
+        app_handle: &tauri::AppHandle,
+        chunk: &AgentChunk,
+        run_id: &str,
+    ) {
+        // Gemini/OpenClaw deliberately do not persist raw external events.
+        emit_chunk_with_run_id(app_handle, chunk, self.kind.key(), run_id);
+    }
+}
+
 impl SimpleCliManager {
-    pub fn new(
-        kind: SimpleCliKind,
-        thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
-    ) -> Self {
+    pub fn new(kind: SimpleCliKind, thread_manager: Arc<ThreadManager>) -> Self {
         let key = kind.key();
         Self {
             kind,
             thread_manager,
             runs: ExternalRunRegistry::new(key, key),
         }
+    }
+
+    pub fn runtime_key(&self) -> &'static str {
+        self.kind.key()
     }
 
     /// Idle-watchdog hook (called by `app::watchdog`). Mirrors the Claude/Codex
@@ -114,29 +133,7 @@ impl SimpleCliManager {
             .runs
             .reap_inactive(idle_timeout_ms, self.kind.display_name())
             .await;
-        for run in &finalized {
-            let run_id = run.run_id.as_deref().unwrap_or(run.thread_id.as_str());
-            if let Some(reason) = run.reason.clone() {
-                emit_chunk_with_run_id(
-                    app_handle,
-                    &AgentChunk::Error {
-                        thread_id: run.thread_id.clone(),
-                        message: reason.clone(),
-                    },
-                    self.kind.key(),
-                    run_id,
-                );
-            }
-            emit_chunk_with_run_id(
-                app_handle,
-                &AgentChunk::StreamEnd {
-                    thread_id: run.thread_id.clone(),
-                    reason: run.reason.clone(),
-                },
-                self.kind.key(),
-                run_id,
-            );
-        }
+        self.emit_watchdog_finalized(app_handle, &finalized).await;
         finalized.len()
     }
 
@@ -147,32 +144,19 @@ impl SimpleCliManager {
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
         let thread_id = thread_id.to_string();
+        let start = self
+            .runs
+            .prepare_start(&thread_id, message.run_id.as_deref())
+            .await?;
         let app_handle = app_handle.clone();
         let manager = self.clone();
-        let run_id = resolve_run_id(&thread_id, message.run_id.as_deref());
-        let stream_end_emitted = Arc::new(AtomicBool::new(false));
-
-        if let Some(reason) = self.runs.reap_stale(&thread_id).await {
-            return Err(reason);
-        }
+        let run_id = start.run_id;
+        let stream_end_emitted = start.stream_end_emitted;
 
         tokio::spawn(async move {
-            // 閫氱敤 metadata 鍗忚 鈹€鈹€ StreamStart 鎼哄甫璇?run 閿佸畾鐨?            // model / reasoning_effort, 鍓嶇 hover card 绛夌粍浠跺彲璇汇€?            // 鎸?manager 鑷韩 kind 鍙? 閬垮厤 Gemini/OpenClaw 璇 flowix 娈点€?
-            let metadata_key = manager.kind.key();
-            let model = message.model_for_runtime(metadata_key).map(str::to_string);
-            let reasoning_effort = message
-                .reasoning_effort_for_runtime(metadata_key)
-                .map(str::to_string);
-            emit_chunk_with_run_id(
-                &app_handle,
-                &AgentChunk::StreamStart {
-                    thread_id: thread_id.clone(),
-                    model,
-                    reasoning_effort,
-                },
-                manager.kind.key(),
-                &run_id,
-            );
+            manager
+                .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
+                .await;
 
             let reason = match manager
                 .run_cli(
@@ -186,29 +170,22 @@ impl SimpleCliManager {
             {
                 Ok(()) => None,
                 Err(err) => {
-                    emit_chunk_with_run_id(
-                        &app_handle,
-                        &AgentChunk::Error {
-                            thread_id: thread_id.clone(),
-                            message: err.clone(),
-                        },
-                        manager.kind.key(),
-                        &run_id,
-                    );
+                    manager
+                        .emit_run_error(&app_handle, &thread_id, err.clone(), &run_id)
+                        .await;
                     Some(err)
                 }
             };
 
-            // 鍏滃簳 emit: 鑻?stop_chat 杩樻病鏇挎垜浠彂杩?StreamEnd, 鐢辨湰璺緞琛ュ彂;
-            // 鍚﹀垯 CAS 澶辫触, 璺宠繃閬垮厤閲嶅銆傝瑙?`shared::emit_stream_end_once`銆?
-            emit_stream_end_once(
-                &app_handle,
-                &thread_id,
-                &run_id,
-                manager.kind.key(),
-                reason,
-                &stream_end_emitted,
-            );
+            manager
+                .emit_stream_end(
+                    &app_handle,
+                    &thread_id,
+                    &run_id,
+                    reason,
+                    &stream_end_emitted,
+                )
+                .await;
         });
 
         Ok(String::new())
@@ -220,24 +197,23 @@ impl SimpleCliManager {
         run_id: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) -> bool {
-        let running = match run_id {
-            Some(rid) => self.runs.remove_if_run_id(thread_id, Some(rid)).await,
-            None => self.runs.remove(thread_id).await,
-        };
-        let Some(mut running) = running else {
+        let Some(stopped) = self
+            .runs
+            .stop_run(thread_id, thread_id, run_id, self.kind.display_name())
+            .await
+        else {
             return false;
         };
-        kill_child_tree(&mut running.child, self.kind.display_name(), thread_id).await;
 
-        let run_id_for_chunk = running.run_id.as_deref().unwrap_or(thread_id).to_string();
-        emit_stream_end_once(
+        let run_id_for_chunk = stopped.run_id;
+        self.emit_stream_end(
             app_handle,
             thread_id,
             &run_id_for_chunk,
-            self.kind.key(),
             Some(USER_STOPPED_REASON.to_string()),
-            &running.stream_end_emitted,
-        );
+            &stopped.stream_end_emitted,
+        )
+        .await;
         true
     }
 
@@ -259,9 +235,8 @@ impl SimpleCliManager {
     ) -> Result<(), String> {
         let runtime_key = self.kind.key();
         let cwd = {
-            let manager = self.thread_manager.read().await;
             resolve_and_freeze_runtime_cwd(
-                &manager,
+                &self.thread_manager,
                 thread_id,
                 |m, _| {
                     m.cwd_for_runtime(runtime_key)
@@ -269,6 +244,7 @@ impl SimpleCliManager {
                         .filter(|p| p.is_dir())
                 },
                 &message,
+                None,
                 None,
             )
             .await?
@@ -435,12 +411,12 @@ impl SimpleCliManager {
         prompt: &str,
         message: &AgentUserMessage,
     ) -> Result<(), String> {
-        let manager = self.thread_manager.read().await;
+        let manager = &self.thread_manager;
         manager
             .ensure_thread(
                 thread_id,
                 AgentId(self.kind.key().to_string()),
-                default_thread_title(self.kind, prompt),
+                default_thread_title(self.kind.display_name(), prompt),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -473,8 +449,7 @@ impl SimpleCliManager {
         if text.trim().is_empty() {
             return Ok(());
         }
-        let manager = self.thread_manager.read().await;
-        manager
+        self.thread_manager
             .add_message(
                 thread_id,
                 ThreadChatMessage {
@@ -502,17 +477,6 @@ impl SimpleCliManager {
     async fn persist_error_message(&self, thread_id: &str, error: &str) -> Result<(), String> {
         let text = format!("Error: {}", error.trim());
         self.persist_assistant_message(thread_id, &text).await
-    }
-}
-
-fn truncate_for_log(text: &str) -> String {
-    const MAX_LOG_TEXT_CHARS: usize = 2048;
-    let mut chars = text.chars();
-    let truncated: String = chars.by_ref().take(MAX_LOG_TEXT_CHARS).collect();
-    if chars.next().is_some() {
-        format!("{truncated}\n...[truncated]")
-    } else {
-        truncated
     }
 }
 
@@ -618,28 +582,6 @@ where
     Ok(output)
 }
 
-async fn read_to_string<R>(reader: BufReader<R>) -> Result<String, String>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut reader = reader;
-    let mut out = String::new();
-    reader
-        .read_to_string(&mut out)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(out)
-}
-
-fn default_thread_title(kind: SimpleCliKind, prompt: &str) -> String {
-    let title = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.is_empty() {
-        format!("{} session", kind.display_name())
-    } else {
-        title.chars().take(28).collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,11 +601,14 @@ mod tests {
     #[test]
     fn default_thread_title_collapses_whitespace_and_truncates() {
         assert_eq!(
-            default_thread_title(SimpleCliKind::Gemini, "  fix   this now  "),
+            default_thread_title(SimpleCliKind::Gemini.display_name(), "  fix   this now  "),
             "fix this now"
         );
         assert_eq!(
-            default_thread_title(SimpleCliKind::OpenClaw, "abcdefghijklmnopqrstuvwxyz123456"),
+            default_thread_title(
+                SimpleCliKind::OpenClaw.display_name(),
+                "abcdefghijklmnopqrstuvwxyz123456"
+            ),
             "abcdefghijklmnopqrstuvwxyz12"
         );
     }

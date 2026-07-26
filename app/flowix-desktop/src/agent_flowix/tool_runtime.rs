@@ -112,6 +112,11 @@ impl AgentManager {
 
         let system_prompt = args.system_prompt.clone();
         let tools = get_sub_agent_tools();
+        // Sub-agent may only call tools it was given in its schema. Derive the
+        // allowed-name set from `get_sub_agent_tools()` so this whitelist can
+        // never drift from the schema the LLM actually sees.
+        let sub_agent_tool_names: Vec<String> =
+            tools.iter().map(|tool| tool.function.name.clone()).collect();
         let provider = match build_chat_provider(&config, system_prompt.clone(), &tools) {
             Ok(provider) => provider,
             Err(err) => {
@@ -181,23 +186,22 @@ impl AgentManager {
             let mut results = Vec::with_capacity(tool_calls.len());
             for call in tool_calls {
                 let name = call.function.name.clone();
-                let result = match name.as_str() {
-                    "available_dirs" | "read" | "ls" | "glob" | "grep" | "load_skill" => {
-                        execute_tool(
-                            &name,
-                            &call.function.arguments,
-                            &self.memo_file,
-                            &self.agent_access,
-                            Some(self.security_bookmarks.clone()),
-                            &self.skill_store,
-                            runtime_workspace_paths,
-                            None,
-                        )
-                        .await
-                    }
-                    _ => crate::agent_flowix::tools::ToolResult::error(format!(
+                let result = if sub_agent_tool_names.iter().any(|tool| tool == &name) {
+                    execute_tool(
+                        &name,
+                        &call.function.arguments,
+                        &self.memo_file,
+                        &self.agent_access,
+                        Some(self.security_bookmarks.clone()),
+                        &self.skill_store,
+                        runtime_workspace_paths,
+                        None,
+                    )
+                    .await
+                } else {
+                    crate::agent_flowix::tools::ToolResult::error(format!(
                         "sub_agent cannot call tool '{name}'"
-                    )),
+                    ))
                 };
                 if !result.success {
                     if let Some(err_msg) = result.error.as_deref() {
@@ -272,10 +276,10 @@ impl AgentManager {
             None
         };
 
-        // Plan B: Agent 涓嶅啀 mark_self_write, 涔熶笉鍐嶆墜鍔?emit memo-event銆?        // 涓€鍒囩鐩樺彉鏇翠氦缁?watcher 鐨?dispatch_modify_event 鍗曠偣澶勭悊 鈥?        // 瀹冭蛋 frontmatter-key-first 鍒嗘祦, 鑷姩鐢?reload_memo_from_disk_by_filename
-        // (鎴?register_existing_file) 鍚屾 memo index, 鐒跺悗 emit
+        // Plan B: Agent 不再 mark_self_write, 也不再手�?emit memo-event�?        // 一切�?盘变更交�?watcher �?dispatch_modify_event 单点处理 —        // 它走 frontmatter-key-first 分流, �?���?reload_memo_from_disk_by_filename
+        // (�?register_existing_file) 同�? memo index, 然后 emit
         // `MemoEvent::Updated` / `Created` (source: ExternalTool)銆?
-        // `self.memo_file` 鏄?`Arc<RwLock<MemoFile>>`, 瑙ｅ紩鐢ㄥ悗璋冪敤 `.read()`
+        // `self.memo_file` �?`Arc<RwLock<MemoFile>>`, 解引用后调用 `.read()`
         // 鑷姩寰楀埌 `&RwLock<MemoFile>`, 鍠傜粰 `execute_tool` 鐨勫舰鍙傜被鍨嬨€?
         let result = execute_tool(
             tool_name,
@@ -289,9 +293,9 @@ impl AgentManager {
         )
         .await;
 
-        // 宸ュ叿璋冪敤澶辫触 鈹€鈹€ 鎶婇敊璇暅鍍忓埌 agent.log銆?娉ㄦ剰杩?*涓嶆浛浠?*鎶婇敊璇?        // 浜よ繕 LLM: 涓嬮潰 `ToolResult` chunk 浠嶇劧 emit 鍒板墠绔? thread.db 涔?        // 钀?tool_data (success=false) 琛? LLM 涓嬭疆 reload 鏃惰兘鐪嬪埌, 鐢?        // LLM 鑷繁鍐冲畾鏄敼璺緞 / 鎹㈠伐鍏?/ 鏀跺彛銆?agent.log 杩欓噷鏄帓闅滅殑
-        // 闀滃儚 鈹€鈹€ 鐢ㄦ埛浜嬪悗鍙嶉"鍒氭墠 LLM 鎬庝箞鎰ｅ湪閭ｉ噷"鏃? 鑳界洿鎺?grep
-        // `kind=tool_error` 鐪嬪叿浣撳摢鏉″伐鍏疯皟鐢ㄥ悆浜嗕粈涔?error銆?
+        // 工具调用失败 ── 把错�?��像到 agent.log�?注意�?*不替�?*把错�?        // 交还 LLM: 下面 `ToolResult` chunk 仍然 emit 到前�? thread.db �?        // �?tool_data (success=false) �? LLM 下轮 reload 时能看到, �?        // LLM �?��决定�?���?�� / 换工�?/ 收口�?agent.log 这里�?��障的
+        // 镜像 ── 用户事后反�?"刚才 LLM 怎么愣在那里"�? 能直�?grep
+        // `kind=tool_error` 看具体哪条工具调用吃了什�?error�?
         if !result.success {
             if let Some(err_msg) = result.error.as_deref() {
                 runtime_log::record_agent_event(
@@ -310,8 +314,8 @@ impl AgentManager {
             match tool_name {
                 "read" => {
                     if let Some(path_key) = path_key {
-                        // 璺?filesystem.rs::read 璧板悓鏍疯矾寰?鈹€鈹€ 鏀?`tokio::fs::read_to_string`
-                        // 璁?worker 涓嶈鍚屾 I/O 鍗℃, 鍗曟澶ф枃浠惰鐩樹笉鍐嶅喕浣忔暣涓?                        // ReAct 寰幆銆?read 宸ュ叿鏈韩宸插垏鍒?tokio::fs, 杩欓噷璺熷畠瀵归綈銆?
+                        // �?filesystem.rs::read 走同样路�?── �?`tokio::fs::read_to_string`
+                        // �?worker 不�?同�? I/O 卡�?, 单�?大文件�?盘不再冻住整�?                        // ReAct �?���?read 工具�?��已切�?tokio::fs, 这里跟它对齐�?
                         if let Ok(content) = tokio::fs::read_to_string(&path_key).await {
                             let mut snapshots = self.read_snapshots.write().await;
                             snapshots
@@ -323,16 +327,16 @@ impl AgentManager {
                 }
                 "write" | "edit" => {
                     if let Some(path_key) = path_key {
-                        // 娓呮帀 read 蹇収: 鏂囦欢鍙兘鍙樹簡, 鏃у揩鐓уけ鏁堛€?                        // edit 宸ュ叿鐨?drift 妫€娴嬩緷璧?read_snapshot, 涓嶆竻浼氳
+                        // 清掉 read �?��: 文件�?��变了, 旧快照失效�?                        // edit 工具�?drift 检测依�?read_snapshot, 不清会�?
                         // 涓嬫 edit 鐢ㄨ繃鏈熷揩鐓ф姤 "File changed on disk" 鍋囬槼鎬с€?
                         let mut snapshots = self.read_snapshots.write().await;
                         if let Some(files) = snapshots.get_mut(thread_id) {
                             files.remove(&path_key);
                         }
                         // memo index 鍚屾 + memo-event emit 瀹屽叏浜ょ粰 watcher
-                        // (dispatch_modify_event: frontmatter-key-first 鍒嗘祦 鈫?
+                        // (dispatch_modify_event: frontmatter-key-first 分流 �?
                         //  reload_memo_from_disk_by_filename / register_unnamed_file 鈫?
-                        //  emit source=ExternalTool)銆侫gent 涓嶅啀鑷繁 emit銆?
+                        //  emit source=ExternalTool)。Agent 不再�?�� emit�?
                     }
                 }
                 _ => {}

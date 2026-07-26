@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufReader};
 
+use super::super::lifecycle::ExternalLifecycleEmitter;
 pub(crate) use super::binary::resolve_codex_binary;
 #[cfg(test)]
 use super::command::{
@@ -15,27 +16,44 @@ use super::command::{
 use super::command::{build_codex_command_with_images, resolve_codex_cwd};
 pub(crate) use super::command::{build_codex_entrypoint, preflight_codex};
 use super::history::is_codex_session_id;
-use super::runtime::{
-    diagnostics_enabled, persist_and_emit_codex_chunk, persist_codex_chunk, resolve_run_id,
-};
+use super::runtime::{diagnostics_enabled, persist_and_emit_codex_chunk, persist_codex_chunk};
 use super::stream::read_codex_stdout;
-use super::{truncate_for_log, AGENT_TYPE};
+use super::AGENT_TYPE;
 use crate::agent_external::{
-    emit_stream_end_once, kill_child_tree, read_stderr_to_string,
-    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, ExternalRunRegistry,
-    USER_STOPPED_REASON,
+    read_stderr_to_string, resolve_and_freeze_runtime_cwd, select_external_session_for_runtime,
+    truncate_for_log, ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
 
 pub struct CodexCliManager {
-    thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
 }
 
+#[async_trait::async_trait]
+impl ExternalLifecycleEmitter for CodexCliManager {
+    fn lifecycle_agent_type(&self) -> &'static str {
+        AGENT_TYPE
+    }
+
+    async fn emit_and_persist_lifecycle_chunk(
+        &self,
+        app_handle: &tauri::AppHandle,
+        chunk: &AgentChunk,
+        run_id: &str,
+    ) {
+        persist_and_emit_codex_chunk(app_handle, &self.thread_manager, chunk, run_id, None).await;
+    }
+
+    async fn persist_emitted_stream_end(&self, chunk: &AgentChunk, run_id: &str) {
+        persist_codex_chunk(&self.thread_manager, chunk, run_id, None).await;
+    }
+}
+
 impl CodexCliManager {
-    pub fn new(thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>) -> Self {
+    pub fn new(thread_manager: Arc<ThreadManager>) -> Self {
         Self {
             thread_manager,
             runs: ExternalRunRegistry::new(AGENT_TYPE, AGENT_TYPE),
@@ -49,38 +67,19 @@ impl CodexCliManager {
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
         let thread_id = thread_id.to_string();
+        let start = self
+            .runs
+            .prepare_start(&thread_id, message.run_id.as_deref())
+            .await?;
         let app_handle = app_handle.clone();
         let manager = self.clone();
-        let run_id = resolve_run_id(&thread_id, message.run_id.as_deref());
-        // 鍏变韩鐨?StreamEnd 宸茬粡 emit 鍑哄幓娌?鏍囧織 鈹€鈹€ `stop_chat` 鍜屾祦寮忎换鍔?        // 閮芥寔鏈変竴浠?Arc, 璋佸厛 CAS(false鈫抰rue) 璋佽礋璐ｅ彂; 鍙︿竴涓垎鏀湅鍒?        // 鏍囧織涓?true 鐩存帴 skip, 淇濊瘉鍓嶇鍙敹涓€鏉?StreamEnd銆?
-        let stream_end_emitted = Arc::new(AtomicBool::new(false));
-
-        // Reap any zombie child (kill/oom/broken pipe leaves the registry
-        // entry behind until the watchdog sweeps it) and refuse overlapping
-        // runs BEFORE we emit StreamStart 鈥?otherwise the UI flashes
-        // loading for ~ms and then bounces to an error.
-        if let Some(reason) = self.runs.reap_stale(&thread_id).await {
-            return Err(reason);
-        }
+        let run_id = start.run_id;
+        let stream_end_emitted = start.stream_end_emitted;
 
         tokio::spawn(async move {
-            // 閫氱敤 metadata 鍗忚 鈹€鈹€ StreamStart 鎼哄甫璇?run 閿佸畾鐨?            // model / reasoning_effort, 鍓嶇 hover card 绛夌粍浠跺彲璇汇€?
-            let model = message.model_for_runtime("codex").map(str::to_string);
-            let reasoning_effort = message
-                .reasoning_effort_for_runtime("codex")
-                .map(str::to_string);
-            persist_and_emit_codex_chunk(
-                &app_handle,
-                &manager.thread_manager,
-                &AgentChunk::StreamStart {
-                    thread_id: thread_id.clone(),
-                    model,
-                    reasoning_effort,
-                },
-                &run_id,
-                None,
-            )
-            .await;
+            manager
+                .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
+                .await;
 
             let reason = match manager
                 .run_codex(
@@ -94,40 +93,22 @@ impl CodexCliManager {
             {
                 Ok(()) => None,
                 Err(err) => {
-                    persist_and_emit_codex_chunk(
-                        &app_handle,
-                        &manager.thread_manager,
-                        &AgentChunk::Error {
-                            thread_id: thread_id.clone(),
-                            message: err.clone(),
-                        },
-                        &run_id,
-                        None,
-                    )
-                    .await;
+                    manager
+                        .emit_run_error(&app_handle, &thread_id, err.clone(), &run_id)
+                        .await;
                     Some(err)
                 }
             };
 
-            // 鍏滃簳 emit: 鑻?stop_chat / watchdog 杩樻病鏇挎垜浠彂杩?StreamEnd,
-            // 鐢辨湰璺緞琛ュ彂; 鍚﹀垯 CAS 澶辫触, 璺宠繃閬垮厤閲嶅銆傝瑙?            // `shared::emit_stream_end_once`銆?
-            let stream_end = AgentChunk::StreamEnd {
-                thread_id: thread_id.clone(),
-                reason,
-            };
-            if emit_stream_end_once(
-                &app_handle,
-                &thread_id,
-                &run_id,
-                AGENT_TYPE,
-                match &stream_end {
-                    AgentChunk::StreamEnd { reason, .. } => reason.clone(),
-                    _ => None,
-                },
-                &stream_end_emitted,
-            ) {
-                persist_codex_chunk(&manager.thread_manager, &stream_end, &run_id, None).await;
-            }
+            manager
+                .emit_stream_end(
+                    &app_handle,
+                    &thread_id,
+                    &run_id,
+                    reason,
+                    &stream_end_emitted,
+                )
+                .await;
         });
 
         Ok(String::new())
@@ -139,14 +120,13 @@ impl CodexCliManager {
         run_id: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) -> bool {
-        let mut running = match run_id {
-            Some(rid) => self.runs.remove_if_run_id(thread_id, Some(rid)).await,
-            None => self.runs.remove(thread_id).await,
-        };
-        if running.is_none() {
+        let mut stopped = self
+            .runs
+            .stop_run(thread_id, thread_id, run_id, "CodexCli")
+            .await;
+        if stopped.is_none() {
             let mapped_thread_id = {
-                let manager = self.thread_manager.read().await;
-                manager
+                self.thread_manager
                     .find_thread_by_external_session(thread_id, AGENT_TYPE)
                     .await
                     .ok()
@@ -154,38 +134,27 @@ impl CodexCliManager {
             };
             if let Some(mapped_thread_id) = mapped_thread_id {
                 if mapped_thread_id != thread_id {
-                    running = match run_id {
-                        Some(rid) => {
-                            self.runs
-                                .remove_if_run_id(&mapped_thread_id, Some(rid))
-                                .await
-                        }
-                        None => self.runs.remove(&mapped_thread_id).await,
-                    };
+                    stopped = self
+                        .runs
+                        .stop_run(&mapped_thread_id, thread_id, run_id, "CodexCli")
+                        .await;
                 }
             }
         }
-        let Some(mut running) = running else {
+        let Some(stopped) = stopped else {
             return false;
         };
-        kill_child_tree(&mut running.child, "CodexCli", thread_id).await;
 
-        // 涓嶇瓑娴佸紡浠诲姟鑷繁閱掓潵 鈹€鈹€ 鐢ㄦ埛鍋滄鍚庣珛鍒诲彂 StreamEnd銆傚叡浜?flag 璁?        // task body 鏈熬鐨勫厹搴?emit 鑷姩璺宠繃 (閬垮厤閲嶅浜嬩欢)銆?
-        let run_id_for_chunk = running.run_id.as_deref().unwrap_or(thread_id).to_string();
-        let stream_end = AgentChunk::StreamEnd {
-            thread_id: thread_id.to_string(),
-            reason: Some(USER_STOPPED_REASON.to_string()),
-        };
-        if emit_stream_end_once(
+        // 不等流式任务�?��醒来 ── 用户停�?后立刻发 StreamEnd。共�?flag �?        // task body �?��的兜�?emit �?��跳过 (避免重�?事件)�?
+        let run_id_for_chunk = stopped.run_id;
+        self.emit_stream_end(
             app_handle,
             thread_id,
             &run_id_for_chunk,
-            AGENT_TYPE,
             Some(USER_STOPPED_REASON.to_string()),
-            &running.stream_end_emitted,
-        ) {
-            persist_codex_chunk(&self.thread_manager, &stream_end, &run_id_for_chunk, None).await;
-        }
+            &stopped.stream_end_emitted,
+        )
+        .await;
         true
     }
 
@@ -203,35 +172,7 @@ impl CodexCliManager {
         idle_timeout_ms: i64,
     ) -> usize {
         let finalized = self.runs.reap_inactive(idle_timeout_ms, "CodexCli").await;
-        for run in &finalized {
-            // CAS 宸插湪 `reap_inactive` 閿佸唴鎶㈣繃 鈹€鈹€ 杩欓噷鐨?run 閮芥槸 watchdog 璧㈠緱
-            // slot 鐨? 鐩存帴鍙?Error + StreamEnd + persist, 涓嶄細鍙屽彂銆?
-            let run_id = run.run_id.as_deref().unwrap_or(run.thread_id.as_str());
-            if let Some(reason) = run.reason.clone() {
-                persist_and_emit_codex_chunk(
-                    app_handle,
-                    &self.thread_manager,
-                    &AgentChunk::Error {
-                        thread_id: run.thread_id.clone(),
-                        message: reason.clone(),
-                    },
-                    run_id,
-                    None,
-                )
-                .await;
-            }
-            persist_and_emit_codex_chunk(
-                app_handle,
-                &self.thread_manager,
-                &AgentChunk::StreamEnd {
-                    thread_id: run.thread_id.clone(),
-                    reason: run.reason.clone(),
-                },
-                run_id,
-                None,
-            )
-            .await;
-        }
+        self.emit_watchdog_finalized(app_handle, &finalized).await;
         finalized.len()
     }
 
@@ -244,8 +185,7 @@ impl CodexCliManager {
         stream_end_emitted: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let mapped_session_id = {
-            let manager = self.thread_manager.read().await;
-            manager
+            self.thread_manager
                 .get_external_session(thread_id, AGENT_TYPE)
                 .await
                 .map_err(|e| e.to_string())?
@@ -253,13 +193,13 @@ impl CodexCliManager {
         let hint = is_codex_session_id(thread_id).then(|| thread_id.to_string());
         let session_id = select_external_session_for_runtime(mapped_session_id, hint);
         let cwd = {
-            let manager = self.thread_manager.read().await;
             resolve_and_freeze_runtime_cwd(
-                &manager,
+                &self.thread_manager,
                 &thread_id,
                 resolve_codex_cwd,
                 &message,
                 session_id.as_deref(),
+                None,
             )
             .await?
         };
@@ -400,8 +340,8 @@ impl CodexCliManager {
         let status = if let Some(running) = child.as_mut() {
             running.child.wait().await.map_err(|e| e.to_string())?
         } else {
-            // child 宸茶 stop_chat 鎴?watchdog 绉昏蛋 鈹€鈹€ 浜岃€呴兘宸?CAS 鎶㈠彂杩?
-            // StreamEnd, 杩欓噷鐩存帴杩斿洖, tail 鐨?CAS 浼氬け璐ヨ€?skip, 涓嶅弻鍙戙€?
+            // child 已�? stop_chat �?watchdog 移走 ── 二者都�?CAS 抢发�?
+            // StreamEnd, 这里直接返回, tail �?CAS 会失败�?skip, 不双发�?
             runtime_log::record_agent_event(
                 "warn",
                 "codex_process",
@@ -539,11 +479,11 @@ mod tests {
         assert_eq!(normalized_reasoning_effort(None), None);
     }
 
-    /// 鏋勯€犱竴涓殧绂荤殑涓存椂鐩綍锛岄噷闈㈡斁涓€涓?fake `codex` 鍙墽琛屾枃浠躲€?    /// 鐢?pid + 涓€涓祴璇曞悕鍚庣紑閬垮厤骞惰娴嬭瘯浜掔浉涓叉壈銆?
+    /// 构造一�?��离的临时�?��，里面放一�?fake `codex` �?��行文件�?    /// �?pid + 一�?��试名后缀避免并�?测试互相串扰�?
     #[test]
     fn select_session_prefers_hint_over_mapping() {
         let mapped = Some("019f0000-0000-7000-8000-000000000000".to_string());
-        // thread_id 鏈韩灏辨槸 UUID 褰㈠紡 鈫?hint 鑳滃嚭锛屾棤瑙?SQLite 鏄犲皠銆?
+        // thread_id �?��就是 UUID 形式 �?hint 胜出，无�?SQLite 映射�?
         let session_id = "019f0000-0000-7000-8000-000000000001";
         assert_eq!(
             select_external_session_for_runtime(mapped.clone(), Some(session_id.to_string()))
@@ -555,8 +495,8 @@ mod tests {
     #[test]
     fn select_session_falls_back_to_mapping_when_no_hint() {
         let mapped = Some("019f0000-0000-7000-8000-000000000000".to_string());
-        // thread_id 涓嶆槸 UUID 褰㈠紡 鈫?鐢?SQLite 閲岀殑鏄犲皠 (cwd / workspace
-        // 涓€鑷翠笌鍚︿笉鍐嶅弬涓庡喅绛栵紝UI 鍦ㄩ鏉℃秷鎭攣瀹?銆?
+        // thread_id 不是 UUID 形式 �?�?SQLite 里的映射 (cwd / workspace
+        // 一致与否不再参与决策，UI 在�?条消�?���?�?
         assert_eq!(
             select_external_session_for_runtime(mapped.clone(), None),
             mapped
@@ -565,7 +505,7 @@ mod tests {
 
     #[test]
     fn select_session_returns_none_for_brand_new_thread() {
-        // 鍏ㄦ柊 thread锛氭棦娌℃槧灏勶紝thread_id 涔熶笉鏄?UUID 鈫?鏂板缓 session銆?
+        // 全新 thread：既没映射，thread_id 也不�?UUID �?新建 session�?
         assert_eq!(select_external_session_for_runtime(None, None), None);
     }
 
@@ -690,8 +630,8 @@ mod tests {
 
     #[test]
     fn resumed_codex_session_uses_config_override_instead_of_sandbox_flag() {
-        // `codex exec resume` 鎷掔粷 `--sandbox`锛坋xit 2: unexpected argument锛夈€?        // resume 鏄柊鐨?CLI invocation锛屽繀椤荤敤瀹冩敮鎸佺殑 config override 閲嶆柊
-        // 搴旂敤 thread card 鐨勬潈闄愬揩鐓э紝涓嶈兘鍋囧畾棣栨 turn 鐨?sandbox 浼氳鎭㈠銆?
+        // `codex exec resume` 拒绝 `--sandbox`（exit 2: unexpected argument）�?        // resume �?���?CLI invocation，必须用它支持的 config override 重新
+        // 应用 thread card 的权限快照，不能假定首�? turn �?sandbox 会�?恢�?�?
         let root = std::env::temp_dir().join(format!(
             "flowix-codex-resume-sandbox-test-{}-{}",
             std::process::id(),
@@ -971,7 +911,7 @@ mod tests {
         cleanup(&dir);
 
         let found = result.expect("expected to find fake codex in PATH");
-        // `which_codex` 鐩存帴鎷?`dir.join("codex")` 杩斿洖锛屼笉璧扮鍙烽摼鎺ヨВ鏋愶紱
+        // `which_codex` 直接�?`dir.join("codex")` 返回，不走�?号链接解析；
         // Compare paths directly to avoid macOS /var -> /private/var canonicalization.
         assert_eq!(found, dir.join("codex"));
     }
@@ -1105,7 +1045,7 @@ mod tests {
     #[test]
     fn resolve_node_binary_falls_back_to_homebrew_path_when_path_empty() {
         let _guard = acquire_env_lock();
-        // 鍙湪 macOS / Linux 涓旀枃浠剁‘瀹炲瓨鍦ㄧ殑 CI 涓婇獙璇侊紱寮€鍙戞満涓€鑸懡涓?
+        // �?�� macOS / Linux 且文件�实存在的 CI 上验证；开发机一�?���?
         #[cfg(unix)]
         {
             let original_path = std::env::var_os("PATH");
@@ -1124,7 +1064,7 @@ mod tests {
                 None => std::env::remove_var("CODEX_NODE_PATH"),
             }
 
-            // 鍛戒腑 /opt/homebrew/bin/node 鎴?/usr/local/bin/node 鎴?/usr/bin/node 涔嬩竴鍗冲彲
+            // 命中 /opt/homebrew/bin/node �?/usr/local/bin/node �?/usr/bin/node 之一即可
             if let Some(p) = &resolved {
                 assert!(
                     p.starts_with("/opt/homebrew/bin/node")
@@ -1137,7 +1077,7 @@ mod tests {
         }
         #[cfg(not(unix))]
         {
-            // Windows 涓?`node` 閫氬父宸茬粡鍦?PATH锛屼笉寮哄埗
+            // Windows �?`node` 通常已经�?PATH，不强制
         }
     }
 
@@ -1149,7 +1089,7 @@ mod tests {
         let original_cli_env = std::env::var_os("CODEX_CLI_PATH");
         std::env::remove_var("CODEX_NODE_PATH");
         std::env::set_var("PATH", "");
-        // 鎶?codex 鎸囧悜涓€涓牴鏈笉瀛樺湪鐨?.js锛岃 needs_node=true 浣?node 鎵句笉鍒?
+        // �?codex 指向一�?���?��存在�?.js，�? needs_node=true �?node 找不�?
         std::env::set_var(
             "CODEX_CLI_PATH",
             std::env::temp_dir().join("flowix-preflight-nonexistent-codex.js"),
@@ -1170,7 +1110,7 @@ mod tests {
             None => std::env::remove_var("CODEX_CLI_PATH"),
         }
 
-        // 鍦ㄨ浜?node 鐨勫紑鍙戞満涓婏紙鍖呮嫭 CI锛変細閫氳繃锛涜繖閲屽彧鏂█"閿欒淇℃伅鍖呭惈鎸囧紩"鎴?閫氳繃"
+        // 在�?�?node 的开发机上（包括 CI）会通过；这里只�?��"错�?信息包含指引"�?通过"
         if let Err(msg) = result {
             assert!(
                 msg.contains("Node.js"),

@@ -12,17 +12,17 @@ use super::{
     AGENT_TYPE,
 };
 
-/// [history path] 鍒楀嚭 `~/.claude/projects/.../*.jsonl` 閲岀殑鎵€鏈?session
-/// 鎽樿銆傝鍓嶇 IPC `list_agent_conversation_instances` 绛夎皟鐢?鏁版嵁婧?/// 鏄寔涔呭寲 JSONL 鈹€鈹€ 涓?stream path 瀹屽叏鐙珛銆?
+/// [history path] 列出 `~/.claude/projects/.../*.jsonl` 里的所�?session
+/// 摘�?。�?前�? IPC `list_agent_conversation_instances` 等调�?数据�?/// �?��久化 JSONL ── �?stream path 完全�?���?
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_claude_sessions)
         .await
         .map_err(|e| e.to_string())?
 }
 
-/// [history path] 璇?`~/.claude/projects/.../<sid>.jsonl` 鍏ㄩ噺,杞垚
-/// `Vec<ChatMessage>` 鎺ㄥ埌 thread card銆傝鍓嶇 IPC `get_session` 璋冪敤銆?/// 鍚屼細璇濈殑 stream path 璧?`events.rs::parse_claude_stdout_line`,
-/// 鏁版嵁婧愭槸 Claude Code 瀛愯繘绋嬬殑 stdout 鈹€鈹€ 涓ゆ潯 path 澶勭悊鐨勬槸鍚屼竴浠?/// 瀵硅瘽鐨勪笉鍚岃鍥?streaming 鏄疄鏃跺垏鐗? history 鏄帇缂╁悗鐨勫叏閲?銆?
+/// [history path] �?`~/.claude/projects/.../<sid>.jsonl` 全量,�?��
+/// `Vec<ChatMessage>` 推到 thread card。�?前�? IPC `get_session` 调用�?/// 同会话的 stream path �?`events.rs::parse_claude_stdout_line`,
+/// 数据源是 Claude Code 子进程的 stdout ── 两条 path 处理的是同一�?/// 对话的不同�?�?streaming �?��时切�? history �?��缩后的全�?�?
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || read_claude_session_messages(&session_id))
@@ -31,19 +31,19 @@ pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
 }
 
 pub fn is_claude_session_id(text: &str) -> bool {
-    // 蹇呴』鏄惧紡鎷掔粷 "claude-local-agent-inst-<ts>-<seq>" 绛夊墠绔?thread id
-    // 鍗犱綅绗?鈹€鈹€ 杩欎簺瀛楃涓查暱搴?鈮?32 涓斿寘鍚?5 涓?dash, 鑰佺増瀹芥澗鍒ゆ柇浼氭妸
-    // 瀹冧滑褰撴垚 session id 閫忎紶缁?Claude CLI 鐨?--resume, 浣?CLI 鏄?UUID
+    // 必须显式拒绝 "claude-local-agent-inst-<ts>-<seq>" 等前�?thread id
+    // 占位�?── 这些字�?串长�?�?32 且包�?5 �?dash, 老版宽松判断会把
+    // 它们当成 session id 透传�?Claude CLI �?--resume, �?CLI �?UUID
     // 涓ユ牸鏍￠獙: "Provided value ... is not a UUID and does not match any
     // session title"銆?
     let value = text.trim();
     if value.is_empty() || value.starts_with("claude-local-") {
         return false;
     }
-    // Claude Code 鐪?session id 鏄?UUID 鈹€鈹€ 36 瀛楃, 4 涓?dash, 鍏朵綑鍏ㄦ槸
-    // ASCII 鍗佸叚杩涘埗浣嶃€?鍚屾椂涔熷吋瀹?Claude 鍚庣画鍙兘鐨勯潪 UUID 鏍煎紡
-    // (渚嬪鏈潵浠栦滑鎹?ULID/base32), 閫氳繃闀垮害 + dash 璁℃暟瀹芥斁, 浠嶆槸鍚堟硶
-    // 鐨?闀垮緱鍍?id 瀛楃涓?銆?
+    // Claude Code �?session id �?UUID ── 36 字�?, 4 �?dash, 其余全是
+    // ASCII 十六进制位�?同时也兼�?Claude 后续�?��的非 UUID 格式
+    // (例�?�?��他们�?ULID/base32), 通过长度 + dash 计数宽放, 仍是合法
+    // �?长得�?id 字�?�?�?
     let dash_count = value.chars().filter(|c| *c == '-').count();
     value.len() >= 32 && dash_count == 4
 }
@@ -99,10 +99,10 @@ fn list_claude_sessions() -> Result<Vec<ThreadInfo>, String> {
     Ok(list)
 }
 
-/// [history path] 璇绘寔涔呭寲 JSONL 鍏ㄩ噺,閫愯杞?`ChatMessage`銆傛瘡琛岀粡
+/// [history path] 读持久化 JSONL 全量,逐�?�?`ChatMessage`。每行经
 /// `value_to_chat_messages` 杩囨护(isMeta / isSidechain / isSynthetic /
 /// subagent_type / task-notification 瀹堝崼),鍐嶇粡 `append_claude_history_message`
-/// 鍚堝苟鍚?tool_call_id 鐨?tool_use + tool_result銆?
+/// 合并�?tool_call_id �?tool_use + tool_result�?
 fn read_claude_session_messages(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let path = find_claude_session_file(session_id)?
         .ok_or_else(|| format!("Claude Code session not found: {session_id}"))?;
@@ -129,7 +129,7 @@ fn read_claude_session_messages(session_id: &str) -> Result<Vec<ChatMessage>, St
     Ok(messages)
 }
 
-/// [history path] 淇"session 涓€旇 kill 鐣欎笅鐨勫鍎?tool_use"銆?/// stream path 娌℃湁绛変环闇€姹?鈹€鈹€ 娴佸紡涓?tool_result 绱ц窡 tool_use 鍒拌揪,
+/// [history path] �??"session �?���? kill 留下的�?�?tool_use"�?/// stream path 没有等价需�?── 流式�?tool_result 紧跟 tool_use 到达,
 /// 涓嶄細鐣欏鍎裤€?
 fn close_orphan_claude_tool_calls(messages: &mut [ChatMessage]) {
     use std::collections::HashSet;
@@ -152,9 +152,9 @@ fn close_orphan_claude_tool_calls(messages: &mut [ChatMessage]) {
     }
 }
 
-/// [history path] 鎶?`value_to_chat_messages` 浜х敓鐨?`ChatMessage` 杩藉姞
-/// 鍒版秷鎭垪琛?鐗规畩澶勭悊 tool_result 鈹€鈹€ 鑻ュ凡鏈夊悓 tool_call_id 鐨?/// tool_call_message(璇存槑 tool_use 宸插厛鍒?,鍒欏師鍦板悎骞惰€岄潪杩藉姞,
-/// 閬垮厤 thread card 涓婂悓鏃舵樉绀?璋冪敤涓?鍜?宸茶繑鍥?涓ゆ潯 tool 姘旀场銆?
+/// [history path] �?`value_to_chat_messages` 产生�?`ChatMessage` 追加
+/// 到消�?���?特殊处理 tool_result ── 若已有同 tool_call_id �?/// tool_call_message(说明 tool_use 已先�?,则原地合并而非追加,
+/// 避免 thread card 上同时显�?调用�?�?已返�?两条 tool 气泡�?
 fn append_claude_history_message(messages: &mut Vec<ChatMessage>, message: ChatMessage) {
     let is_tool_result = message.role == "tool"
         && message.tool_name.as_deref() == Some("tool_result")
@@ -188,8 +188,8 @@ struct SessionMeta {
     updated_at: Option<i64>,
 }
 
-/// [history path] 璇?JSONL 鍏ㄩ噺,鎻愬彇 session 绾у厓鏁版嵁 鈹€鈹€ id / title /
-/// created_at / updated_at銆倀itle 浠庨涓?type=user 琛?+ 闈炲悎鎴愭秷鎭?/// (`!should_silence_event`) + 鍚彲璇?text 鐨勮鎻愬彇 鈹€鈹€ 閬垮厤鎶?/// Skill body / task-notification XML 璇綋鎴?session 鏍囬銆?
+/// [history path] �?JSONL 全量,提取 session 级元数据 ── id / title /
+/// created_at / updated_at。title 从�?�?type=user �?+ 非合成消�?/// (`!should_silence_event`) + �?���?text 的�?提取 ── 避免�?/// Skill body / task-notification XML �?���?session 标�?�?
 fn read_claude_session_meta(path: &Path) -> Result<SessionMeta, String> {
     let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let mut id = session_id_from_filename(path);
@@ -225,12 +225,12 @@ fn read_claude_session_meta(path: &Path) -> Result<SessionMeta, String> {
     })
 }
 
-/// [history path] 浠?Claude Code CLI 鐨?session jsonl 閲岃鍑哄師濮?cwd 鈹€鈹€
-/// session 鍏冩暟鎹涓€琛岄€氬父甯?`cwd` 瀛楁 (`{"type":..., "cwd":"/abs/path", ...}`).
+/// [history path] �?Claude Code CLI �?session jsonl 里�?出原�?cwd ──
+/// session 元数�??一行通常�?`cwd` 字�? (`{"type":..., "cwd":"/abs/path", ...}`).
 ///
-/// 鐢ㄩ€? 鍚庣 `claude_cli.rs::run_claude` 鐨?cwd 鍏滃簳閾?鈹€鈹€ 褰?IPC 鍏ュ弬
-/// 鐨?`message.cwd_for_runtime` 鎷夸笉鍒板€兼椂 (鍓嶇鍏ㄥ眬 store 鍚姩 race
-/// 鍦烘櫙), 鐢?session 鏂囦欢鑷韩鐨?cwd 浣滀负鏈€鍙潬鐨勭湡婧愩€?瑙?agent_conversation
+/// 用�? 后�? `claude_cli.rs::run_claude` �?cwd 兜底�?── �?IPC 入参
+/// �?`message.cwd_for_runtime` 拿不到值时 (前�?全局 store �?�� race
+/// 场景), �?session 文件�?���?cwd 作为最�?��的真源�?�?agent_conversation
 /// 鍦ㄥ墠绔妸 runtime_config 鍐欏叆 instance 鐨勫搴斾慨澶嶃€?
 pub fn claude_session_cwd(session_id: &str) -> Result<Option<PathBuf>, String> {
     let Some(path) = find_claude_session_file(session_id)? else {
@@ -247,7 +247,7 @@ pub fn claude_session_cwd(session_id: &str) -> Result<Option<PathBuf>, String> {
                 return Ok(Some(PathBuf::from(trimmed)));
             }
         }
-        // metadata 浜嬩欢 (鏂扮増鏈?Claude Code CLI 鎶?cwd 鏀惧湪 metadata.cwd)
+        // metadata 事件 (新版�?Claude Code CLI �?cwd 放在 metadata.cwd)
         if let Some(cwd) = value
             .get("metadata")
             .and_then(|m| m.get("cwd"))
@@ -273,9 +273,9 @@ pub fn claude_session_cwd(session_id: &str) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-/// [history path] 鎸佷箙鍖?JSONL 鍗曡 鈫?`Vec<ChatMessage>` 鈹€鈹€ 琚?/// `read_claude_session_messages` 璋冪敤銆侲ntry guard 鐢?`silence_reason`
-/// 鎷︽埅鍚堟垚娑堟伅(璇﹁ `silence_reason` 鐨?doc);閫氳繃鍚庢寜 role 鍒嗗彂:
-/// text / tool_use / tool_result 鍧楀悇鑷浆 `ChatMessage`銆?
+/// [history path] 持久�?JSONL 单�? �?`Vec<ChatMessage>` ── �?/// `read_claude_session_messages` 调用。Entry guard �?`silence_reason`
+/// 拦截合成消息(详�? `silence_reason` �?doc);通过后按 role 分发:
+/// text / tool_use / tool_result 块各�?�� `ChatMessage`�?
 fn value_to_chat_messages(session_id: &str, idx: usize, value: &Value) -> Vec<ChatMessage> {
     if let Some(reason) = silence_reason(value) {
         tracing::debug!(
@@ -349,10 +349,10 @@ fn value_to_chat_messages(session_id: &str, idx: usize, value: &Value) -> Vec<Ch
                     "tool_result" => {
                         // 涓?events.rs type=user 鐨?"Async agent launched
                         // successfully" 鍓嶇紑瀹堝崼瀵归綈 鈹€鈹€ Agent launch metadata
-                        // 鍗犱綅 tool_result 鍦ㄦ寔涔呭寲 JSONL 閲?isSidechain=false /
-                        // 鏃?subagent_type,浜嬩欢绾?silence_reason 鎶撲笉鍒?鍙兘
-                        // 闈?content 鍓嶇紑鍒ゅ畾銆俢ontent 鏈?string 鍜?array 涓ょ
-                        // 褰㈡€?閮藉緱鏌ャ€?
+                        // 占位 tool_result 在持久化 JSONL �?isSidechain=false /
+                        // �?subagent_type,事件�?silence_reason 抓不�?�?��
+                        // �?content 前缀判定。content �?string �?array 两�?
+                        // 形�?都得查�?
                         let content_text = match part.get("content") {
                             Some(Value::String(s)) => Some(s.as_str()),
                             Some(Value::Array(parts)) => parts
@@ -415,9 +415,9 @@ fn value_to_chat_messages(session_id: &str, idx: usize, value: &Value) -> Vec<Ch
     )]
 }
 
-/// [history path] 鎶婁换鎰忓舰鐘?content (string / array) 鎽婂钩鎴愮函鏂囨湰 鈹€鈹€
-/// `value_to_chat_messages` 鐨?string-content 鍏滃簳鍒嗘敮 + `read_claude_session_meta`
-/// 鐨?title 鎻愬彇鍏辩敤銆?
+/// [history path] 把任意形�?content (string / array) 摊平成纯文本 ──
+/// `value_to_chat_messages` �?string-content 兜底分支 + `read_claude_session_meta`
+/// �?title 提取共用�?
 fn message_content_to_text(value: &Value) -> Option<String> {
     if let Some(text) = value.get("content").and_then(Value::as_str) {
         return Some(text.to_string());
@@ -426,8 +426,8 @@ fn message_content_to_text(value: &Value) -> Option<String> {
     content_blocks_to_text(content)
 }
 
-/// [history path] 鍦ㄤ袱绉?content envelope 涔嬮棿浜岄€変竴:
-/// `message.content`(宓屽鏍煎紡,Claude Code v2) 鎴栭《灞?`content`(legacy 鏍煎紡)銆?
+/// [history path] 在两�?content envelope 之间二选一:
+/// `message.content`(嵌�?格式,Claude Code v2) 或顶�?`content`(legacy 格式)�?
 fn message_content(value: &Value) -> Option<&Value> {
     value
         .get("message")
@@ -435,8 +435,8 @@ fn message_content(value: &Value) -> Option<&Value> {
         .or_else(|| value.get("content"))
 }
 
-/// [history path] 鎶?array content 鎽婂钩鎴愬瓧绗︿覆 鈹€鈹€ 閬嶅巻姣忎釜 block,鍙?`text`
-/// 鎴?`content` 瀛楁鎷兼帴;绌虹粨鏋滆繑鍥?None(閬垮厤鎺ㄧ┖ user 姘旀场)銆?
+/// [history path] �?array content 摊平成字符串 ── 遍历每个 block,�?`text`
+/// �?`content` 字�?拼接;空结果返�?None(避免推空 user 气泡)�?
 fn content_blocks_to_text(content: &Value) -> Option<String> {
     match content {
         Value::String(text) => Some(text.to_string()),
@@ -456,7 +456,7 @@ fn content_blocks_to_text(content: &Value) -> Option<String> {
     }
 }
 
-/// [history path] 鏋勯€?user / tool 閫氱敤 ChatMessage 缁撴瀯銆傛墍鏈?field 榛樿
+/// [history path] 构�?user / tool 通用 ChatMessage 结构。所�?field 默�?
 /// None,璋冪敤鏂规寜闇€濉厖 tool_call_id / tool_name / tool_input / tool_data 绛夈€?
 fn base_message(id: String, role: &str, content: String, timestamp: String) -> ChatMessage {
     ChatMessage {
@@ -478,9 +478,9 @@ fn base_message(id: String, role: &str, content: String, timestamp: String) -> C
     }
 }
 
-/// [history path] 鏋勯€?type=assistant 鐨?tool_use ChatMessage 鈹€鈹€ id /
-/// name / tool_input 浠?JSONL block 瀛楁璇诲嚭,绛?tool_result 鍒版潵鍚庣敱
-/// `append_claude_history_message` 鍚堝苟銆?
+/// [history path] 构�?type=assistant �?tool_use ChatMessage ── id /
+/// name / tool_input �?JSONL block 字�?读出,�?tool_result 到来后由
+/// `append_claude_history_message` 合并�?
 fn tool_call_message(
     session_id: &str,
     idx: usize,
@@ -511,8 +511,8 @@ fn tool_call_message(
     message
 }
 
-/// [history path] 鏋勯€?type=user 鐨?tool_result ChatMessage 鈹€鈹€ 瑙ｆ瀽
-/// block.content 涓?envelope JSON 瀛楃涓?瀛樺叆 `tool_data` 渚涘墠绔睍绀恒€?
+/// [history path] 构�?type=user �?tool_result ChatMessage ── 解析
+/// block.content �?envelope JSON 字�?�?存入 `tool_data` 供前�?��示�?
 fn tool_result_message(
     session_id: &str,
     idx: usize,
@@ -542,9 +542,9 @@ fn tool_result_message(
     message
 }
 
-/// [history path] 鎶?tool_result block.content 搴忓垪鍖栨垚 envelope JSON
-/// 瀛楃涓?鈹€鈹€ 涓?`events.rs::claude_tool_result_value`(events path)琛屼负涓€鑷?
-/// 鍙槸杈撳嚭鏍煎紡鐢?pretty JSON 瀛樺埌 `tool_data` 渚涘墠绔睍绀恒€?
+/// [history path] �?tool_result block.content 序列化成 envelope JSON
+/// 字�?�?── �?`events.rs::claude_tool_result_value`(events path)行为一�?
+/// �?��输出格式�?pretty JSON 存到 `tool_data` 供前�?��示�?
 fn claude_tool_result_content(part: &Value) -> Value {
     let Some(content) = part.get("content") else {
         return claude_tool_result_envelope(part.clone(), part);
@@ -572,8 +572,8 @@ fn claude_tool_result_content(part: &Value) -> Value {
     claude_tool_result_envelope(content, part)
 }
 
-/// [both paths] tool_result envelope 鍏叡閫昏緫 鈹€鈹€ history.rs 璧?/// `claude_tool_result_content`,events.rs 璧?`claude_tool_result_value`,
-/// 涓よ€呮渶缁堥兘璋冭繖閲岀粰 envelope 鍔?`is_error` 瀛楁銆?
+/// [both paths] tool_result envelope �?��逻辑 ── history.rs �?/// `claude_tool_result_content`,events.rs �?`claude_tool_result_value`,
+/// 两者最终都调这里给 envelope �?`is_error` 字�?�?
 fn claude_tool_result_envelope(mut value: Value, source: &Value) -> Value {
     if let Some(is_error) = source.get("is_error").and_then(Value::as_bool) {
         match &mut value {
@@ -591,7 +591,7 @@ fn claude_tool_result_envelope(mut value: Value, source: &Value) -> Value {
     value
 }
 
-/// [history path] 鍒楀嚭 `~/.claude/projects/.../*.jsonl` 鏂囦欢 鈹€鈹€ 琚?/// `find_claude_session_file` 璋冪敤銆?
+/// [history path] 列出 `~/.claude/projects/.../*.jsonl` 文件 ── �?/// `find_claude_session_file` 调用�?
 fn claude_session_files() -> Result<Vec<PathBuf>, String> {
     let Some(home) = dirs::home_dir() else {
         return Ok(Vec::new());
@@ -612,9 +612,9 @@ fn claude_session_files() -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-/// [history path] 鎸?session_id 鎵?JSONL 鏂囦欢 鈹€鈹€ 鍏堟寜鏂囦欢鍚嶅尮閰?
-/// 鎵句笉鍒板啀閫€鍖栦负鎸?metadata.id 鍖归厤(澶勭悊 sub-agent 鏂囦欢鍚嶄笉鍚富 session id
-/// 鐨勬儏鍐?銆?
+/// [history path] �?session_id �?JSONL 文件 ── 先按文件名匹�?
+/// 找不到再退化为�?metadata.id 匹配(处理 sub-agent 文件名不�?�� session id
+/// 的情�?�?
 fn find_claude_session_file(session_id: &str) -> Result<Option<PathBuf>, String> {
     for path in claude_session_files()? {
         if path
@@ -637,7 +637,7 @@ fn find_claude_session_file(session_id: &str) -> Result<Option<PathBuf>, String>
     Ok(None)
 }
 
-/// [history path] 閫掑綊鎵?session id 鈹€鈹€ 椤跺眰 / message envelope / parentUuid銆?/// 琚?`read_claude_session_meta` 鐢ㄤ綔 id fallback銆?
+/// [history path] 递归�?session id ── 顶层 / message envelope / parentUuid�?/// �?`read_claude_session_meta` 用作 id fallback�?
 fn extract_session_id(value: &Value) -> Option<String> {
     for key in ["session_id", "sessionId", "uuid"] {
         if let Some(id) = value.get(key).and_then(Value::as_str) {
@@ -655,13 +655,13 @@ fn extract_session_id(value: &Value) -> Option<String> {
         })
 }
 
-/// [history path] 浠庢枃浠惰矾寰勯噷鎶?session id 鈹€鈹€ `~/.claude/projects/.../<sid>.jsonl`
-/// 鐨勬枃浠跺悕灏辨槸 sid(鍘绘帀 .jsonl 鍚庣紑)銆?
+/// [history path] 从文件路径里�?session id ── `~/.claude/projects/.../<sid>.jsonl`
+/// 的文件名就是 sid(去掉 .jsonl 后缀)�?
 fn session_id_from_filename(path: &Path) -> Option<String> {
     path.file_stem()?.to_str().map(str::to_string)
 }
 
-/// [history path] 浼樺厛鐢?JSONL `timestamp` 瀛楁;缂哄け鍒欑敤褰撳墠鏃堕棿浣滀负 fallback銆?
+/// [history path] 优先�?JSONL `timestamp` 字�?;缺失则用当前时间作为 fallback�?
 fn extract_timestamp(value: &Value) -> String {
     if let Some(timestamp) = value.get("timestamp").and_then(Value::as_str) {
         timestamp.to_string()
@@ -670,8 +670,8 @@ fn extract_timestamp(value: &Value) -> String {
     }
 }
 
-/// [history path] 鍚?`extract_timestamp`,浣嗚繑鍥?i64 姣 鈹€鈹€ 鐢ㄤ簬 session
-/// metadata 鐨?created_at / updated_at 璁＄畻銆?
+/// [history path] �?`extract_timestamp`,但返�?i64 �?? ── 用于 session
+/// metadata �?created_at / updated_at 计算�?
 fn extract_timestamp_millis(value: &Value) -> Option<i64> {
     value
         .get("timestamp")
@@ -684,7 +684,7 @@ fn extract_timestamp_millis(value: &Value) -> Option<i64> {
 }
 
 /// [history path] session 鏍囬瑁佸壀 鈹€鈹€ 鏀舵嫝绌虹櫧瀛楃鍒板崟绌烘牸,鎴墠 40 瀛楃,
-/// 瓒呴暱鍔?`...`銆傝 `read_claude_session_meta` 鐢ㄣ€?
+/// 超长�?`...`。�? `read_claude_session_meta` 用�?
 fn truncate_title(text: &str) -> String {
     let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if trimmed.chars().count() <= 40 {
@@ -706,18 +706,18 @@ mod tests {
 
     #[test]
     fn rejects_local_claude_thread_ids() {
-        // 鍥炲綊 鈹€鈹€ 杩欐潯瀛楃涓查暱搴?鈮?32 涓斿惈 5 涓?dash, 鑰佺増瀹芥澗瑙勫垯浼氳鍒や负
-        // "鏄湡鐨?session id", 鎶?`claude-local-agent-inst-...` 褰撶湡瀹?UUID
-        // 閫忎紶缁?Claude CLI 鐨?--resume銆?CLI 鏄?UUID 涓ユ牸鏍￠獙, 鎶ラ敊:
+        // 回归 ── 这条字�?串长�?�?32 且含 5 �?dash, 老版宽松规则会�?判为
+        // "�?���?session id", �?`claude-local-agent-inst-...` 当真�?UUID
+        // 透传�?Claude CLI �?--resume�?CLI �?UUID 严格校验, 报错:
         // "Provided value ... is not a UUID and does not match any session
-        // title"銆?淇鍚庡繀椤讳互 `claude-local-` 鍓嶇紑鐩存帴鎷掓帀銆?
+        // title"�?�??后必须以 `claude-local-` 前缀直接拒掉�?
         assert!(!is_claude_session_id(
             "claude-local-agent-inst-1783828675847-3"
         ));
         assert!(!is_claude_session_id(
             "claude-local-agent-inst-1783828675847-100"
         ));
-        // 绌虹櫧 + 鐭瓧绗︿覆 鈹€鈹€ 鑰佺増鎰忓鍖归厤鐨?corner銆?
+        // 空白 + �?��符串 ── 老版意�?匹配�?corner�?
         assert!(!is_claude_session_id(""));
         assert!(!is_claude_session_id("   "));
     }
@@ -833,11 +833,11 @@ mod tests {
         assert_eq!(messages[0].is_loading, Some(false));
     }
 
-    // `skips_user_text_only_skill_injection_messages` 鍜?    // `skips_user_text_when_mixed_only_with_tool_result` 杩欎袱涓祴璇曟槸
-    // **鏈夋剰姘镐箙鍒犻櫎**鐨勨€斺€斿畠浠柇瑷€鐨勫潡绾?`should_skip_user_text_blocks`
-    // 鍚彂寮忎笉鍐嶅瓨鍦ㄤ簬 history.rs銆傚畧鍗繚鐣欎笌鍚︿笉褰卞搷瀹為檯 dev 琛屼负(宸插疄娴?,
-    // 淇濈暀瀹堝崼鏃惰繖涓ゆ潯鏄洖褰掓姢鏍?鍒犻櫎瀹堝崼鍚庡畠浠細鍙嶈繃鏉?fail,鎵€浠ヤ竴骞跺垹闄ゃ€?    // 鑻ユ湭鏉ラ噸鏂板紩鍏ュ畧鍗?瑙?`value_to_chat_messages` 鍐呯殑璁捐璇存槑),
-    // 鎶婅繖涓ゆ潯娴嬭瘯浠?git history 鎷夊洖鏉ュ嵆鍙€?
+    // `skips_user_text_only_skill_injection_messages` �?    // `skips_user_text_when_mixed_only_with_tool_result` 这两�?��试是
+    // **有意永久删除**的——它�?��言的块�?`should_skip_user_text_blocks`
+    // �?��式不再存在于 history.rs。守�?��留与否不影响实际 dev 行为(已实�?,
+    // 保留守卫时这两条�?��归护�?删除守卫后它�?��反过�?fail,所以一并删除�?    // 若未来重新引入守�?�?`value_to_chat_messages` 内的设�?说明),
+    // 把这两条测试�?git history 拉回来即�?�?
     #[test]
     fn skips_meta_user_messages_in_session_history() {
         let user = serde_json::json!({
@@ -858,7 +858,7 @@ mod tests {
 
     #[test]
     fn shows_sidechain_assistant_messages_in_session_history() {
-        // 鍙嶅悜 鈥?isSidechain=true assistant 鏂囨湰搴斿湪鍘嗗彶 thread card 灞曠ず銆?
+        // 反向 —isSidechain=true assistant 文本应在历史 thread card 展示�?
         let value = serde_json::json!({
             "type": "assistant",
             "isSidechain": true,
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn shows_sidechain_user_tool_results_in_session_history() {
-        // 鍙嶅悜 鈥?isSidechain=true sub-agent tool_result 搴斿湪鍘嗗彶 thread card 灞曠ず銆?
+        // 反向 —isSidechain=true sub-agent tool_result 应在历史 thread card 展示�?
         let value = serde_json::json!({
             "type": "user",
             "isSidechain": true,
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn shows_agent_tool_use_in_assistant_history() {
-        // 鍙嶅悜 鈥?main agent 鐨?Task 宸ュ叿(name="Agent")tool_use 搴斿湪鍘嗗彶 thread card 灞曠ず銆?
+        // 反向 —main agent �?Task 工具(name="Agent")tool_use 应在历史 thread card 展示�?
         let assistant = serde_json::json!({
             "type": "assistant",
             "isSidechain": false,
@@ -1013,9 +1013,9 @@ mod tests {
         m
     }
 
-    /// 鍐欎竴涓复鏃?`~/.claude/projects/<encoded>/<sid>.jsonl`, 楠岃瘉
-    /// `claude_session_cwd` 鑳戒粠 `cwd` 瀛楁璇诲洖鍘熷 cwd銆?杩欐槸
-    /// "閲嶅惎浜у搧鍚?IPC 鍏ュ弬 cwd 涓虹┖, 鍚庣鍏滃簳鍒?session 鍏冩暟鎹?
+    /// 写一�?���?`~/.claude/projects/<encoded>/<sid>.jsonl`, 验证
+    /// `claude_session_cwd` 能从 `cwd` 字�?读回原�? cwd�?这是
+    /// "重启产品�?IPC 入参 cwd 为空, 后�?兜底�?session 元数�?
     /// 淇璺緞鐨勫洖褰掓祴璇曘€?
     #[test]
     fn claude_session_cwd_reads_cwd_field() {
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(resolved, tmp_root);
     }
 
-    /// 娌℃湁浠讳綍 cwd 瀛楁鏃? 杩斿洖 None 鈹€鈹€ 鑰屼笉鏄┖瀛楃涓叉垨鍏滃簳杩涚▼ cwd銆?
+    /// 没有任何 cwd 字�?�? 返回 None ── 而不�?��字�?串或兜底进程 cwd�?
     #[test]
     fn claude_session_cwd_returns_none_when_missing() {
         let tmp_root = tempdir_via_env();
@@ -1078,10 +1078,10 @@ mod tests {
         dir
     }
 
-    /// Claude Code CLI 鐨勯」鐩洰褰曠紪鐮佹柟寮?
+    /// Claude Code CLI 的项�?��录编码方�?
     ///   /Users/rop/notes  鈫? -Users-rop-notes
-    /// 鎶婃墍鏈夐潪 ASCII 鏇挎崲鎴?`-`, 浣嗗崟鍏冩祴璇?fixture 鐢ㄧ函 ASCII 璺緞,
-    /// 瀹為檯鍙嶆帹涓嶅鏉?鈹€鈹€ 涓嶉渶瑕佸畬鏁村鍒? 鍙彇 path segment 鎷兼垚 dash-joined.
+    /// 把所有非 ASCII 替换�?`-`, 但单元测�?fixture 用纯 ASCII �?��,
+    /// 实际反推不�?�?── 不需要完整�?�? �?�� path segment 拼成 dash-joined.
     fn encode_claude_project_dir(path: &Path) -> String {
         let binding = path.to_string_lossy();
         let stripped = binding.trim_start_matches('/');
@@ -1097,8 +1097,8 @@ mod tests {
 
     fn with_claude_config_dir<T>(root: PathBuf, f: impl FnOnce() -> T) -> T {
         // Save & restore CLAUDE_CONFIG_DIR 閬垮厤姹℃煋鍏跺畠骞跺彂 test.
-        // 鎸?TEST_ENV_LOCK 璁?set/restore 涓庡叾瀹冩敼 env 鐨勬祴璇曚簰鏂?鈹€鈹€ 鍚﹀垯
-        // save-restore 绐楀彛鏈?find_claude_session_file 鍙兘璇诲埌琚苟鍙戞祴璇?        // 鏀瑰啓鐨?CLAUDE_CONFIG_DIR, 瀵艰嚧 session 鏂囦欢鎵句笉鍒?(flaky)銆?
+        // �?TEST_ENV_LOCK �?set/restore 与其它改 env 的测试互�?── 否则
+        // save-restore 窗口�?find_claude_session_file �?��读到�?��发测�?        // 改写�?CLAUDE_CONFIG_DIR, 导致 session 文件找不�?(flaky)�?
         let _guard = crate::agent_external::acquire_test_env_lock();
         let prev = std::env::var_os("CLAUDE_CONFIG_DIR");
         std::env::set_var("CLAUDE_CONFIG_DIR", &root);

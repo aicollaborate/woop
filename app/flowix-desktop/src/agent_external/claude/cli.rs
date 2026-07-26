@@ -6,6 +6,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 #[cfg(test)]
 use tokio::process::Command;
 
+use super::super::lifecycle::ExternalLifecycleEmitter;
 pub(crate) use super::binary::resolve_claude_binary;
 use super::command::{build_claude_command, preflight_claude, resolve_claude_cwd};
 #[cfg(test)]
@@ -15,13 +16,13 @@ use super::command::{
 };
 #[cfg(test)]
 use super::events::parse_claude_stdout_line;
-use super::history::is_claude_session_id;
+use super::history::{claude_session_cwd, is_claude_session_id};
 use super::stream::read_claude_stdout;
-use super::{truncate_for_log, AGENT_TYPE};
+use super::AGENT_TYPE;
 use crate::agent_external::{
-    emit_stream_end_once, kill_child_tree, persist_and_emit_external_chunk, persist_external_chunk,
-    read_stderr_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,
-    select_external_session_for_runtime, ExternalRunRegistry, USER_STOPPED_REASON,
+    persist_and_emit_external_chunk, persist_external_chunk, read_stderr_to_string,
+    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, truncate_for_log,
+    ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
@@ -47,12 +48,40 @@ fn append_attached_image_context(mut prompt: String, image_paths: &[String]) -> 
 }
 
 pub struct ClaudeCliManager {
-    thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
 }
 
+#[async_trait::async_trait]
+impl ExternalLifecycleEmitter for ClaudeCliManager {
+    fn lifecycle_agent_type(&self) -> &'static str {
+        AGENT_TYPE
+    }
+
+    async fn emit_and_persist_lifecycle_chunk(
+        &self,
+        app_handle: &tauri::AppHandle,
+        chunk: &AgentChunk,
+        run_id: &str,
+    ) {
+        persist_and_emit_external_chunk(
+            app_handle,
+            &self.thread_manager,
+            AGENT_TYPE,
+            chunk,
+            run_id,
+            None,
+        )
+        .await;
+    }
+
+    async fn persist_emitted_stream_end(&self, chunk: &AgentChunk, run_id: &str) {
+        persist_external_chunk(&self.thread_manager, AGENT_TYPE, chunk, run_id, None).await;
+    }
+}
+
 impl ClaudeCliManager {
-    pub fn new(thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>) -> Self {
+    pub fn new(thread_manager: Arc<ThreadManager>) -> Self {
         Self {
             thread_manager,
             runs: ExternalRunRegistry::new(AGENT_TYPE, AGENT_TYPE),
@@ -66,39 +95,19 @@ impl ClaudeCliManager {
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
         let thread_id = thread_id.to_string();
+        let start = self
+            .runs
+            .prepare_start(&thread_id, message.run_id.as_deref())
+            .await?;
         let app_handle = app_handle.clone();
         let manager = self.clone();
-        let run_id = resolve_run_id(&thread_id, message.run_id.as_deref());
-        // 鍏变韩鐨?StreamEnd 宸茬粡 emit 鍑哄幓娌?鏍囧織 鈹€鈹€ 瑙?CodexCliManager 鍚屽悕娉ㄩ噴銆?
-        let stream_end_emitted = Arc::new(AtomicBool::new(false));
-
-        // Reap any zombie child (kill/oom/broken pipe leaves the registry
-        // entry behind until the watchdog sweeps it) and refuse overlapping
-        // runs BEFORE we emit StreamStart 鈥?otherwise the UI flashes
-        // loading for ~ms and then bounces to an error.
-        if let Some(reason) = self.runs.reap_stale(&thread_id).await {
-            return Err(reason);
-        }
+        let run_id = start.run_id;
+        let stream_end_emitted = start.stream_end_emitted;
 
         tokio::spawn(async move {
-            // 閫氱敤 metadata 鍗忚 鈹€鈹€ StreamStart 鎼哄甫璇?run 閿佸畾鐨?            // model / reasoning_effort, 鍓嶇 hover card 绛夌粍浠跺彲璇汇€?
-            let model = message.model_for_runtime("claude").map(str::to_string);
-            let reasoning_effort = message
-                .reasoning_effort_for_runtime("claude")
-                .map(str::to_string);
-            persist_and_emit_external_chunk(
-                &app_handle,
-                &manager.thread_manager,
-                AGENT_TYPE,
-                &AgentChunk::StreamStart {
-                    thread_id: thread_id.clone(),
-                    model,
-                    reasoning_effort,
-                },
-                &run_id,
-                None,
-            )
-            .await;
+            manager
+                .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
+                .await;
 
             let reason = match manager
                 .run_claude(
@@ -112,48 +121,22 @@ impl ClaudeCliManager {
             {
                 Ok(()) => None,
                 Err(err) => {
-                    persist_and_emit_external_chunk(
-                        &app_handle,
-                        &manager.thread_manager,
-                        AGENT_TYPE,
-                        &AgentChunk::Error {
-                            thread_id: thread_id.clone(),
-                            message: err.clone(),
-                        },
-                        &run_id,
-                        None,
-                    )
-                    .await;
+                    manager
+                        .emit_run_error(&app_handle, &thread_id, err.clone(), &run_id)
+                        .await;
                     Some(err)
                 }
             };
 
-            // 鍏滃簳 emit: 鑻?stop_chat / watchdog 杩樻病鏇挎垜浠彂杩?StreamEnd,
-            // 鐢辨湰璺緞琛ュ彂; 鍚﹀垯 CAS 澶辫触, 璺宠繃閬垮厤閲嶅銆?
-            let stream_end = AgentChunk::StreamEnd {
-                thread_id: thread_id.clone(),
-                reason,
-            };
-            if emit_stream_end_once(
-                &app_handle,
-                &thread_id,
-                &run_id,
-                AGENT_TYPE,
-                match &stream_end {
-                    AgentChunk::StreamEnd { reason, .. } => reason.clone(),
-                    _ => None,
-                },
-                &stream_end_emitted,
-            ) {
-                persist_external_chunk(
-                    &manager.thread_manager,
-                    AGENT_TYPE,
-                    &stream_end,
+            manager
+                .emit_stream_end(
+                    &app_handle,
+                    &thread_id,
                     &run_id,
-                    None,
+                    reason,
+                    &stream_end_emitted,
                 )
                 .await;
-            }
         });
 
         Ok(String::new())
@@ -165,14 +148,13 @@ impl ClaudeCliManager {
         run_id: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) -> bool {
-        let mut running = match run_id {
-            Some(rid) => self.runs.remove_if_run_id(thread_id, Some(rid)).await,
-            None => self.runs.remove(thread_id).await,
-        };
-        if running.is_none() {
+        let mut stopped = self
+            .runs
+            .stop_run(thread_id, thread_id, run_id, "ClaudeCli")
+            .await;
+        if stopped.is_none() {
             let mapped_thread_id = {
-                let manager = self.thread_manager.read().await;
-                manager
+                self.thread_manager
                     .find_thread_by_external_session(thread_id, AGENT_TYPE)
                     .await
                     .ok()
@@ -180,44 +162,26 @@ impl ClaudeCliManager {
             };
             if let Some(mapped_thread_id) = mapped_thread_id {
                 if mapped_thread_id != thread_id {
-                    running = match run_id {
-                        Some(rid) => {
-                            self.runs
-                                .remove_if_run_id(&mapped_thread_id, Some(rid))
-                                .await
-                        }
-                        None => self.runs.remove(&mapped_thread_id).await,
-                    };
+                    stopped = self
+                        .runs
+                        .stop_run(&mapped_thread_id, thread_id, run_id, "ClaudeCli")
+                        .await;
                 }
             }
         }
-        let Some(mut running) = running else {
+        let Some(stopped) = stopped else {
             return false;
         };
-        kill_child_tree(&mut running.child, "ClaudeCli", thread_id).await;
 
-        let run_id_for_chunk = running.run_id.as_deref().unwrap_or(thread_id).to_string();
-        let stream_end = AgentChunk::StreamEnd {
-            thread_id: thread_id.to_string(),
-            reason: Some(USER_STOPPED_REASON.to_string()),
-        };
-        if emit_stream_end_once(
+        let run_id_for_chunk = stopped.run_id;
+        self.emit_stream_end(
             app_handle,
             thread_id,
             &run_id_for_chunk,
-            AGENT_TYPE,
             Some(USER_STOPPED_REASON.to_string()),
-            &running.stream_end_emitted,
-        ) {
-            persist_external_chunk(
-                &self.thread_manager,
-                AGENT_TYPE,
-                &stream_end,
-                &run_id_for_chunk,
-                None,
-            )
-            .await;
-        }
+            &stopped.stream_end_emitted,
+        )
+        .await;
         true
     }
 
@@ -235,37 +199,7 @@ impl ClaudeCliManager {
         idle_timeout_ms: i64,
     ) -> usize {
         let finalized = self.runs.reap_inactive(idle_timeout_ms, "ClaudeCli").await;
-        for run in &finalized {
-            // CAS 宸插湪 `reap_inactive` 閿佸唴鎶㈣繃 鈹€鈹€ 杩欓噷鐨?run 閮芥槸 watchdog 璧㈠緱
-            // slot 鐨? 鐩存帴鍙?Error + StreamEnd + persist, 涓嶄細鍙屽彂銆?
-            let run_id = run.run_id.as_deref().unwrap_or(run.thread_id.as_str());
-            if let Some(reason) = run.reason.clone() {
-                persist_and_emit_external_chunk(
-                    app_handle,
-                    &self.thread_manager,
-                    AGENT_TYPE,
-                    &AgentChunk::Error {
-                        thread_id: run.thread_id.clone(),
-                        message: reason.clone(),
-                    },
-                    run_id,
-                    None,
-                )
-                .await;
-            }
-            persist_and_emit_external_chunk(
-                app_handle,
-                &self.thread_manager,
-                AGENT_TYPE,
-                &AgentChunk::StreamEnd {
-                    thread_id: run.thread_id.clone(),
-                    reason: run.reason.clone(),
-                },
-                run_id,
-                None,
-            )
-            .await;
-        }
+        self.emit_watchdog_finalized(app_handle, &finalized).await;
         finalized.len()
     }
 
@@ -278,8 +212,7 @@ impl ClaudeCliManager {
         stream_end_emitted: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let mapped_session_id = {
-            let manager = self.thread_manager.read().await;
-            manager
+            self.thread_manager
                 .get_external_session(thread_id, AGENT_TYPE)
                 .await
                 .map_err(|e| e.to_string())?
@@ -287,14 +220,44 @@ impl ClaudeCliManager {
         let hint = is_claude_session_id(thread_id).then(|| thread_id.to_string());
         let session_id = select_external_session_for_runtime(mapped_session_id, hint);
 
+        let authoritative_session_cwd = session_id
+            .as_deref()
+            .and_then(|sid| claude_session_cwd(sid).ok().flatten())
+            .filter(|path| path.is_dir());
+
         let cwd = {
-            let manager = self.thread_manager.read().await;
+            if let (Some(frozen), Some(session_cwd)) = (
+                self.thread_manager
+                    .read_frozen_cwd(&thread_id)
+                    .await
+                    .ok()
+                    .flatten(),
+                authoritative_session_cwd.as_ref(),
+            ) {
+                if frozen.as_path() != session_cwd.as_path() {
+                    runtime_log::record_agent_event(
+                        "warn",
+                        "claude_process",
+                        "claude.cwd_reconciled",
+                        "Frozen cwd differed from Claude session cwd; using session cwd",
+                        Some(&thread_id),
+                        Some(AGENT_TYPE),
+                        Some(serde_json::json!({
+                            "run_id": run_id,
+                            "session_id": session_id,
+                            "frozen_cwd": frozen.display().to_string(),
+                            "session_cwd": session_cwd.display().to_string(),
+                        })),
+                    );
+                }
+            }
             resolve_and_freeze_runtime_cwd(
-                &manager,
+                &self.thread_manager,
                 &thread_id,
                 resolve_claude_cwd,
                 &message,
                 session_id.as_deref(),
+                authoritative_session_cwd.as_deref(),
             )
             .await?
         };
@@ -414,8 +377,8 @@ impl ClaudeCliManager {
         let status = if let Some(running) = child.as_mut() {
             running.child.wait().await.map_err(|e| e.to_string())?
         } else {
-            // child 宸茶 stop_chat 鎴?watchdog 绉昏蛋 鈹€鈹€ 浜岃€呴兘宸?CAS 鎶㈠彂杩?
-            // StreamEnd, 杩欓噷鐩存帴杩斿洖, tail 鐨?CAS 浼氬け璐ヨ€?skip, 涓嶅弻鍙戙€?
+            // child 已�? stop_chat �?watchdog 移走 ── 二者都�?CAS 抢发�?
+            // StreamEnd, 这里直接返回, tail �?CAS 会失败�?skip, 不双发�?
             runtime_log::record_agent_event(
                 "warn",
                 "claude_process",
@@ -607,6 +570,10 @@ mod tests {
                 third.to_string_lossy().to_string()
             ]
         );
+        assert!(
+            !args.iter().any(|arg| arg.is_empty()),
+            "stdin carries the prompt; an empty positional is parsed as an empty --add-dir"
+        );
 
         cleanup(&root);
     }
@@ -710,7 +677,7 @@ mod tests {
 
     #[test]
     fn emits_text_and_tool_result_blocks_from_user_array_content() {
-        // type=user 鐨?content array 閲屽悓鏃跺惈 text 涓?tool_result 鍧楁椂,涓や釜鍧?        // 閮藉彂鈥斺€攖ext 鍧楀彂 AgentChunk::Text,tool_result 鍧楀彂 AgentChunk::ToolResult銆?        // 杩欐槸 events.rs 娴佸紡璺緞鐨勫綋鍓嶈涓?涓?history.rs 璧拌繃鐨勮矾寰?        // 涓€鑷粹€斺€旀枃鏈疮绉繘 user ChatMessage銆乼ool_result 淇濈暀涓?tool 娑堟伅)銆?
+        // type=user �?content array 里同时含 text �?tool_result 块时,两个�?        // 都发——text 块发 AgentChunk::Text,tool_result 块发 AgentChunk::ToolResult�?        // 这是 events.rs 流式�?��的当前�?�?�?history.rs 走过的路�?        // 一致——文�?���?�� user ChatMessage、tool_result 保留�?tool 消息)�?
         let value = serde_json::json!({
             "type": "user",
             "message": {
@@ -742,8 +709,8 @@ mod tests {
 
     #[test]
     fn user_tool_result_only_content_emits_tool_result_chunk() {
-        // type=user 鐨?content array 閲屽彧鏈?tool_result 鍧?鏃?text)鏃?
-        // 鍙彂 ToolResult 涓€鏉?chunk,涓庡師鏈殑 tool_result 澶勭悊璺緞涓€鑷淬€?
+        // type=user �?content array 里只�?tool_result �?�?text)�?
+        // �?�� ToolResult 一�?chunk,与原�?�� tool_result 处理�?��一致�?
         let value = serde_json::json!({
             "type": "user",
             "message": {
@@ -765,8 +732,8 @@ mod tests {
 
     #[test]
     fn user_image_block_is_silently_dropped() {
-        // type=user 鐨?content array 鍚?image / attachment 绛夐潪 text/tool_result
-        // 鍧楁椂,涓嶄骇鐢熶换浣?chunk(娌℃湁 AgentChunk 鍙樹綋鍙互鎵胯浇 user image)銆?
+        // type=user �?content array �?image / attachment 等非 text/tool_result
+        // 块时,不产生任�?chunk(没有 AgentChunk 变体�?��承载 user image)�?
         let value = serde_json::json!({
             "type": "user",
             "message": {
@@ -794,8 +761,8 @@ mod tests {
 
     #[test]
     fn drops_claude_synthetic_user_marker_while_streaming() {
-        // 娴佸紡 stdout 鐨?isSynthetic=true 鈥?Skill 宸ュ叿璋冪敤鎴愬姛鏃?harness
-        // 鎶?skill body 娉ㄥ叆鍒颁富 agent 鐨?user 娑堟伅閲屻€傝瀛楁瑕嗙洊鍒颁簡銆?
+        // 流式 stdout �?isSynthetic=true —Skill 工具调用成功�?harness
+        // �?skill body 注入到主 agent �?user 消息里。�?字�?覆盖到了�?
         let stream_marker = serde_json::json!({
             "type": "user",
             "isSynthetic": true,
@@ -810,7 +777,7 @@ mod tests {
         let chunks = claude_event_to_chunks("thread_1", &stream_marker);
         assert!(chunks.is_empty());
 
-        // 鎸佷箙鍖?JSONL 鐨?isMeta=true 鈥?鍚屼竴绫绘秷鎭湪 --resume / 鍘嬬缉閲嶅缓鍚?        // 鐨勫舰鎬併€傚悓涓€ helper 搴斿綋鍏煎銆?
+        // 持久�?JSONL �?isMeta=true —同一类消�?�� --resume / 压缩重建�?        // 的形态。同一 helper 应当兼�?�?
         let persistent_marker = serde_json::json!({
             "type": "user",
             "isMeta": true,
@@ -825,8 +792,8 @@ mod tests {
 
     #[test]
     fn emits_claude_subagent_event_while_streaming() {
-        // 鍙嶅悜娴嬭瘯 鈥?sub-agent 娲诲姩瑕佸睍绀哄湪涓?thread card 涓?甯︾湡瀹炲伐鍏峰悕銆?        // ToolResult 鐨?name 瀛楁鐢?stream.rs 鐨?tool_use_id->name 鏄犲皠濉厖
-        // (杩欓噷鍗曟祴鍙獙璇?chunk emit, 涓嶉獙璇?name 濉厖)銆?        // type=user + subagent_type(sub-agent tool_result) -> 鎺?ToolResult
+        // 反向测试 —sub-agent 活动要展示在�?thread card �?带真实工具名�?        // ToolResult �?name 字�?�?stream.rs �?tool_use_id->name 映射�?��
+        // (这里单测�?���?chunk emit, 不验�?name �?��)�?        // type=user + subagent_type(sub-agent tool_result) -> �?ToolResult
         let user_row = serde_json::json!({
             "type": "user",
             "subagent_type": "Explore",
@@ -883,9 +850,9 @@ mod tests {
 
     #[test]
     fn emits_subagent_spawn_tool_use_blocks_in_assistant_message() {
-        // 涓?agent 鍦?assistant 琛岄噷骞惰璋冭捣澶氫釜 Agent (Task) sub-agent 鈹€鈹€
-        // 姣忎釜 tool_use 鍧楀搴斾竴涓?spawn,涓?thread card **搴斿綋**灞曠ず杩欎簺
-        // tool_call 鍗＄墖(甯︾湡瀹炲伐鍏峰悕 "Agent")銆傛枃鏈?/ 鏅€氬伐鍏?(Bash / Read)
+        // �?agent �?assistant 行里并�?调起多个 Agent (Task) sub-agent ──
+        // 每个 tool_use 块�?应一�?spawn,�?thread card **应当**展示这些
+        // tool_call 卡片(带真实工具名 "Agent")。文�?/ �?��工�?(Bash / Read)
         // 鍚屾牱姝ｅ父鍙戙€?
         let value = serde_json::json!({
             "type": "assistant",
@@ -907,7 +874,7 @@ mod tests {
 
         let chunks = claude_event_to_chunks("thread_1", &value);
 
-        // 涓変釜 Agent tool_use 鍏ㄩ儴灞曠ず涓?ToolCall(name="Agent")
+        // 三个 Agent tool_use 全部展示�?ToolCall(name="Agent")
         let agent_count = chunks
             .iter()
             .filter(|c| matches!(c, AgentChunk::ToolCall { name, .. } if name == "Agent"))
@@ -923,7 +890,7 @@ mod tests {
             c, AgentChunk::Text { text, .. } if text == "let me run several analyses in parallel"
         )));
 
-        // 鏅€?Bash tool_use 姝ｅ父鍙?
+        // �?�?Bash tool_use 正常�?
         assert!(chunks.iter().any(|c| matches!(
             c, AgentChunk::ToolCall { name, .. } if name == "Bash"
         )));
@@ -931,8 +898,8 @@ mod tests {
 
     #[test]
     fn emits_agent_launch_metadata_tool_result() {
-        // 鍙嶅悜娴嬭瘯 鈥?"Async agent launched successfully" launch metadata
-        // 涔熻 emit(涓?thread card 灞曠ず Agent tool 璋冭捣鍚庣殑 launch 鐘舵€?銆?        // content 鏈?string 鍜?array 涓ょ褰㈡€?閮藉簲姝ｅ父鎺?ToolResult銆?
+        // 反向测试 —"Async agent launched successfully" launch metadata
+        // 也�? emit(�?thread card 展示 Agent tool 调起后的 launch 状�?�?        // content �?string �?array 两�?形�?都应正常�?ToolResult�?
         let string_form = serde_json::json!({
             "type": "user",
             "message": {
@@ -973,9 +940,9 @@ mod tests {
 
     #[test]
     fn keeps_normal_tool_result_with_empty_name_unchanged() {
-        // 鏅€?Bash / Read tool_result 鍗充究娌?name 瀛楁涔熷簲姝ｅ父鎺?ToolResult
-        // 鈹€鈹€ 鍚庣涓嶈噯鏂€俢ontent 浠?"Async agent launched successfully"
-        // 璧峰ご閭ｆ潯鎵嶄涪,鍏朵粬鍘熸牱鐨?tool_result 涓€寰嬬収甯搞€俷ame 绌哄瓧绗︿覆鏄?        // 娴佽矾寰勭殑鍥哄畾琛屼负,鐢卞墠绔喅瀹氭€庝箞 fallback銆?
+        // �?�?Bash / Read tool_result 即便�?name 字�?也应正常�?ToolResult
+        // ── 后�?不臆�?��content �?"Async agent launched successfully"
+        // 起头那条才丢,其他原样�?tool_result 一律照常。name 空字符串�?        // 流路径的固定行为,由前�?��定怎么 fallback�?
         let value = serde_json::json!({
             "type": "user",
             "message": {
@@ -998,7 +965,7 @@ mod tests {
 
     #[test]
     fn emits_claude_sidechain_assistant_text_while_streaming() {
-        // 鍙嶅悜娴嬭瘯 鈥?isSidechain=true 鏍囪鐨?sub-agent 鏂囨湰搴旀甯稿睍绀恒€?
+        // 反向测试 —isSidechain=true 标�?�?sub-agent 文本应�?常展示�?
         let value = serde_json::json!({
             "type": "assistant",
             "isSidechain": true,
@@ -1017,7 +984,7 @@ mod tests {
 
     #[test]
     fn emits_claude_sidechain_user_tool_result_while_streaming() {
-        // 鍙嶅悜娴嬭瘯 鈥?isSidechain=true 鏍囪鐨?sub-agent tool_result 搴旀甯稿睍绀恒€?
+        // 反向测试 —isSidechain=true 标�?�?sub-agent tool_result 应�?常展示�?
         let value = serde_json::json!({
             "type": "user",
             "isSidechain": true,
@@ -1041,7 +1008,7 @@ mod tests {
     #[test]
     fn silence_reason_categorizes_each_filter_case() {
         // sub-agent / sidechain 杩囨护宸蹭粠 silence_reason 鎾ら櫎 (鐢ㄦ埛瑕佹眰灞曠ず
-        // sub-agent 宸ュ叿璋冪敤), 瀵瑰簲 helper 鍑芥暟浜﹀凡鍒犻櫎銆俿ilence_reason 鐜板湪鍙?catch:
+        // sub-agent 工具调用), 对应 helper 函数亦已删除。silence_reason 现在�?catch:
         //   1. synthetic_user_event 鈥?task-notification XML
         //   2. synthetic_user_marker 鈥?isSynthetic / isMeta / Skill body
         //
@@ -1053,7 +1020,7 @@ mod tests {
         });
         assert_eq!(silence_reason(&synthetic), Some("synthetic_user_event"));
 
-        // synthetic_user_marker: type=user + isSynthetic=true (娴佸紡) 鎴?isMeta=true (JSONL)
+        // synthetic_user_marker: type=user + isSynthetic=true (流式) �?isMeta=true (JSONL)
         let stream_marker = serde_json::json!({
             "type": "user",
             "isSynthetic": true,
@@ -1113,7 +1080,7 @@ mod tests {
             .chunks
             .is_empty());
 
-        // 鍙嶅悜鏂█: sub-agent 娲诲姩 + 鏅€氫富閾捐矾閮戒笉搴旇 silence_reason 鎷?        // (鍓嶈€呭湪 history/stream 涓ゆ潯 path 涓婇兘搴旀甯?emit, 鐢?stream.rs 鐨?        // tool_use_id->name 鏄犲皠淇濊瘉 ToolResult 鎷垮埌鐪熷疄宸ュ叿鍚?
+        // 反向�?��: sub-agent 活动 + �?��主链路都不应�? silence_reason �?        // (前者在 history/stream 两条 path 上都应�?�?emit, �?stream.rs �?        // tool_use_id->name 映射保证 ToolResult 拿到真实工具�?
         let subagent_user = serde_json::json!({
             "type": "user",
             "subagent_type": "Explore",
@@ -1128,7 +1095,7 @@ mod tests {
         });
         assert_eq!(silence_reason(&subagent_assistant), None);
 
-        // 涓婚摼璺?assistant 涓嶅懡涓?
+        // 主链�?assistant 不命�?
         let main = serde_json::json!({
             "type": "assistant",
             "message": {
@@ -1142,8 +1109,8 @@ mod tests {
 
     #[test]
     fn should_silence_event_agrees_with_silence_reason_is_some() {
-        // 鍚屼竴琛屼换鎰忎袱濂楄皳璇嶅繀椤讳竴鑷?鈥?鍙嶅悜鏉′欢(history.rs 鏍囬妫€鏌ョ敤
-        // should_silence_event,姝ｅ悜涓㈠純鐢?silence_reason)濡傛灉鍙戠敓鍒嗘浼?        // 鍑虹幇"琚潤榛樹絾琚綋浣?title 鍊欓€?鎴?搴斾涪寮冨嵈娓叉煋"鐨勫洖褰掋€?
+        // 同一行任意两套谓词必须一�?—反向条件(history.rs 标�?检查用
+        // should_silence_event,正向丢弃�?silence_reason)如果发生分�?�?        // 出现"�?��默但�?���?title 候�?�?应丢弃却渲染"的回归�?
         for value in [
             serde_json::json!({"type":"user","subagent_type":"Explore","message":{"role":"user","content":[]}}),
             serde_json::json!({"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[]}}),
@@ -1391,9 +1358,9 @@ mod tests {
     }
 
     // ---- --include-partial-messages (stream_event) streaming tests ----
-    // partial 妯″紡涓?Claude Code 鎶婂洖绛旀媶鎴?Anthropic 鍘熺敓 stream_event 澧為噺;
+    // partial 模式�?Claude Code 把回答拆�?Anthropic 原生 stream_event 增量;
     // 涓嬪垪娴嬭瘯瑕嗙洊 text_delta / thinking_delta / tool_use input 绱Н / assistant
-    // 蹇収鎶戝埗 / message_delta usage, 瀵瑰簲 events::stream_event_to_chunks銆?
+    // �?��抑制 / message_delta usage, 对应 events::stream_event_to_chunks�?
     #[test]
     fn stream_event_text_delta_emits_incremental_text() {
         let value = serde_json::json!({
@@ -1424,7 +1391,7 @@ mod tests {
 
     #[test]
     fn stream_event_text_deltas_emit_one_chunk_per_fragment() {
-        // 姣忎釜 text_delta 鏄閲忕墖娈?-> 鍚勮嚜涓€涓?Text chunk; 鍓嶇 append 杩樺師鍏ㄦ枃銆?
+        // 每个 text_delta �??量片�?-> 各自一�?Text chunk; 前�? append 还原全文�?
         let d1 = serde_json::json!({
             "type": "stream_event",
             "event": { "type": "content_block_delta", "index": 0,
@@ -1445,7 +1412,7 @@ mod tests {
     #[test]
     fn stream_event_tool_use_accumulates_input_across_deltas() {
         // content_block_start(tool_use) + N x input_json_delta + content_block_stop
-        // -> 鍗曚釜 ToolCall, input 涓哄悎骞跺悗瑙ｆ瀽鐨?JSON銆俿tart / delta 涓?emit銆?
+        // -> 单个 ToolCall, input 为合并后解析�?JSON。start / delta �?emit�?
         let mut state = ClaudeStreamState::default();
         let start = serde_json::json!({
             "type": "stream_event",
@@ -1483,7 +1450,7 @@ mod tests {
 
     #[test]
     fn partial_suppresses_assistant_snapshot_but_non_partial_emits() {
-        // partial=true: 鍐椾綑绱Н蹇収涓㈠純(delta 宸查┍鍔ㄦ覆鏌?銆?        // partial=false: 鏁存鏂囨湰鐓у父 emit(鍥炲綊淇濇姢)銆?
+        // partial=true: 冗余�?���?��丢弃(delta 已驱动渲�?�?        // partial=false: 整�?文本照常 emit(回归保护)�?
         let assistant = serde_json::json!({
             "type": "assistant",
             "message": { "content": [{ "type": "text", "text": "hello" }] }

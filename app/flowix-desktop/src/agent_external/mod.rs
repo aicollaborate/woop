@@ -1,18 +1,20 @@
-//! External agent runtimes 鈥?鍚庣鐢ㄦ潵璺?AI 瀵硅瘽鐨勪袱鏉¤矾寰?
+//! External agent runtimes —后�?用来�?AI 对话的两杤���?
 //!
 //! - **sidecar CLI** (`claude` / `codex` / `hermes` / `simple_cli`): 鏈湴
-//!   spawn 涓€涓?binary 瀛愯繘绋? 鎶?stdout 鎸夎瑙ｆ瀽鎴?`AgentChunk`銆?//!   涓変釜 vendor 鍚勬湁鐙珛鐨?session 鏂囦欢 (鍒嗗埆钀?`~/.claude/` / `~/.codex/` /
-//!   `~/.hermes/`), 鐢卞悇鑷殑 `history` 瀛愭ā鍧楄鍙栥€?//! - **in-process LLM provider** (`agent::factory`): 璧?HTTP 娴佸紡鍗忚銆?//!
-//! 鏈ā鍧楀彧鏀舵嫝 sidecar 杩欎竴鏉°€傛墍鏈?sidecar 鍏变韩 `shared::ExternalRunRegistry`
-//! (child 杩涚▼娉ㄥ唽琛?+ watchdog) 鍜?`shared::emit_chunk_with_run_id` (缁熶竴
-//! 鎶?run_id 鍐欏埌 chunk payload 椤跺眰)銆?//!
-//! 鍏ュ彛妯″潡灏变袱灞? `shared` 鏄湡姝ｇ殑 cross-runtime 宸ュ叿, 鍏朵綑姣忎釜 runtime
-//! 閮芥槸 `cli + history` (history 鍙湪鏈夌鐩?session 鏂囦欢鐨?vendor 閲屾湁鎰忎箟)銆?
+//!   spawn 一�?binary 子进�? �?stdout 按�?解析�?`AgentChunk`�?//!   三个 vendor 各有�?���?session 文件 (分别�?`~/.claude/` / `~/.codex/` /
+//!   `~/.hermes/`), 由各�?�� `history` 子模块�?取�?//! - **in-process LLM provider** (`agent::factory`): �?HTTP 流式协�?�?//!
+//! �?��块只收拢 sidecar 这一杰��所�?sidecar 共享 `shared::ExternalRunRegistry`
+//! (child 进程注册�?+ watchdog) �?`shared::emit_chunk_with_run_id` (统一
+//! �?run_id 写到 chunk payload 顶层)�?//!
+//! 入口模块就两�? `shared` �?��正的 cross-runtime 工具, 其余每个 runtime
+//! 都是 `cli + history` (history �?��有�?�?session 文件�?vendor 里有意义)�?
 pub mod claude;
 pub mod cli_resolver;
 pub mod codex;
 pub mod hermes;
+pub mod lifecycle;
 pub mod node;
+pub mod runtime_registry;
 pub mod shared;
 pub mod simple_cli;
 
@@ -30,7 +32,7 @@ pub(crate) fn acquire_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
     let guard = TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    // 娉ㄥ唽琛ㄦ槸杩涚▼绾?static, 璺ㄦ祴璇曚細涓插懗 鈹€鈹€ 鎷垮埌閿佸悗鍏堟竻鍥?None, 淇濊瘉姣忎釜
+    // 注册表是进程�?static, 跨测试会串味 ── 拿到锁后先清�?None, 保证每个
     // Tests start from pure detection behavior unless they explicitly seed the registry.
     cli_resolver::reset_external_cli_registry_for_test();
     guard
@@ -41,9 +43,10 @@ pub(crate) fn acquire_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 // `shared`. Per-runtime APIs (ClaudeCliManager etc.) live on the
 // submodules.
 pub use shared::{
-    append_workspace_context, emit_chunk_with_run_id, emit_stream_end_once, kill_child_tree,
+    append_workspace_context, default_thread_title, emit_chunk_with_run_id,
     persist_and_emit_external_chunk, persist_external_chunk, read_capped_line,
-    read_stderr_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,
-    select_external_session_for_runtime, ExternalRunRegistry, StreamingEmitBuffer,
-    MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES, USER_STOPPED_REASON,
+    read_stderr_to_string, read_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,
+    select_external_session_for_runtime, truncate_chars, truncate_for_log, ExternalRunRegistry,
+    StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
+    USER_STOPPED_REASON,
 };

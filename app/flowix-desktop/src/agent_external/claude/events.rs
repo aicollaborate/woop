@@ -10,16 +10,16 @@ pub(crate) struct ParsedClaudeStdoutLine {
     pub chunks: Vec<AgentChunk>,
 }
 
-/// `--include-partial-messages` 妯″紡涓? Claude Code 鎶婁竴娆?assistant 鍥炵瓟鎷嗘垚
-/// 澶氭潯 `stream_event`(Anthropic 鍘熺敓娴佸紡浜嬩欢)澧為噺杈撳嚭銆傚叾涓?`tool_use` 鍧楃殑
+/// `--include-partial-messages` 模式�? Claude Code 把一�?assistant 回答拆成
+/// 多条 `stream_event`(Anthropic 原生流式事件)增量输出。其�?`tool_use` 块的
 /// `input` JSON 閫氳繃 `input_json_delta` 鍒嗙墖鍒拌揪, 鍗曡瑙ｆ瀽鏃犳硶杩樺師瀹屾暣 input,
-/// 蹇呴』璺ㄨ绱Н 鈹€鈹€ 鏈粨鏋勬寔鏈夎繖涓法琛岀姸鎬? 鐢?`read_claude_stdout` 寰幆鎸変細璇?/// 淇濆瓨, 浼犲叆 `claude_event_to_chunks_with_state`銆?///
-/// 闀滃儚 OpenAI 鍏煎 provider 鐨?`PendingToolCalls`(BTreeMap 鎸?content_block
-/// `index` 绱Н `arguments`), 浠呬綔鐢ㄤ簬 Claude partial 娴佸紡璺緞銆?
+/// 必须跨�?�?�� ── �?��构持有这�?��行状�? �?`read_claude_stdout` �?��按会�?/// 保存, 传入 `claude_event_to_chunks_with_state`�?///
+/// 镜像 OpenAI 兼�? provider �?`PendingToolCalls`(BTreeMap �?content_block
+/// `index` �?�� `arguments`), 仅作用于 Claude partial 流式�?���?
 #[derive(Default)]
 pub(crate) struct ClaudeStreamState {
-    /// content_block `index` -> 绱Н涓殑 tool_use 杈撳叆銆?
-    /// `content_block_start`(tool_use) 寤?entry;`input_json_delta` 杩藉姞
+    /// content_block `index` -> �?���?�� tool_use 输入�?
+    /// `content_block_start`(tool_use) �?entry;`input_json_delta` 追加
     /// `partial_json`;`content_block_stop` flush 鎴?`AgentChunk::ToolCall`銆?
     pending_tool_inputs: BTreeMap<i64, PendingToolInput>,
     /// 已发出 ToolCall 的 tool_use_id 集合 —— 跨行去重,防止 stream_event 增量与
@@ -35,20 +35,20 @@ struct PendingToolInput {
     json_buf: String,
 }
 
-/// [stream path] 鎶?Claude Code 瀛愯繘绋?stdout 鐨勪竴琛?JSONL 瑙ｆ瀽鎴?/// `ParsedClaudeStdoutLine`銆傞潪 JSON 琛屼綔涓?raw 鏂囨湰 Text chunk 閫忎紶,
-/// JSON 琛岃浆 AgentChunk 鍒楄〃銆傝 `stream.rs::read_claude_stdout` 璋冪敤浜?/// 娴佸紡鍥炴樉銆傚悓浼氳瘽鐨?history path 璧?`history.rs::value_to_chat_messages`,
-/// 鏁版嵁婧愭槸 `~/.claude/projects/.../sid.jsonl` 鈹€鈹€ 涓ゆ潯璺緞澶勭悊鐨勬槸鍚屼竴浠?/// 瀵硅瘽鐨勪笉鍚岃鍥?streaming 鏄疄鏃跺垏鐗? history 鏄帇缂╁悗鐨勫叏閲?銆?///
-/// 鏈叆鍙ｆ槸闈?partial 鍏滃簳(鍗曞厓娴嬭瘯 / 鏈紑 `--include-partial-messages` 鐨勫巻鍙?/// 璺緞);鐪熷疄娴佸紡璺緞璧?[`parse_claude_stdout_line_with_state`](partial=true +
+/// [stream path] �?Claude Code 子进�?stdout 的一�?JSONL 解析�?/// `ParsedClaudeStdoutLine`。非 JSON 行作�?raw 文本 Text chunk 透传,
+/// JSON 行转 AgentChunk 列表。�? `stream.rs::read_claude_stdout` 调用�?/// 流式回显。同会话�?history path �?`history.rs::value_to_chat_messages`,
+/// 数据源是 `~/.claude/projects/.../sid.jsonl` ── 两条�?��处理的是同一�?/// 对话的不同�?�?streaming �?��时切�? history �?��缩后的全�?�?///
+/// �?��口是�?partial 兜底(单元测试 / �?�� `--include-partial-messages` 的历�?/// �?��);真实流式�?���?[`parse_claude_stdout_line_with_state`](partial=true +
 /// 璺ㄨ state)
-#[allow(dead_code)] // 闈?partial 鍏滃簳 + 鍗曞厓娴嬭瘯鍏ュ彛; 鐢熶骇娴佸紡璧?with_state銆?
+#[allow(dead_code)] // �?partial 兜底 + 单元测试入口; 生产流式�?with_state�?
 pub(crate) fn parse_claude_stdout_line(thread_id: &str, line: &str) -> ParsedClaudeStdoutLine {
     parse_claude_stdout_line_inner(thread_id, line, false, &mut ClaudeStreamState::default())
 }
 
 /// [stream path] partial 妯″紡涓撶敤鍏ュ彛 鈹€鈹€ `read_claude_stdout` 鎸佹湁璺ㄨ `state`,
-/// `partial=true` 鎶戝埗鍐椾綑 `assistant` 蹇収(delta 宸查┍鍔ㄦ覆鏌?, 骞舵妸
-/// `stream_event` 瑙ｆ瀽鎴愬閲?`AgentChunk`銆俙state` 鍦ㄨ皟鐢ㄦ柟寰幆閲岃法琛屽鐢?
-/// 鍚屼竴浼氳瘽鐨?`input_json_delta` 鍒嗙墖鍦ㄦ绱Н銆?
+/// `partial=true` 抑制冗余 `assistant` �?��(delta 已驱动渲�?, 并把
+/// `stream_event` 解析成�?�?`AgentChunk`。`state` 在调用方�?��里跨行�?�?
+/// 同一会话�?`input_json_delta` 分片在�?�?���?
 pub(crate) fn parse_claude_stdout_line_with_state(
     thread_id: &str,
     line: &str,
@@ -91,12 +91,12 @@ fn parse_claude_stdout_line_inner(
     }
 }
 
-/// [history path primarily] Claude Code v2 鎶?Task 瀛?agent 瀹屾垚鐨勯€氱煡
-/// 鍖呮垚 `type=user` 娑堟伅鍠傜粰涓?agent,鍐呭鏄暣娈?/// `<task-notification>...</task-notification>` XML 鈥斺€?杩欎竴褰㈡€佸彧鍦?/// 鎸佷箙鍖?JSONL 閲屽嚭鐜?鐢?CLI 鍦ㄥ帇缂?/ 涓婁笅鏂囨仮澶嶉樁娈靛啓鍏?銆?/// 娴佸紡 stdout 閲?sub-agent 瀹屾垚閫氱煡鏀硅蛋 `type=result, origin.kind=
-/// "task-notification"`(鏃?type=user 褰㈡€?,鎵€浠ユ湰 helper 鍦?stream path
-/// 涓婂疄闄呬笂鏄?no-op銆?///
-/// `origin.kind == "task-notification"` 鏄渶鍙潬鐨?schema 绾т俊鍙?
-/// 鏃х増鏈垨闈炴爣鏍煎紡鍙兘娌℃湁 origin 瀛楁浣?content 鐩存帴鏄?`<task-notification>`
+/// [history path primarily] Claude Code v2 �?Task �?agent 完成的通知
+/// 包成 `type=user` 消息喂给�?agent,内�?�?���?/// `<task-notification>...</task-notification>` XML —�?这一形态只�?/// 持久�?JSONL 里出�?�?CLI 在压�?/ 上下文恢复阶段写�?�?/// 流式 stdout �?sub-agent 完成通知改走 `type=result, origin.kind=
+/// "task-notification"`(�?type=user 形�?,所以本 helper �?stream path
+/// 上实际上�?no-op�?///
+/// `origin.kind == "task-notification"` �?���?���?schema 级信�?
+/// 旧版�?��非标格式�?��没有 origin 字�?�?content 直接�?`<task-notification>`
 /// 瀛楃涓测€斺€斾竴骞跺厹搴曘€?
 fn is_synthetic_user_event(value: &Value) -> bool {
     if value.get("type").and_then(Value::as_str) != Some("user") {
@@ -118,14 +118,14 @@ fn is_synthetic_user_event(value: &Value) -> bool {
     false
 }
 
-/// [both paths] 娴佸紡 `isSynthetic=true` + 鎸佷箙鍖?`isMeta=true` 鐨勭粺涓€
-/// helper銆備袱鑰呰涔夌浉鍚?鏍囪"harness / CLI 鍚堟垚鐨?user 娑堟伅"(涓昏鏄?/// Skill 宸ュ叿璋冪敤鏃舵敞鍏ョ殑 skill body,浠ュ強 `Your previous response had no
-/// visible output...` 涓€绫荤殑闅愬紡鎻愰啋),涓?thread card 涓婁笉搴斿睍绀恒€?///
-/// 瀛楁鍚嶉殢杞戒綋涓嶅悓,鏈?helper 鍚屾椂瑕嗙洊涓ゆ潯璺緞:
+/// [both paths] 流式 `isSynthetic=true` + 持久�?`isMeta=true` 的统一
+/// helper。两者�?义相�?标�?"harness / CLI 合成�?user 消息"(主�?�?/// Skill 工具调用时注入的 skill body,以及 `Your previous response had no
+/// visible output...` 一类的隐式提醒),�?thread card 上不应展示�?///
+/// 字�?名随载体不同,�?helper 同时覆盖两条�?��:
 ///   - [stream path]  娴佸紡 stdout(v2.1.207+): 椤跺眰 `isSynthetic` 瀛楁
-///   - [history path] 鎸佷箙鍖?JSONL: 椤跺眰 `isMeta` 瀛楁(鍑虹幇鍦?--resume /
+///   - [history path] 持久�?JSONL: 顶层 `isMeta` 字�?(出现�?--resume /
 ///                     鍘嬬缉閲嶅缓闃舵,浠ュ強閮ㄥ垎琛屽悓鏃跺湪鎸佷箙鍖栨枃浠朵腑)
-/// 涓や釜閮借鐩栦互闃?resume / 鍘嬬缉閲嶅缓鍦烘櫙涓嬫贩鐢ㄥ鑷存紡杩囥€?
+/// 两个都�?盖以�?resume / 压缩重建场景下混用�?致漏过�?
 fn is_synthetic_user_marker(value: &Value) -> bool {
     if value.get("type").and_then(Value::as_str) != Some("user") {
         return false;
@@ -198,12 +198,12 @@ fn looks_like_claude_json_event_line(line: &str) -> bool {
             || trimmed.contains("Base directory for this skill:"))
 }
 
-/// [both paths] 缁熶竴闈欓粯鍒ゅ畾鍏ュ彛 鈹€鈹€ 鍦?events.rs(stream) 涓?history.rs
-/// (history) 涓や釜鍏ュ彛閮戒細琚皟鐢ㄣ€傝繑鍥?`Some(reason)` 鏃惰浜嬩欢搴斿湪娓叉煋鍓?/// 鏁存潯涓㈠純;`reason` 鏄ǔ瀹氱殑瀛楃涓叉爣绛?鍙敤浜?`tracing::debug!` 鏃ュ織涓?/// 鍗曞厓娴嬭瘯鏂█,缁濅笉灞曠ず缁欐渶缁堢敤鎴枫€?///
-/// 妫€鏌ラ『搴忓浐瀹?浠庢渶鍏蜂綋鐨?绯荤粺鍚堟垚"淇″彿鍒版渶寮?鍚屾椂鍙嶆槧涓ゆ潯 path 鐨?/// 鍛戒腑棰戠巼 鈹€鈹€ 楂橀淇″彿鍦ㄥ墠,閬垮厤鏃犺皳鐨勪綆棰戞鏌?:
-///   1. synthetic_user_event   [history]   task-notification(origin.kind 鎴?<task-notification> 鍓嶇紑)
-///   2. synthetic_user_marker  [both]      Skill body 娉ㄥ叆 / 绯荤粺鎻愰啋(isSynthetic 鎴?isMeta)
-/// 浠讳綍澶氶噸鍛戒腑浼樺厛褰掑埌鏈€鍏堝尮閰嶇殑閭ｄ竴绫?閬垮厤鏃ュ織閲屽悓涓€琛屽嚭鐜板涓?reason銆?
+/// [both paths] 统一静默判定入口 ── �?events.rs(stream) �?history.rs
+/// (history) 两个入口都会�?��用。返�?`Some(reason)` 时�?事件应在渲染�?/// 整条丢弃;`reason` �?��定的字�?串标�?�?���?`tracing::debug!` 日志�?/// 单元测试�?��,绝不展示给最终用户�?///
+/// 检查顺序固�?从最具体�?系统合成"信号到最�?同时反映两条 path �?/// 命中频率 ── 高�?信号在前,避免无谓的低频�?�?:
+///   1. synthetic_user_event   [history]   task-notification(origin.kind �?<task-notification> 前缀)
+///   2. synthetic_user_marker  [both]      Skill body 注入 / 系统提醒(isSynthetic �?isMeta)
+/// 任何多重命中优先归到最先匹配的那一�?避免日志里同一行出现�?�?reason�?
 pub(super) fn silence_reason(value: &Value) -> Option<&'static str> {
     if is_synthetic_user_event(value) {
         return Some("synthetic_user_event");
@@ -215,17 +215,17 @@ pub(super) fn silence_reason(value: &Value) -> Option<&'static str> {
 }
 
 /// [both paths] `silence_reason(value).is_some()` 鐨勮涔夌硸,鐢ㄤ簬"璇ヨ
-/// 鏄惁搴斾涪寮?鐨勭函甯冨皵鍒ゅ畾(涓嶉渶瑕?reason 瀛楃涓?銆俙silence_reason` 涓?/// `should_silence_event` 閮藉澶栨毚闇?鍓嶈€呯敤浜庨渶瑕佹墦鏃ュ織鐨勫叆鍙?/// (events.rs::claude_event_to_chunks / history.rs::value_to_chat_messages),
-/// 鍚庤€呯敤浜?鍙嶅悜鏉′欢"鍒ゆ柇(history.rs::read_claude_session_meta 鐨勬爣棰?/// 鍊欓€夋潯浠?,灏戝仛涓€娆?Option 瑙ｅ寘銆?
+/// �?��应丢�?的纯布尔判定(不需�?reason 字�?�?。`silence_reason` �?/// `should_silence_event` 都�?外暴�?前者用于需要打日志的入�?/// (events.rs::claude_event_to_chunks / history.rs::value_to_chat_messages),
+/// 后者用�?反向条件"判断(history.rs::read_claude_session_meta 的标�?/// 候选条�?,少做一�?Option 解包�?
 pub(super) fn should_silence_event(value: &Value) -> bool {
     silence_reason(value).is_some()
 }
 
-/// [stream path] 鍗曡 JSONL 鈫?AgentChunk 鍒楄〃銆傝 `parse_claude_stdout_line`
-/// 璋冪敤,鏄祦寮?stdout 瑙ｆ瀽鐨勬渶搴曞眰銆俥ntry guard 鐢?`silence_reason` 鎷︽埅
-/// 鍚堟垚娑堟伅(璇﹁ `silence_reason` 鐨?doc);閫氳繃鍚庢寜 `type` 鍒嗗彂鍒板悇 block
+/// [stream path] 单�? JSONL �?AgentChunk 列表。�? `parse_claude_stdout_line`
+/// 调用,�?���?stdout 解析的最底层。entry guard �?`silence_reason` 拦截
+/// 合成消息(详�? `silence_reason` �?doc);通过后按 `type` 分发到各 block
 /// 澶勭悊鍒嗘敮(assistant / user / result / system / 鏈煡 type fallback)
-#[allow(dead_code)] // 闈?partial 鍏滃簳 + 鍗曞厓娴嬭瘯鍏ュ彛; 鐢熶骇娴佸紡璧?with_state銆?
+#[allow(dead_code)] // �?partial 兜底 + 单元测试入口; 生产流式�?with_state�?
 pub(crate) fn claude_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> {
     claude_event_to_chunks_with_state(thread_id, value, false, &mut ClaudeStreamState::default())
 }
@@ -267,16 +267,16 @@ pub(crate) fn claude_event_to_chunks_with_state(
         .unwrap_or_default();
 
     // [stream path, partial only] type=stream_event 鈹€鈹€ Anthropic 鍘熺敓娴佸紡浜嬩欢
-    // (message_start / content_block_start|delta|stop / message_delta|stop)銆?    // text_delta / thinking_delta -> 澧為噺 Text / Reasoning;input_json_delta ->
-    // 璺ㄨ绱Н;message_delta -> Usage銆俻artial=false 鏃朵笉浼氬嚭鐜拌 type銆?
+    // (message_start / content_block_start|delta|stop / message_delta|stop)�?    // text_delta / thinking_delta -> 增量 Text / Reasoning;input_json_delta ->
+    // 跨�?�?��;message_delta -> Usage。partial=false 时不会出现�? type�?
     if event_type == "stream_event" {
         return stream_event_to_chunks(thread_id, value, state);
     }
 
-    // [stream path] type=assistant 鍒嗗彂 鈹€鈹€ text / thinking / tool_use 鍧?    // 鈫?瀵瑰簲 AgentChunk;image / attachment 绛?鈫?闈欓粯涓㈠純銆?
+    // [stream path] type=assistant 分发 ── text / thinking / tool_use �?    // �?对应 AgentChunk;image / attachment �?�?静默丢弃�?
     if event_type == "assistant" {
-        // partial: delta 宸查┍鍔ㄦ覆鏌? 涓㈠純鍐椾綑绱Н蹇収銆俻artial 蹇収涓庨潪 partial
-        // 瀹屾暣娑堟伅鐨?stop_reason 閮芥槸 null, 鍙兘闈?`partial` 鏍囧織鍖哄垎銆?
+        // partial: delta 已驱动渲�? 丢弃冗余�?���?��。partial �?��与非 partial
+        // 完整消息�?stop_reason 都是 null, �?���?`partial` 标志区分�?
         if partial {
             // text/thinking 已由 stream_event delta 驱动渲染,跳过;但对内置工具
             // (WebSearch / Agent / TaskOutput 等无 stream_event 增量、仅存于快照的
@@ -345,10 +345,10 @@ pub(crate) fn claude_event_to_chunks_with_state(
         return chunks;
     }
 
-    // [stream path] type=user 鍒嗗彂 鈹€鈹€ text 鍧?鈫?AgentChunk::Text;
-    // tool_result 鍧?鈫?AgentChunk::ToolResult;image / attachment 绛?鈫?闈欓粯
-    // 涓㈠純銆傚悎鎴愭秷鎭?isMeta / isSynthetic /
-    // task-notification)鐢?entry guard `silence_reason` 鍦ㄥ垎鍙戝墠鎷︽埅,
+    // [stream path] type=user 分发 ── text �?�?AgentChunk::Text;
+    // tool_result �?�?AgentChunk::ToolResult;image / attachment �?�?静默
+    // 丢弃。合成消�?isMeta / isSynthetic /
+    // task-notification)�?entry guard `silence_reason` 在分发前拦截,
     // 涓嶄細鍒拌繖閲屻€?
     if event_type == "user" {
         let mut chunks = Vec::new();
@@ -396,7 +396,7 @@ pub(crate) fn claude_event_to_chunks_with_state(
     }
 
     // [stream path] type=system 鈹€鈹€ subtype=error 杞?AgentChunk::Error,
-    // 鍏朵粬 subtype(init / thinking_tokens 绛?鏄?harness 鍏冩暟鎹?涓㈠純銆?
+    // 其他 subtype(init / thinking_tokens �?�?harness 元数�?丢弃�?
     if event_type == "system" {
         if value.get("subtype").and_then(Value::as_str) == Some("error") {
             if let Some(text) = first_string(value, &["message", "error"]) {
@@ -409,7 +409,7 @@ pub(crate) fn claude_event_to_chunks_with_state(
         return Vec::new();
     }
 
-    // [stream path] 鏈煡 type 鍏滃簳 鈹€鈹€ 鐢?first_string 鎵鹃《灞?string 瀛楁銆?
+    // [stream path] �?�� type 兜底 ── �?first_string 找顶�?string 字�?�?
     if let Some(text) = first_string(value, &["delta", "text", "content"]) {
         if !text.trim().is_empty() {
             return vec![AgentChunk::Text {
@@ -422,11 +422,11 @@ pub(crate) fn claude_event_to_chunks_with_state(
     Vec::new()
 }
 
-/// [stream path, partial only] 瑙ｆ瀽 `type=stream_event` 琛屻€俙event` 鏄?Anthropic
-/// 鍘熺敓娴佸紡浜嬩欢, `index` 鏍囪瘑 content_block銆倀ool_use 鐨?`input` 閫氳繃
-/// `input_json_delta` 鍒嗙墖绱Н鍒?`state`, 鍦?`content_block_stop` flush 鎴?/// `AgentChunk::ToolCall`(瑙ｆ瀽澶辫触 / 绌?-> `{}`)銆?///
-/// sub-agent 鐨?stream_event 甯?`parent_tool_use_id`(闈?null)鈹€鈹€ 涓庨潪 partial
-/// 璺緞涓€鑷? sub-agent 娲诲姩鎸夎璁″睍绀哄湪涓?thread card 涓?瑙?cli.rs
+/// [stream path, partial only] 解析 `type=stream_event` 行。`event` �?Anthropic
+/// 原生流式事件, `index` 标识 content_block。tool_use �?`input` 通过
+/// `input_json_delta` 分片�?���?`state`, �?`content_block_stop` flush �?/// `AgentChunk::ToolCall`(解析失败 / �?-> `{}`)�?///
+/// sub-agent �?stream_event �?`parent_tool_use_id`(�?null)── 与非 partial
+/// �?��一�? sub-agent 活动按�?计展示在�?thread card �?�?cli.rs
 /// `emits_claude_subagent_event_while_streaming`), 姝ゅ涓嶉澶栬繃婊ゃ€?
 fn stream_event_to_chunks(
     thread_id: &str,
@@ -440,13 +440,13 @@ fn stream_event_to_chunks(
     let index = ev.get("index").and_then(Value::as_i64).unwrap_or(0);
 
     match event_type {
-        // 鏂?message 寮€濮? 娓呮帀涓婁竴杞畫鐣欑殑 pending tool input, 闃茶法杞硠婕忋€?
+        // �?message 开�? 清掉上一�?��留的 pending tool input, 防跨�?��漏�?
         "message_start" => {
             state.pending_tool_inputs.clear();
             Vec::new()
         }
-        // tool_use 鍧楀紑濮? 璁?id / name, input 鐢?input_json_delta 绱Н銆?
-        // text / thinking 鍧?start 鏃?chunk(鍐呭鐢?delta 鎶曢€?銆?
+        // tool_use 块开�? �?id / name, input �?input_json_delta �?���?
+        // text / thinking �?start �?chunk(内�?�?delta 投�?�?
         "content_block_start" => {
             let is_tool_use = ev
                 .get("content_block")
@@ -508,7 +508,7 @@ fn stream_event_to_chunks(
                 _ => Vec::new(),
             }
         }
-        // flush 绱Н鐨?tool_use input -> ToolCall(瑙ｆ瀽澶辫触 / 绌?-> `{}`)銆?
+        // flush �?���?tool_use input -> ToolCall(解析失败 / �?-> `{}`)�?
         "content_block_stop" => match state.pending_tool_inputs.remove(&index) {
             Some(pending) => {
                 // 若该 id 已被完整快照补发过(insert 返回 false),跳过避免重复 ToolCall。
@@ -530,8 +530,8 @@ fn stream_event_to_chunks(
             }
             None => Vec::new(),
         },
-        // 鏈熬 usage(input / output / cache_read tokens)銆俿top_reason 涔熷湪鏈簨浠?
-        // 浣嗗墠绔潬 stream_end 鏀舵暃 run, 鏃犻渶棰濆 chunk銆?
+        // �?�� usage(input / output / cache_read tokens)。stop_reason 也在�?���?
+        // 但前�?�� stream_end 收敛 run, 无需额�? chunk�?
         "message_delta" => match ev.get("usage") {
             Some(usage) => vec![AgentChunk::Usage {
                 thread_id: thread_id.to_string(),
@@ -558,12 +558,12 @@ fn stream_event_to_chunks(
             }],
             None => Vec::new(),
         },
-        // message_stop / 鍏朵粬: 鏃?chunk銆?
+        // message_stop / 其他: �?chunk�?
         _ => Vec::new(),
     }
 }
 
-// [both paths] ToolResult payload 搴忓垪鍖?鈹€鈹€ events.rs 鍜?history.rs 鐨?// 涓ゆ潯 path 鍦ㄦ帹 ToolResult 鏃堕兘浼氳皟杩欓噷鎶?block.content 杞垚缁熶竴 envelope銆?
+// [both paths] ToolResult payload 序列�?── events.rs �?history.rs �?// 两条 path 在推 ToolResult 时都会调这里�?block.content �?��统一 envelope�?
 /// [stream path, partial only] 完整 `type=assistant` 快照里的 tool_use 补发。
 ///
 /// `--include-partial-messages` 下 Claude Code 对普通模型工具(Bash / Read 等)会先
@@ -662,8 +662,8 @@ fn claude_tool_result_envelope(mut value: Value, source: &Value) -> Value {
     value
 }
 
-// [stream path] 浠庨《灞?/ 宓屽 message envelope 閲岄€掑綊鎵?session id 鈹€鈹€
-// Claude Code 鐨?stdout JSONL 鍦ㄩ《灞傛垨 message.* 閲岄兘浼氬甫 session_id銆?// 鐢ㄤ簬 `parse_claude_stdout_line` 鐨?`SessionResolved` chunk 鎺ㄩ€佷笌
+// [stream path] 从顶�?/ 嵌�? message envelope 里递归�?session id ──
+// Claude Code �?stdout JSONL 在顶层或 message.* 里都会带 session_id�?// 用于 `parse_claude_stdout_line` �?`SessionResolved` chunk 推送与
 // `upsert_external_session` 鎸佷箙鍖栥€?
 fn extract_session_id(value: &Value) -> Option<String> {
     for key in ["session_id", "sessionId", "uuid"] {

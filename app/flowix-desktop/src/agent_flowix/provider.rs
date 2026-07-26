@@ -21,14 +21,49 @@ pub struct AgentInstance {
     pub(super) tools: Vec<Tool>,
 }
 
+pub(super) type AgentTaggedStream = std::pin::Pin<
+    Box<
+        dyn futures::Stream<Item = Result<OpenAICompatibleStreamItem, rllm::error::LLMError>>
+            + Send,
+    >,
+>;
+
 #[derive(Clone)]
 pub(super) enum AgentChatProvider {
     OpenAICompatible(Arc<OpenAICompatibleProvider>),
     DeepSeek(Arc<DeepSeekProvider>),
     Rllm(Arc<dyn rllm::LLMProvider>),
+    #[cfg(test)]
+    Scripted(Arc<ScriptedChatProvider>),
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) enum ScriptedStreamEvent {
+    Item(OpenAICompatibleStreamItem),
+    Error(String),
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) enum ScriptedProviderTurn {
+    Stream(Vec<ScriptedStreamEvent>),
+    RequestError(String),
+}
+
+#[cfg(test)]
+pub(super) struct ScriptedChatProvider {
+    turns: tokio::sync::Mutex<std::collections::VecDeque<ScriptedProviderTurn>>,
 }
 
 impl AgentChatProvider {
+    #[cfg(test)]
+    pub(super) fn scripted(turns: Vec<ScriptedProviderTurn>) -> Self {
+        Self::Scripted(Arc::new(ScriptedChatProvider {
+            turns: tokio::sync::Mutex::new(turns.into()),
+        }))
+    }
+
     pub(super) async fn chat_with_tools(
         &self,
         messages: &[OpenAICompatibleChatMessage],
@@ -44,6 +79,10 @@ impl AgentChatProvider {
                     .collect::<Vec<_>>();
                 provider.chat_with_tools(&llm_messages, tools).await
             }
+            #[cfg(test)]
+            Self::Scripted(_) => Err(LLMError::ProviderError(
+                "scripted provider only supports streaming tests".to_string(),
+            )),
         }
     }
 
@@ -51,16 +90,7 @@ impl AgentChatProvider {
         &self,
         messages: &[OpenAICompatibleChatMessage],
         tools: Option<&[Tool]>,
-    ) -> Result<
-        std::pin::Pin<
-            Box<
-                dyn futures::Stream<
-                        Item = Result<OpenAICompatibleStreamItem, rllm::error::LLMError>,
-                    > + Send,
-            >,
-        >,
-        rllm::error::LLMError,
-    > {
+    ) -> Result<AgentTaggedStream, rllm::error::LLMError> {
         match self {
             Self::OpenAICompatible(provider) => provider.chat_stream_tagged(messages, tools).await,
             Self::DeepSeek(provider) => provider.chat_stream_tagged(messages, tools).await,
@@ -127,6 +157,27 @@ impl AgentChatProvider {
                         Ok(Box::pin(futures::stream::iter(items)))
                     }
                     Err(err) => Err(err),
+                }
+            }
+            #[cfg(test)]
+            Self::Scripted(provider) => {
+                let turn = provider.turns.lock().await.pop_front().unwrap_or_else(|| {
+                    ScriptedProviderTurn::RequestError(
+                        "scripted provider exhausted its turns".to_string(),
+                    )
+                });
+                match turn {
+                    ScriptedProviderTurn::RequestError(message) => {
+                        Err(LLMError::ProviderError(message))
+                    }
+                    ScriptedProviderTurn::Stream(events) => Ok(Box::pin(futures::stream::iter(
+                        events.into_iter().map(|event| match event {
+                            ScriptedStreamEvent::Item(item) => Ok(item),
+                            ScriptedStreamEvent::Error(message) => {
+                                Err(LLMError::ProviderError(message))
+                            }
+                        }),
+                    ))),
                 }
             }
         }

@@ -1,6 +1,7 @@
 use crate::agent_external::claude::ClaudeCliManager;
 use crate::agent_external::codex::CodexCliManager;
 use crate::agent_external::hermes::HermesCliManager;
+use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
 use crate::agent_external::simple_cli;
 use crate::agent_external_config::AgentExternalConfig;
 use crate::agent_flowix::AgentManager;
@@ -22,6 +23,7 @@ use crate::watcher::MemoWatcher;
 use flowix_core::search::{BigramTokenizer, MemoIndex};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tauri::{Listener, Manager};
 
 pub fn run() {
@@ -45,8 +47,8 @@ pub fn run() {
         ),
     );
 
-    // 鍚姩鏃跺湪 `~/.local/bin/flowix-cli` 寤轰竴涓?symlink銆傝鎯呰
-    // `cli_link` 妯″潡: 骞傜瓑 (姣忔鍚姩閮借窇, 宸插瓨鍦ㄥ氨涓嶅姩), 澶辫触鍙?warn
+    // �?��时在 `~/.local/bin/flowix-cli` 建一�?symlink。�?情�?
+    // `cli_link` 模块: 幂等 (每�?�?��都跑, 已存在就不动), 失败�?warn
     // This is idempotent and failures do not block GUI startup.
     cli_link::ensure_cli_symlink();
 
@@ -55,8 +57,8 @@ pub fn run() {
     let thread_db_path = user_config_dir.join("thread.db");
     let user_config = Arc::new(user_config::UserConfigStore::new(home_dir.clone()));
 
-    // 绗旇鏈敞鍐岃〃鐪熸簮璧?~/.flowix/index.db (SQLite); `MemoFile::open_index_db`
-    // 棣栨琚鏃跺缓琛ㄣ€?杩欓噷涓嶉渶瑕佷换浣曠鐩樿縼绉?鈹€鈹€ 鏃?`notebook.json` 璺緞宸插簾銆?
+    // 笔�?�?��册表真源�?~/.flowix/index.db (SQLite); `MemoFile::open_index_db`
+    // 首�?�??时建表�?这里不需要任何�?盘迁�?── �?`notebook.json` �?��已废�?
     let memo_file = flowix_core::memo_file::MemoFile::new(user_config_dir.clone());
 
     // System metadata goes under ~/.flowix/boot/system.json.
@@ -73,7 +75,7 @@ pub fn run() {
     };
 
     // External CLI 璺緞閰嶇疆 (~/.flowix/agent-external-config.json) 鈹€鈹€
-    // 浣滀负 codex/claude/gemini/hermes/openclaw 鎵ц璺緞鐨勫敮涓€鍙傜収銆?
+    // 作为 codex/claude/gemini/hermes/openclaw 执�?�?��的唯一参照�?
     let agent_external_config_path = user_config_dir.join("agent-external-config.json");
     let agent_external_config = match AgentExternalConfig::new(agent_external_config_path.clone()) {
         Ok(store) => store,
@@ -86,8 +88,8 @@ pub fn run() {
         }
     };
 
-    // 涓変釜闇€瑕佷笌 AgentManager 鍏变韩鐨勪緷璧? 鎻愬墠寤哄ソ Arc 鍐?clone銆?    // refcount 鏈熸湜: user_config=2 (AppState + AgentManager), thread_manager=2,
-    // memo_file=2 鈹€鈹€ 瑙?`commands.rs::AppState` 娉ㄩ噴銆?
+    // 三个需要与 AgentManager 共享的依�? 提前建好 Arc �?clone�?    // refcount 期望: user_config=2 (AppState + AgentManager), thread_manager=2,
+    // memo_file=2 ── �?`commands.rs::AppState` 注释�?
     let memo_file_arc = Arc::new(RwLock::new(memo_file));
     let thread_manager = match ThreadManager::new(thread_db_path.clone()) {
         Ok(manager) => manager,
@@ -101,17 +103,16 @@ pub fn run() {
             })
         }
     };
-    let thread_manager_arc = Arc::new(tokio::sync::RwLock::new(thread_manager));
-    // 鍚姩鏃朵竴娆℃€ф竻鐞嗗鍎?is_loading=1 琛?鈹€鈹€ 瑙ｅ喅"涓婃杩涚▼鍦?tool_use
-    // 钀界洏鍚庤 SIGKILL / 寮洪€€, 涓嬫鍚姩鐪嬪埌杞湀鍗℃宸ュ叿琛?鐨勯棶棰樸€?璇﹁
+    let thread_manager_arc = Arc::new(thread_manager);
+    // �?��时一次性清理�?�?is_loading=1 �?── 解决"上�?进程�?tool_use
+    // 落盘后�? SIGKILL / 强退, 下�?�?��看到�?��卡�?工具�?的问题�?详�?
     // `ThreadManager::clear_all_loading` 娉ㄩ噴銆俙run()` 姝ゆ椂杩樺湪 tauri
     // runtime 璧锋潵涔嬪墠, 涓嶈兘 `.await`, 鎵€浠ユ槸鍚屾鏂规硶 (鍐呴儴鍗曟潯
-    // UPDATE, 娌℃湁鐪熷疄寮傛宸ヤ綔)銆傝閿佽冻澶? clear 鍙蛋 UPDATE, 涓嶄細
-    // 涓庢甯?add_message / update_tool_result 鍐茬獊 (鍚庤€呭啓鍚屼竴琛岀殑 0,
-    // 鍚庡埌鍐欏悗璧? 涓ゆ潯璺緞娈婇€斿悓褰?銆?
+    // UPDATE, 没有真实异�?工作)。�?锁足�? clear �?�� UPDATE, 不会
+    // 与�?�?add_message / update_tool_result 冲突 (后者写同一行的 0,
+    // 后到写后�? 两条�?��殊途同�?�?
     {
-        let manager = thread_manager_arc.blocking_read();
-        match manager.clear_all_loading() {
+        match thread_manager_arc.clear_all_loading() {
             Ok(0) => tracing::debug!("[Startup] no orphan is_loading=1 rows"),
             Ok(n) => tracing::info!("[Startup] cleared {n} orphan is_loading=1 rows"),
             Err(e) => tracing::warn!("[Startup] clear_all_loading failed: {e}"),
@@ -119,8 +120,8 @@ pub fn run() {
     }
     let user_config_arc = user_config.clone();
 
-    // Agent 鍙闂洰褰?store 鈹€鈹€ 蹇呴』鍦?notebook registry 涓?`memo_file_arc`
-    // 閮藉氨缁箣鍚庢瀯閫?(鏂?store 浼氳 notebook registry 鎾 + 瀵硅处)銆?
+    // Agent �??�?���?store ── 必须�?notebook registry �?`memo_file_arc`
+    // 都就�?��后构�?(�?store 会�? notebook registry �?? + 对账)�?
     let security_bookmarks_arc = Arc::new(SecurityBookmarkStore::new(user_config_dir.clone()));
     let agent_access_arc = Arc::new(AgentAccessStore::new(
         user_config_dir.clone(),
@@ -129,11 +130,11 @@ pub fn run() {
 
     // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Skills 鈹€鈹€ `~/.flowix/skills/` 鍗曟牴, 鎵弿涓や釜鍖哄煙:
-    //   1. `.system/<name>/SKILL.md`  绯荤粺鍐呯疆 (浠?bundle 涓€娆℃€?seed)
-    //   2. `<name>/SKILL.md`          鐢ㄦ埛鑷坊鍔?    //
-    // 娴佺▼: 鍒涘缓鐢ㄦ埛鐩綍 鈫?seed-once (浠?bundle 鎷蜂竴浠藉埌 .system/) 鈫?榛樿
-    // 缁?agent-access.json 鍔犱竴鏉?Folder entry (id=`fld_skills_auto`) 鈫?    // 鎵弿鏁翠釜鏍圭洰褰?鈫?鏋勯€?SkillStore 鈫?涓?AppState / AgentManager 鍏变韩
-    // 鈹€鈹€ SkillStore 鍚姩鍚庝笉鍙彉, Arc 鍏变韩, 鏃犻渶 RwLock銆?    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    //   1. `.system/<name>/SKILL.md`  系统内置 (�?bundle 一次�?seed)
+    //   2. `<name>/SKILL.md`          用户�?���?    //
+    // 流程: 创建用户�?�� �?seed-once (�?bundle 拷一份到 .system/) �?默�?
+    // �?agent-access.json 加一�?Folder entry (id=`fld_skills_auto`) �?    // �?��整个根目�?�?构�?SkillStore �?�?AppState / AgentManager 共享
+    // ── SkillStore �?��后不�?��, Arc 共享, 无需 RwLock�?    // ──────────────────────────────────────────────────────────────────
     let skills_root = user_config_dir.join("skills");
     if let Err(e) = std::fs::create_dir_all(&skills_root) {
         tracing::warn!(
@@ -143,7 +144,7 @@ pub fn run() {
     }
 
     // Seed-once: bundled `resources/skills/.system/*` 鈫?`~/.flowix/skills/.system/*`.
-    // 涓変釜鍊欓€夎矾寰? 鍛戒腑绗竴涓彲鐢ㄧ殑灏卞仠 鈹€鈹€ 瑙?    // `crate::agent_flowix::skills::scanner::resolve_bundled_root`銆?
+    // 三个候选路�? 命中�?���?��用的就停 ── �?    // `crate::agent_flowix::skills::scanner::resolve_bundled_root`�?
     if let Some(bundled) = crate::agent_flowix::skills::scanner::resolve_bundled_root() {
         let report = crate::agent_flowix::skills::seed_system_skills(&bundled, &skills_root);
         if !report.copied.is_empty() || !report.skipped.is_empty() {
@@ -159,7 +160,7 @@ pub fn run() {
         );
     }
 
-    // 榛樿缁?Agent `~/.flowix/skills/` 鐨勮鏉冮檺 鈹€鈹€ LLM 鍙互鐩存帴 `read` / `grep`
+    // 默�?�?Agent `~/.flowix/skills/` 的�?权限 ── LLM �?��直接 `read` / `grep`
     // Let the agent read registered skills directly when needed.
     agent_access_arc.ensure_skill_folder(&skills_root);
 
@@ -170,22 +171,22 @@ pub fn run() {
         skill_store.root().display()
     );
 
-    // 鐩戝惉 user-config-changed 鐑洿鏂?whitelist 鏃? 涔熼渶瑕?user_config_arc,
-    // 鍗曠嫭 clone 涓€浠?(鍚庣画浼氳 move 杩?AgentManager::new)銆?
+    // 监听 user-config-changed �?���?whitelist �? 也需�?user_config_arc,
+    // 单独 clone 一�?(后续会�? move �?AgentManager::new)�?
     let user_config_for_watcher = user_config_arc.clone();
 
-    // AppState 鍦?`.setup()` 闂寘閲屾瀯閫犮€俆auri 2 鐨?`.manage(state)` 鏄?    // "涓€娆℃€?璇箟, 鎵€浠ユ墍鏈夊叡浜緷璧栭兘鍦ㄨ繘鍏ラ棴鍖呭墠鍑嗗濂姐€?    //
-    // 杩欓噷鎶婃瀯閫?AppState 闇€瑕佺殑瀛愮粨鏋?clone 鍑烘潵 (闂寘 `move` 鎹曡幏),
-    // 鍚屾椂鎶婂彟涓€浠?clone 鍠傜粰 sub-component 鏋勯€犲嚱鏁般€?
+    // AppState �?`.setup()` �?��里构造。Tauri 2 �?`.manage(state)` �?    // "一次�?�?��, 所以所有共�?��赖都在进入闭包前准�?好�?    //
+    // 这里把构�?AppState 需要的子结�?clone 出来 (�?�� `move` 捕获),
+    // 同时把另一�?clone 喂给 sub-component 构造函数�?
     let user_config_for_state = user_config_arc.clone();
     let memo_file_for_state = memo_file_arc.clone();
     let agent_access_for_state = agent_access_arc.clone();
     let security_bookmarks_for_state = security_bookmarks_arc.clone();
     let thread_manager_for_state = thread_manager_arc.clone();
-    // 鍚姩璁惧鐧昏妯″潡 鈹€鈹€ 鍜屼笂闈㈠悓鏍风殑 prep 妯″紡: clone 杩?setup 闂寘銆?
+    // �?��设�?登�?模块 ── 和上面同样的 prep 模式: clone �?setup �?���?
     let user_config_dir_for_device = user_config_dir.clone();
     // `system_data` 娌?
-    // impl Clone 鈹€鈹€ 鐩存帴 move 杩?setup 闂寘, 閭ｉ噷
+    // impl Clone ── 直接 move �?setup �?��, 那里
     // move 杩?AppState銆?
     let search_init = RwLock::new(MemoIndex::new(Arc::new(BigramTokenizer)));
     let agent_manager = Arc::new(AgentManager::new(
@@ -207,10 +208,17 @@ pub fn run() {
         simple_cli::SimpleCliKind::OpenClaw,
         thread_manager_arc.clone(),
     ));
+    let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
+        codex_cli_manager,
+        claude_cli_manager,
+        gemini_cli_manager,
+        hermes_cli_manager,
+        openclaw_cli_manager,
+    ));
 
-    // 绗旇鏈洰褰曟枃浠剁洃鍚櫒 鈥?鎶婂閮ㄧ紪杈戝櫒 / 鍏朵粬 AI 瀵逛换鎰忓凡娉ㄥ唽 notebook
-    // 鐨勭鐩樺彉鏇磋浆鎴?`memo-event` 鎺ㄥ墠绔€俙AppHandle` 鍦?`run()` 闃舵鎷夸笉鍒?
-    // 瀹為檯缁戝畾鍦?.setup() 闂寘閲屽畬鎴愩€?
+    // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
+    // 的�?盘变更转�?`memo-event` 推前�?��`AppHandle` �?`run()` 阶�?拿不�?
+    // 实际绑定�?.setup() �?��里完成�?
     let memo_watcher = Arc::new(RwLock::new(MemoWatcher::new(memo_file_arc.clone())));
 
     tauri::Builder::default()
@@ -225,9 +233,9 @@ pub fn run() {
         .manage(commands::tab_window::TabWindowCoordinator::default())
         .setup(move |app| {
             // 鈹€鈹€ 0) 鍚姩璁惧鐧昏 / last_seen 鍒锋柊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-            //   涓嶉樆濉? spawn 涓€涓?fire-and-forget tokio 浠诲姟, 鑷繁鍐呴儴
-            //   鍏?sleep 10s 鍐?POST, 涓庝骇鍝佹洿鏂?7s 妫€鏌ラ敊寮€銆傝繙绔寜
-            //   `device_id` upsert, 棣栨鎻掑叆, 鍚庣画鍚姩鍒锋柊 last_seen_at銆?
+            //   不阻�? spawn 一�?fire-and-forget tokio 任务, �?��内部
+            //   �?sleep 10s �?POST, 与产品更�?7s 检查错开。远�?��
+            //   `device_id` upsert, 首�?插入, 后续�?��刷新 last_seen_at�?
             let app_version = app.package_info().version.to_string();
             let device_registry = Arc::new(crate::device_registration::DeviceRegistry::load(
                 &user_config_dir_for_device,
@@ -236,11 +244,11 @@ pub fn run() {
             device_registry.clone().spawn_startup_registration();
 
             // 鈹€鈹€ 1) 鍚姩鎺㈡祴 external CLI 璺緞 鈹€鈹€
-            //   瀵?source=auto/缂哄け鐨?agent 璺戞帰娴嬮摼 (env>PATH>鍊欓€?shell),
+            //   �?source=auto/缺失�?agent 跑探测链 (env>PATH>候�?shell),
             // Populate the external CLI registry once at startup.
             agent_external_config.run_startup_detect();
 
-            // 鈹€鈹€ 2) 鏋勯€?AppState 骞?manage 鈹€鈹€
+            // ── 2) 构�?AppState �?manage ──
             let app_state = AppState {
                 user_config: user_config_for_state.clone(),
                 system_data,
@@ -248,33 +256,22 @@ pub fn run() {
                 memo_file: memo_file_for_state.clone(),
                 search: search_init,
                 agent_manager: agent_manager.clone(),
-                codex_cli_manager: codex_cli_manager.clone(),
-                claude_cli_manager: claude_cli_manager.clone(),
-                gemini_cli_manager: gemini_cli_manager.clone(),
-                hermes_cli_manager: hermes_cli_manager.clone(),
-                openclaw_cli_manager: openclaw_cli_manager.clone(),
+                external_runtimes: external_runtimes.clone(),
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),
                 security_bookmarks: security_bookmarks_for_state.clone(),
             };
             app.manage(app_state);
-            spawn_external_agent_watchdog(
-                app.handle().clone(),
-                codex_cli_manager.clone(),
-                claude_cli_manager.clone(),
-                hermes_cli_manager.clone(),
-                gemini_cli_manager.clone(),
-                openclaw_cli_manager.clone(),
-            );
+            spawn_external_agent_watchdog(app.handle().clone(), external_runtimes.clone());
 
             if let Some(window) = app.get_webview_window("main") {
                 crate::window_chrome::apply_window_border_color(&window);
-                // 鍚姩鍗冲榻愪富棰樿儗鏅壊, 娑堥櫎鍐峰惎鍔ㄧ櫧闂?(灏ゅ叾娣辫壊涓婚)銆?
+                // �?��即�?齐主题背�?��, 消除冷启动白�?(尤其深色主�?)�?
                 let theme = app.state::<AppState>().user_config.get_preference().theme;
                 crate::window_chrome::apply_theme_background(&window, theme);
 
-                // Theme::System 鏃惰窡闅?OS 鏄庢殫瀹炴椂鍒囨崲绐楀彛鑳屾櫙鑹? 浠呭綋绐楀彛鏈鏄惧紡
-                // theme (鏈簲鐢ㄦ墍鏈夌獥鍙ｉ兘鏄? 鏃?Tauri 鎵嶆淳鍙?ThemeChanged, 鏁呰繖閲?                // 鐩戝惉涓荤獥鍙ｅ嵆鍙Е鍙戜竴娆″叏灞€鍒锋柊 (apply_theme_background_all 閬嶅巻鎵€鏈夌獥鍙?銆?
+                // Theme::System 时跟�?OS 明暗实时切换窗口背景�? 仅当窗口�??显式
+                // theme (�?��用所有窗口都�? �?Tauri 才派�?ThemeChanged, 故这�?                // 监听主窗口即�?��发一次全局刷新 (apply_theme_background_all 遍历所有窗�?�?
                 let app_for_theme = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::ThemeChanged(_) = event {
@@ -293,8 +290,8 @@ pub fn run() {
                 });
             }
 
-            // 鍦?setup 闃舵 manage dispatcher, 鍥犱负
-            // TauriDispatcher::new 闇€瑕?AppHandle, builder chain 閲屾嬁涓嶅埌銆?
+            // �?setup 阶�? manage dispatcher, 因为
+            // TauriDispatcher::new 需�?AppHandle, builder chain 里拿不到�?
             let dispatcher: crate::events::SharedDispatcher =
                 std::sync::Arc::new(crate::events::TauriDispatcher::new(app.handle().clone()));
             app.manage(dispatcher);
@@ -334,7 +331,7 @@ pub fn run() {
                 })
                 .rebind_all(app.handle().clone(), initial_notebooks.clone());
 
-            // 鍙湪宸叉湁 current notebook 鏃跺仛鍚姩瀵硅处銆?current=None 鏃?            // `MemoFile` 浼氬洖閫€鍒伴粯璁?notebook 璺緞, 鍦?macOS 涓婂彲鑳借Е鍙?            // Documents 鏉冮檺寮圭獥銆?
+            // �?��已有 current notebook 时做�?��对账�?current=None �?            // `MemoFile` 会回退到默�?notebook �?��, �?macOS 上可能触�?            // Documents 权限弹窗�?
             let current_notebook_id = crate::lock_utils::read_lock(&memo_file_arc, "memo_file")
                 .current_notebook_id_value();
             if current_notebook_id.is_some() {
@@ -392,9 +389,9 @@ pub fn run() {
                 }
             }
 
-            // 鍚姩鏃舵妸 preference.json::watcher 搴旂敤鍒?MemoWatcher;
-            // 鍚屾椂娉ㄥ唽 user-config-changed 鐩戝惉鍋氱儹鏇存柊 (鍓嶇璋?            // update_watcher_config IPC 璧?settings::update_watcher_config
-            // 鍐欏悗 emit 璇ヤ簨浠? 杩欓噷鏀跺埌灏?set_whitelist)銆?
+            // �?��时把 preference.json::watcher 应用�?MemoWatcher;
+            // 同时注册 user-config-changed 监听做热更新 (前�?�?            // update_watcher_config IPC �?settings::update_watcher_config
+            // 写后 emit 该事�? 这里收到�?set_whitelist)�?
             {
                 let watcher_cfg = user_config_for_watcher.get_preference().watcher.clone();
                 memo_watcher
@@ -408,10 +405,10 @@ pub fn run() {
                 let w_for_evt = memo_watcher.clone();
                 let uc_for_evt = user_config_for_watcher.clone();
                 app.listen("user-config-changed", move |event| {
-                    // payload 鏄?kind 瀛楃涓?("preference" / "ai_config" / "watcher")
-                    // 鈹€鈹€ ai_config 璧?~/.flowix/agent-config.toml (TOML), 鍏朵綑璧?JSON
-                    // event.payload() 杩斿洖 serde_json 搴忓垪鍖栫粨鏋?(甯﹀紩鍙? 濡?"\"preference\""),
-                    // 鐩存帴 == 姣斿浼氭亽涓?false, 杩欓噷鍙嶅簭鍒楀寲杩樺師鎴愯８瀛楃涓层€?
+                    // payload �?kind 字�?�?("preference" / "ai_config" / "watcher")
+                    // ── ai_config �?~/.flowix/agent-config.toml (TOML), 其余�?JSON
+                    // event.payload() 返回 serde_json 序列化结�?(带引�? �?"\"preference\""),
+                    // 直接 == 比�?会恒�?false, 这里反序列化还原成裸字�?串�?
                     let kind = serde_json::from_str::<String>(event.payload()).unwrap_or_default();
                     if kind == "preference" || kind == "watcher" {
                         let new_cfg = uc_for_evt.get_preference().watcher.clone();
@@ -424,22 +421,22 @@ pub fn run() {
                             .set_whitelist(new_cfg);
                         tracing::info!("[watcher] whitelist hot-updated");
                     }
-                    // 涓婚鍒囨崲鐨勫師鐢?chrome 鏇存柊鐢卞墠绔?apply_window_theme IPC 瀹炴椂椹卞姩,
-                    // 涓嶅湪杩欓噷澶勭悊 (杩欓噷 200ms 闃叉姈鍚庢墠瑙﹀彂, 涓斾笌鎸佷箙鍖栬€﹀悎)銆?
+                    // 主�?切换的原�?chrome 更新由前�?apply_window_theme IPC 实时驱动,
+                    // 不在这里处理 (这里 200ms 防抖后才触发, 且与持久化耦合)�?
                 });
             }
 
             register_deep_links(app);
             handle_cold_start_open_targets(app.handle());
 
-            // release 鏋勫缓涓嶅寘鍚鍒嗘敮銆?鐢ㄦ埛闅忔椂鍙敤 F12 / Ctrl+Shift+I 鍒囨崲銆?
+            // release 构建不包�??分支�?用户随时�?�� F12 / Ctrl+Shift+I 切换�?
             // 鈹€鈹€ spawn flowix-cli sidecar 鈹€鈹€
-            // 蹇呴』鏀?setup 鏈熬, 姝ゆ椂 AppState 宸茬粡 manage, IPC 璋冪敤鏂瑰彲浠?
-            // 鎷垮埌 (铏界劧杩樻病濉?handle 鈹€鈹€ 澶辫触鏃惰繑 "not yet spawned" 閿?銆?
+            // 必须�?setup �?��, 此时 AppState 已经 manage, IPC 调用方可�?
+            // 拿到 (虽然还没�?handle ── 失败时返 "not yet spawned" �?�?
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // 鍋忓ソ (JSON, 璧?user_config)
+            // 偏好 (JSON, �?user_config)
             commands::product::get_product_info,
             commands::product::get_diagnostics,
             commands::product::check_product_update_notice,
@@ -458,10 +455,10 @@ pub fn run() {
             commands::kv::get_tag_system_metadata,
             commands::kv::set_tag_system_layout,
             commands::kv::set_tag_system_hidden,
-            // 绗旇 / Doc 鈹€鈹€ 鎸?commands/memo/{reads,creates,versions,deletes}.rs
+            // 笔�? / Doc ── �?commands/memo/{reads,creates,versions,deletes}.rs
             // 瀛愭ā鍧楄矾寰勫彇, 涓嶈蛋 `commands::memo::xxx` 椤跺眰 re-export 鈹€鈹€
-            // `#[tauri::command]` 瀹忕敓鎴愮殑 `__cmd__xxx` wrapper 鏄嚱鏁版墍鍦?            // 妯″潡鐨勫悓绾?macro, 鍙兘鍦ㄨ妯″潡璺緞 (`commands::memo::reads::xxx`)
-            // 瑙ｆ瀽鍒? `commands::memo::xxx` 椤跺眰璺緞涓嶄紶閫?macro re-export.
+            // `#[tauri::command]` 宏生成的 `__cmd__xxx` wrapper �?��数所�?            // 模块的同�?macro, �?��在�?模块�?�� (`commands::memo::reads::xxx`)
+            // 解析�? `commands::memo::xxx` 顶层�?��不传�?macro re-export.
             commands::memo::reads::get_memos,
             commands::memo::reads::search_mention_notes,
             commands::memo::reads::list_agent_role_memos,
@@ -603,7 +600,7 @@ pub fn run() {
 }
 
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
-    // 浜屾鍚姩: 鍖哄垎 markdown 鏂囦欢璺緞涓?flowix:// 娣遍摼銆?    // 涓や釜閫氶亾鍙互鍚屾椂瑙﹀彂 (鐢ㄦ埛鐢?`xdg-open foo.md flowix://memo/abc123` 鍚姩)銆?
+    // 二�?�?��: 区分 markdown 文件�?���?flowix:// 深链�?    // 两个通道�?��同时触发 (用户�?`xdg-open foo.md flowix://memo/abc123` �?��)�?
     let paths = commands::markdown_paths_from_args(args.clone());
     for path in &paths {
         route_markdown_path_to_tab(app, path);
@@ -620,10 +617,10 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
 fn register_deep_links(app: &mut tauri::App) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
-    // 寮€鍙戞湡姣忔鍚姩閮芥敞鍐屼竴娆″箓绛夛紱姝ｅ紡鎵撳寘鍚?installer 浼氭帴绠★紝杩愯鏃舵敞鍐屼粛鍙ˉ婕忋€?
+    // 开发期每�?�?��都注册一次幂等；正式打包�?installer 会接管，运�?时注册仍�?��漏�?
     let _ = app.deep_link().register("flowix");
 
-    // macOS / Windows: OS 鎶婃繁閾炬姇鍒?running app, 閫氳繃 deep-link 鎻掍欢鍥炶皟娲惧彂銆?
+    // macOS / Windows: OS 把深链投�?running app, 通过 deep-link 插件回调派发�?
     let app_handle = app.handle().clone();
     app.deep_link().on_open_url(move |event| {
         for url in event.urls() {
@@ -701,18 +698,44 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     }
 }
 
+/// 退出路径上等待 5 个 CLI manager `stop_all` 的总时长上界。
+///
+/// `stop_all` -> `kill_child_tree` 在 Unix 同步发 SIGTERM/SIGKILL、在 Windows 跑
+/// `taskkill /T /F`, 正常 ms 级完成; 若某子进程句柄 `child.kill().await` 卡住,
+/// 无上界会让 `block_on` 永不返回 ── 表现为 app 退不掉。超时即放行退出: kill 信号
+/// 已在超时前并发送出, 句柄是否回收不影响子进程已被杀。
+const EXTERNAL_AGENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn stop_external_agent_children(app: &tauri::AppHandle, phase: &str) {
     let state = app.state::<AppState>();
     tauri::async_runtime::block_on(async {
-        let codex = state.codex_cli_manager.stop_all().await;
-        let claude = state.claude_cli_manager.stop_all().await;
-        let gemini = state.gemini_cli_manager.stop_all().await;
-        let hermes = state.hermes_cli_manager.stop_all().await;
-        let openclaw = state.openclaw_cli_manager.stop_all().await;
-        if codex + claude + gemini + hermes + openclaw > 0 {
-            tracing::info!(
-                "stopped external agent children on {phase}: codex={codex}, claude={claude}, gemini={gemini}, hermes={hermes}, openclaw={openclaw}"
-            );
+        // ExternalRuntimeRegistry 并发停止所有 manager，既缩短
+        // 正常退出耗时, 也保证即便某个 `child.kill().await` 卡住, 其余 manager 的
+        // kill 信号仍及时送出。超时后整个 join future 被 drop ── 取消未完成的
+        // `stop_all`, 但 SIGTERM/SIGKILL 已在 `kill_child_tree` 内同步发出。
+        let stopped = tokio::time::timeout(
+            EXTERNAL_AGENT_SHUTDOWN_TIMEOUT,
+            state.external_runtimes.stop_all(),
+        )
+        .await;
+
+        match stopped {
+            Ok(stopped) => {
+                let total = stopped.iter().map(|(_, count)| count).sum::<usize>();
+                if total > 0 {
+                    let summary = stopped
+                        .iter()
+                        .map(|(key, count)| format!("{key}={count}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    tracing::info!("stopped external agent children on {phase}: {summary}");
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "external agent shutdown on {phase} exceeded {EXTERNAL_AGENT_SHUTDOWN_TIMEOUT:?}; kill signals already dispatched, proceeding with exit"
+                );
+            }
         }
     });
 }

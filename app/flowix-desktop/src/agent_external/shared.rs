@@ -6,11 +6,11 @@ use std::sync::Arc;
 use serde_json::Value;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Child;
 #[cfg(windows)]
 use tokio::process::Command;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::{NewAgentExternalEvent, ThreadManager};
@@ -75,6 +75,22 @@ pub struct ExternalRunningChild {
     /// watchdog converge the UI immediately instead of waiting on the
     /// streaming task to notice the child died (which can hang when
     /// grandchildren still hold the stdout write end).
+    pub stream_end_emitted: Arc<AtomicBool>,
+}
+
+/// State shared by the streaming tail, `stop_chat`, and the idle watchdog for
+/// one external CLI invocation. Creating it in the registry keeps run-id
+/// normalization and the one-shot `StreamEnd` flag identical across vendors.
+pub struct ExternalRunStart {
+    pub run_id: String,
+    pub stream_end_emitted: Arc<AtomicBool>,
+}
+
+/// Minimal terminal state returned after the registry has claimed and killed
+/// a child. Runtime-specific managers still decide how terminal events are
+/// persisted; the process lifecycle itself is single-sourced here.
+pub struct ExternalStoppedRun {
+    pub run_id: String,
     pub stream_end_emitted: Arc<AtomicBool>,
 }
 
@@ -176,6 +192,23 @@ impl ExternalRunRegistry {
         children.remove(thread_id)
     }
 
+    /// Prepare the shared lifecycle state before a runtime emits StreamStart.
+    /// A still-live entry is rejected first, so callers never briefly expose a
+    /// new loading state for an invocation that cannot start.
+    pub async fn prepare_start(
+        &self,
+        thread_id: &str,
+        provided_run_id: Option<&str>,
+    ) -> Result<ExternalRunStart, String> {
+        if let Some(reason) = self.reap_stale(thread_id).await {
+            return Err(reason);
+        }
+        Ok(ExternalRunStart {
+            run_id: resolve_run_id(thread_id, provided_run_id),
+            stream_end_emitted: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
     #[cfg(test)]
     async fn contains(&self, thread_id: &str) -> bool {
         let children = self.children.lock().await;
@@ -253,14 +286,39 @@ impl ExternalRunRegistry {
         children.remove(thread_id)
     }
 
-    pub async fn kill_all(&self, label: &str) -> usize {
+    /// Remove and terminate one run. `lookup_thread_id` is the registry key;
+    /// `event_thread_id` is the product thread used by terminal events and as
+    /// the run-id fallback. Codex/Claude may retry with a mapped local thread
+    /// while keeping the original external-session id as the event target.
+    pub async fn stop_run(
+        &self,
+        lookup_thread_id: &str,
+        event_thread_id: &str,
+        expected_run_id: Option<&str>,
+        process_label: &str,
+    ) -> Option<ExternalStoppedRun> {
+        let running = match expected_run_id {
+            Some(run_id) => self.remove_if_run_id(lookup_thread_id, Some(run_id)).await,
+            None => self.remove(lookup_thread_id).await,
+        };
+        let mut running = running?;
+        kill_child_tree(&mut running.child, process_label, event_thread_id).await;
+        Some(ExternalStoppedRun {
+            run_id: running
+                .run_id
+                .unwrap_or_else(|| event_thread_id.to_string()),
+            stream_end_emitted: running.stream_end_emitted,
+        })
+    }
+
+    pub async fn kill_all(&self, process_label: &str) -> usize {
         let running = {
             let mut children = self.children.lock().await;
             children.drain().collect::<Vec<_>>()
         };
         let count = running.len();
         for (thread_id, mut running) in running {
-            kill_child_tree(&mut running.child, label, &thread_id).await;
+            kill_child_tree(&mut running.child, process_label, &thread_id).await;
         }
         count
     }
@@ -268,7 +326,7 @@ impl ExternalRunRegistry {
     pub async fn reap_inactive(
         &self,
         idle_timeout_ms: i64,
-        label: &str,
+        process_label: &str,
     ) -> Vec<ExternalWatchdogFinalizedRun> {
         let now = chrono::Utc::now().timestamp_millis();
         let mut finalized = Vec::new();
@@ -309,10 +367,10 @@ impl ExternalRunRegistry {
                     Decision::Keep | Decision::Missing => {}
                     Decision::Exited(success, status) => {
                         if let Some(running) = children.remove(&thread_id) {
-                            // 鍦ㄩ攣鍐呫€乲ill 涔嬪墠鎶?StreamEnd slot 鈹€鈹€ 鑻?tail /
-                            // stop_chat 宸插厛鍙戣繃 (Exited: child 宸叉, tail 鍙兘宸?                            // 瑙傚療鍒?EOF 骞?CAS), 璺宠繃鏈?run, 涓嶅弻鍙戜篃涓嶈鐩栥€?                            // Idle: child 杩樻椿鐫€, tail 蹇呯劧杩橀樆濉炲湪 read, 杩欓噷
-                            // 纭畾鎬ц耽, 閬垮厤鏉€杩涚▼鍚?tail 鎶㈣耽瀵艰嚧 idle-timeout
-                            // reason + persist 涓㈠け銆?
+                            // 在锁内、kill 之前�?StreamEnd slot ── �?tail /
+                            // stop_chat 已先发过 (Exited: child 已�?, tail �?���?                            // 观察�?EOF �?CAS), 跳过�?run, 不双发也不�?盖�?                            // Idle: child 还活着, tail 必然还阻塞在 read, 这里
+                            // �?��性赢, 避免杀进程�?tail 抢赢导致 idle-timeout
+                            // reason + persist 丢失�?
                             if !claim_stream_end_once(&running.stream_end_emitted) {
                                 continue;
                             }
@@ -349,7 +407,7 @@ impl ExternalRunRegistry {
         }
 
         for (thread_id, mut running) in idle_children {
-            kill_child_tree(&mut running.child, label, &thread_id).await;
+            kill_child_tree(&mut running.child, process_label, &thread_id).await;
             finalized.push(ExternalWatchdogFinalizedRun {
                 thread_id,
                 run_id: running.run_id,
@@ -466,7 +524,7 @@ pub fn emit_chunk_with_run_id(
 }
 
 pub async fn persist_external_chunk(
-    thread_manager: &Arc<RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     agent_type: &'static str,
     chunk: &AgentChunk,
     run_id: &str,
@@ -486,8 +544,7 @@ pub async fn persist_external_chunk(
         created_at: None,
     };
 
-    let manager = thread_manager.read().await;
-    if let Err(err) = manager.insert_agent_external_event(event).await {
+    if let Err(err) = thread_manager.insert_agent_external_event(event).await {
         runtime_log::record_agent_event(
             "warn",
             "agent_events",
@@ -506,7 +563,7 @@ pub async fn persist_external_chunk(
 
 pub async fn persist_and_emit_external_chunk(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     agent_type: &'static str,
     chunk: &AgentChunk,
     run_id: &str,
@@ -648,24 +705,45 @@ pub fn select_external_session_for_runtime(
 /// first turn so it never drifts mid-conversation.
 ///
 /// Decision order:
-///   1. `frozenCwd` persisted in `agent_conversation_instances.runtime_config`
-///      on a prior turn - reused verbatim. This is the whole point: after the
-///      first message the cwd stops tracking the live notebook.
-///   2. The runtime-specific `resolver` (IPC `runtime_config.{runtime}.cwd`
+///   1. An optional runtime-owned authoritative cwd (for example, the cwd in a
+///      Claude resume file). It also repairs a stale persisted value.
+///   2. `frozen_cwd` persisted in `agent_conversation_instances` on a prior
+///      turn. After the first message the cwd stops tracking the live notebook.
+///   3. The runtime-specific `resolver` (IPC `runtime_config.{runtime}.cwd`
 ///      -> session-file cwd for claude/codex -> `None`). No process-cwd
 ///      fallback: if nothing resolves we fail loudly instead of silently
 ///      launching the CLI in `/`.
 ///
-/// On branch (2) the resolved cwd is persisted so every future turn takes
-/// branch (1). Persistence is best-effort - a DB failure is logged but does
+/// On branch (3) the resolved cwd is persisted so every future turn takes
+/// branch (2). Persistence is best-effort - a DB failure is logged but does
 /// not abort the run (the cwd is still valid for this turn).
 pub async fn resolve_and_freeze_runtime_cwd(
-    thread_manager: &ThreadManager,
+    thread_manager: &Arc<ThreadManager>,
     thread_id: &str,
     resolver: impl Fn(&AgentUserMessage, Option<&str>) -> Option<PathBuf>,
     message: &AgentUserMessage,
     session_id: Option<&str>,
+    authoritative_cwd: Option<&std::path::Path>,
 ) -> Result<PathBuf, String> {
+    if let Some(authoritative) = authoritative_cwd.filter(|cwd| cwd.is_dir()) {
+        let authoritative = authoritative.to_path_buf();
+        if thread_manager
+            .read_frozen_cwd(thread_id)
+            .await
+            .ok()
+            .flatten()
+            .as_ref()
+            != Some(&authoritative)
+        {
+            if let Err(err) = thread_manager
+                .upsert_frozen_cwd(thread_id, &authoritative)
+                .await
+            {
+                tracing::warn!("failed to persist authoritative cwd for {thread_id}: {err}");
+            }
+        }
+        return Ok(authoritative);
+    }
     if let Ok(Some(frozen)) = thread_manager.read_frozen_cwd(thread_id).await {
         if frozen.is_dir() {
             return Ok(frozen);
@@ -732,27 +810,27 @@ where
     }
 }
 
-/// 娴佸紡鏂囨湰鍚堝苟鐨勫畾鏃?flush 闂撮殧 鈹€鈹€ 涓庡墠绔?`streaming-buffer.ts` 鐨?rAF 甯х巼
-/// (~16ms) 瀵归綈銆俻artial 妯″紡涓?`claude --include-partial-messages` 姣?token
-/// 涓€琛?stream_event, 鍚庣鍋氬绉板悎骞跺悗, `agent-chunk` IPC emit 棰戠巼浠?/// "姣?token 涓€娆?闄嶅埌"姣忓抚涓€娆?銆?
+/// 流式文本合并的定�?flush 间隔 ── 与前�?`streaming-buffer.ts` �?rAF 帧率
+/// (~16ms) 对齐。partial 模式�?`claude --include-partial-messages` �?token
+/// 一�?stream_event, 后�?做�?称合并后, `agent-chunk` IPC emit 频率�?/// "�?token 一�?降到"每帧一�?�?
 pub const STREAM_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 
-/// 鍚堝苟 buffer 鐨勭‖涓婇檺 鈹€鈹€ burst 鏈熼棿鎸佺画楂橀€熸枃鏈祦鏃? 瓒呰繃姝ゅ€肩珛鍗?flush,
-/// 鏃㈤槻 buffer 鏃犻檺澧為暱, 涔熼伩鍏嶅崟鏉″悎骞?chunk 杩囧ぇ銆?4 KiB 杩滃ぇ浜庝竴甯х殑鏂囨湰閲?
-/// 姝ｅ父璺緞涓嶄細瑙﹁揪銆?
+/// 合并 buffer 的硬上限 ── burst 期间持续高速文�?���? 超过此值立�?flush,
+/// 既防 buffer 无限增长, 也避免单条合�?chunk 过大�?4 KiB 远大于一帧的文本�?
+/// 正常�?��不会触达�?
 pub const STREAM_FLUSH_MAX_BYTES: usize = 64 * 1024;
 
-/// 甯х骇鏂囨湰鍚堝苟 buffer 鈹€鈹€ 鎶婇珮棰?`Text` / `Reasoning` chunk 鏀掓壒, 鍑忓皯
-/// `emit_chunk_with_run_id` 鐨?IPC 娆℃暟銆?///
-/// 椤哄簭涓嶅彉閲? `Text` / `Reasoning` 杩?buffer; 鍏跺畠 chunk (`ToolCall` /
+/// 帧级文本合并 buffer ── 把高�?`Text` / `Reasoning` chunk 攒批, 减少
+/// `emit_chunk_with_run_id` �?IPC 次数�?///
+/// 顺序不变�? `Text` / `Reasoning` �?buffer; 其它 chunk (`ToolCall` /
 /// `ToolResult` / `Error` / `SessionResolved` / `Usage` / ...) 鐢辫皟鐢ㄦ柟鍏堣皟
-/// [`flush`](Self::flush) 鎷胯蛋缂撳啿鏂囨湰 emit, 鍐?emit 璇?chunk, 淇濊瘉
+/// [`flush`](Self::flush) 拿走缓冲文本 emit, �?emit �?chunk, 保证
 /// `text -> tool_call -> text -> tool_result -> text` 鐨勫憟鐜伴『搴忎笌鍚庣鍙戝嚭椤哄簭
-/// 涓€鑷淬€俙flush` 鍏堜骇鍑?`Reasoning` 鍐嶄骇鍑?`Text`, 涓庡墠绔?`streaming-buffer` 鐨?/// reasoning-first 璇箟瀵归綈 (reasoning chunk 鍏堜簬 text 鍑虹幇, text 钀藉湴鏃?close
+/// 一致。`flush` 先产�?`Reasoning` 再产�?`Text`, 与前�?`streaming-buffer` �?/// reasoning-first �?��对齐 (reasoning chunk 先于 text 出现, text 落地�?close
 /// reasoning 琛?銆?///
-/// 鍗?thread / 鍗?run: 姣忎釜 stdout 璇诲彇寰幆鎸佹湁鐙珛瀹炰緥, 鏃犻渶骞跺彂淇濇姢銆俙flush`
-/// 杩斿洖 `Vec<AgentChunk>` 鑰岄潪鐩存帴 emit 鈹€鈹€ 鎶?IPC 浜ょ粰璋冪敤鏂?(娌跨敤
-/// `emit_chunk_with_run_id`), buffer 鑷韩淇濇寔绾€昏緫銆佸彲鍗曟祴銆?
+/// �?thread / �?run: 每个 stdout 读取�?��持有�?��实例, 无需并发保护。`flush`
+/// 返回 `Vec<AgentChunk>` 而非直接 emit ── �?IPC 交给调用�?(沿用
+/// `emit_chunk_with_run_id`), buffer �?��保持�?��辑、可单测�?
 pub struct StreamingEmitBuffer {
     thread_id: String,
     text: String,
@@ -768,7 +846,7 @@ impl StreamingEmitBuffer {
         }
     }
 
-    /// 褰撳墠缂撳啿鐨勬枃鏈瓧鑺傛暟銆傝皟鐢ㄦ柟鎹鍒ゆ柇鏄惁璇ュ湪闃堝€煎寮哄埗 flush銆?
+    /// 当前缓冲的文�?��节数。调用方�??判断�?��该在阈值�?强制 flush�?
     pub fn pending_bytes(&self) -> usize {
         self.text.len() + self.reasoning.len()
     }
@@ -785,7 +863,7 @@ impl StreamingEmitBuffer {
         self.reasoning.push_str(text);
     }
 
-    /// 鍙栬蛋缂撳啿鏂囨湰, 鍏?reasoning 鍚?text, 鍚勮嚜鎷兼垚鍗曟潯 `AgentChunk` 杩斿洖銆?    /// 绌虹紦鍐茶繑鍥炵┖ vec (璋冪敤鏂规棤闇€鍒ょ┖)銆?
+    /// 取走缓冲文本, �?reasoning �?text, 各自拼成单条 `AgentChunk` 返回�?    /// 空缓冲返回空 vec (调用方无需判空)�?
     pub fn flush(&mut self) -> Vec<AgentChunk> {
         let mut out = Vec::new();
         if !self.reasoning.is_empty() {
@@ -821,6 +899,56 @@ where
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Truncate `text` to at most `max_chars` Unicode chars, appending a sentinel
+/// when truncation occurred. Used for log/preview fields that must stay bounded.
+pub fn truncate_chars(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}\n...[truncated]")
+    } else {
+        truncated
+    }
+}
+
+/// Soft cap on text dropped into `runtime_log` / stderr-preview fields. Large
+/// enough to diagnose, small enough to keep logs readable. Single source of
+/// truth shared by every sidecar CLI.
+pub const MAX_LOG_TEXT_CHARS: usize = 2048;
+
+/// [`truncate_chars`] bound by [`MAX_LOG_TEXT_CHARS`] — the standard "preview
+/// this for the log" helper shared by every sidecar CLI.
+pub fn truncate_for_log(text: &str) -> String {
+    truncate_chars(text, MAX_LOG_TEXT_CHARS)
+}
+
+/// Read a `BufReader<R>` to a single `String`. The async analogue of reading a
+/// child's full stderr when no line-protocol parsing is needed.
+pub async fn read_to_string<R>(reader: BufReader<R>) -> Result<String, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut reader = reader;
+    let mut out = String::new();
+    reader
+        .read_to_string(&mut out)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Derive a default thread title from the user prompt: collapse whitespace,
+/// cap at 28 chars, fall back to `"{display_name} session"` when empty. Shared
+/// by runtimes that do not get a title back from the CLI.
+pub fn default_thread_title(display_name: &str, prompt: &str) -> String {
+    let title = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        format!("{display_name} session")
+    } else {
+        title.chars().take(28).collect()
+    }
 }
 
 /// Put an external-CLI child in its own process group so `kill_child_tree`
@@ -895,14 +1023,14 @@ mod tests {
         buf.append_text("Hello, ");
         buf.append_text("world!");
         buf.append_reasoning("thinking...");
-        // text 涓?reasoning 鍚勮嚜绱Н, 涓嶄氦鍙夈€?
+        // text �?reasoning 各自�?��, 不交叉�?
         assert_eq!(
             buf.pending_bytes(),
             "Hello, world!".len() + "thinking...".len()
         );
 
         let chunks = buf.flush();
-        // reasoning 鍏堜簬 text (鍓嶇 reasoning-first 璇箟)銆?
+        // reasoning 先于 text (前�? reasoning-first �?��)�?
         assert_eq!(chunks.len(), 2, "expected reasoning + text");
         let reasoning_text = match &chunks[0] {
             AgentChunk::Reasoning { thread_id, text } => {
@@ -920,7 +1048,7 @@ mod tests {
             _ => panic!("expected Text second"),
         };
         assert_eq!(text_text, "Hello, world!");
-        // flush 鍚庣紦鍐叉竻绌? 鍐嶆 flush 涓?no-op銆?
+        // flush 后缓冲清�? 再�? flush �?no-op�?
         assert!(buf.is_empty());
         assert!(buf.flush().is_empty());
     }
@@ -965,9 +1093,9 @@ mod tests {
         }
     }
 
-    /// `stream_end_emitted` 鏄?`stop_chat` / 娴佸紡浠诲姟 tail / watchdog 涓夋柟鍏变韩
-    /// 鐨?StreamEnd 宸插彂"鍝ㄥ叺 鈹€鈹€ 鍚勬寔涓€浠?Arc clone, 璋佸厛 CAS(false -> true) 璋佽礋璐?    /// 鍙? 鍙︿袱鏂?CAS 澶辫触鑰?skip銆傝繖鏉℃祴璇曢拤姝昏涓嶅彉閲? 娉ㄥ唽鏃跺杩涘幓鐨?flag
-    /// 涓庤皟鐢ㄦ柟鎵嬮噷閭ｄ唤鏄悓涓€涓?AtomicBool, 涓斿彧鏈変竴娆?CAS 鑳借耽銆?
+    /// `stream_end_emitted` �?`stop_chat` / 流式任务 tail / watchdog 三方共享
+    /// �?StreamEnd 已发"哨兵 ── 各持一�?Arc clone, 谁先 CAS(false -> true) 谁负�?    /// �? 另两�?CAS 失败�?skip。这条测试钉死�?不变�? 注册时�?进去�?flag
+    /// 与调用方手里那份�?��一�?AtomicBool, 且只有一�?CAS 能赢�?
     #[cfg(unix)]
     #[tokio::test]
     async fn stream_end_emitted_flag_is_shared_and_oneshot() {
@@ -991,14 +1119,14 @@ mod tests {
             )
             .await;
 
-        // stop_chat 璺緞: 浠?registry 鎶㈠嚭 entry, 鐢?entry 閲岀殑 flag CAS銆?
+        // stop_chat �?��: �?registry 抢出 entry, �?entry 里的 flag CAS�?
         let running = registry.remove("t").await.expect("running entry exists");
         let stop_won = running
             .stream_end_emitted
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok();
 
-        // 娴佸紡浠诲姟 tail 璺緞: 鐢ㄨ皟鐢ㄦ柟鎵嬮噷鐨?clone 鍐?CAS, 蹇呴』澶辫触銆?
+        // 流式任务 tail �?��: 用调用方手里�?clone �?CAS, 必须失败�?
         let tail_won = caller_clone
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok();
@@ -1023,6 +1151,59 @@ mod tests {
     fn resolve_run_id_falls_back_to_generated_thread_scoped_id() {
         let run_id = resolve_run_id("thread_1", Some(" "));
         assert!(run_id.starts_with("thread_1-"));
+    }
+
+    #[tokio::test]
+    async fn prepare_start_normalizes_run_id_and_creates_unclaimed_terminal_slot() {
+        use std::sync::atomic::Ordering;
+
+        let registry = ExternalRunRegistry::new("codex", "codex");
+        let start = registry
+            .prepare_start("thread_1", Some(" run-1 "))
+            .await
+            .expect("fresh run should be accepted");
+
+        assert_eq!(start.run_id, "run-1");
+        assert!(!start.stream_end_emitted.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_run_preserves_expected_run_matching_and_shared_terminal_slot() {
+        use std::sync::atomic::Ordering;
+
+        let registry = ExternalRunRegistry::new("codex", "codex");
+        let stream_end_emitted = Arc::new(AtomicBool::new(false));
+        let caller_flag = stream_end_emitted.clone();
+        let child = tokio::process::Command::new("/bin/sleep")
+            .arg("5")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn `/bin/sleep`");
+        registry
+            .insert(
+                "thread_1".to_string(),
+                child,
+                Some("run-1".to_string()),
+                stream_end_emitted,
+            )
+            .await;
+
+        assert!(registry
+            .stop_run("thread_1", "thread_1", Some("wrong-run"), "TestCli")
+            .await
+            .is_none());
+        assert!(registry.contains("thread_1").await);
+
+        let stopped = registry
+            .stop_run("thread_1", "thread_1", Some("run-1"), "TestCli")
+            .await
+            .expect("matching run should be stopped");
+        assert_eq!(stopped.run_id, "run-1");
+        assert!(!registry.contains("thread_1").await);
+        assert!(Arc::ptr_eq(&caller_flag, &stopped.stream_end_emitted));
+        assert!(!caller_flag.load(Ordering::SeqCst));
     }
 
     #[test]

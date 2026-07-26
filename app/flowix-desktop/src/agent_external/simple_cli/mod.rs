@@ -1,8 +1,8 @@
-// 涓?claude/codex/hermes 涓嶅悓, simple_cli 娌℃湁鐙珛鐨?history 瀛愭ā鍧?鈹€鈹€
-// Gemini / OpenClaw 鐨?session 浠嶇敱鍚勮嚜鐨?`~/.gemini/` / `~/.openclaw/`
-// 鐩綍鎸佹湁, 浣嗗墠绔?UI 涓嶇洿鎺ュ垪鍘嗗彶 (鍙湪鏈?session 鍐?chat_stream), 鎵€浠?// 杩欓噷淇濇寔鍗曟枃浠跺嵆鍙€?//
-// 鏁翠釜 simple_cli 瀛愭ā鍧楃殑瀛樺湪鎰忎箟: 鎶?Gemini + OpenClaw 涓ょ "绾?stdout
-// 鏂囨湰杈撳嚭" 鐨?small CLI 鏁村悎鍒颁竴涓?manager 鍚庨潰, 鍏变韩 ExternalRunRegistry
-// 娉ㄥ唽琛?+ kill_child_tree 绛?shared 宸ュ叿, 涓嶅啀璁╁崟涓?vendor 鑷繁閫犱竴浠姐€?
+// �?claude/codex/hermes 不同, simple_cli 没有�?���?history 子模�?──
+// Gemini / OpenClaw �?session 仍由各自�?`~/.gemini/` / `~/.openclaw/`
+// �?��持有, 但前�?UI 不直接列历史 (�?���?session �?chat_stream), 所�?// 这里保持单文件即�?�?//
+// 整个 simple_cli 子模块的存在意义: �?Gemini + OpenClaw 两�? "�?stdout
+// 文本输出" �?small CLI 整合到一�?manager 后面, 共享 ExternalRunRegistry
+// 注册�?+ kill_child_tree �?shared 工具, 不再让单�?vendor �?��造一份�?
 mod cli;
 pub use cli::*;

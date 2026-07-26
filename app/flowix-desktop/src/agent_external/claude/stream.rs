@@ -7,19 +7,19 @@ use tokio::io::BufReader;
 use super::events::{
     parse_claude_stdout_line_with_state, ClaudeStreamState, ParsedClaudeStdoutLine,
 };
-use super::{truncate_for_log, AGENT_TYPE};
+use super::AGENT_TYPE;
 use crate::agent_external::{
-    persist_and_emit_external_chunk, read_capped_line, ExternalRunRegistry, StreamingEmitBuffer,
-    MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
+    persist_and_emit_external_chunk, read_capped_line, truncate_for_log, ExternalRunRegistry,
+    StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
 };
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
 
-/// flush `emit_buf` 鐨勫叏閮ㄧ紦鍐?chunk 骞堕€愭潯 emit銆傜┖缂撳啿涓?no-op銆?
+/// flush `emit_buf` 的全部缓�?chunk 并逐条 emit。空缓冲�?no-op�?
 async fn flush_emit_buffer(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     emit_buf: &mut StreamingEmitBuffer,
     run_id: &str,
 ) {
@@ -39,12 +39,12 @@ async fn flush_emit_buffer(
     }
 }
 
-/// burst 淇濋櫓 鈹€鈹€ 缂撳啿瓒呰繃 [`STREAM_FLUSH_MAX_BYTES`] 鏃剁珛鍗?flush 骞堕噸缃抚璁℃椂,
-/// 闃叉鎸佺画楂橀€熸枃鏈祦鏃剁紦鍐叉棤闄愬闀裤€傛甯镐竴甯х殑鏂囨湰閲忚繙灏忎簬姝ら槇鍊? 鍙湁
-/// read_capped_line 鎸佺画杩斿洖楂橀 text 琛岀殑鏋佺 burst 鎵嶄細瑙﹁揪銆?
+/// burst 保险 ── 缓冲超过 [`STREAM_FLUSH_MAX_BYTES`] 时立�?flush 并重�?��计时,
+/// 防�?持续高速文�?��时缓冲无限�?长。�?常一帧的文本量远小于此阈�? �?��
+/// read_capped_line 持续返回高�? text 行的极�? burst 才会触达�?
 async fn flush_emit_buffer_if_full(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: &Arc<ThreadManager>,
     emit_buf: &mut StreamingEmitBuffer,
     run_id: &str,
     last_flush_at: &mut Instant,
@@ -59,7 +59,7 @@ pub(crate) async fn read_claude_stdout<R>(
     thread_id: String,
     run_id: String,
     app_handle: tauri::AppHandle,
-    thread_manager: Arc<tokio::sync::RwLock<ThreadManager>>,
+    thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
     reader: BufReader<R>,
 ) -> Result<(), String>
@@ -68,21 +68,21 @@ where
 {
     let mut reader = reader;
     let mut seen_sessions = HashSet::new();
-    // tool_use_id -> tool_name 璺ㄨ鏄犲皠銆俆oolCall chunk 鍙戝嚭鏃惰褰?id->name,
-    // 鍚庣画 ToolResult chunk 鍒拌揪鏃剁敤瀹冨～鍏ョ湡瀹炲伐鍏峰悕,閬垮厤鍓嶇 name="" fallback "unknown tool"銆?
+    // tool_use_id -> tool_name 跨�?映射。ToolCall chunk 发出时�?�?id->name,
+    // 后续 ToolResult chunk 到达时用它填入真实工具名,避免前�? name="" fallback "unknown tool"�?
     let mut tool_names: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    // partial 妯″紡璺ㄨ鐘舵€?鈹€鈹€ 绱Н tool_use 鐨?input_json_delta 鍒嗙墖, 鍦?    // content_block_stop flush 鎴?ToolCall銆傝 events::ClaudeStreamState銆?
+    // partial 模式跨�?状�?── �?�� tool_use �?input_json_delta 分片, �?    // content_block_stop flush �?ToolCall。�? events::ClaudeStreamState�?
     let mut stream_state = ClaudeStreamState::default();
-    // 甯х骇鏂囨湰鍚堝苟 buffer 鈹€鈹€ 鎶婇珮棰?Text / Reasoning 鏀掓壒, 鍑忓皯 agent-chunk IPC
-    // emit 娆℃暟 (瑙?StreamingEmitBuffer doc)銆俆ext/Reasoning 杩?buffer; 鍏跺畠 chunk
-    // 鍏?flush 鍐?emit, 淇濊瘉鍛堢幇椤哄簭銆?
+    // 帧级文本合并 buffer ── 把高�?Text / Reasoning 攒批, 减少 agent-chunk IPC
+    // emit 次数 (�?StreamingEmitBuffer doc)。Text/Reasoning �?buffer; 其它 chunk
+    // �?flush �?emit, 保证呈现顺序�?
     let mut emit_buf = StreamingEmitBuffer::new(thread_id.clone());
-    // 甯х骇 flush 璁℃椂 鈹€鈹€ 涓庡墠绔?rAF 甯х巼 (~16ms) 瀵归綈銆傛瘡璇诲畬涓€鏁磋妫€鏌?elapsed,
-    // burst 鏈熼棿绾︽瘡甯?flush 涓€娆°€?    //
-    // 涓嶇敤 select! + interval: read_capped_line 璇?> BufReader 瀹归噺 (8 KiB) 鐨勯暱琛?    // 鏃朵細璺ㄥ娆?fill_buf 绱Н out, select! 鍦ㄤ腑閫?drop 鍏?future 浼氫涪澶卞凡绱Н鐨勯儴鍒?    // 琛?(reader cursor 宸?consume 浣?out 琚涪), 瀵艰嚧澶?tool_result 琛屾崯鍧?-> JSON
-    // 瑙ｆ瀽澶辫触琚綋 non_json 鏂囨湰鍥炴樉銆?琛屾湯鏃堕棿妫€鏌?鍦?read_capped_line 瀹屾暣杩斿洖涓€
-    // 琛屽悗鎵嶆鏌ユ椂闂? 闆?drop 椋庨櫓銆?
+    // 帧级 flush 计时 ── 与前�?rAF 帧率 (~16ms) 对齐。每读完一整�?检�?elapsed,
+    // burst 期间约每�?flush 一欰�?    //
+    // 不用 select! + interval: read_capped_line �?> BufReader 容量 (8 KiB) 的长�?    // 时会跨�?�?fill_buf �?�� out, select! 在中�?drop �?future 会丢失已�?��的部�?    // �?(reader cursor �?consume �?out �?��), 导致�?tool_result 行损�?-> JSON
+    // 解析失败�?�� non_json 文本回显�?行末时间检�?�?read_capped_line 完整返回一
+    // 行后才�?查时�? �?drop 风险�?
     let mut last_flush_at = Instant::now();
 
     loop {
@@ -95,7 +95,7 @@ where
             }
         };
         let Some((raw, truncated_by_reader)) = line_opt else {
-            // EOF: 蹇呴』鍦ㄨ繑鍥炲墠 flush 娈嬬暀鏂囨湰 鈹€鈹€ 鍚﹀垯 spawn tail 鐨?
+            // EOF: 必须在返回前 flush 残留文本 ── 否则 spawn tail �?
             // emit_stream_end_once 浼氬厛浜庡熬閮ㄦ枃鏈埌杈惧墠绔€?
             flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
             break;
@@ -120,7 +120,7 @@ where
             continue;
         }
         // dev-only: 鎶婂瓙杩涚▼ stdout 鍘熷琛岄暅鍍忓埌 ~/.flowix/debug/, 1:1 杩樺師
-        // vendor CLI 鍥炲寘渚涙帓闅溿€俽elease 鏋勫缓鍐?no-op, 涓嶈惤鐩樸€?
+        // vendor CLI 回包供排障。release 构建�?no-op, 不落盘�?
         runtime_log::dump_debug_stdout_line(AGENT_TYPE, &thread_id, &run_id, line);
         runs.touch(&thread_id, Some(&run_id)).await;
 
@@ -158,7 +158,7 @@ where
                         "line_preview": truncate_for_log(line),
                     })),
                 );
-                // 闈?JSON 琛屼綔涓烘枃鏈洖鏄?鈹€鈹€ 杩?buffer 鍚堝苟 (鏈€澶氬欢杩熶竴甯?銆?
+                // �?JSON 行作为文�?���?── �?buffer 合并 (最多延迟一�?�?
                 emit_buf.append_text(&text);
                 flush_emit_buffer_if_full(
                     &app_handle,
@@ -186,8 +186,7 @@ where
                         "session_id": session_id,
                     })),
                 );
-                let manager = thread_manager.read().await;
-                if let Err(err) = manager
+                if let Err(err) = thread_manager
                     .upsert_external_session(
                         &thread_id,
                         AGENT_TYPE,
@@ -213,8 +212,8 @@ where
                         "[ClaudeCli] failed to persist external session mapping for {thread_id}: {err}"
                     );
                 }
-                // SessionResolved 鏄潪鏂囨湰 chunk 鈹€鈹€ 鍏?flush 鏂囨湰 buffer, 淇濊瘉瀹冧箣鍓?
-                // 鐨勬枃鏈厛钀藉湴, 鍐?emit銆?
+                // SessionResolved �?��文本 chunk ── �?flush 文本 buffer, 保证它之�?
+                // 的文�?��落地, �?emit�?
                 flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
                 last_flush_at = Instant::now();
                 let chunk = AgentChunk::SessionResolved {
@@ -260,11 +259,11 @@ where
                     .await;
                 }
                 mut chunk => {
-                    // 闈炴枃鏈?chunk 鈹€鈹€ 鍏?flush 鏂囨湰 buffer, 淇濊瘉
-                    // text -> tool_call -> text -> tool_result 鐨勫憟鐜伴『搴? 鍐?emit銆?
+                    // 非文�?chunk ── �?flush 文本 buffer, 保证
+                    // text -> tool_call -> text -> tool_result 的呈现顺�? �?emit�?
                     flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
                     last_flush_at = Instant::now();
-                    // ToolCall 鍙戝嚭鍓嶈褰?id -> name
+                    // ToolCall 发出前�?�?id -> name
                     if let AgentChunk::ToolCall {
                         ref id, ref name, ..
                     } = chunk
@@ -273,7 +272,7 @@ where
                             tool_names.insert(id.clone(), name.clone());
                         }
                     }
-                    // ToolResult 鐢?tool_use_id 鏌ュ洖鐪熷疄宸ュ叿鍚?濉叆 name 瀛楁
+                    // ToolResult �?tool_use_id 查回真实工具�?�?�� name 字�?
                     if let AgentChunk::ToolResult {
                         ref id,
                         ref mut name,
@@ -299,9 +298,9 @@ where
             }
         }
 
-        // 甯х骇 flush 鈹€鈹€ 杩欎竴琛屽鐞嗗畬, 鑻ヨ窛涓婃 flush 宸茶繃涓€甯? 钀藉湴缂撳啿鏂囨湰銆?        // burst 鏈熼棿绾︽瘡 16ms flush 涓€娆?(涓庡墠绔?rAF 瀵归綈); 闈炴枃鏈?chunk 宸插湪涓婇潰
+        // 帧级 flush ── 这一行�?理完, 若距上�? flush 已过一�? 落地缓冲文本�?        // burst 期间约每 16ms flush 一�?(与前�?rAF 对齐); 非文�?chunk 已在上面
         // 寮哄埗 flush, 杩欓噷涓昏鍏滄寔缁枃鏈祦鐨勬敀鎵广€傝娴佸仠椤挎椂 read_capped_line 闃诲,
-        // 缂撳啿閲屾渶澶氭畫鐣欎竴甯ф枃鏈? 鐢变笅涓€琛?/ EOF / 宸ュ叿璋冪敤瑙﹀彂钀藉湴銆?
+        // 缓冲里最多残留一帧文�? 由下一�?/ EOF / 工具调用触发落地�?
         if last_flush_at.elapsed() >= STREAM_FLUSH_INTERVAL {
             flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
             last_flush_at = Instant::now();

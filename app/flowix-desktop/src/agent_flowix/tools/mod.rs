@@ -131,9 +131,9 @@ impl ToolScope {
         }
     }
 
-    /// 鏋勯€犳椂鍚屾椂璇?access 鍒楄〃 (鍚敤涓旀湭澶辫仈) 涓?memo_file 鐨勯粯璁?notebook
-    /// 璺緞銆?access 鍒楄〃鏄?AI 鍙鐩綍鐨?*鐪熸簮** 鈹€鈹€ 鐢ㄦ埛鍙互鍦?    /// `~/.flowix/agent-access.json` 閲屽彇娑堝嬀閫夋煇涓?notebook 璁?AI
-    /// 鐪嬩笉鍒? 涓嶅奖鍝?notebook 鏈韩瀛樺湪銆俙default_root` 鍦?access 鍒楄〃涓?    /// 绌烘椂鍙繚鐣?`default_root` 浣滀负鎶ラ敊鎻愮ず璺緞, 涓嶆妸瀹冮殣寮忓姞鍏ュ厑璁歌寖鍥淬€?    /// Build the legacy/global scope from `agent-access.json`.
+    /// 构造时同时�?access 列表 (�?��且未失联) �?memo_file 的默�?notebook
+    /// �?���?access 列表�?AI �??�?���?*真源** ── 用户�?���?    /// `~/.flowix/agent-access.json` 里取消勾选某�?notebook �?AI
+    /// 看不�? 不影�?notebook �?��存在。`default_root` �?access 列表�?    /// 空时�?���?`default_root` 作为报错提示�?��, 不把它隐式加入允许范围�?    /// Build the legacy/global scope from `agent-access.json`.
     ///
     /// This is a compatibility fallback for old requests that do not carry
     /// runtime workspace paths. New agent-thread-card runs should pass
@@ -160,8 +160,8 @@ impl ToolScope {
             if !entry.enabled || entry.missing {
                 continue;
             }
-            // kind=Notebook: 蹇呴』浠嶇劧瀛樺湪浜?notebook 娉ㄥ唽琛?(闃叉 access
-            // 鍒楄〃閲屾湁 "骞界伒 notebook id" 鎶?`~/etc/` 杩欑璺緞鏀捐)銆?            // kind=Folder: 鐩存帴淇′换銆?
+            // kind=Notebook: 必须仍然存在�?notebook 注册�?(防�? access
+            // 列表里有 "幽灵 notebook id" �?`~/etc/` 这�?�?��放�?)�?            // kind=Folder: 直接信任�?
             if entry.kind == crate::config::AgentAccessKind::Notebook {
                 let still_registered = registered.iter().any(|c| c.id == entry.id);
                 if !still_registered {
@@ -215,6 +215,35 @@ fn normalize_root_path(path: &str) -> Option<PathBuf> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolDispatchTarget {
+    Notebook,
+    Filesystem,
+    WebSearch,
+    Shell,
+    Skills,
+    /// `sub_agent` needs `AgentManager` and a provider, so tool_runtime
+    /// intercepts it before this lower-level dispatcher.
+    SubAgentRuntime,
+    DisabledShellAlias,
+    Unknown,
+}
+
+fn tool_dispatch_target(tool_name: &str) -> ToolDispatchTarget {
+    match tool_name {
+        notebook::TOOL_NAME => ToolDispatchTarget::Notebook,
+        "read" | "write" | "delete" | "edit" | "ls" | "glob" | "grep" => {
+            ToolDispatchTarget::Filesystem
+        }
+        web_search::TOOL_NAME => ToolDispatchTarget::WebSearch,
+        shell::TOOL_NAME => ToolDispatchTarget::Shell,
+        skills::TOOL_NAME => ToolDispatchTarget::Skills,
+        sub_agent::TOOL_NAME => ToolDispatchTarget::SubAgentRuntime,
+        "bash" => ToolDispatchTarget::DisabledShellAlias,
+        _ => ToolDispatchTarget::Unknown,
+    }
+}
+
 /// Execute a tool by name with the given arguments.
 pub async fn execute_tool(
     tool_name: &str,
@@ -231,19 +260,24 @@ pub async fn execute_tool(
     } else {
         ToolScope::from_memo_file_and_access(memo_file, agent_access, security_bookmarks)
     };
-    match tool_name {
-        notebook::TOOL_NAME => {
+    match tool_dispatch_target(tool_name) {
+        ToolDispatchTarget::Notebook => {
             notebook::execute_tool(tool_name, memo_file, agent_access, runtime_workspace_paths)
                 .await
         }
-        "read" | "write" | "delete" | "edit" | "ls" | "glob" | "grep" => {
+        ToolDispatchTarget::Filesystem => {
             filesystem::execute_tool(tool_name, arguments, read_snapshot, &scope).await
         }
-        web_search::TOOL_NAME => web_search::execute_tool(arguments).await,
-        shell::TOOL_NAME => shell::execute_tool(arguments, &scope).await,
-        skills::TOOL_NAME => skills::execute_tool(skill_store, arguments).await,
-        "bash" => ToolResult::error("Shell execution is disabled for AI agents"),
-        _ => ToolResult::error(format!("Unknown tool: {}", tool_name)),
+        ToolDispatchTarget::WebSearch => web_search::execute_tool(arguments).await,
+        ToolDispatchTarget::Shell => shell::execute_tool(arguments, &scope).await,
+        ToolDispatchTarget::Skills => skills::execute_tool(skill_store, arguments).await,
+        ToolDispatchTarget::SubAgentRuntime => {
+            ToolResult::error("sub_agent must be executed through the agent runtime")
+        }
+        ToolDispatchTarget::DisabledShellAlias => {
+            ToolResult::error("Shell execution is disabled for AI agents")
+        }
+        ToolDispatchTarget::Unknown => ToolResult::error(format!("Unknown tool: {}", tool_name)),
     }
 }
 
@@ -307,6 +341,38 @@ mod tests {
             skill_store: SkillStore::load(&skills_dir),
             global_root,
             runtime_root,
+        }
+    }
+
+    #[test]
+    fn every_advertised_tool_has_one_dispatch_target() {
+        let tools = get_all_tools();
+        let mut names = std::collections::HashSet::new();
+        for tool in tools {
+            let name = tool.function.name;
+            assert!(names.insert(name.clone()), "duplicate tool schema: {name}");
+            assert_ne!(
+                tool_dispatch_target(&name),
+                ToolDispatchTarget::Unknown,
+                "advertised tool has no dispatch target: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn sub_agent_tool_set_is_a_read_only_subset_of_registered_tools() {
+        let registered = get_all_tools()
+            .into_iter()
+            .map(|tool| tool.function.name)
+            .collect::<std::collections::HashSet<_>>();
+        let sub_agent_names = get_sub_agent_tools()
+            .into_iter()
+            .map(|tool| tool.function.name)
+            .collect::<Vec<_>>();
+
+        assert!(sub_agent_names.iter().all(|name| registered.contains(name)));
+        for mutating in ["write", "delete", "edit", "shell", sub_agent::TOOL_NAME] {
+            assert!(!sub_agent_names.iter().any(|name| name == mutating));
         }
     }
 

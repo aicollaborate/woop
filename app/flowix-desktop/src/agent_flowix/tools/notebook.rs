@@ -8,7 +8,7 @@ use flowix_core::memo_file::NotebookConfig;
 
 use super::{function_tool, ToolResult};
 
-/// 宸ュ叿鍚嶅父閲?鈹€鈹€ 鍦ㄤ笁澶?(宸ュ叿娉ㄥ唽 + handler match + dispatch match) 鍏辩敤,
+/// 工具名常�?── 在三�?(工具注册 + handler match + dispatch match) 共用,
 /// 鏀瑰悕鏃舵敼杩欎竴澶勩€?
 pub const TOOL_NAME: &str = "available_dirs";
 
@@ -38,9 +38,9 @@ pub async fn execute_tool(
 
             let access_cfg = agent_access.get_config();
 
-            // 宸叉敞鍐?notebook 绱㈠紩, 鐢?path / icon 瀛楁琛?            // access 鍒楄〃鐨?鐦?entry銆?access 鍒楄〃鏄敤鎴峰嬀閫夌殑鐪熸簮,
-            // 娉ㄥ唽琛ㄦ槸璺緞 / 鍚嶅瓧鐨勭湡婧?鈹€鈹€ 涓よ竟閮界湅, 鍙栧苟闆嗕氦杩囨护
-            // (access 閲屾湁浣嗘敞鍐岃〃娌′簡 = 骞界伒, 璺?`ToolScope` 鍚屾簮)銆?
+            // 已注�?notebook 索引, �?path / icon 字�?�?            // access 列表�?�?entry�?access 列表�?��户勾选的真源,
+            // 注册表是�?�� / 名字的真�?── 两边都看, 取并集交过滤
+            // (access 里有但注册表没了 = 幽灵, �?`ToolScope` 同源)�?
             let notebook_index: std::collections::HashMap<String, NotebookConfig> = {
                 let guard = read_lock(memo_file, "memo_file");
                 guard
@@ -54,8 +54,8 @@ pub async fn execute_tool(
             let mut result: Vec<serde_json::Value> = Vec::new();
 
             // 鈹€鈹€ 1. notebook entries 鈹€鈹€
-            // 椤哄簭鎸?access 鍒楄〃 (鐢ㄦ埛鏈€杩戞敼鍚?/ 璋冩暣杩囩殑鏉＄洰, 鐢?            // `add_or_update_notebook` / `rename_notebook` 鎺ㄥ埌瀵瑰簲浣嶇疆),
-            // 璺?鍙闂洰褰?瀛愯彍鍗曠殑娓叉煋椤哄簭涓€鑷? 瑙嗚涓庤繑鍥炲€煎寰椾笂銆?
+            // 顺序�?access 列表 (用户最近改�?/ 调整过的条目, �?            // `add_or_update_notebook` / `rename_notebook` 推到对应位置),
+            // �?�??�?���?子菜单的渲染顺序一�? 视�?与返回值�?得上�?
             for entry in access_cfg
                 .entries
                 .iter()
@@ -82,8 +82,8 @@ pub async fn execute_tool(
             }
 
             // 鈹€鈹€ 2. folder entries 鈹€鈹€
-            // 椤哄簭鍚屾牱鎸?access 鍒楄〃 鈹€鈹€ "鍙闂洰褰?瀛愯彍鍗曠殑 folder
-            // 娈典篃鏄悓涓€浠介『搴? 鐢ㄦ埛瑙嗚鎰熺煡 = AI 鐪嬪埌鐨勫垪琛ㄣ€?
+            // 顺序同样�?access 列表 ── "�??�?���?子菜单的 folder
+            // 段也�?��一份顺�? 用户视�?感知 = AI 看到的列表�?
             for entry in access_cfg
                 .entries
                 .iter()
@@ -102,8 +102,8 @@ pub async fn execute_tool(
 
             ToolResult::success(result)
         }
-        // 鑰佸悕瀛楀湪 match 涓笉璇嗗埆涔熻蛋杩欓噷, 缁欏墠绔?/ 鏃ュ織涓€涓兘鏌ュ埌鐨?
-        // 閿欒淇℃伅; 瀹為檯鍏煎鍒嗘敮宸茬粡鍦ㄤ笂闈竴骞跺懡涓簡銆?
+        // 老名字在 match �?��识别也走这里, 给前�?/ 日志一�?��查到�?
+        // 错�?信息; 实际兼�?分支已经在上�?��并命�?���?
         _ => ToolResult::error(format!("Unknown notebook tool: {}", tool_name)),
     }
 }
