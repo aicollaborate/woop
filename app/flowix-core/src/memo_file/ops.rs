@@ -697,6 +697,31 @@ impl MemoFile {
         Ok(removed)
     }
 
+    /// Delete a memo only when it belongs to the requested notebook.
+    ///
+    /// Cloud synchronization must never resolve an incoming note ID globally:
+    /// a duplicate/malicious remote ID from another notebook must not remove
+    /// that notebook's local file.
+    pub fn delete_memo_result_for_notebook_id(
+        &self,
+        notebook_id: &str,
+        id: &str,
+    ) -> std::io::Result<bool> {
+        let _index_io_guard = self.current_index_io.lock().expect("index_io poisoned");
+        let Some(memo) = self.read_memo_for_notebook_id(notebook_id, id) else {
+            return Ok(false);
+        };
+        let base = self
+            .memo_base_for_notebook_id_result(notebook_id)
+            .map_err(std::io::Error::other)?;
+        let path = base.join(&memo.filename);
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        MemoFile::sync_index_on_delete_for_notebook_id_locked(self, notebook_id, id)?;
+        Ok(true)
+    }
+
     /// 把磁盘上已存在的 .md 注册为 memo, **不**重命名磁盘文件, **不**覆盖 body。
     /// 失败: 路径非 .md; 文件不存在; 文件名已在 memo index 走 reload 路径 (不重复 push)。
     ///

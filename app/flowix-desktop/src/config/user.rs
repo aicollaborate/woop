@@ -18,6 +18,7 @@ const BOOT_DIR_NAME: &str = "boot";
 const PREFERENCE_FILE_NAME: &str = "preference.json";
 const DEFAULT_SECRET_DB_NAME: &str = "default.db";
 const SECRET_ACCOUNT_NAME: &str = "default";
+const CLOUD_SECRET_PROVIDER: &str = "flowix_cloud_refresh";
 
 /// ~/.flowix/boot/preference.json —用户偏好设置
 /// 瀛楁鍏ㄩ儴 #[serde(default)], 鏂囦欢鎹熷潖鎴栫己澶辨椂鍥為€€鍒伴粯璁ゅ€笺€?
@@ -424,6 +425,22 @@ impl UserConfigStore {
             .map_err(|err| UserConfigError::SecretStore(err.to_string()))
     }
 
+    pub fn save_cloud_refresh_token(&self, token: &str) -> Result<(), UserConfigError> {
+        self.save_provider_secret(CLOUD_SECRET_PROVIDER, token)
+    }
+
+    pub fn load_cloud_refresh_token(&self) -> Result<Option<String>, UserConfigError> {
+        let account = entry_name(CLOUD_SECRET_PROVIDER, SECRET_ACCOUNT_NAME);
+        self.secrets
+            .load(&account)
+            .map(|value| value.map(|secret| secret.into_inner()))
+            .map_err(|err| UserConfigError::SecretStore(err.to_string()))
+    }
+
+    pub fn delete_cloud_refresh_token(&self) -> Result<(), UserConfigError> {
+        self.delete_provider_secret(CLOUD_SECRET_PROVIDER)
+    }
+
     fn read_preference_from_disk(dir: &PathBuf) -> Option<PreferenceFile> {
         let path = preference_file_path(dir);
         if !path.exists() {
@@ -583,6 +600,21 @@ mod tests {
         // 浣欓噺銆傛敼榛樿鍊兼椂杩欐潯鍗曟祴蹇呴』鍚屾鏀广€?
         let cfg = AiModelConfig::default();
         assert_eq!(cfg.max_total_tokens, 180_000);
+    }
+
+    #[test]
+    fn cloud_refresh_token_round_trips_without_entering_preferences() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+
+        assert_eq!(store.load_cloud_refresh_token().unwrap(), None);
+        store.save_cloud_refresh_token("refresh-secret").unwrap();
+        assert_eq!(
+            store.load_cloud_refresh_token().unwrap().as_deref(),
+            Some("refresh-secret")
+        );
+        store.delete_cloud_refresh_token().unwrap();
+        assert_eq!(store.load_cloud_refresh_token().unwrap(), None);
     }
 
     #[test]

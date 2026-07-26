@@ -16,6 +16,7 @@ export type SettingsTab =
   | 'cli'
   | 'mcp'
   | 'connections'
+  | 'cloudSync'
   | 'tools'
   | 'history'
   | 'aiAgent'

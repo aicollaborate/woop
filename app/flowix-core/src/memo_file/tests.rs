@@ -920,6 +920,37 @@ fn delete_memo_returns_false_when_unknown() {
     assert!(!mf.delete_memo("zzzzzz"));
 }
 
+#[test]
+fn scoped_delete_does_not_remove_same_id_from_another_notebook() {
+    let (mut mf, tmp) = fresh_memo_file();
+    let other_dir = tmp.join("other-delete");
+    fs::create_dir_all(&other_dir).unwrap();
+    let mut configs = mf.read_notebook_configs().expect("read notebooks");
+    configs.push(super::types::NotebookConfig {
+        id: "nb_other".to_string(),
+        name: "Other".to_string(),
+        icon: None,
+        path: format!("{}/", other_dir.display()),
+        is_default: false,
+        sort: 0,
+        created_at: 1,
+        updated_at: 1,
+    });
+    mf.write_notebook_configs(&configs)
+        .expect("write notebooks");
+    mf.set_current_notebook(Some("nb_other".to_string()));
+    let other_memo = mf.create_memo("Other", "keep me", None).unwrap();
+    let other_path = other_dir.join(&other_memo.filename);
+
+    assert!(!mf
+        .delete_memo_result_for_notebook_id("nb_test", &other_memo.id)
+        .unwrap());
+    assert!(other_path.exists());
+    assert!(mf
+        .read_memo_for_notebook_id("nb_other", &other_memo.id)
+        .is_some());
+}
+
 // =====================================================================
 // ops: register
 // =====================================================================

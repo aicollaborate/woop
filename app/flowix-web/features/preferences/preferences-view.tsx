@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { StarFourIcon } from '@phosphor-icons/react';
-import { FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
+import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
 import {
 	useUserSettings,
 	useUserSettingsActions,
@@ -17,6 +17,7 @@ import {
 	CliSection,
 	McpSection,
 	ConnectionsSection,
+	CloudSyncSection,
 	HistorySection,
 	QuickPhrasesSection,
 	SectionHeader,
@@ -29,6 +30,7 @@ import { PreferencesTitlebarMac } from '@features/preferences/preferences-titleb
 import { PreferencesTitlebarWin } from '@features/preferences/preferences-titlebar-win';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { getCurrentWindow } from '@platform/tauri/window';
+import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
 
 function isWindowsPlatform(): boolean {
 	return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -46,6 +48,7 @@ const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 			{ id: 'noteSettings', labelKey: 'preferences.tabs.noteSettings', icon: <FileCog className="w-4 h-4" /> },
 			{ id: 'shortcuts', labelKey: 'preferences.tabs.shortcuts', icon: <Keyboard className="w-4 h-4" /> },
 			{ id: 'history', labelKey: 'preferences.tabs.history', icon: <History className="w-4 h-4" /> },
+			{ id: 'cloudSync', labelKey: 'preferences.tabs.cloudSync', icon: <Cloud className="w-4 h-4" /> },
 		],
 	},
 	{
@@ -116,15 +119,31 @@ interface PreferencesViewProps {
 
 export function PreferencesView({ initialTab }: PreferencesViewProps) {
 	const { t } = useI18n();
+	const experimental = useExperimentalMode();
 	const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 	const title = t('preferences.title');
+	const visibleTabGroups = useMemo(
+		() => TAB_GROUPS.map((group) => ({
+			...group,
+			tabs: experimental
+				? group.tabs
+				: group.tabs.filter((tab) => tab.id !== 'cloudSync'),
+		})),
+		[experimental],
+	);
 
 	useEffect(() => {
 		if (initialTab) {
 			const normalizedTab = normalizeInitialTab(initialTab);
-			if (normalizedTab) setActiveTab(normalizedTab);
+			if (normalizedTab && (normalizedTab !== 'cloudSync' || experimental)) {
+				setActiveTab(normalizedTab);
+			}
 		}
-	}, [initialTab]);
+	}, [experimental, initialTab]);
+
+	useEffect(() => {
+		if (!experimental && activeTab === 'cloudSync') setActiveTab('general');
+	}, [activeTab, experimental]);
 
 	useEffect(() => {
 		document.title = title;
@@ -140,7 +159,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 			<div className="flex-1 flex min-h-0">
 				{/* Left sidebar */}
 				<div className="w-[204px] min-h-0 overflow-y-auto [scrollbar-gutter:stable] border-r border-solid border-[var(--divider)] bg-[var(--card)] shrink-0 px-2 pt-5 pb-2 flex flex-col gap-4">
-					{TAB_GROUPS.map((group) => (
+					{visibleTabGroups.map((group) => (
 						<div key={group.labelKey} className="space-y-1">
 							<div className="px-2 pb-1 text-xs font-medium text-[var(--muted-foreground)]">
 								{t(group.labelKey)}
@@ -185,6 +204,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 							{activeTab === 'cli' && <CliSection />}
 							{activeTab === 'mcp' && <McpSection />}
 							{activeTab === 'connections' && <ConnectionsSection />}
+							{experimental && activeTab === 'cloudSync' && <CloudSyncSection />}
 							{activeTab === 'tools' && (
 								<div className="space-y-8">
 									<PlaceholderSection

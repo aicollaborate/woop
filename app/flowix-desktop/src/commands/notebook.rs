@@ -362,6 +362,9 @@ pub fn delete_notebook(id: String, state: State<AppState>, app: AppHandle) -> Re
     memo_file
         .write_notebook_configs(&configs)
         .map_err(|e| format!("INDEX_WRITE_FAILED: {e}"))?;
+    if let Err(error) = state.cloud_sync.forget_notebook(&id) {
+        tracing::warn!("failed to forget cloud sync link for deleted notebook {id}: {error}");
+    }
 
     // 同�?把�?应的 agent_access entry 也删�? 状态栏�?文件权限"子菜�?    // 会少一�?── 用户没主动去勾�? 不应该留�??儿在那里�?
     if state.agent_access.remove_notebook(&id) {
@@ -442,6 +445,9 @@ pub fn clear_notebooks(state: State<AppState>, app: AppHandle) -> bool {
     // 把�?清掉的非默�? notebook �?access 列表里也清掉, 然后 emit 一欰�?
     let mut any_removed = false;
     for id in before_ids {
+        if let Err(error) = state.cloud_sync.forget_notebook(&id) {
+            tracing::warn!("failed to forget cloud sync link for cleared notebook {id}: {error}");
+        }
         if state.agent_access.remove_notebook(&id) {
             any_removed = true;
         }

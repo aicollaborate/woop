@@ -40,6 +40,8 @@ const DEFAULT_SUPABASE_ANON_KEY: &str = "sb_publishable_l6AmH0K0Uq8_roThQHSnnQ_2
 pub struct BootFile {
     pub schema_version: u32,
     #[serde(default)]
+    pub experimental: bool,
+    #[serde(default)]
     pub user_info: UserInfo,
 }
 
@@ -100,6 +102,12 @@ impl DeviceRegistry {
             tokio::time::sleep(Duration::from_secs(REGISTRATION_DELAY_SECS)).await;
             self.try_register_once().await;
         });
+    }
+
+    /// Whether this client exposes experimental product features.
+    /// Missing `experimental` in an existing v2 boot.json deserializes as false.
+    pub fn experimental(&self) -> bool {
+        self.read().experimental
     }
 
     /// 真�?的上报流�? 收集�?��字�? �?POST �?根据结果写回 boot.json�?    /// 失败�?��日志 / boot.json 里留�? 不抛回启动链�?
@@ -245,6 +253,7 @@ impl DeviceRegistry {
     fn fresh() -> BootFile {
         BootFile {
             schema_version: BOOT_SCHEMA_VERSION,
+            experimental: false,
             user_info: UserInfo {
                 device_id: Uuid::new_v4(),
                 installed_at: Utc::now(),
@@ -451,6 +460,7 @@ mod tests {
     fn fresh_has_valid_defaults() {
         let b = fresh_boot();
         assert_eq!(b.schema_version, BOOT_SCHEMA_VERSION);
+        assert!(!b.experimental);
         assert!(!b.user_info.registered);
         assert_eq!(b.user_info.attempts, 0);
         assert!(b.user_info.registered_at.is_none());
@@ -459,15 +469,25 @@ mod tests {
 
     #[test]
     fn roundtrip_serde() {
-        let b = fresh_boot();
+        let mut b = fresh_boot();
+        b.experimental = true;
         let s = serde_json::to_string(&b).unwrap();
         let v: BootFile = serde_json::from_str(&s).unwrap();
+        assert!(v.experimental);
         assert_eq!(b.user_info.device_id, v.user_info.device_id);
         assert_eq!(b.user_info.installed_at, v.user_info.installed_at);
         assert_eq!(
             b.user_info.app_version_at_install,
             v.user_info.app_version_at_install
         );
+    }
+
+    #[test]
+    fn missing_experimental_defaults_to_false() {
+        let mut value = serde_json::to_value(fresh_boot()).unwrap();
+        value.as_object_mut().unwrap().remove("experimental");
+        let boot: BootFile = serde_json::from_value(value).unwrap();
+        assert!(!boot.experimental);
     }
 
     #[test]

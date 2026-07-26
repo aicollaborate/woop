@@ -15,6 +15,7 @@ use flowix_core::search::MemoIndex;
 /// `search` / `system_data` 没有跨模块需�? 保持原样 (�?Arc 包�?)�?
 pub struct AppState {
     pub user_config: Arc<UserConfigStore>,
+    pub cloud_sync: Arc<flowix_sync::SyncManager>,
     /// System metadata (notebook tag order/layout/hidden state).
     /// Stored at `~/.flowix/boot/system.json`.
     pub system_data: SystemData,

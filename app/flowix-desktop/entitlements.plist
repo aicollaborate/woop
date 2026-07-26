@@ -34,6 +34,12 @@
     <key>com.apple.security.network.server</key>
     <true/>
 
+    <!-- Native Sign in with Apple via AuthenticationServices. -->
+    <key>com.apple.developer.applesignin</key>
+    <array>
+        <string>Default</string>
+    </array>
+
     <!--
       User-selected directories are persisted with security-scoped bookmarks
       in `security_bookmark.rs`. These entitlements are required for the

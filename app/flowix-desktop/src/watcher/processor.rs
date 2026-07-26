@@ -508,6 +508,7 @@ impl MemoEventProcessor {
                 path: entry_path,
                 notebook_id: ctx.notebook_id.clone(),
                 derived_changed,
+                source: MemoChangeSource::ExternalTool,
             },
         );
     }

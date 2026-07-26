@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { Check, Pencil, Plus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, Cloud, Pencil, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
 import { useI18n } from '@/lib/i18n';
+import { cloud, listenToCloudStateChanges } from '@platform/tauri/client';
+import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
 import {
   computeNotebookDropPosition,
@@ -53,6 +55,7 @@ export function NotebookList({
   onEditNotebook,
 }: NotebookListProps) {
   const { t } = useI18n();
+  const experimental = useExperimentalMode();
   const reorderNotebooks = useMemoStore((s) => s.reorderNotebooks);
 
   // 折叠态: 折叠后仅展示选中的笔记本, 隐藏其余与「新建」按钮。
@@ -68,9 +71,37 @@ export function NotebookList({
   const [notebookFilterActive, setNotebookFilterActive] = useState(
     readPersistedNotebookListCollapsed,
   );
+  const [cloudSyncedNotebookIds, setCloudSyncedNotebookIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const notebookScrollerRef = useRef<HTMLDivElement | null>(null);
   const collapseTimerRef = useRef<number | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
+
+  const refreshCloudSyncedNotebookIds = useCallback(() => {
+    if (!experimental) {
+      setCloudSyncedNotebookIds(new Set());
+      return;
+    }
+    void cloud.listNotebookStates()
+      .then((links) => {
+        setCloudSyncedNotebookIds(
+          new Set(links.filter((link) => link.enabled).map((link) => link.localNotebookId)),
+        );
+      })
+      .catch(() => {
+        setCloudSyncedNotebookIds(new Set());
+      });
+  }, [experimental]);
+
+  useEffect(() => {
+    refreshCloudSyncedNotebookIds();
+  }, [notebooks, refreshCloudSyncedNotebookIds]);
+
+  useEffect(() => {
+    if (!experimental) return;
+    return listenToCloudStateChanges(refreshCloudSyncedNotebookIds);
+  }, [experimental, refreshCloudSyncedNotebookIds]);
 
   // 笔记本行点击: 与 NotebookSwitcher 保持一致 ── 失效路径直接 toast 警告,
   // 不切换。有效路径走 onSelectNotebook 回调。
@@ -193,6 +224,7 @@ export function NotebookList({
             notebooks.map((notebook) => {
               if (notebookFilterActive && notebook.id !== selectedNotebook?.id) return null;
               const isActive = selectedNotebook?.id === notebook.id;
+              const isCloudSynced = cloudSyncedNotebookIds.has(notebook.id);
               const isMissing = Boolean(notebook.missing);
               const isNotebookDragging = draggingNotebookId === notebook.id;
               const showNotebookHoverBefore =
@@ -223,6 +255,9 @@ export function NotebookList({
                   }}
                   className={cn(
                     'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors',
+                    isCloudSynced && isActive
+                      ? 'pr-14'
+                      : (isCloudSynced || isActive) && 'pr-8',
                     isNotebookDragging
                       ? 'cursor-grabbing opacity-40'
                       : notebookListCollapsed
@@ -265,9 +300,21 @@ export function NotebookList({
                   </div>
                   {/* 选中对勾 ── 折叠态下列表只剩选中行这一条, 对勾已无标识
                       意义, 故折叠时不渲染。展开态多行并存时才显示。 */}
-                  {isActive && !notebookListCollapsed && (
-                    <div className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center transition-opacity group-hover:opacity-0 z-10 pointer-events-none">
-                      <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
+                  {(isCloudSynced || (isActive && !notebookListCollapsed)) && (
+                    <div className="pointer-events-none absolute right-1.5 top-1/2 z-10 flex -translate-y-1/2 items-center transition-opacity group-hover:opacity-0">
+                      {isCloudSynced && (
+                        <span className="flex h-6 w-6 items-center justify-center">
+                          <Cloud
+                            className="h-3.5 w-3.5 text-[var(--primary)]"
+                            aria-label={t('notebook.cloudSync.title')}
+                          />
+                        </span>
+                      )}
+                      {isActive && !notebookListCollapsed && (
+                        <span className="flex h-6 w-6 items-center justify-center">
+                          <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
+                        </span>
+                      )}
                     </div>
                   )}
                   {/* 编辑 ── 与 NotebookSwitcher 行内操作保持一致,

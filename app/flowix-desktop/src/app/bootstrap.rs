@@ -24,7 +24,7 @@ use flowix_core::search::{BigramTokenizer, MemoIndex};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 pub fn run() {
     install_panic_log_hook();
@@ -56,6 +56,22 @@ pub fn run() {
     std::fs::create_dir_all(&user_config_dir).ok();
     let thread_db_path = user_config_dir.join("thread.db");
     let user_config = Arc::new(user_config::UserConfigStore::new(home_dir.clone()));
+    let cloud_sync = Arc::new(
+        flowix_sync::SyncManager::new(
+            flowix_sync::DEFAULT_CLOUD_API_BASE,
+            user_config_dir.join("sync.db"),
+        )
+        .unwrap_or_else(|error| {
+            tracing::error!(
+                "failed to initialize cloud sync database: {error}; using a temporary database"
+            );
+            flowix_sync::SyncManager::new(
+                flowix_sync::DEFAULT_CLOUD_API_BASE,
+                std::env::temp_dir().join(format!("flowix-sync-{}.db", std::process::id())),
+            )
+            .expect("failed to initialize temporary cloud sync database")
+        }),
+    );
 
     // 笔�?�?��册表真源�?~/.flowix/index.db (SQLite); `MemoFile::open_index_db`
     // 首�?�??时建表�?这里不需要任何�?盘迁�?── �?`notebook.json` �?��已废�?
@@ -179,6 +195,7 @@ pub fn run() {
     // 这里把构�?AppState 需要的子结�?clone 出来 (�?�� `move` 捕获),
     // 同时把另一�?clone 喂给 sub-component 构造函数�?
     let user_config_for_state = user_config_arc.clone();
+    let cloud_sync_for_state = cloud_sync.clone();
     let memo_file_for_state = memo_file_arc.clone();
     let agent_access_for_state = agent_access_arc.clone();
     let security_bookmarks_for_state = security_bookmarks_arc.clone();
@@ -242,6 +259,7 @@ pub fn run() {
                 app_version,
             ));
             device_registry.clone().spawn_startup_registration();
+            app.manage(device_registry);
 
             // 鈹€鈹€ 1) 鍚姩鎺㈡祴 external CLI 璺緞 鈹€鈹€
             //   �?source=auto/缺失�?agent 跑探测链 (env>PATH>候�?shell),
@@ -251,6 +269,7 @@ pub fn run() {
             // ── 2) 构�?AppState �?manage ──
             let app_state = AppState {
                 user_config: user_config_for_state.clone(),
+                cloud_sync: cloud_sync_for_state.clone(),
                 system_data,
                 agent_external_config,
                 memo_file: memo_file_for_state.clone(),
@@ -262,6 +281,33 @@ pub fn run() {
                 security_bookmarks: security_bookmarks_for_state.clone(),
             };
             app.manage(app_state);
+            commands::cloud::start_cloud_sync_polling(app.handle().clone());
+            if let Ok(Some(refresh_token)) = user_config_for_state.load_cloud_refresh_token() {
+                let cloud_sync = cloud_sync_for_state.clone();
+                let user_config = user_config_for_state.clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match cloud_sync.restore(&refresh_token).await {
+                        Ok(outcome) => {
+                            if let Err(error) =
+                                user_config.save_cloud_refresh_token(&outcome.refresh_token)
+                            {
+                                tracing::warn!(
+                                    "failed to persist rotated cloud refresh token: {error}"
+                                );
+                            }
+                            let _ = app_handle.emit("cloud-state-changed", &outcome.state);
+                        }
+                        Err(error) => {
+                            tracing::warn!("failed to restore Flowix Cloud session: {error}");
+                            let _ = user_config.delete_cloud_refresh_token();
+                            if let Ok(state) = cloud_sync.state() {
+                                let _ = app_handle.emit("cloud-state-changed", state);
+                            }
+                        }
+                    }
+                });
+            }
             spawn_external_agent_watchdog(app.handle().clone(), external_runtimes.clone());
 
             if let Some(window) = app.get_webview_window("main") {
@@ -448,6 +494,23 @@ pub fn run() {
             commands::settings::test_ai_connection,
             commands::settings::get_watcher_config,
             commands::settings::update_watcher_config,
+            commands::boot::get_boot_features,
+            commands::cloud::cloud_get_state,
+            commands::cloud::cloud_register,
+            commands::cloud::cloud_login,
+            commands::cloud::cloud_sign_in_with_apple,
+            commands::cloud::cloud_link_apple,
+            commands::cloud::cloud_logout,
+            commands::cloud::cloud_set_enabled,
+            commands::cloud::cloud_get_notebook_state,
+            commands::cloud::cloud_list_notebook_states,
+            commands::cloud::cloud_list_notebooks,
+            commands::cloud::cloud_link_notebook,
+            commands::cloud::cloud_set_notebook_enabled,
+            commands::cloud::cloud_refresh_membership,
+            commands::cloud::cloud_list_products,
+            commands::cloud::cloud_create_checkout,
+            commands::cloud::cloud_sync_now,
             // agent 鍙闂洰褰?(JSON, 璧?agent_access)
             commands::agent_access::get_agent_access,
             commands::agent_access::set_agent_access,

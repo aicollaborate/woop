@@ -3,6 +3,7 @@ mod agent_external_config;
 mod agent_flowix;
 mod agent_session;
 mod agent_types;
+mod apple_sign_in;
 mod app;
 mod cli_link;
 mod commands;

@@ -30,7 +30,12 @@ import {
 } from '@features/memo';
 import { resolveSelectedTagId } from '@features/memo/services/memo-list-metadata-service';
 import { useTauriRpc } from '@platform/tauri/use-tauri-rpc';
-import { windows as tauriWindows } from '@platform/tauri/client';
+import {
+  cloud,
+  listenToCloudStateChanges,
+  windows as tauriWindows,
+  type CloudNotebook,
+} from '@platform/tauri/client';
 import { useMemoInsertAnimation } from '@features/memo/hooks/use-memo-insert-animation';
 import { useCreateNotebookFlow } from '@features/memo/hooks/use-create-notebook-flow';
 import { toast } from '@/lib/toast';
@@ -423,10 +428,17 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   const [newNotebookName, setNewNotebookName] = useState('');
   const [newNotebookPath, setNewNotebookPath] = useState('');
   const [newNotebookIcon, setNewNotebookIcon] = useState<string | null>(null);
+  const [createNotebookMode, setCreateNotebookMode] = useState<'create' | 'cloud'>('create');
+  const [remoteNotebooks, setRemoteNotebooks] = useState<CloudNotebook[]>([]);
+  const [remoteNotebooksLoading, setRemoteNotebooksLoading] = useState(false);
+  const [remoteNotebookSyncingId, setRemoteNotebookSyncingId] = useState<string | null>(null);
   const [editNotebookOpen, setEditNotebookOpen] = useState(false);
   const [editingNotebook, setEditingNotebook] = useState<Notebook | null>(null);
   const [editNotebookName, setEditNotebookName] = useState('');
   const [editNotebookIcon, setEditNotebookIcon] = useState<string | null>(null);
+  const [editNotebookCloudSync, setEditNotebookCloudSync] = useState(false);
+  const [originalEditNotebookCloudSync, setOriginalEditNotebookCloudSync] = useState(false);
+  const [cloudSyncAvailable, setCloudSyncAvailable] = useState(false);
   const [tagMap, setTagMap] = useState<Record<string, string>>({});
   const [isMemoListLoading, setIsMemoListLoading] = useState(false);
   const [loadedMemoListQueryKey, setLoadedMemoListQueryKey] = useState<string | null>(null);
@@ -439,6 +451,35 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     onMemoListLoadingChange: setIsMemoListLoading,
   });
 
+  useEffect(() => {
+    if (!editNotebookOpen || !editingNotebook) return;
+    let cancelled = false;
+    void Promise.all([
+      cloud.getState(),
+      cloud.getNotebookState(editingNotebook.id),
+    ])
+      .then(([cloudState, link]) => {
+        if (cancelled) return;
+        const enabled = Boolean(link?.enabled);
+        setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+        setEditNotebookCloudSync(enabled);
+        setOriginalEditNotebookCloudSync(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setCloudSyncAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editNotebookOpen, editingNotebook]);
+
+  useEffect(() => {
+    if (hideHeader) return;
+    return listenToCloudStateChanges((cloudState) => {
+      setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+    });
+  }, [hideHeader]);
+
   // 全局事件监听器 ── 跨组件 shortcut / dispatchEvent 解耦点。
   // 主列表始终挂载（侧栏收起时只是宽度变为 0），所以只让主列表持有这些监听器。
   // hover 浮层通过 hideHeader 标识为只读复用实例，不能重复响应全局事件。
@@ -450,6 +491,10 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
       setNewNotebookName('');
       setNewNotebookPath('');
       setNewNotebookIcon(null);
+      setCreateNotebookMode('create');
+      setRemoteNotebooks([]);
+      setRemoteNotebooksLoading(false);
+      setRemoteNotebookSyncingId(null);
       setCreateNotebookOpen(true);
     };
     window.addEventListener('flowix:open-create-notebook', handleOpenNotebook);
@@ -892,6 +937,52 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     onListRendered();
   }, [memos, onListRendered]);
 
+  const handleOpenRemoteNotebooks = async () => {
+    try {
+      const cloudState = await cloud.getState();
+      setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+      if (!cloudState.authenticated) {
+        setCreateNotebookOpen(false);
+        await tauriWindows.openPreferences('cloudSync');
+        return;
+      }
+      setCreateNotebookMode('cloud');
+      setRemoteNotebooksLoading(true);
+      const notebooks = await cloud.listNotebooks();
+      setRemoteNotebooks(notebooks);
+    } catch (error) {
+      toast.error(`${t('notebook.cloudImport.failed')}: ${String(error)}`);
+    } finally {
+      setRemoteNotebooksLoading(false);
+    }
+  };
+
+  const handleSelectRemoteNotebook = async (remoteNotebook: CloudNotebook) => {
+    if (remoteNotebook.synced || remoteNotebookSyncingId) return;
+    try {
+      const path = await request<string | null>('select_directory');
+      if (!path) return;
+      setRemoteNotebookSyncingId(remoteNotebook.id);
+      setCreateNotebookOpen(false);
+      const created = await createNotebook({
+        name: remoteNotebook.name,
+        path,
+        icon: normalizeNotebookIconId(remoteNotebook.icon),
+      });
+      if (!created) return;
+      await cloud.linkNotebook(created.id, remoteNotebook.id);
+      await cloud.syncNow(created.id);
+      triggerRefresh();
+      toast.success(t('notebook.cloudImport.complete'));
+    } catch (error) {
+      toast.error(`${t('notebook.cloudImport.failed')}: ${String(error)}`);
+    } finally {
+      setRemoteNotebookSyncingId(null);
+      setCreateNotebookMode('create');
+      setRemoteNotebooks([]);
+    }
+  };
+
   const handleConfirmCreateNotebook = async () => {
     if (!newNotebookName.trim() || !newNotebookPath.trim()) return;
 
@@ -914,7 +1005,11 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     const nextIcon = editNotebookIcon || null;
     const currentIcon = normalizeNotebookIconId(editingNotebook.icon);
     const iconChanged = (nextIcon ?? '') !== (currentIcon ?? '');
-    if (!trimmed || (trimmed === editingNotebook.name && !iconChanged)) {
+    const cloudSyncChanged =
+      editNotebookCloudSync !== originalEditNotebookCloudSync;
+    const notebookMetadataChanged =
+      trimmed !== editingNotebook.name || iconChanged;
+    if (!trimmed || (!notebookMetadataChanged && !cloudSyncChanged)) {
       setEditNotebookOpen(false);
       setEditingNotebook(null);
       setEditNotebookName('');
@@ -922,8 +1017,16 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
       return;
     }
     try {
-      const updated = await notebookRepository.update(editingNotebook.id, trimmed, nextIcon ?? '');
+      const updated = notebookMetadataChanged
+        ? await notebookRepository.update(editingNotebook.id, trimmed, nextIcon ?? '')
+        : editingNotebook;
       if (updated) {
+        if (cloudSyncChanged) {
+          await cloud.setNotebookEnabled(editingNotebook.id, editNotebookCloudSync);
+          if (editNotebookCloudSync) {
+            await cloud.syncNow(editingNotebook.id);
+          }
+        }
         toast.success(t('memo.list.updated'));
         // 同步更新列表
         setNotebooks(
@@ -937,12 +1040,14 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
         setEditingNotebook(null);
         setEditNotebookName('');
         setEditNotebookIcon(null);
+        setEditNotebookCloudSync(false);
+        setOriginalEditNotebookCloudSync(false);
       } else {
         toast.error(t('memo.list.updateFailed'));
       }
     } catch (error) {
       logger.warn('update notebook failed', { error });
-      toast.error(t('memo.list.updateFailed'));
+      toast.error(`${t('memo.list.updateFailed')}: ${String(error)}`);
     }
   };
 
@@ -1212,13 +1317,36 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
         <Suspense fallback={null}>
           <LazyNotebookDialogs
             createOpen={createNotebookOpen}
-            onCreateOpenChange={setCreateNotebookOpen}
+            onCreateOpenChange={(open) => {
+              if (!open) {
+                setCreateNotebookMode('create');
+                setRemoteNotebooks([]);
+                setRemoteNotebooksLoading(false);
+                setRemoteNotebookSyncingId(null);
+              }
+              setCreateNotebookOpen(open);
+            }}
             newNotebookName={newNotebookName}
             onNewNotebookNameChange={setNewNotebookName}
             newNotebookPath={newNotebookPath}
             onNewNotebookPathChange={setNewNotebookPath}
             newNotebookIcon={newNotebookIcon}
             onNewNotebookIconChange={setNewNotebookIcon}
+            cloudSyncAvailable={cloudSyncAvailable}
+            createMode={createNotebookMode}
+            remoteNotebooks={remoteNotebooks}
+            remoteNotebooksLoading={remoteNotebooksLoading}
+            remoteNotebookSyncingId={remoteNotebookSyncingId}
+            onOpenRemoteNotebooks={() => {
+              void handleOpenRemoteNotebooks();
+            }}
+            onBackToCreate={() => {
+              setCreateNotebookMode('create');
+              setRemoteNotebooks([]);
+            }}
+            onSelectRemoteNotebook={(notebook) => {
+              void handleSelectRemoteNotebook(notebook);
+            }}
             onSelectDirectory={async () => {
               const result = await request<string | null>('select_directory');
               if (result) setNewNotebookPath(result);
@@ -1229,6 +1357,10 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
               setNewNotebookName('');
               setNewNotebookPath('');
               setNewNotebookIcon(null);
+              setCreateNotebookMode('create');
+              setRemoteNotebooks([]);
+              setRemoteNotebooksLoading(false);
+              setRemoteNotebookSyncingId(null);
             }}
             editOpen={editNotebookOpen}
             onEditOpenChange={(open) => {
@@ -1236,6 +1368,8 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
                 setEditingNotebook(null);
                 setEditNotebookName('');
                 setEditNotebookIcon(null);
+                setEditNotebookCloudSync(false);
+                setOriginalEditNotebookCloudSync(false);
               }
               setEditNotebookOpen(open);
             }}
@@ -1244,12 +1378,24 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
             onEditNotebookNameChange={setEditNotebookName}
             editNotebookIcon={editNotebookIcon}
             onEditNotebookIconChange={setEditNotebookIcon}
+            editNotebookCloudSync={editNotebookCloudSync}
+            onEditNotebookCloudSyncChange={setEditNotebookCloudSync}
+            onEditNotebookCloudSyncUnavailable={() => {
+              void tauriWindows.openPreferences('cloudSync').catch((error) => {
+                toast.error(`${t('notebook.cloudSync.failed')}: ${String(error)}`);
+              });
+            }}
+            editNotebookCloudSyncChanged={
+              editNotebookCloudSync !== originalEditNotebookCloudSync
+            }
             onConfirmEdit={handleConfirmEditNotebook}
             onCancelEdit={() => {
               setEditNotebookOpen(false);
               setEditingNotebook(null);
               setEditNotebookName('');
               setEditNotebookIcon(null);
+              setEditNotebookCloudSync(false);
+              setOriginalEditNotebookCloudSync(false);
             }}
           />
         </Suspense>

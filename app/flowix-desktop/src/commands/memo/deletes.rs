@@ -5,7 +5,7 @@ use std::path::Path;
 use tauri::{AppHandle, State};
 
 use crate::lock_utils::read_lock;
-use crate::memo_events::{self, MemoDerivedChanged, MemoEvent};
+use crate::memo_events::{self, MemoChangeSource, MemoDerivedChanged, MemoEvent};
 
 use crate::app::search_index::{force_rebuild_index, try_index_remove};
 use crate::app::state::AppState;
@@ -40,6 +40,7 @@ pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
                 path: abs_path,
                 notebook_id,
                 derived_changed,
+                source: MemoChangeSource::UserDelete,
             },
         );
     }
@@ -87,6 +88,7 @@ pub fn clear_memos(notebook_id: Option<String>, state: State<AppState>, app: App
                 path: path.clone(),
                 notebook_id: notebook_id.clone(),
                 derived_changed: derived_changed.clone(),
+                source: MemoChangeSource::UserDelete,
             },
         );
     }

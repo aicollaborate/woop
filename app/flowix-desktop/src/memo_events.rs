@@ -24,9 +24,14 @@ pub enum MemoChangeSource {
     UserImport,
     /// 用户在编辑器保存, �?`update_memo_db` / `write_document`
     UserEdit,
+    /// User explicitly deleted a note.
+    UserDelete,
     /// 外部编辑�?/ 其他 AI / Agent 改�?�? 文件监听器�?察到 ──
     /// v3 鍚庢墍鏈夐潪鐢ㄦ埛涓诲姩淇濆瓨鐨勮矾寰勯兘鍚堝埌杩欓噷
     ExternalTool,
+    /// Flowix Cloud pull applied this write locally. Automatic push scheduling
+    /// must ignore this source to avoid a sync loop.
+    CloudSync,
 }
 
 /// Derived memo fields that changed as a result of the write.
@@ -104,6 +109,7 @@ pub enum MemoEvent {
         notebook_id: String,
         #[serde(rename = "derivedChanged")]
         derived_changed: MemoDerivedChanged,
+        source: MemoChangeSource,
     },
     /// 整棵 tag 子树重命名完成 (move_memo_tag IPC): 一次性发出, 替代
     /// 之前每个 affected memo 都发一次 Updated 的方案。后端已经批量改写
@@ -210,12 +216,33 @@ impl MemoEvent {
 /// �?emit 风格保持一�?—IPC 通道关闭时不该�?业务逻辑�?�?///
 /// v3 改造后物理 rename 不再发生, 不再需�?id 二级兜底�?
 pub fn emit(app: &AppHandle, event: MemoEvent) {
+    let sync_notebook_id = match &event {
+        MemoEvent::Created {
+            notebook_id,
+            source,
+            ..
+        }
+        | MemoEvent::Updated {
+            notebook_id,
+            source,
+            ..
+        }
+        | MemoEvent::Deleted {
+            notebook_id,
+            source,
+            ..
+        } if !matches!(source, MemoChangeSource::CloudSync) => Some(notebook_id.clone()),
+        _ => None,
+    };
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
     // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
         emit_via_dispatcher(&dispatcher, event);
     } else {
         let _ = app.emit(MEMO_EVENT, &event);
+    }
+    if let Some(notebook_id) = sync_notebook_id {
+        crate::commands::cloud::schedule_notebook_sync(app.clone(), notebook_id);
     }
 }
 
@@ -373,6 +400,7 @@ mod tests {
                 todos: true,
                 agents: false,
             },
+            source: MemoChangeSource::UserDelete,
         };
         let v: serde_json::Value = serde_json::to_value(&event).unwrap();
         assert_eq!(v["kind"], "deleted");
@@ -380,6 +408,7 @@ mod tests {
         assert_eq!(v["path"], "/tmp/foo.md");
         assert_eq!(v["notebookId"], "nb_default");
         assert_eq!(v["derivedChanged"]["todos"], true);
+        assert_eq!(v["source"], "user_delete");
     }
 
     #[test]
@@ -389,7 +418,9 @@ mod tests {
             (MemoChangeSource::UserNew, "user_new"),
             (MemoChangeSource::UserImport, "user_import"),
             (MemoChangeSource::UserEdit, "user_edit"),
+            (MemoChangeSource::UserDelete, "user_delete"),
             (MemoChangeSource::ExternalTool, "external_tool"),
+            (MemoChangeSource::CloudSync, "cloud_sync"),
         ] {
             let s: String = serde_json::to_value(&variant)
                 .unwrap()
