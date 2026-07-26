@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./images/app-icon.png" width="120" alt="Flowix Memo" />
+  <img src="./images/128x128.png" width="120" alt="Flowix Memo" />
 </p>
 
 <h1 align="center">Flowix Memo</h1>
