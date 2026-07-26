@@ -5,78 +5,78 @@
 <h2 align="center">Flowix Memo</h2>
 
 <p align="center">
-  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="支持平台" /></a>
-  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/github/v/release/text2future/flowix" alt="最新版本" /></a>
+  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="Supported platforms" /></a>
+  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/github/v/release/text2future/flowix" alt="Latest release" /></a>
 </p>
 
 ![Flowix Memo](./docs/images/readme-banner.png)
 
-**Flowix Memo 是面向 AI Agent 的本地文档空间。**
+**Flowix Memo is a local document workspace built for AI Agents.**
 
-它将日常笔记、任务需求、参考资料、Agent 对话与产出放进同一套 Markdown 工作流，让上下文可以长期积累、持续编辑和反复使用。
+It brings everyday notes, task requirements, reference materials, agent conversations and outputs together into a single Markdown workflow, so context can accumulate over time and be continuously edited and reused.
 
-Flowix Memo 主要帮助解决这些常见问题：
+Flowix Memo mainly helps solve these common problems:
 
-- Prompt 和任务说明散落各处，难以管理
-- Agent 缺少稳定上下文，反复犯同样的错误
-- 对话中跑通的流程和有价值的产出，难以沉淀和复用
+- Prompts and task instructions scattered everywhere, hard to manage
+- Agents lacking stable context, repeatedly making the same mistakes
+- Workflows and valuable outputs from conversations that are hard to capture and reuse
 
-在 Flowix Memo 中，一篇文档既可以是笔记，也可以是 Agent 的任务说明、长期记忆和工作结果。AI 协作不再止于一次性聊天，而是逐渐积累为可以复查、编辑和再次调用的知识。
+In Flowix Memo, a document can serve as a note, but also as an agent's task instructions, long-term memory and work results. AI collaboration no longer ends at a one-off chat; it gradually accumulates into knowledge you can review, edit and call upon again.
 
-## 你可以用它做什么
+## What you can do with it
 
-### 记录日常笔记，沉淀 Agent 工作
+### Capture everyday notes and consolidate agent work
 
-记录读书笔记、旅行计划、工作日志和日常随笔，也可以把需求、资料与参考链接写进文档，让 Agent 基于明确的上下文进行总结、改写、问答、任务拆解或代码编写。
+Keep reading notes, travel plans, work logs and everyday writing, or write requirements, materials and reference links into a document so an agent can summarize, rewrite, answer questions, break down tasks or write code based on clear context.
 
-Agent 的输出可以继续写回文档，成为下一次工作的输入。
+An agent's output can be written back into the document, becoming the input for the next round of work.
 
-### 用笔记本组织项目上下文
+### Organize project context with notebooks
 
-一个笔记本就是一个本地文件夹。你可以把工作、研究、客户项目、日记、资料库或代码项目分别放在不同笔记本中。
+A notebook is simply a local folder. You can keep work, research, client projects, journals, reference libraries or code projects in separate notebooks.
 
-切换笔记本，也是在切换默认工作上下文。这样既能减少不同项目之间的信息干扰，也更容易只向 Agent 提供完成任务所需的资料。
+Switching notebooks also switches your default working context. This reduces information noise between projects and makes it easier to give an agent only the materials it needs to finish the task.
 
-### 让内容长期保留在本地
+### Keep your content local for the long term
 
-笔记以普通 Markdown 文件保存在你的磁盘中，可以直接用其他编辑器打开，也可以交给自己的同步盘、备份工具或版本管理系统。
+Notes are saved as plain Markdown files on your disk. You can open them directly in other editors, or hand them to your own sync drive, backup tool or version control system.
 
-内容不会被锁在专有云服务里。即使以后更换工具，你的文档依然可读、可迁移、可继续使用。
+Your content is never locked into a proprietary cloud service. Even if you switch tools later, your documents stay readable, portable and usable.
 
-### 在文档中调用不同的 Agent
+### Call different agents from within a document
 
-Flowix Memo 支持内置 AI Agent，也可以连接 Claude Code、Codex、Hermes 等本地 CLI Agent。你可以根据任务控制 Agent 能看到的范围，例如当前笔记、某个文件夹、整个笔记本或项目目录。
+Flowix Memo supports a built-in AI Agent and can also connect to local CLI agents such as Claude Code, Codex and Hermes. For each task you control what an agent can see — for example the current note, a specific folder, an entire notebook or a project directory.
 
-上下文越明确，Agent 的输出越稳定；过程被记录下来后，也更容易复盘、修改和继续推进。
+The clearer the context, the more stable an agent's output. Once the process is recorded, it's also easier to review, revise and keep moving forward.
 
-内置 Agent 采用 BYOK（自备 API Key）模式。只有当你主动发起模型请求时，所选上下文才会发送给你配置的模型服务商。
+The built-in agent uses a BYOK (Bring Your Own Key) model. Only when you actively send a model request is the selected context sent to the model provider you configured.
 
-### 连接外部 Agent 工作流
+### Connect to external agent workflows
 
-Flowix CLI 可供本地 Agent 执行非交互式笔记操作；
-MCP 则让支持 MCP 的外部 Agent 客户端读取、检索和更新 Flowix 文档。
+The Flowix CLI lets local agents perform non-interactive note operations;
+MCP lets external agent clients that support MCP read, search and update Flowix documents.
 
-对于外部 Agent 客户端，推荐优先使用 MCP。配置方式与工具说明请查看[帮助文档](https://flowix-memo.com/docs/)。
+For external agent clients, MCP is the recommended option. See the [help docs](https://flowix-memo.com/docs/) for configuration and tool details.
 
-## 核心能力
+## Core capabilities
 
-**Markdown 与本地文件夹**：数据可直接访问、备份、迁移或版本管理<br>
-**标签与属性**：通过正文标签和 YAML Frontmatter 组织结构化信息<br>
-**BYOK 与多 Provider**：支持 OpenAI、Anthropic、DeepSeek 等模型服务<br>
-**内置与本地 Agent**：在文档中使用内置 Agent、Claude Code、Codex 或 Hermes<br>
-**CLI 与 MCP**：将文档接入本地或外部 Agent 工作流<br>
-**多窗口与多页签**：将笔记拆分到子窗口，并在窗口之间移动页签
+**Markdown and local folders**: data is directly accessible, backup-friendly, portable and version-controllable<br>
+**Tags and properties**: structure information with inline tags and YAML frontmatter<br>
+**BYOK and multiple providers**: supports model services such as OpenAI, Anthropic and DeepSeek<br>
+**Built-in and local agents**: use the built-in agent, Claude Code, Codex or Hermes within a document<br>
+**CLI and MCP**: connect documents to local or external agent workflows<br>
+**Multi-window and multi-tab**: split notes into child windows and move tabs between windows
 
 ![AI Agent](./docs/images/readme-agent.png)
 
-## 快速开始
+## Quick start
 
-1. 从 [Releases](https://github.com/text2future/flowix/releases) 下载并安装 Flowix Memo。
-2. 新建一个本地文件夹，或注册已有文件夹作为笔记本。
-3. 创建文档，写下任务背景、参考资料、目标和约束。
-4. 在文档中调用 Agent，或通过标签与属性继续组织内容。
+1. Download and install Flowix Memo from [Releases](https://github.com/text2future/flowix/releases).
+2. Create a new local folder, or register an existing folder as a notebook.
+3. Create a document and write down the task background, reference materials, goals and constraints.
+4. Call an agent from within the document, or keep organizing content with tags and properties.
 
-## 本地开发
+## Local development
 
 ```bash
 git clone https://github.com/text2future/flowix.git
@@ -88,12 +88,12 @@ npm run dev
 npm run tauri build
 ```
 
-开发环境需要 Node.js 20+、Rust 1.75+、Tauri v2；桌面应用支持 macOS 14+ 和 Windows 10+。
+The development environment requires Node.js 20+, Rust 1.75+ and Tauri v2; the desktop app supports macOS 14+ and Windows 10+.
 
-## 更多信息
+## More information
 
-欢迎提交 Issue 或 Pull Request 参与改进。
+Issues and Pull Requests are welcome.
 
-- 官网：[https://flowix-memo.com/](https://flowix-memo.com/)
-- 帮助文档：[https://flowix-memo.com/docs/](https://flowix-memo.com/docs/)
-- GitHub：[https://github.com/text2future/flowix](https://github.com/text2future/flowix)
+- Website: [https://flowix-memo.com/](https://flowix-memo.com/)
+- Help docs: [https://flowix-memo.com/docs/](https://flowix-memo.com/docs/)
+- GitHub: [https://github.com/text2future/flowix](https://github.com/text2future/flowix)
