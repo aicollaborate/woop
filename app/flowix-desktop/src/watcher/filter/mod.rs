@@ -17,7 +17,6 @@ use debouncer::Debouncer;
 use self_write::SelfWriteSuppressor;
 
 pub mod debouncer;
-pub mod id_dedup;
 pub mod path_filter;
 pub mod self_write;
 
