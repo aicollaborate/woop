@@ -58,6 +58,20 @@ MCP lets external agent clients that support MCP read, search and update Flowix 
 
 For external agent clients, MCP is the recommended option. See the [help docs](https://flowix-memo.com/docs/) for configuration and tool details.
 
+## Use cases
+
+### Continuously iterating software products
+Requirements, prompts and workflows are consolidated in one place, so AI can pick up development from the latest document.
+
+### Social media content management
+Manage everything from topics to final drafts in Markdown; AI helps expand drafts and adapt them for multiple platforms.
+
+### Strategic research and analysis
+Archive materials, competitors and research frameworks together; AI summarizes and compares within context, with traceable conclusions.
+
+### Long-term personal learning plans
+Accumulate notes, excerpts, plans and reviews over the long term; AI answers questions and makes connections based on your knowledge base.
+
 ## Core capabilities
 
 **Markdown and local folders**: data is directly accessible, backup-friendly, portable and version-controllable<br>
