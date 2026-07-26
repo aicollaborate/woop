@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Cloud, RefreshCw } from 'lucide-react';
 
 import appleLogo from '@/assets/apple.svg';
+import { errorMessage } from '@/lib/error-message';
 import { useI18n } from '@/lib/i18n';
+import { toast } from '@/lib/toast';
 import { openUrl } from '@platform/tauri/opener';
 import {
   cloud,
@@ -66,9 +68,10 @@ export function CloudSyncSection() {
   const [password, setPassword] = useState('');
   const [legacyLoginOpen, setLegacyLoginOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const [nextState, nextProducts] = await Promise.all([
         cloud.getState(),
@@ -77,7 +80,7 @@ export function CloudSyncSection() {
       setState(nextState);
       setProducts(nextProducts);
     } catch (error) {
-      setMessage(String(error));
+      setLoadError(errorMessage(error));
     }
   }, []);
 
@@ -101,13 +104,12 @@ export function CloudSyncSection() {
 
   const run = async (task: () => Promise<CloudState>) => {
     setBusy(true);
-    setMessage(null);
     try {
       const next = await task();
       setState(next);
       setPassword('');
     } catch (error) {
-      setMessage(String(error));
+      toast.error(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -122,9 +124,15 @@ export function CloudSyncSection() {
     return (
       <div className="space-y-4">
         <SectionHeader title={t('preferences.cloud.title')} />
-        <p className="text-sm text-[var(--muted-foreground)]">
-          {t('preferences.cloud.loading')}
-        </p>
+        {loadError ? (
+          <p className="break-words text-sm text-[var(--destructive)]">
+            {loadError}
+          </p>
+        ) : (
+          <p className="text-sm text-[var(--muted-foreground)]">
+            {t('preferences.cloud.loading')}
+          </p>
+        )}
       </div>
     );
   }
@@ -289,14 +297,13 @@ export function CloudSyncSection() {
               disabled={busy || !state.enabled}
               onClick={() => {
                 setBusy(true);
-                setMessage(null);
                 void cloud.syncNow()
                   .then((result) => {
-                    setMessage(
+                    toast.success(
                       `${t('preferences.cloud.syncComplete')}: ↑${result.uploaded} ↓${result.downloaded} ⚠${result.conflicts}`,
                     );
                   })
-                  .catch((error) => setMessage(String(error)))
+                  .catch((error) => toast.error(errorMessage(error)))
                   .finally(() => setBusy(false));
               }}
             >
@@ -327,10 +334,9 @@ export function CloudSyncSection() {
                   disabled={busy}
                   onClick={() => {
                     setBusy(true);
-                    setMessage(null);
                     void cloud.createCheckout(product.id)
                       .then((checkout) => openUrl(checkout.checkoutUrl))
-                      .catch((error) => setMessage(String(error)))
+                      .catch((error) => toast.error(errorMessage(error)))
                       .finally(() => setBusy(false));
                   }}
                 >
@@ -340,12 +346,6 @@ export function CloudSyncSection() {
             ))}
           </div>
         </>
-      )}
-
-      {message && (
-        <div className="rounded-lg bg-[var(--muted)] px-3 py-2 text-xs text-[var(--muted-foreground)] break-words">
-          {message}
-        </div>
       )}
     </div>
   );
