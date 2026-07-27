@@ -209,6 +209,9 @@ pub struct LocalNote {
     pub id: String,
     pub filename: String,
     pub content: String,
+    /// Wall-clock millis of the last local edit. Used as the last-writer-wins
+    /// tiebreaker when both sides changed a note.
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +236,8 @@ pub(crate) struct ManifestChange {
     pub filename: String,
     pub revision: Option<String>,
     pub deleted_at: Option<i64>,
+    #[serde(default)]
+    pub updated_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -263,28 +268,12 @@ pub struct RemoteApply {
     pub kind: RemoteApplyKind,
 }
 
-#[derive(Debug, Clone)]
-pub struct ConflictNote {
-    pub note_id: String,
-    pub filename: String,
-    pub cloud_content: String,
-    pub cloud_revision: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalConflictNote {
-    pub filename: String,
-    pub local_content: String,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct SyncReport {
     pub workspace_id: String,
     pub uploaded: usize,
     pub deleted: usize,
     pub remote: Vec<RemoteApply>,
-    pub conflicts: Vec<ConflictNote>,
-    pub local_conflicts: Vec<LocalConflictNote>,
     pub cursor: i64,
 }
 

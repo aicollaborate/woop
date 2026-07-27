@@ -24,6 +24,14 @@ import { Tooltip } from '@shared/ui/tooltip';
  *
  * path 不在全局 entries (用户删了 folder 但默认仍存) 时按 missing 灰显,
  * name 取路径末段兜底。 与标签列表同处一个滚动容器 (文件在上, 标签在下)。
+ *
+ * 交互: 多 folder 时整行可点击切换主空间 (与 agent thread card access popover
+ * 的 avatar 入口对齐); 删除按钮 hover 显形, 点击 stopPropagation 只删该 notebook
+ * 引用。 行的 hover 显隐走纯 CSS `group-hover` ── 不用 base-ui Tooltip 包裹
+ * group 行: Tooltip 的 Trigger 会向 reference 注入 native 指针事件并 Portal
+ * 渲染 Popup (floating-ui transform 定位), 在 WKWebView 上会干扰 group `:hover`
+ * 的状态更新时序, 导致 hover 显形的删除按钮在鼠标移出后不消失 (notebook-list
+ * 用纯 div 无 Tooltip, 无此问题)。 路径/操作提示改用原生 `title` + `aria-label`。
  */
 interface NotebookAccessFilesListProps {
   notebookId: string | undefined;
@@ -110,7 +118,7 @@ export function NotebookAccessFilesList({
     if (!saved) toast.error(t('agent.access.saveFailed'));
   }, [addFolderFromPicker, setDefaultFiles, notebookId, t]);
 
-  // 点击 folder 图标切换主空间 ── 仅在「多个资料文件夹」时提供入口 (单 folder
+  // 点击整行切换主空间 ── 仅在「多个资料文件夹」时提供入口 (单 folder
   // 无切换对象)。点击其它 folder 可切换主空间；点击当前主空间不清空，避免
   // UI 角标与 runtime 对空 workspace 自动使用 folders[0] 的规则不一致。
   // 只写该 notebook 自己的默认 (defaults.files[<notebookId>]),
@@ -159,86 +167,75 @@ export function NotebookAccessFilesList({
       </div>
       {folderItems.map((item) => {
         const isWorkspace = effectiveWorkspace === item.path;
-        // 多资料文件夹时, folder 图标可点击切换主空间 (与 agent thread card
+        // 多资料文件夹时, 整行可点击切换主空间 (与 agent thread card
         // access popover 的 avatar 入口对齐)。 单 folder 无切换对象, missing
-        // 路径不能当主空间 ── 两者都不挂交互入口, 图标仅作展示。
+        // 路径不能当主空间 ── 两者都不挂交互入口, 行仅作展示。
         const canSwitchWorkspace = folderItems.length > 1 && !item.missing;
+        const rowTitle = item.missing ? t('agent.access.pathMissing') : item.path;
         const iconTitle = canSwitchWorkspace
           ? isWorkspace
             ? t('agent.access.workspaceBadge')
             : t('agent.access.setWorkspace')
           : undefined;
         return (
-          <Tooltip
+          <div
             key={item.path}
-            content={item.missing ? t('agent.access.pathMissing') : item.path}
-            side="right"
-            align="start"
+            role={canSwitchWorkspace ? 'button' : undefined}
+            tabIndex={canSwitchWorkspace ? 0 : undefined}
+            title={rowTitle}
+            aria-label={canSwitchWorkspace ? iconTitle : undefined}
+            aria-pressed={canSwitchWorkspace ? isWorkspace : undefined}
+            onClick={
+              canSwitchWorkspace
+                ? () => handleToggleWorkspace(item.path)
+                : undefined
+            }
+            onKeyDown={
+              canSwitchWorkspace
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      handleToggleWorkspace(item.path);
+                    }
+                  }
+                : undefined
+            }
+            className={cn(
+              'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
+              canSwitchWorkspace && 'cursor-pointer hover:bg-[var(--muted)]',
+              item.missing && 'opacity-70',
+            )}
           >
-            <div
-              className={cn(
-                'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
-                item.missing && 'opacity-70',
-              )}
+            <span
+              aria-label={iconTitle}
+              className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--muted-foreground)]"
             >
-              <Tooltip content={iconTitle} side="right">
+              <Folder className="h-3.5 w-3.5" weight="fill" />
+              {isWorkspace && (
                 <span
-                  role={canSwitchWorkspace ? 'button' : undefined}
-                  tabIndex={canSwitchWorkspace ? 0 : undefined}
-                  aria-label={iconTitle}
-                  onClick={
-                    canSwitchWorkspace
-                      ? (event) => {
-                          event.stopPropagation();
-                          handleToggleWorkspace(item.path);
-                        }
-                      : undefined
-                  }
-                  onKeyDown={
-                    canSwitchWorkspace
-                      ? (event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handleToggleWorkspace(item.path);
-                          }
-                        }
-                      : undefined
-                  }
-                  className={cn(
-                    'relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--muted-foreground)]',
-                    canSwitchWorkspace && 'cursor-pointer transition-colors',
-                  )}
-                >
-                  <Folder className="h-3.5 w-3.5" weight="fill" />
-                  {isWorkspace && (
-                    <span
-                      className="agent-thread-card__access-workspace-mark"
-                      aria-hidden="true"
-                    />
-                  )}
-                </span>
-              </Tooltip>
-              <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                <span className={cn('min-w-0 truncate', item.missing && 'text-[var(--muted-foreground)]')}>
-                  {item.name}
-                </span>
-              </div>
-              <Tooltip content={t('agent.access.deleteFolder')} side="right">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleRemoveFolder(item.path);
-                  }}
-                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--destructive)] group-hover:opacity-100"
-                  aria-label={t('agent.access.deleteFolder')}
-                >
-                  <Trash className="h-3.5 w-3.5" />
-                </button>
-              </Tooltip>
+                  className="agent-thread-card__access-workspace-mark"
+                  aria-hidden="true"
+                />
+              )}
+            </span>
+            <div className="flex-1 min-w-0 flex items-center gap-1.5">
+              <span className={cn('min-w-0 truncate', item.missing && 'text-[var(--muted-foreground)]')}>
+                {item.name}
+              </span>
             </div>
-          </Tooltip>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleRemoveFolder(item.path);
+              }}
+              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--destructive)] group-hover:opacity-100"
+              aria-label={t('agent.access.deleteFolder')}
+              title={t('agent.access.deleteFolder')}
+            >
+              <Trash className="h-3.5 w-3.5" />
+            </button>
+          </div>
         );
       })}
       <Tooltip content={t('agent.access.addFolderHint')} side="right" align="start">

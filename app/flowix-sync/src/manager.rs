@@ -8,8 +8,8 @@ use crate::client::CloudClient;
 use crate::error::SyncError;
 use crate::models::{
     AppleAuthChallenge, AppleAuthorization, AuthOutcome, CloudAccount, CloudCheckout,
-    CloudMembership, CloudProduct, CloudState, ConflictNote, LocalConflictNote, LocalNote,
-    NotebookLink, RemoteApply, RemoteApplyKind, RuntimeSession, SyncReport,
+    CloudMembership, CloudProduct, CloudState, LocalNote, NotebookLink, RemoteApply,
+    RemoteApplyKind, RuntimeSession, SyncReport,
 };
 use crate::store::SyncStore;
 
@@ -455,41 +455,88 @@ impl SyncManager {
             if local_dirty && remote_dirty {
                 if let Some(change) = remote {
                     if change.deleted_at.is_some() {
-                        report.remote.push(RemoteApply {
-                            note_id: note.id.clone(),
-                            kind: RemoteApplyKind::Delete,
-                        });
-                        report.local_conflicts.push(LocalConflictNote {
-                            filename: note.filename.clone(),
-                            local_content: note.content.clone(),
-                        });
-                    } else {
-                        let revision = change.revision.clone().unwrap_or_default();
-                        let cloud_content = self
+                        // Local edit vs cloud delete: the edit wins. Resurrect
+                        // the cloud note by uploading with no base revision,
+                        // which clears `deleted_at` server-side.
+                        let put = self
                             .client
-                            .get_note(
+                            .put_note(
                                 &token,
                                 &link.workspace_id,
                                 &link.cloud_notebook_id,
                                 &note.id,
+                                &note.filename,
+                                &note.content,
+                                None,
                             )
                             .await?;
-                        if content_hash(&cloud_content) == hash {
-                            self.store.save_note_state(
-                                &workspace_id,
-                                notebook_id,
+                        self.store.save_note_state(
+                            &workspace_id,
+                            notebook_id,
+                            &note.id,
+                            &put.note.revision,
+                            &hash,
+                        )?;
+                        report.uploaded += 1;
+                        handled_remote.insert(note.id.clone());
+                        continue;
+                    }
+                    let revision = change.revision.clone().unwrap_or_default();
+                    let cloud_content = self
+                        .client
+                        .get_note(
+                            &token,
+                            &link.workspace_id,
+                            &link.cloud_notebook_id,
+                            &note.id,
+                        )
+                        .await?;
+                    if content_hash(&cloud_content) == hash {
+                        // Both sides converged to the same bytes: align state.
+                        self.store.save_note_state(
+                            &workspace_id,
+                            notebook_id,
+                            &note.id,
+                            &revision,
+                            &hash,
+                        )?;
+                        handled_remote.insert(note.id.clone());
+                        continue;
+                    }
+                    // Last-writer-wins: the newer edit overwrites the older.
+                    // Ties go to local so we avoid a needless download cycle.
+                    // Note: cloud `updated_at` is the server upload time, so
+                    // near-simultaneous edits (within sync delay) may pick the
+                    // cloud side; this only matters for sub-second races.
+                    if local_wins_lww(note.updated_at, change.updated_at) {
+                        let put = self
+                            .client
+                            .put_note(
+                                &token,
+                                &link.workspace_id,
+                                &link.cloud_notebook_id,
                                 &note.id,
-                                &revision,
-                                &hash,
-                            )?;
-                            handled_remote.insert(note.id.clone());
-                            continue;
-                        }
-                        report.conflicts.push(ConflictNote {
+                                &note.filename,
+                                &note.content,
+                                change.revision.as_deref(),
+                            )
+                            .await?;
+                        self.store.save_note_state(
+                            &workspace_id,
+                            notebook_id,
+                            &note.id,
+                            &put.note.revision,
+                            &hash,
+                        )?;
+                        report.uploaded += 1;
+                    } else {
+                        report.remote.push(RemoteApply {
                             note_id: note.id.clone(),
-                            filename: change.filename.clone(),
-                            cloud_content,
-                            cloud_revision: revision,
+                            kind: RemoteApplyKind::Upsert {
+                                filename: change.filename.clone(),
+                                content: cloud_content,
+                                revision,
+                            },
                         });
                     }
                     handled_remote.insert(note.id.clone());
@@ -523,7 +570,7 @@ impl SyncManager {
 
         // A note that existed at the last successful sync but no longer
         // exists locally is a local delete. If Cloud changed it concurrently,
-        // preserve the Cloud body as a conflict instead of deleting it.
+        // the edit wins: pull the Cloud version back down instead of deleting.
         for (note_id, state) in self.store.note_states(&workspace_id, notebook_id)? {
             if local_by_id.contains_key(note_id.as_str()) {
                 continue;
@@ -536,6 +583,7 @@ impl SyncManager {
                     continue;
                 }
                 if change.revision.as_deref() != Some(state.revision.as_str()) {
+                    // Local delete vs cloud edit: resurrect locally.
                     let revision = change.revision.clone().unwrap_or_default();
                     let cloud_content = self
                         .client
@@ -546,11 +594,13 @@ impl SyncManager {
                             &note_id,
                         )
                         .await?;
-                    report.conflicts.push(ConflictNote {
-                        note_id,
-                        filename: change.filename.clone(),
-                        cloud_content,
-                        cloud_revision: revision,
+                    report.remote.push(RemoteApply {
+                        note_id: note_id.clone(),
+                        kind: RemoteApplyKind::Upsert {
+                            filename: change.filename.clone(),
+                            content: cloud_content,
+                            revision,
+                        },
                     });
                     continue;
                 }
@@ -582,7 +632,9 @@ impl SyncManager {
                 continue;
             }
             if change.deleted_at.is_some() {
-                if local_by_id.contains_key(change.note_id.as_str()) {
+                if local_by_id.contains_key(change.note_id.as_str())
+                    && should_propagate_remote_delete(state.as_ref(), change)
+                {
                     report.remote.push(RemoteApply {
                         note_id: change.note_id.clone(),
                         kind: RemoteApplyKind::Delete,
@@ -641,15 +693,6 @@ impl SyncManager {
                 }
             }
         }
-        for conflict in &report.conflicts {
-            self.store.save_note_state(
-                workspace_id,
-                notebook_id,
-                &conflict.note_id,
-                &conflict.cloud_revision,
-                &content_hash(&conflict.cloud_content),
-            )?;
-        }
         self.store
             .finish_sync(workspace_id, notebook_id, report.cursor)
     }
@@ -667,6 +710,27 @@ fn remote_change_already_applied(
         && state.map(|state| state.revision.as_str()) == change.revision.as_deref()
 }
 
+/// Last-writer-wins tiebreaker. Returns true when the local edit should
+/// overwrite the cloud version. Ties (and a missing cloud timestamp) go to
+/// local so we avoid a needless download round-trip.
+fn local_wins_lww(local_updated_at: i64, cloud_updated_at: Option<i64>) -> bool {
+    local_updated_at >= cloud_updated_at.unwrap_or(0)
+}
+
+/// Whether a cloud tombstone should delete the local copy. Only true when the
+/// local note is still at the pre-delete revision. A note that was resurrected
+/// by a concurrent local edit (state advanced past the tombstone's revision)
+/// must be kept -- the tombstone is stale and a later sync will reconcile once
+/// the cursor moves past it.
+fn should_propagate_remote_delete(
+    state: Option<&crate::models::NoteState>,
+    change: &crate::models::ManifestChange,
+) -> bool {
+    state
+        .map(|s| Some(s.revision.as_str()) == change.revision.as_deref())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,6 +743,7 @@ mod tests {
             filename: "note.md".into(),
             revision: Some("same_revision".into()),
             deleted_at,
+            updated_at: None,
         }
     }
 
@@ -693,5 +758,39 @@ mod tests {
             &change(Some(1_700_000_000_000)),
             Some(&state)
         ));
+    }
+
+    #[test]
+    fn lww_picks_local_on_later_edit_or_tie() {
+        // Local edited later than the cloud upload -> local wins.
+        assert!(local_wins_lww(2_000, Some(1_000)));
+        // Tie goes to local to skip a redundant download.
+        assert!(local_wins_lww(1_000, Some(1_000)));
+        // Cloud edited later -> local loses, cloud version is downloaded.
+        assert!(!local_wins_lww(1_000, Some(2_000)));
+        // Missing cloud timestamp is treated as oldest, so local wins.
+        assert!(local_wins_lww(1_000, None));
+    }
+
+    #[test]
+    fn remote_delete_only_propagates_at_pre_delete_revision() {
+        let tombstone = change(Some(1_700_000_000_000)); // revision = "same_revision"
+        // Local still at the pre-delete revision -> propagate the delete.
+        let pre_delete = NoteState {
+            revision: "same_revision".into(),
+            last_synced_hash: "hash".into(),
+        };
+        assert!(should_propagate_remote_delete(Some(&pre_delete), &tombstone));
+        // Local was resurrected (state advanced past the tombstone) -> keep it.
+        let resurrected = NoteState {
+            revision: "newer_revision".into(),
+            last_synced_hash: "hash".into(),
+        };
+        assert!(!should_propagate_remote_delete(
+            Some(&resurrected),
+            &tombstone
+        ));
+        // No state (never synced) -> keep the local note, do not delete.
+        assert!(!should_propagate_remote_delete(None, &tombstone));
     }
 }

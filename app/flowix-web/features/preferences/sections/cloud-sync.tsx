@@ -300,7 +300,7 @@ export function CloudSyncSection() {
                 void cloud.syncNow()
                   .then((result) => {
                     toast.success(
-                      `${t('preferences.cloud.syncComplete')}: ↑${result.uploaded} ↓${result.downloaded} ⚠${result.conflicts}`,
+                      `${t('preferences.cloud.syncComplete')}: ↑${result.uploaded} ↓${result.downloaded}`,
                     );
                   })
                   .catch((error) => toast.error(errorMessage(error)))

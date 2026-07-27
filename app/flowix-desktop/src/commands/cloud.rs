@@ -26,7 +26,6 @@ pub struct CloudSyncResult {
     pub uploaded: usize,
     pub deleted: usize,
     pub downloaded: usize,
-    pub conflicts: usize,
 }
 
 fn sync_error(error: impl std::fmt::Display) -> String {
@@ -65,6 +64,7 @@ fn local_snapshot(state: &AppState, notebook_id: &str) -> Result<Vec<LocalNote>,
                 id: memo.id,
                 filename: memo.filename,
                 content,
+                updated_at: memo.updated_at,
             })
         })
         .collect()
@@ -96,40 +96,6 @@ fn apply_report(
         .into_iter()
         .map(|memo| memo.filename)
         .collect();
-
-    // Preserve locally edited content before applying a concurrent Cloud
-    // tombstone. If a later filesystem operation fails, the user's body still
-    // exists under a fresh memo ID.
-    for conflict in &report.local_conflicts {
-        let title = Path::new(&conflict.filename)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("Local conflict");
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H%M%S");
-        let base_name =
-            sanitize_filename_component(&format!("{title} (Local conflict {timestamp})"));
-        let filename = resolve_filename_conflict(&base, &base_name, &occupied);
-        occupied.push(filename.clone());
-        let path = base.join(filename);
-        crate::watcher::runtime::mark_self_write_for(app, &path);
-        atomic_write_bytes(&path, conflict.local_content.as_bytes()).map_err(sync_error)?;
-        let memo = memo_file
-            .register_existing_file_as_new_for_notebook_id(notebook_id, &path)
-            .map_err(sync_error)?;
-        memo_events::emit(
-            app,
-            MemoEvent::Created {
-                memo,
-                notebook_id: notebook_id.to_string(),
-                derived_changed: MemoDerivedChanged {
-                    tags: true,
-                    todos: true,
-                    agents: true,
-                },
-                source: MemoChangeSource::CloudSync,
-            },
-        );
-    }
 
     for remote in &report.remote {
         match &remote.kind {
@@ -226,37 +192,6 @@ fn apply_report(
                 );
             }
         }
-    }
-
-    for conflict in &report.conflicts {
-        let title = Path::new(&conflict.filename)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("Cloud conflict");
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H%M%S");
-        let base_name =
-            sanitize_filename_component(&format!("{title} (Cloud conflict {timestamp})"));
-        let filename = resolve_filename_conflict(&base, &base_name, &occupied);
-        occupied.push(filename.clone());
-        let path = base.join(filename);
-        crate::watcher::runtime::mark_self_write_for(app, &path);
-        atomic_write_bytes(&path, conflict.cloud_content.as_bytes()).map_err(sync_error)?;
-        let memo = memo_file
-            .register_existing_file_as_new_for_notebook_id(notebook_id, &path)
-            .map_err(sync_error)?;
-        memo_events::emit(
-            app,
-            MemoEvent::Created {
-                memo,
-                notebook_id: notebook_id.to_string(),
-                derived_changed: MemoDerivedChanged {
-                    tags: true,
-                    todos: true,
-                    agents: true,
-                },
-                source: MemoChangeSource::CloudSync,
-            },
-        );
     }
     Ok(())
 }
@@ -603,7 +538,6 @@ pub async fn cloud_sync_now(
         uploaded: 0,
         deleted: 0,
         downloaded: 0,
-        conflicts: 0,
     };
     for notebook_id in notebook_ids {
         let report = sync_one(state.inner(), &app, &notebook_id).await?;
@@ -611,7 +545,6 @@ pub async fn cloud_sync_now(
         result.uploaded += report.uploaded;
         result.deleted += report.deleted;
         result.downloaded += report.remote.len();
-        result.conflicts += report.conflicts.len() + report.local_conflicts.len();
     }
     Ok(result)
 }
