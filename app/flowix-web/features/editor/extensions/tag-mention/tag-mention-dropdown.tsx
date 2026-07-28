@@ -1,8 +1,9 @@
 import { type MouseEvent } from 'react';
-import { Hash, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { useSelectedItemScroll } from '@features/editor/extensions/shared/use-selected-item-scroll';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import type { MentionTagItem } from '@features/editor/extensions/tag-mention/tag-mention-data';
+import { TagMentionName } from '@features/editor/extensions/tag-mention/tag-mention-label';
 import { useI18n } from '@/lib/i18n';
 
 export interface TagMentionDropdownProps {
@@ -41,7 +42,11 @@ export function TagMentionDropdown({
   };
 
   return (
-    <div className="mention-note-dropdown" role="listbox" aria-label="Tags">
+    <div
+      className="mention-note-dropdown tag-mention-dropdown"
+      role="listbox"
+      aria-label="Tags"
+    >
       <div className="mention-note-header" aria-label="Mention type">
         <span>{t('editor.tagMention.header')}</span>
         {loading && (
@@ -88,8 +93,8 @@ export function TagMentionDropdown({
                 }}
               >
                 <span className="mention-note-title mention-tag-title">
-                  <Hash className="mention-tag-icon" aria-hidden="true" />
-                  <span className="mention-tag-name">{item.name}</span>
+                  <span className="mention-tag-icon" aria-hidden="true" />
+                  <TagMentionName name={item.name} />
                 </span>
                 {item.create && (
                   <span className="mention-note-notebook">

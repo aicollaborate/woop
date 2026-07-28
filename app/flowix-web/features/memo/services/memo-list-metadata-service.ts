@@ -238,22 +238,19 @@ export async function loadMemoLibraryMetadata({
     tagMap[tag.id] = tag.name;
   }
 
-  const usedTagIds = usedTagIdsResult.usedTagIds;
-  const usedTagIdSet = new Set(usedTagIds);
+  const allTagIds = allTagDefinitions.map((tag) => tag.id);
+  const allTagIdSet = new Set(allTagIds);
 
   const savedOrder = normalizeSavedStringArray(tagSystemMetadata.order);
   const savedLayout = normalizeSavedTagLayout(tagSystemMetadata.layout);
   const tagLayout = normalizeTagLayout({
-    usedTagIds,
+    usedTagIds: allTagIds,
     savedLayout,
     savedOrder,
   });
 
   const tagById = new Map(
-    usedTagIds.map((id) => [
-      id,
-      tagMap[id] ?? allTagDefinitions.find((tag) => tag.id === id)?.name ?? id,
-    ]),
+    allTagDefinitions.map((tag) => [tag.id, tag.name]),
   );
   const tagOptions = buildTagTreeOptions({
     layout: tagLayout,
@@ -262,7 +259,7 @@ export async function loadMemoLibraryMetadata({
   });
 
   const savedHidden = normalizeSavedStringArray(tagSystemMetadata.hidden);
-  const hiddenTagIds = savedHidden.filter((id) => usedTagIdSet.has(id));
+  const hiddenTagIds = savedHidden.filter((id) => allTagIdSet.has(id));
 
   return {
     tagMap,

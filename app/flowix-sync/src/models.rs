@@ -214,6 +214,49 @@ pub struct LocalNote {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalChangeKind {
+    Put,
+    Delete,
+}
+
+impl LocalChangeKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Put => "put",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChangeVersion {
+    pub modified_at: i64,
+    pub logical_counter: i64,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OutboxEntry {
+    pub id: i64,
+    pub note_id: String,
+    pub operation: LocalChangeKind,
+    pub occurred_at: i64,
+    pub logical_counter: i64,
+    pub device_id: String,
+}
+
+impl OutboxEntry {
+    pub(crate) fn version(&self) -> ChangeVersion {
+        ChangeVersion {
+            modified_at: self.occurred_at,
+            logical_counter: self.logical_counter,
+            device_id: self.device_id.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct NoteState {
     pub revision: String,
@@ -225,7 +268,18 @@ pub(crate) struct NoteState {
 pub(crate) struct ManifestData {
     pub cursor: i64,
     pub has_more: bool,
+    #[serde(default)]
+    pub server_time: Option<i64>,
     pub changes: Vec<ManifestChange>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SyncStatusData {
+    pub head_cursor: i64,
+    pub has_changes: bool,
+    #[serde(default)]
+    pub server_time: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -238,6 +292,12 @@ pub(crate) struct ManifestChange {
     pub deleted_at: Option<i64>,
     #[serde(default)]
     pub updated_at: Option<i64>,
+    #[serde(default)]
+    pub modified_at: Option<i64>,
+    #[serde(default)]
+    pub logical_counter: i64,
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,6 +331,8 @@ pub struct RemoteApply {
 #[derive(Debug, Clone, Default)]
 pub struct SyncReport {
     pub workspace_id: String,
+    pub started_at: i64,
+    pub outbox_through_id: i64,
     pub uploaded: usize,
     pub deleted: usize,
     pub remote: Vec<RemoteApply>,

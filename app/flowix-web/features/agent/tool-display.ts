@@ -3,7 +3,19 @@ import type {
   AgentToolDisplayKind,
   AgentTypeKey,
 } from "@/types/agent";
-import type { AppLanguage } from "@/lib/i18n";
+import { COMMAND_KEYS, normalizeToolInput, stringField } from "./tool-display/common";
+import { formatAgentPlanSummaryForDisplay } from "./tool-display/plan";
+export * from "./tool-display/command";
+export { normalizeToolInput } from "./tool-display/common";
+export {
+  formatAgentPlanSummary,
+  formatAgentPlanSummaryForDisplay,
+  parseAgentPlan,
+  type AgentPlan,
+  type AgentPlanStatus,
+  type AgentPlanStep,
+} from "./tool-display/plan";
+
 
 type ToolDisplayFormatter = (
   input: Record<string, unknown>,
@@ -26,21 +38,16 @@ function valueToText(value: unknown): string {
   }
 }
 
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
 function extractFileName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   return normalized.split("/").filter(Boolean).pop() || path;
 }
 
-function stringField(
-  input: Record<string, unknown>,
-  keys: readonly string[],
-): string | undefined {
-  for (const key of keys) {
-    const value = input[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return undefined;
-}
 
 function deepStringField(
   input: unknown,
@@ -193,26 +200,6 @@ function display(
   };
 }
 
-export function normalizeToolInput(
-  input: unknown,
-): Record<string, unknown> | undefined {
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    return input as Record<string, unknown>;
-  }
-  if (Array.isArray(input)) return { items: input };
-  if (typeof input === "string" && input.trim()) {
-    try {
-      const parsed = JSON.parse(input) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return { command: input };
-    }
-    return { command: input };
-  }
-  return undefined;
-}
 
 function fieldKind(key: string): AgentToolDisplayKind {
   if (
@@ -246,303 +233,14 @@ function directoryDisplay(
   return display(path ? extractFileName(path) : undefined, "file", path);
 }
 
-const COMMAND_KEYS = [
-  "command_preview",
-  "command",
-  "command_text",
-  "commandText",
-  "cmd",
-  "cmdline",
-  "shell_command",
-  "script",
-] as const;
-
 function commandDisplay(
   input: Record<string, unknown>,
 ): AgentToolDisplay | undefined {
   const command = stringField(input, COMMAND_KEYS);
-  // codex 后端用 workdir, 不是 cwd/working_directory
   const cwd = stringField(input, ["workdir", "cwd", "working_directory"]);
   return display(command, "command", cwd ? `${command}\n${cwd}` : command);
 }
 
-export type AgentCommandOperator = "&&" | "||" | ";" | "|";
-
-export interface AgentCommandItem {
-  op?: AgentCommandOperator;
-  command: string;
-  args: string[];
-  env: string[];
-  raw: string;
-  wrapper?: {
-    label: string;
-    payload: AgentCommandList;
-  };
-}
-
-export interface AgentCommandList {
-  items: AgentCommandItem[];
-}
-
-interface CommandToken {
-  text: string;
-  quoted: boolean;
-  op?: AgentCommandOperator;
-}
-
-const COMMAND_SCRIPT_FLAGS = new Set([
-  "-c",
-  "-lc",
-  "-ic",
-  "-lic",
-  "-e",
-]);
-
-const COMMAND_WRAPPER_NAMES = new Set([
-  "bash",
-  "dash",
-  "fish",
-  "ksh",
-  "node",
-  "perl",
-  "php",
-  "python",
-  "python2",
-  "python3",
-  "ruby",
-  "sh",
-  "zsh",
-]);
-
-function basenameCommandName(command: string): string {
-  return command.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? command;
-}
-
-/**
- * 公开的 basename 提取 ── 给前端渲染用 (例: thread card 展示命令名)。
- * 把 Windows / POSIX 路径末尾的文件名/可执行名取出, 非路径输入保持原样。
- *
- *   basenameCommandNameForDisplay("C:\\Windows\\...\\powershell.exe")
- *     === "powershell.exe"
- *   basenameCommandNameForDisplay("/usr/local/bin/node")
- *     === "node"
- *   basenameCommandNameForDisplay("rg")
- *     === "rg"
- *
- * 跟模块内部 `basenameCommandName` 不同: 内部版假设输入已 tokenize,
- * 不带 `\`, 也不关心 unicode 安全; 这里我们保留 backslash 兼容 + 对
- * 路径分隔符做显式检测 ── 调用方可以决定什么时候才走 basename。
- */
-export function basenameCommandNameForDisplay(command: string): string {
-  return basenameCommandName(command);
-}
-
-function isEnvAssignment(token: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
-}
-
-function tokenizeCommand(command: string): CommandToken[] {
-  const tokens: CommandToken[] = [];
-  let text = "";
-  let quote: "'" | '"' | null = null;
-  let quoted = false;
-  let parenDepth = 0;
-  let bracketDepth = 0;
-  let braceDepth = 0;
-
-  const push = () => {
-    if (!text) return;
-    tokens.push({ text, quoted });
-    text = "";
-    quoted = false;
-  };
-
-  for (let i = 0; i < command.length; i += 1) {
-    const ch = command[i];
-    const next = command[i + 1];
-
-    if (ch === "\\" && next !== undefined) {
-      text += next;
-      i += 1;
-      continue;
-    }
-
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-      } else {
-        text += ch;
-      }
-      continue;
-    }
-
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      quoted = true;
-      continue;
-    }
-
-    if (/\s/.test(ch)) {
-      if (parenDepth > 0 || bracketDepth > 0 || braceDepth > 0) {
-        text += ch;
-        continue;
-      }
-      push();
-      continue;
-    }
-
-    if (ch === "(") {
-      parenDepth += 1;
-      text += ch;
-      continue;
-    }
-    if (ch === ")") {
-      parenDepth = Math.max(0, parenDepth - 1);
-      text += ch;
-      continue;
-    }
-    if (ch === "[") {
-      bracketDepth += 1;
-      text += ch;
-      continue;
-    }
-    if (ch === "]") {
-      bracketDepth = Math.max(0, bracketDepth - 1);
-      text += ch;
-      continue;
-    }
-    if (ch === "{") {
-      braceDepth += 1;
-      text += ch;
-      continue;
-    }
-    if (ch === "}") {
-      braceDepth = Math.max(0, braceDepth - 1);
-      text += ch;
-      continue;
-    }
-
-    const atTopLevel =
-      parenDepth === 0 && bracketDepth === 0 && braceDepth === 0;
-
-    if (
-      atTopLevel &&
-      ((ch === "&" && next === "&") || (ch === "|" && next === "|"))
-    ) {
-      push();
-      tokens.push({ text: ch + next, quoted: false, op: ch + next as AgentCommandOperator });
-      i += 1;
-      continue;
-    }
-
-    if (atTopLevel && (ch === ";" || ch === "|")) {
-      push();
-      tokens.push({ text: ch, quoted: false, op: ch as AgentCommandOperator });
-      continue;
-    }
-
-    text += ch;
-  }
-  push();
-  return tokens;
-}
-
-function tokenText(tokens: CommandToken[]): string {
-  return tokens.map((token) => token.text).join(" ").trim();
-}
-
-function parseCommandTokens(
-  tokens: CommandToken[],
-  op: AgentCommandOperator | undefined,
-  depth: number,
-): AgentCommandItem | null {
-  const words = tokens.filter((token) => !token.op && token.text);
-  if (words.length === 0) return null;
-
-  const script = findWrapperScript(words);
-  const env: string[] = [];
-  let commandIndex = 0;
-  while (commandIndex < words.length && isEnvAssignment(words[commandIndex].text)) {
-    env.push(words[commandIndex].text);
-    commandIndex += 1;
-  }
-  const command = words[commandIndex]?.text;
-  if (!command) return null;
-
-  const item: AgentCommandItem = {
-    op,
-    command,
-    args: words.slice(commandIndex + 1).map((token) => token.text),
-    env,
-    raw: tokenText(words),
-  };
-
-  if (script && depth < 2) {
-    const payload = parseCommandString(script.payload, depth + 1);
-    if (payload) {
-      item.wrapper = {
-        label: tokenText(words.slice(0, script.payloadIndex)),
-        payload,
-      };
-    }
-  }
-
-  return item;
-}
-
-function findWrapperScript(
-  tokens: CommandToken[],
-): { payload: string; payloadIndex: number } | null {
-  for (let i = 0; i < tokens.length - 1; i += 1) {
-    const name = basenameCommandName(tokens[i].text).toLowerCase();
-    if (!COMMAND_WRAPPER_NAMES.has(name)) continue;
-
-    for (let j = i + 1; j < tokens.length - 1; j += 1) {
-      const flag = tokens[j].text;
-      if (!flag.startsWith("-")) break;
-      if (COMMAND_SCRIPT_FLAGS.has(flag) || /c$/.test(flag)) {
-        return { payload: tokens[j + 1].text, payloadIndex: j + 1 };
-      }
-    }
-  }
-  return null;
-}
-
-function parseCommandString(
-  command: string,
-  depth = 0,
-): AgentCommandList | null {
-  const tokens = tokenizeCommand(command);
-  const items: AgentCommandItem[] = [];
-  let segment: CommandToken[] = [];
-  let op: AgentCommandOperator | undefined;
-
-  for (const token of tokens) {
-    if (token.op) {
-      const item = parseCommandTokens(segment, op, depth);
-      if (item) items.push(item);
-      segment = [];
-      op = token.op;
-    } else {
-      segment.push(token);
-    }
-  }
-
-  const last = parseCommandTokens(segment, op, depth);
-  if (last) items.push(last);
-
-  return items.length > 0 ? { items } : null;
-}
-
-export function parseAgentCommandInput(
-  input: unknown,
-): AgentCommandList | null {
-  const normalized = normalizeToolInput(input);
-  if (!normalized) return null;
-  const command = stringField(normalized, COMMAND_KEYS);
-  if (!command) return null;
-  return parseCommandString(command);
-}
 
 function searchDisplay(
   input: Record<string, unknown>,
@@ -550,6 +248,9 @@ function searchDisplay(
   const query =
     deepStringField(input, SEARCH_QUERY_KEYS) ?? fallbackSearchQuery(input);
   const path = deepStringField(input, ["path", "cwd", "include"]);
+  if (!query && deepStringField(input, ["type"]) === "other") {
+    return display("Web search", "search");
+  }
   return display(query, "search", path ? `${query}\n${path}` : query);
 }
 
@@ -876,23 +577,10 @@ function patchDisplay(
  *  与其它 formatter 同构: 失败返回 undefined, 让 createAgentToolDisplay
  *  走 getAgentToolInputSummary fallback 路径.
  * ════════════════════════════════════════════════════════════════════════ */
-export function formatAgentPlanSummaryForDisplay(
-  input: Record<string, unknown>,
-): string {
-  const parsed = parseAgentPlan(input);
-  if (!parsed) return "";
-  const total = parsed.plan.length;
-  const done = parsed.plan.filter((s) => s.status === "completed").length;
-  const current = parsed.plan.find((s) => s.status === "in_progress");
-  if (current) return `${done}/${total} · ${truncate(current.step, PLAN_SUMMARY_MAX)}`;
-  return `${done}/${total}`;
-}
 
 function todoDisplay(
   input: Record<string, unknown>,
 ): AgentToolDisplay | undefined {
-  const plan = parseAgentPlan(input);
-  if (!plan) return undefined;
   const summary = formatAgentPlanSummaryForDisplay(input);
   if (!summary) return undefined;
   return display(summary, "todo", "Todo");
@@ -1065,131 +753,4 @@ export function createAgentToolDisplay(
     title: summary,
     kind: inferredKind,
   };
-}
-
-/* ════════════════════════════════════════════════════════════════════════
- *  update_plan 派生 ── Codex CLI 的 todo/list 工具
- * ════════════════════════════════════════════════════════════════════════
- *
- *  arguments: { plan: Array<{ status: "pending"|"in_progress"|"completed", step: string }> }
- *
- *  - formatAgentPlanSummary → 给单行 header 显示用 ("3/5 · 正在做: …" / "3/5 · Working on: …")
- *  - parseAgentPlan         → 给 checklist 渲染用, 失败返回 null
- *  - 复用 TOOLS 元数据 ── toolName 走 agent.tools.* 的 i18n label
- */
-
-export type AgentPlanStatus = "pending" | "in_progress" | "completed";
-export interface AgentPlanStep {
-  status: AgentPlanStatus;
-  step: string;
-}
-export interface AgentPlan {
-  plan: AgentPlanStep[];
-}
-
-const PLAN_STEP_MAX = 200;
-const PLAN_SUMMARY_MAX = 60;
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max - 1) + "…";
-}
-
-const PLAN_KEYS = ["plan", "Plan", "items", "todos", "steps", "tasks"] as const;
-const STATUS_KEYS = ["status", "state", "Status"] as const;
-const STEP_KEYS = ["step", "content", "title", "text", "activeForm", "label"] as const;
-const STATUS_ALIASES: Record<string, AgentPlanStatus> = {
-  pending: "pending",
-  todo: "pending",
-  not_started: "pending",
-  "not-started": "pending",
-  queued: "pending",
-  in_progress: "in_progress",
-  "in-progress": "in_progress",
-  inprogress: "in_progress",
-  doing: "in_progress",
-  running: "in_progress",
-  active: "in_progress",
-  executing: "in_progress",
-  completed: "completed",
-  done: "completed",
-  finished: "completed",
-  complete: "completed",
-  success: "completed",
-  succeeded: "completed",
-};
-
-function normalizeStatus(value: unknown): AgentPlanStatus | null {
-  if (typeof value !== "string") return null;
-  const key = value.trim().toLowerCase();
-  return STATUS_ALIASES[key] ?? null;
-}
-
-function findPlanArray(value: unknown, depth: number): unknown[] | null {
-  if (depth > 3) return null;
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== "object") return null;
-  for (const key of PLAN_KEYS) {
-    const v = (value as Record<string, unknown>)[key];
-    if (Array.isArray(v)) return v;
-  }
-  // 深入一层找常见包壳 (input / arguments / data / payload)
-  for (const wrap of ["input", "arguments", "data", "payload", "args"]) {
-    const v = (value as Record<string, unknown>)[wrap];
-    if (v && typeof v === "object") {
-      const inner = findPlanArray(v, depth + 1);
-      if (inner) return inner;
-    }
-  }
-  return null;
-}
-
-export function parseAgentPlan(
-  input: unknown,
-): AgentPlan | null {
-  const arr = findPlanArray(input, 0);
-  if (!arr || arr.length === 0) return null;
-  const plan: AgentPlanStep[] = [];
-  for (const item of arr) {
-    if (!item || typeof item !== "object") continue;
-    const obj = item as Record<string, unknown>;
-    let status: AgentPlanStatus | null = null;
-    for (const k of STATUS_KEYS) {
-      status = normalizeStatus(obj[k]);
-      if (status) break;
-    }
-    let step: string | null = null;
-    if (typeof obj.step === "string" && obj.step.trim()) step = obj.step.trim();
-    if (!step) {
-      for (const k of STEP_KEYS) {
-        const v = obj[k];
-        if (typeof v === "string" && v.trim()) { step = v.trim(); break; }
-      }
-    }
-    if (status && step) {
-      plan.push({ status, step: truncate(step, PLAN_STEP_MAX) });
-    } else if (step) {
-      // 没有 status 也能渲染 ── 视作 pending (比丢弃好)
-      plan.push({ status: "pending", step: truncate(step, PLAN_STEP_MAX) });
-    }
-  }
-  return plan.length > 0 ? { plan } : null;
-}
-
-export function formatAgentPlanSummary(
-  input: Record<string, unknown> | undefined,
-  language: AppLanguage = "zh-CN",
-): string {
-  const parsed = parseAgentPlan(input);
-  if (!parsed) return "";
-  const total = parsed.plan.length;
-  const done = parsed.plan.filter((s) => s.status === "completed").length;
-  const current = parsed.plan.find((s) => s.status === "in_progress");
-  const prefix = `${done}/${total}`;
-  if (current) {
-    const label =
-      language === "zh-CN" ? "正在做" : "Working on";
-    return `${prefix} · ${label}：${truncate(current.step, PLAN_SUMMARY_MAX)}`;
-  }
-  return prefix;
 }

@@ -1,0 +1,256 @@
+/* error 提示块 ── 默认 hidden (DOM 写了 hidden 属性), 用 absolute
+ * 浮在 composer 之上, 不挤压 body 区域; 视觉上 error 与 composer
+ * 间距 6px, 高度由内容决定。折叠态在 .--collapsed 下用 display: none
+ * 进一步隐藏 (虽然 hidden 已隐, 双保险)。
+ *
+ * bottom 数值: composer 实际占位 = 8 (padding-top) + 28.8 (textarea)
+ * + 10 (padding-bottom) + 2 (border) + 6 (margin-bottom) = 54.8px ──
+ * 圆到 55, error 浮在 composer 顶 + 6px 间距 = bottom: 61px。 */
+.markdown-editor .agent-thread-card__error {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 61px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--destructive) 30%, transparent);
+  border-radius: 6px;
+  color: var(--destructive);
+  background: color-mix(in oklch, var(--destructive) 8%, transparent);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  z-index: 1;
+}
+
+/* composer 圆角胶囊容器 ── grid auto 行, 高度由内容决定 (auto 行
+ * 在子元素 display: none 时收缩到 0, 这是折叠态没有空白区块的关键)。
+ * 外层 max-height: --atc-composer-max-h (200px) 兜底封顶; 内部
+ * textarea 在 field-sizing: content 配合自身 max-height (= 外层
+ * max-height - padding-y) 下, 内容超出时走 overflow-y 内部滚动,
+ * composer 容器不被撑破。
+ *
+ * 背景统一用 var(--document-bg) ── 跟文档背景融合 (与全屏态视觉一致),
+ * 1px border 保留, 仍能围出胶囊形状; textarea 自身 transparent, 直接
+ * 透出 composer 背景。多行状态由 .--multi-line 修饰类切到 flex-end
+ * (按钮贴底, 始终维持 --atc-bottom-pad 距离)。 类切换由 agent-thread-card.tsx
+ * 的 input 事件控制。 */
+.markdown-editor .agent-thread-card__composer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: end;
+  width: calc(100% - 24px);
+  margin: 0 0.8rem 0.6rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--document-bg);
+  box-sizing: border-box;
+  max-height: 15rem;
+  user-select: none;
+}
+
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__composer {
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin: 0 auto 0.6rem;
+  /* 全屏态: 宽度 / margin 与基线不同; 背景由基线 var(--document-bg) 提供,
+   * 不再覆盖, 全屏 / 非全屏视觉一致。 */
+}
+
+.markdown-editor .agent-thread-card__composer--multi-line {
+  align-items: flex-end;
+}
+
+.markdown-editor .agent-thread-card__composer--has-images {
+  flex-wrap: wrap;
+  border-radius: 0.85rem;
+}
+
+.markdown-editor .agent-thread-card__composer-images {
+  display: flex;
+  width: 100%;
+  gap: 0.5rem;
+  padding: 0.15rem 0 0.25rem;
+  overflow-x: auto;
+}
+
+.markdown-editor .agent-thread-card__composer-images[hidden] {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__composer-image {
+  position: relative;
+  display: block;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--muted);
+}
+
+.markdown-editor .agent-thread-card__composer-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.markdown-editor .agent-thread-card__composer-image-remove {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: rgb(0 0 0 / 55%);
+  color: white;
+  font: inherit;
+  font-size: 1.35rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.markdown-editor .agent-thread-card__composer-image:hover .agent-thread-card__composer-image-remove,
+.markdown-editor .agent-thread-card__composer-image-remove:focus-visible {
+  opacity: 1;
+}
+
+.markdown-editor .agent-thread-card__composer-role-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-self: center;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--secondary-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+/* 之前 `hidden` 时 display: none ── 现在 composerRoleIcon 永远是 button,
+ * 不再设 hidden 属性, 这条规则保留作兜底, 防止后续调用方误设 hidden 时
+ * 留下 24px 空白 (auto 行高 collapse 已处理, 但显式更稳)。 */
+.markdown-editor .agent-thread-card__composer-role-icon[hidden] {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__composer-role-icon img,
+.markdown-editor .agent-thread-card__composer-role-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  /* 子元素 SVG / img 不接收 pointer events ── 点击落到底层 button,
+   * 走统一的 click handler。 否则某些浏览器 (尤其带 ::after 高亮的
+   * svg) 会把事件吞掉, 让 button 的 onclick 不触发。 */
+  pointer-events: none;
+}
+
+/* 空态 Plus 图标 ── 14×14, 复用 access popover 新增资料夹按钮
+ * (`.agent-thread-card__access-add-icon`) 的尺寸。 20×20 对 Plus
+ * filled cross 来说偏大, 与按钮 24×24 容器几乎填满, 视觉上比 memo
+ * 文档图标更"重", 与"未设置"的轻量占位语义不符。 缩到 14×14 后,
+ * 与 access popover 新增资料夹视觉同源, "次级 indicator" 这一类
+ * UI 元素有统一节奏。 */
+.markdown-editor
+  .agent-thread-card__composer-role-icon
+  svg.agent-thread-card__composer-role-icon-empty {
+  width: 14px;
+  height: 14px;
+}
+
+/* hover / open 态 ── 与文件内 __icon-btn 的 hover 风格同源, 用 var(--muted)
+ * 与 var(--foreground) 混合色 + transition 150ms。 popover 打开时挂
+ * --open 修饰类, 视觉上"按钮被按下"。 */
+.markdown-editor .agent-thread-card__composer-role-icon:hover,
+.markdown-editor .agent-thread-card__composer-role-icon--open,
+.markdown-editor .agent-thread-card__composer-role-icon:focus-visible {
+  background: color-mix(in oklch, var(--muted) 80%, var(--foreground) 12%);
+  color: var(--foreground);
+  outline: none;
+}
+
+.markdown-editor
+  .agent-thread-card__composer-role-icon.agent-thread-card__role-icon--svg {
+  color: #3f3f46;
+}
+
+[data-theme="dark"]
+  .markdown-editor
+  .agent-thread-card__composer-role-icon.agent-thread-card__role-icon--svg {
+  color: #fff;
+}
+
+.markdown-editor .agent-thread-card__composer textarea {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 1rem;
+  max-height: calc(var(--atc-composer-max-h) - 8px - var(--atc-bottom-pad));
+  height: auto;
+  field-sizing: content;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground);
+  caret-color: var(--brand);
+  padding: 0;
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  cursor: text;
+  outline: none;
+  user-select: none;
+}
+
+.markdown-editor .agent-thread-card__composer textarea:focus {
+  /* base 已 border: 0, 这里只压掉默认 focus ring 的 box-shadow */
+  box-shadow: none;
+}
+
+.markdown-editor .agent-thread-card__composer textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+/* 发送按钮 ── 28×28 圆形, 内嵌 16×16 Phosphor 图标。
+ * 尺寸取自 --atc-send-size, 与 textarea min-height 公式联动。 */
+.agent-thread-card__access-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--atc-send-size);
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 0 0.5rem;
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.agent-thread-card__access-trigger:hover,
+.agent-thread-card__access-trigger--open {
+  color: var(--foreground);
+}
+

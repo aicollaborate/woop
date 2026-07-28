@@ -2442,6 +2442,62 @@ fn move_tag_no_match_returns_zero_affected() {
 // Step 3+: 路径式 tag 选中某 segment 时 (e.g. `中国`), filter 应
 // 包含所有前缀匹配的 memo (`中国` / `中国/湖南` / `中国/湖南/长沙` 都命中)。
 #[test]
+fn empty_notebook_tag_can_be_created_and_listed() {
+    let (mf, _base) = fresh_memo_file();
+    let created = mf
+        .create_notebook_tag("nb_test", "projects/flowix")
+        .unwrap();
+
+    assert_eq!(created, "projects/flowix");
+    assert_eq!(
+        mf.read_notebook_tag_paths(Some("nb_test")).unwrap(),
+        vec!["projects".to_string(), "projects/flowix".to_string()]
+    );
+    assert!(mf
+        .read_all_memos_filtered("tagged", "createdAt", Some("projects/flowix"))
+        .is_empty());
+}
+
+#[test]
+fn deleting_last_tagged_memo_keeps_notebook_tag() {
+    let (mf, _base) = fresh_memo_file();
+    let memo = mf
+        .create_memo("Tagged", "body", Some("keep/empty"))
+        .unwrap();
+
+    assert!(mf.delete_memo(&memo.id));
+    assert_eq!(
+        mf.read_notebook_tag_paths(Some("nb_test")).unwrap(),
+        vec!["keep".to_string(), "keep/empty".to_string()]
+    );
+}
+
+#[test]
+fn empty_notebook_tag_can_be_moved_and_deleted() {
+    let (mf, _base) = fresh_memo_file();
+    mf.create_notebook_tag("nb_test", "empty/old").unwrap();
+
+    let moved = mf
+        .move_memo_tag_locked(Some("nb_test"), "empty/old", "empty/new")
+        .unwrap();
+    assert_eq!(moved.affected_memos, 0);
+    assert_eq!(
+        moved.renamed_tags,
+        vec![("empty/old".to_string(), "empty/new".to_string())]
+    );
+
+    let deleted = mf
+        .delete_memo_tag_locked(Some("nb_test"), "empty/new")
+        .unwrap();
+    assert_eq!(deleted.affected_memos, 0);
+    assert_eq!(deleted.deleted_tags, vec!["empty/new".to_string()]);
+    assert_eq!(
+        mf.read_notebook_tag_paths(Some("nb_test")).unwrap(),
+        vec!["empty".to_string()]
+    );
+}
+
+#[test]
 fn read_all_memos_filtered_tagged_with_path_prefix() {
     let (mf, _base) = fresh_memo_file();
     let m_china = mf.create_memo("CN", "x", None).unwrap();

@@ -1,0 +1,314 @@
+/* ── 角色设置弹窗 (composer role popover) ────────────────────────────
+ * 旧实现 (accessPopover → 「角色」按钮 → typeSettingsPopover 二级展开)
+ * 的 CSS 已删除 ── 现在走单级方案, 点击 composerRoleIcon 直接出这个
+ * 弹窗。 视觉与 accessPopover 同源 (border / radius / box-shadow /
+ * padding), 但内容只承载"选择角色"单层 list + header, 不需要 actions/
+ * scroll 双层结构。
+ *
+ * 角色项 ── 与旧 type-settings-item 完全同源视觉: min-height 36px /
+ * radius 6px / padding 6px 8px / gap 10px / hover bg var(--muted) /
+ * selected 走 muted 持续高亮 / disabled opacity 0.55 + not-allowed。
+ * icon 是 24×24 (与旧 notebook-icon 同尺寸, 因为现在 popover 更宽 ──
+ * 260px, 旧 submenu 也是 260px, 视觉对齐)。 */
+
+.agent-thread-card__composer-role-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--agent-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.2;
+  text-align: left;
+  box-sizing: border-box;
+  user-select: none;
+  transition: background-color 120ms ease;
+}
+
+.agent-thread-card__composer-role-item
+  + .agent-thread-card__composer-role-item {
+  margin-top: 2px;
+}
+
+.agent-thread-card__composer-role-item:hover {
+  background: var(--muted);
+}
+
+/* 当前 Role ── 选中态直接走 muted 底色 (无需独立 highlight token),
+ * hover 态保持一致 ── 让选中态在视觉上是"持续高亮", 而非"额外标记"。 */
+.agent-thread-card__composer-role-item--selected {
+  background: var(--muted);
+}
+
+.agent-thread-card__composer-role-item--selected:hover {
+  background: var(--muted);
+}
+
+/* 加载中 / 没有角色 ── 透明度 0.55 + not-allowed 光标 + hover 不显示背景 ──
+ * disabled 属性让 click 事件不触发, 避免误操作。 */
+.agent-thread-card__composer-role-item--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.agent-thread-card__composer-role-item--disabled:hover {
+  background: transparent;
+}
+
+/* icon ── 24×24 圆角头像, 复用旧 type-settings-notebook-icon 的视觉 ──
+ * 因为现在 popover 内容不再嵌套在 accessPopover 里, 这个 24px 头像的
+ * 视觉节奏与 role list 单层布局更搭 (旧 18px 太挤)。 */
+.agent-thread-card__composer-role-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--secondary-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-thread-card__composer-role-item-icon--svg {
+  background: var(--muted);
+  color: #3f3f46;
+}
+
+[data-theme="dark"] .agent-thread-card__composer-role-item-icon--svg {
+  color: #fff;
+}
+
+.agent-thread-card__composer-role-item-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  opacity: 0.9;
+}
+
+.agent-thread-card__composer-role-item-icon img {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+/* 文本 fallback (在 appendRoleIconContent 没拿到 memoIcon 时) ── 与
+ * icon 同尺寸, 字体风格一致, 让"无 icon"项的视觉与"有 icon"项对齐。 */
+.agent-thread-card__composer-role-item-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--secondary-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-thread-card__composer-role-item-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-thread-card__composer-role-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-card__composer-role-item-desc {
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 常用语 (quick phrases) ────────────────────────────────────────────
+ * 视觉与角色项完全同源: 直接复用 .agent-thread-card__composer-role-item*,
+ * 不另写一份菜单项样式 ── 空状态、filter 无命中、条目都共用同一套类。
+ *
+ * 这里只定义两块独特的视觉:
+ *   1. 搜索框 (无边框 / 无背景 / 打开自动聚焦)
+ *   2. 列表容器 (只承担 layout 间距, 不渲染视觉) */
+
+/* 搜索框 ── 无边框 / 无背景 / 无搜索 icon, 仅保留底部 1px divider
+ *  跟 popover 视觉节奏一致, 字号跟角色项一致。 */
+.agent-thread-card__composer-quick-phrase-search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  margin: 0 0 4px 0;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  color: var(--agent-foreground);
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.2;
+  outline: none;
+}
+
+.agent-thread-card__composer-quick-phrase-search::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.85;
+}
+.agent-thread-card__composer-quick-phrase-search:focus::placeholder {
+  opacity: 0.6;
+}
+
+/* 列表容器 — 仅承担垂直 padding, 不画外框; 水平方向不加 padding,
+ * 让 item 自身的 6px 8px padding 与角色项完全对齐 (角色项无外层容器)。 */
+.agent-thread-card__composer-quick-phrase-list {
+  display: block;
+  padding: 2px 0 4px 0;
+}
+/* 容器内 group header 之间的分隔线 ── 把常用语与角色明确分组 */
+.agent-thread-card__composer-quick-phrase-list
+  > .agent-thread-card__composer-role-popover-header
+  + .agent-thread-card__composer-role-item,
+.agent-thread-card__composer-quick-phrase-list
+  > .agent-thread-card__composer-role-popover-header
+  + .agent-thread-card__composer-quick-phrase-empty {
+  margin-top: 0;
+}
+/* 第一组 header 与搜索框 divider 衔接; 第二组 header 顶部分割线 */
+.agent-thread-card__composer-quick-phrase-list
+  > .agent-thread-card__composer-role-popover-header {
+  border-top: 1px solid var(--divider);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.agent-thread-card__composer-quick-phrase-list
+  > .agent-thread-card__composer-role-popover-header:first-child {
+  border-top: 0;
+  padding-top: 0.15rem;
+  margin-top: 0;
+}
+
+.markdown-editor .agent-thread-card__send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--atc-send-size);
+  height: var(--atc-send-size);
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+}
+
+.markdown-editor .agent-thread-card__send:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 88%, var(--foreground) 12%);
+}
+
+.markdown-editor .agent-thread-card__send-tooltip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.markdown-editor .agent-thread-card__send:disabled {
+  cursor: not-allowed;
+}
+
+/* 未输入内容时: 跟 inputbox 同步, 走 muted 色变, 不再依赖 opacity 半透明。
+ * --stop 变体由 :not() 排除, 保持 warning 全亮 ── 停止按钮在 loading 期间
+ * 仍需"亮"以传达"这是可点击的停止动作", 与 inputbox 中 isLoading 时强制
+ * canSend=false 但视觉走 dim 的逻辑不同, 这里停止按钮是 dim→亮态的逆例。
+ *
+ * 图标色用 muted-foreground ── 与 muted 背景同色系, 形成'暗底 + 灰图标'
+ * 的纯灰 dim 关系, 不再保留 primary 色相。 */
+.markdown-editor
+  .agent-thread-card__send:disabled:not(.agent-thread-card__send--stop) {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+/* send 图标: 15×15 ── 跟主面板 inputbox 不必对齐, 卡片按钮更小一档
+ * (--atc-send-size 28×28 vs 主面板 h-8 w-8 = 32×32), 图标按比例缩小
+ * 维持视觉密度。stop 图标 (Phosphor 矩形 fill 满框) 在 15×15 下比例
+ * 仍满, 不需要单独 size 分支。 */
+.markdown-editor .agent-thread-card__send-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.markdown-editor .agent-thread-card__send--stop {
+  background: var(--warning);
+  color: var(--floating-foreground);
+}
+
+.markdown-editor
+  .agent-thread-card__send.agent-thread-card__send--stop:hover:not(:disabled) {
+  background: var(--warning);
+  filter: brightness(1.08);
+}
+
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__body,
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__body *,
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__message,
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__message *,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ── 全屏时的 Agent 徽章 HoverCard ──────────────────────────────
+ * mount 默认 display: none (不占 agentWrap flex 流空间),全屏时由
+ * syncBadgeHoverCardPosition() 设为 position: absolute + top/left/width/height
+ * 覆盖到 badge 区域。 trigger 覆盖层 absolute 占满 mount。
+ * 不包 badgeEl ── 避免 React render(null) 把 badge 一并清空。 */
+.agent-thread-card__badge-hover-card-mount {
+  display: none;
+}
+
+.agent-thread-card__badge-hover-trigger {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  cursor: pointer;
+  background: transparent;
+  border-radius: inherit;
+}
+
+/* open 状态不加重背景 (避免与按钮灰色 hover 视觉冲突) ──
+ * 仅在 trigger:hover / open 时让下层 badge 文字提亮。 */
+.agent-thread-card__badge-hover-trigger:hover ~ .agent-type-badge .agent-type-badge__name,
+.agent-thread-card__badge-hover-trigger[data-state="open"] ~ .agent-type-badge .agent-type-badge__name {
+  color: var(--foreground);
+}
+

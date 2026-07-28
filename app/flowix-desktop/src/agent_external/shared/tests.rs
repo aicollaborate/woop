@@ -1,0 +1,334 @@
+use super::*;
+use tokio::io::BufReader;
+
+#[test]
+fn streaming_emit_buffer_batches_text_and_reasoning_in_order() {
+    let mut buf = StreamingEmitBuffer::new("t1".to_string());
+    assert!(buf.is_empty());
+    assert_eq!(buf.pending_bytes(), 0);
+
+    buf.append_text("Hello, ");
+    buf.append_text("world!");
+    buf.append_reasoning("thinking...");
+    // text �?reasoning 各自�?��, 不交叉�?
+    assert_eq!(
+        buf.pending_bytes(),
+        "Hello, world!".len() + "thinking...".len()
+    );
+
+    let chunks = buf.flush();
+    // reasoning 先于 text (前�? reasoning-first �?��)�?
+    assert_eq!(chunks.len(), 2, "expected reasoning + text");
+    let reasoning_text = match &chunks[0] {
+        AgentChunk::Reasoning { thread_id, text } => {
+            assert_eq!(thread_id, "t1");
+            text.as_str()
+        }
+        _ => panic!("expected Reasoning first"),
+    };
+    assert_eq!(reasoning_text, "thinking...");
+    let text_text = match &chunks[1] {
+        AgentChunk::Text { thread_id, text } => {
+            assert_eq!(thread_id, "t1");
+            text.as_str()
+        }
+        _ => panic!("expected Text second"),
+    };
+    assert_eq!(text_text, "Hello, world!");
+    // flush 后缓冲清�? 再�? flush �?no-op�?
+    assert!(buf.is_empty());
+    assert!(buf.flush().is_empty());
+}
+
+#[test]
+fn streaming_emit_buffer_flush_only_emits_non_empty() {
+    let mut buf = StreamingEmitBuffer::new("t2".to_string());
+    // 只有 text: 仅产出 Text。
+    buf.append_text("a");
+    let chunks = buf.flush();
+    assert_eq!(chunks.len(), 1);
+    assert!(matches!(chunks[0], AgentChunk::Text { .. }));
+    // 只有 reasoning: 仅产出 Reasoning。
+    buf.append_reasoning("b");
+    let chunks = buf.flush();
+    assert_eq!(chunks.len(), 1);
+    assert!(matches!(chunks[0], AgentChunk::Reasoning { .. }));
+    // 空: 不产出。
+    assert!(buf.flush().is_empty());
+}
+
+#[test]
+fn registry_metadata_is_thread_scoped() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    assert_eq!(registry.agent_type, "codex");
+    assert_eq!(registry.current_tool, "codex");
+}
+
+#[test]
+fn raw_json_default_follows_build_profile() {
+    assert_eq!(default_raw_json_enabled(), cfg!(debug_assertions));
+}
+
+#[test]
+fn raw_json_env_bool_accepts_only_explicit_true_values() {
+    for value in ["1", "true", "TRUE", " yes ", "on"] {
+        assert!(parse_env_bool(value), "{value:?} should enable raw_json");
+    }
+
+    for value in ["0", "false", "no", "off", "", "maybe"] {
+        assert!(!parse_env_bool(value), "{value:?} should disable raw_json");
+    }
+}
+
+/// `stream_end_emitted` �?`stop_chat` / 流式任务 tail / watchdog 三方共享
+/// �?StreamEnd 已发"哨兵 ── 各持一�?Arc clone, 谁先 CAS(false -> true) 谁负�?    /// �? 另两�?CAS 失败�?skip。这条测试钉死�?不变�? 注册时�?进去�?flag
+/// 与调用方手里那份�?��一�?AtomicBool, 且只有一�?CAS 能赢�?
+#[cfg(unix)]
+#[tokio::test]
+async fn stream_end_emitted_flag_is_shared_and_oneshot() {
+    use std::sync::atomic::Ordering;
+
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let stream_end_emitted = Arc::new(AtomicBool::new(false));
+    let caller_clone = stream_end_emitted.clone();
+
+    let child = tokio::process::Command::new("/usr/bin/true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn `/usr/bin/true`");
+    registry
+        .insert(
+            "t".to_string(),
+            child,
+            Some("run-1".to_string()),
+            stream_end_emitted,
+        )
+        .await;
+
+    // stop_chat �?��: �?registry 抢出 entry, �?entry 里的 flag CAS�?
+    let running = registry.remove("t").await.expect("running entry exists");
+    let stop_won = running
+        .stream_end_emitted
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok();
+
+    // 流式任务 tail �?��: 用调用方手里�?clone �?CAS, 必须失败�?
+    let tail_won = caller_clone
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok();
+
+    assert!(stop_won, "stop_chat should win the CAS");
+    assert!(!tail_won, "streaming tail must skip after stop_chat won");
+    assert!(
+        caller_clone.load(Ordering::SeqCst),
+        "flag must be visible as true to the tail clone"
+    );
+}
+
+#[test]
+fn resolve_run_id_prefers_frontend_run_id() {
+    assert_eq!(
+        resolve_run_id("thread_1", Some(" frontend-run ")),
+        "frontend-run"
+    );
+}
+
+#[test]
+fn resolve_run_id_falls_back_to_generated_thread_scoped_id() {
+    let run_id = resolve_run_id("thread_1", Some(" "));
+    assert!(run_id.starts_with("thread_1-"));
+}
+
+#[tokio::test]
+async fn prepare_start_normalizes_run_id_and_creates_unclaimed_terminal_slot() {
+    use std::sync::atomic::Ordering;
+
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let start = registry
+        .prepare_start("thread_1", Some(" run-1 "))
+        .await
+        .expect("fresh run should be accepted");
+
+    assert_eq!(start.run_id, "run-1");
+    assert!(!start.stream_end_emitted.load(Ordering::SeqCst));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_run_preserves_expected_run_matching_and_shared_terminal_slot() {
+    use std::sync::atomic::Ordering;
+
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let stream_end_emitted = Arc::new(AtomicBool::new(false));
+    let caller_flag = stream_end_emitted.clone();
+    let child = tokio::process::Command::new("/bin/sleep")
+        .arg("5")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn `/bin/sleep`");
+    registry
+        .insert(
+            "thread_1".to_string(),
+            child,
+            Some("run-1".to_string()),
+            stream_end_emitted,
+        )
+        .await;
+
+    assert!(registry
+        .stop_run("thread_1", "thread_1", Some("wrong-run"), "TestCli")
+        .await
+        .is_none());
+    assert!(registry.contains("thread_1").await);
+
+    let stopped = registry
+        .stop_run("thread_1", "thread_1", Some("run-1"), "TestCli")
+        .await
+        .expect("matching run should be stopped");
+    assert_eq!(stopped.run_id, "run-1");
+    assert!(!registry.contains("thread_1").await);
+    assert!(Arc::ptr_eq(&caller_flag, &stopped.stream_end_emitted));
+    assert!(!caller_flag.load(Ordering::SeqCst));
+}
+
+#[test]
+fn workspace_context_lists_only_existing_additional_roots() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("primary");
+    let reference = temp.path().join("reference");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&reference).unwrap();
+    let missing = temp.path().join("missing");
+    let paths = vec![
+        cwd.to_string_lossy().to_string(),
+        reference.to_string_lossy().to_string(),
+        reference.to_string_lossy().to_string(),
+        missing.to_string_lossy().to_string(),
+    ];
+
+    let prompt = append_workspace_context("Question", &cwd, &paths);
+
+    assert!(prompt.starts_with("Question\n\n[Flowix workspace context]"));
+    assert_eq!(
+        prompt
+            .matches(&reference.to_string_lossy().to_string())
+            .count(),
+        1
+    );
+    assert!(!prompt.contains(&missing.to_string_lossy().to_string()));
+}
+
+#[tokio::test]
+async fn capped_stdout_reader_truncates_long_lines() {
+    let input = format!("{}{}\nnext\n", "x".repeat(20), "y".repeat(20));
+    let mut reader = BufReader::new(input.as_bytes());
+
+    let (line, truncated) = read_capped_line(&mut reader, 16)
+        .await
+        .expect("read line")
+        .expect("line");
+    assert_eq!(line.len(), 16);
+    assert!(truncated);
+
+    let (line, truncated) = read_capped_line(&mut reader, 16)
+        .await
+        .expect("read next line")
+        .expect("next line");
+    assert_eq!(line.trim(), "next");
+    assert!(!truncated);
+}
+
+#[tokio::test]
+async fn stderr_reader_preserves_lines_and_newlines() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let reader = BufReader::new("first\nsecond".as_bytes());
+
+    let stderr = read_stderr_to_string("thread_1", Some("run_1"), &registry, reader)
+        .await
+        .expect("stderr reader should succeed");
+
+    assert_eq!(stderr, "first\nsecond\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stderr_reader_touches_matching_run() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let child = tokio::process::Command::new("/bin/sleep")
+        .arg("1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn `/bin/sleep`");
+    registry
+        .insert(
+            "thread_1".to_string(),
+            child,
+            Some("run_1".to_string()),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+
+    {
+        let mut children = registry.children.lock().await;
+        let running = children
+            .get_mut("thread_1")
+            .expect("running entry should exist");
+        running.last_event_at = 1;
+    }
+
+    let reader = BufReader::new("stderr\n".as_bytes());
+    read_stderr_to_string("thread_1", Some("run_1"), &registry, reader)
+        .await
+        .expect("stderr reader should succeed");
+
+    let last_event_at = {
+        let children = registry.children.lock().await;
+        children
+            .get("thread_1")
+            .expect("running entry should exist")
+            .last_event_at
+    };
+    assert!(last_event_at > 1);
+
+    let mut running = registry
+        .remove("thread_1")
+        .await
+        .expect("running entry should be removable");
+    let _ = running.child.kill().await;
+}
+
+#[tokio::test]
+async fn reap_stale_returns_none_when_no_entry() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    assert!(registry.reap_stale("missing").await.is_none());
+}
+
+/// Spawn a child that exits immediately, register it, wait for it to
+/// exit, then call reap_stale 鈥?should drop the entry and return None.
+#[cfg(unix)]
+#[tokio::test]
+async fn reap_stale_drops_already_exited_child() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let child = tokio::process::Command::new("/usr/bin/true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn `/usr/bin/true`");
+    registry
+        .insert(
+            "t".to_string(),
+            child,
+            Some("run-1".to_string()),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+    // Give the kernel a moment to actually reap the process. Without
+    // this, try_wait can still return Ok(None) on slow runners.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    assert!(registry.reap_stale("t").await.is_none());
+    assert!(!registry.contains("t").await);
+}

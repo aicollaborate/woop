@@ -18,7 +18,16 @@ impl MemoFile {
     }
 
     pub fn derived_tags_for_notebook_id(&self, notebook_id: Option<&str>) -> Vec<MemoTag> {
-        Self::derive_tags_from_memos(self.read_all_memos_for_notebook_id(notebook_id))
+        let now = chrono::Utc::now().timestamp_millis();
+        self.read_notebook_tag_paths(notebook_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|name| MemoTag {
+                id: name.clone(),
+                name,
+                created_at: now,
+            })
+            .collect()
     }
 
     fn derive_tags_from_memos(memos: Vec<Memo>) -> Vec<MemoTag> {

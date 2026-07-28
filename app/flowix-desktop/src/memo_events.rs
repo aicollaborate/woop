@@ -216,22 +216,37 @@ impl MemoEvent {
 /// �?emit 风格保持一�?—IPC 通道关闭时不该�?业务逻辑�?�?///
 /// v3 改造后物理 rename 不再发生, 不再需�?id 二级兜底�?
 pub fn emit(app: &AppHandle, event: MemoEvent) {
-    let sync_notebook_id = match &event {
+    let sync_change = match &event {
         MemoEvent::Created {
+            memo,
             notebook_id,
             source,
             ..
-        }
-        | MemoEvent::Updated {
+        } if !matches!(source, MemoChangeSource::CloudSync) => Some((
+            notebook_id.clone(),
+            memo.id.clone(),
+            flowix_sync::LocalChangeKind::Put,
+        )),
+        MemoEvent::Updated {
+            id,
             notebook_id,
             source,
             ..
-        }
-        | MemoEvent::Deleted {
+        } if !matches!(source, MemoChangeSource::CloudSync) => Some((
+            notebook_id.clone(),
+            id.clone(),
+            flowix_sync::LocalChangeKind::Put,
+        )),
+        MemoEvent::Deleted {
+            id,
             notebook_id,
             source,
             ..
-        } if !matches!(source, MemoChangeSource::CloudSync) => Some(notebook_id.clone()),
+        } if !matches!(source, MemoChangeSource::CloudSync) => Some((
+            notebook_id.clone(),
+            id.clone(),
+            flowix_sync::LocalChangeKind::Delete,
+        )),
         _ => None,
     };
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
@@ -241,7 +256,18 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
     } else {
         let _ = app.emit(MEMO_EVENT, &event);
     }
-    if let Some(notebook_id) = sync_notebook_id {
+    if let Some((notebook_id, note_id, operation)) = sync_change {
+        if let Some(state) = app.try_state::<crate::app::state::AppState>() {
+            if let Err(error) =
+                state
+                    .cloud_sync
+                    .record_local_change(&notebook_id, &note_id, operation)
+            {
+                tracing::warn!(
+                    "failed to persist cloud sync outbox entry for {notebook_id}/{note_id}: {error}"
+                );
+            }
+        }
         crate::commands::cloud::schedule_notebook_sync(app.clone(), notebook_id);
     }
 }

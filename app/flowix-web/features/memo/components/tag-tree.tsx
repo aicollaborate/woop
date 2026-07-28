@@ -7,13 +7,15 @@ import {
   useRef,
   useState,
 } from 'react';
-import { HashIcon } from '@phosphor-icons/react';
+import { HashIcon, PlusIcon } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@shared/ui/dialog';
 import { Button } from '@shared/ui/button';
+import { Input } from '@shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@shared/ui/select';
 import {
   useMemoLibraryMetadataStore,
   useMemoStore,
@@ -37,6 +39,7 @@ import {
   reorderTagLayout,
   type TagDropPosition,
 } from '@features/memo/components/tag-reorder';
+import { markTagsCollapsedByAncestor } from '@features/memo/components/tag-collapse';
 
 interface TagTreeProps {
   selectedNotebook: Notebook | null;
@@ -96,6 +99,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   // 行内重命名编辑态: editingTagId 命中时标签名 span 替换为 input。
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [editingTagName, setEditingTagName] = useState('');
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newTagParentPath, setNewTagParentPath] = useState('');
+  const [newTagName, setNewTagName] = useState('');
+  const [createTagError, setCreateTagError] = useState<string | null>(null);
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
   // 删除确认弹窗: `deletingTag` 命中时, 弹 Dialog 提示子树影响范围 + 确认。
   const [deletingTag, setDeletingTag] = useState<MemoTagTreeItem | null>(null);
 
@@ -112,19 +120,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   }, [tagOptions]);
   const visibleTagOptions = useMemo(() => {
     // 不过滤折叠子树, 而是全量渲染并标记 collapsedByAncestor;
-    // 折叠的子树行留在 DOM 中, 由外层 .tag-collapse-track 的 grid 0fr/1fr
-    // 过渡实现展开/折叠动画 (unmount 无法 CSS 过渡)。
-    let collapsedDepth: number | null = null;
-    return tagOptions.map((tag) => {
-      const collapsedByAncestor = collapsedDepth !== null && tag.depth > collapsedDepth;
-      if (collapsedDepth !== null && tag.depth <= collapsedDepth) {
-        collapsedDepth = null;
-      }
-      if (collapsedTagIdSet.has(tag.id)) {
-        collapsedDepth = tag.depth;
-      }
-      return { ...tag, collapsedByAncestor };
-    });
+    // 折叠的子树行留在 DOM 中, 由外层 .tag-collapse-track 过渡高度和透明度。
+    // 基于 parentId 祖先链判定，避免嵌套折叠节点覆盖外层折叠范围。
+    return markTagsCollapsedByAncestor(tagOptions, collapsedTagIdSet);
   }, [collapsedTagIdSet, tagOptions]);
 
   useEffect(() => {
@@ -198,6 +196,63 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       setSelectedTagId,
     ],
   );
+
+  const openCreateTagDialog = useCallback(() => {
+    setNewTagParentPath('');
+    setNewTagName('');
+    setCreateTagError(null);
+    setCreateDialogOpen(true);
+  }, []);
+
+  const submitCreateTag = useCallback(async () => {
+    if (!selectedNotebook || isCreatingTag) return;
+    const name = newTagName.trim();
+    if (!name) {
+      setCreateTagError(t('memo.tag.createEmpty'));
+      return;
+    }
+    if (name.startsWith('#')) {
+      setCreateTagError(t('memo.tag.createWithoutHash'));
+      return;
+    }
+    if (/[\s\p{P}]/u.test(name)) {
+      setCreateTagError(t('memo.tag.createInvalid'));
+      return;
+    }
+    const path = newTagParentPath ? `${newTagParentPath}/${name}` : name;
+
+    setIsCreatingTag(true);
+    setCreateTagError(null);
+    try {
+      const report = await useTagStore
+        .getState()
+        .createTag(selectedNotebook.id, path);
+      clearLibraryMetadata();
+      invalidateMentionTags();
+      setCreateDialogOpen(false);
+      setNewTagParentPath('');
+      setNewTagName('');
+      toast.success(
+        t('memo.tag.createdToast', { path: report.path } satisfies I18nParams),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCreateTagError(
+        message.includes('already exists')
+          ? t('memo.tag.createDuplicate')
+          : `${t('memo.tag.createFailed')}: ${message}`,
+      );
+    } finally {
+      setIsCreatingTag(false);
+    }
+  }, [
+    clearLibraryMetadata,
+    isCreatingTag,
+    newTagName,
+    newTagParentPath,
+    selectedNotebook,
+    t,
+  ]);
 
   const startRename = useCallback((tag: MemoTagTreeItem) => {
     setEditingTagId(tag.id);
@@ -439,13 +494,22 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
 
   return (
     <>
-      {/* 标签组 ── 外侧容器, pt-1 提供组上方留白 (与资料组对称, 两侧均用 padding 而非 margin); space-y-0.5 维持标签行 2px 间距。 */}
-      <div className="space-y-0.5 pt-1">
+      {/* 标签组 ── 外侧容器, pt-1 提供组上方留白 (与资料组对称, 两侧均用 padding 而非 margin);
+          标签行间距由 .tag-collapse-track 自身控制，确保折叠轨道不残留 space-y margin。 */}
+      <div className="tag-tree-list pt-1">
         {/* 标签分类标题 ── 过滤器 (全部/对话/待办) 在上, 真正的标签树在此标题之下。 */}
-        <div
-          className="agent-thread-card__access-section-label"
-        >
-          {t('memo.navigation.tags')}
+        <div className="agent-thread-card__access-section-label flex items-center justify-between">
+          <span>{t('memo.navigation.tags')}</span>
+          <button
+            type="button"
+            onClick={openCreateTagDialog}
+            disabled={!selectedNotebook}
+            className="-my-1 flex h-5 w-5 translate-x-1 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-40"
+            aria-label={t('memo.tag.create')}
+            title={t('memo.tag.create')}
+          >
+            <PlusIcon className="h-3.5 w-3.5" weight="light" />
+          </button>
         </div>
         {tagOptions.length > 0 && (
           <>
@@ -517,6 +581,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                   // ── 视觉提示该图标可点击。
                   role={hasChildren ? 'button' : undefined}
                   tabIndex={hasChildren ? 0 : undefined}
+                  aria-expanded={
+                    hasChildren ? !collapsedTagIdSet.has(tag.id) : undefined
+                  }
                   aria-label={
                     hasChildren
                       ? collapsedTagIdSet.has(tag.id)
@@ -622,6 +689,107 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       {/* Tag 删除确认弹窗 ── 右键菜单"删除" 触发。 子树命中时给出更
           严肃的提示文案, 明确告诉用户删除是整棵子树 + body 里所有
           #tag 都会被移除, 无法撤销。 */}
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          if (isCreatingTag) return;
+          setCreateDialogOpen(open);
+          if (!open) {
+            setNewTagParentPath('');
+            setNewTagName('');
+            setCreateTagError(null);
+          }
+        }}
+      >
+        <DialogContent className="w-[460px]">
+          <DialogHeader className="pr-7">
+            <DialogTitle>{t('memo.tag.createTitle')}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCreateTag();
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <div className="w-1/3 shrink-0">
+                <Select
+                  value={newTagParentPath || '__root__'}
+                  disabled={isCreatingTag}
+                  onValueChange={(value) => {
+                    setNewTagParentPath(value === '__root__' ? '' : value);
+                    if (createTagError) setCreateTagError(null);
+                  }}
+                >
+                  <SelectTrigger className="bg-[var(--background)]">
+                    <span className="min-w-0 truncate text-left">
+                      {newTagParentPath
+                        ? `#${newTagParentPath}`
+                        : t('memo.tag.createParent')}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent align="start" className="max-h-64 w-[240px] overflow-y-auto">
+                    <SelectItem value="__root__">
+                      {t('memo.tag.createNoParent')}
+                    </SelectItem>
+                    {tagOptions.map((tag) => (
+                      <SelectItem key={tag.id} value={tag.fullPath}>
+                        <span
+                          className="block truncate"
+                          style={{ paddingLeft: `${tag.depth * 12}px` }}
+                        >
+                          #{tag.fullPath}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center rounded-lg border border-input bg-background focus-within:border-[var(--primary)]">
+                <span className="pl-3 text-sm text-[var(--muted-foreground)]">#</span>
+                <Input
+                  id="new-tag-name"
+                  autoFocus
+                  value={newTagName}
+                  disabled={isCreatingTag}
+                  placeholder={t('memo.tag.createPlaceholder')}
+                  aria-label={t('memo.tag.createName')}
+                  onChange={(event) => {
+                    setNewTagName(event.target.value);
+                    if (createTagError) setCreateTagError(null);
+                  }}
+                  className="border-0 pl-1 focus-visible:border-0"
+                  aria-invalid={Boolean(createTagError)}
+                />
+              </div>
+            </div>
+            {createTagError && (
+              <p className="mt-1.5 text-xs text-[var(--destructive)]">
+                {createTagError}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={isCreatingTag}
+                onClick={() => setCreateDialogOpen(false)}
+              >
+                {t('memo.tag.createCancel')}
+              </Button>
+              <Button
+                type="submit"
+                disabled={isCreatingTag || !newTagName.trim()}
+              >
+                {isCreatingTag
+                  ? t('memo.tag.creating')
+                  : t('memo.tag.createConfirm')}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={deletingTag !== null}
         onOpenChange={(open) => {

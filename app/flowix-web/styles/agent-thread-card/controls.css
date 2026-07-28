@@ -1,0 +1,333 @@
+/* ── Header icon button (共享基类) ──────────────────────────────────────
+ * header 右侧 actions 区的四个方形按钮 (折叠 / 删除 / 全屏 / 打开侧边栏)
+ * 在视觉上完全同源 ── 28×28 方形 + 0.38rem 圆角 + muted-foreground 文字
+ * 色 + hover var(--muted) 70% 透混背景 + 前景色。
+ *
+ * 之前各自重复 14 行 CSS ── 改基类 + 4 个具体 class 只放"独有"扩展点。
+ * 语义解耦靠具体 className (--collapse / --delete / --fullscreen /
+ * --open-panel) 维持, 视觉同源靠共享基类统一 ── 两件事各司其职。
+ *
+ * ── 颜色用 var(--muted-foreground) 而非硬编码 #888 ──
+ *   - 三套主题 (light/dark/rock) 都定义了 --muted-foreground, 与
+ *     __meta 等"次要文字"位置用同一 token, 跨主题视觉一致。
+ *   - 硬编码 #888 在 dark 主题下偏亮 (与 muted-foreground 不匹配),
+ *     rock 主题下色彩倾向也不对 ── 改 token 后自动跟随主题。
+ *
+ * 选类名 __icon-btn (而非 __header-btn) ── 后续若 composer / footer
+ * 等位置出现同款方形按钮可直接复用同一基类, 不必再起一个名字。 */
+.markdown-editor .agent-thread-card__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0.38rem;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.markdown-editor .agent-thread-card__icon-btn:hover {
+  background: color-mix(in oklch, var(--muted) 70%, transparent);
+  color: var(--foreground);
+}
+
+/* __icon-btn 默认 display: inline-flex 优先级等同 [hidden] (各 0,1,0),
+ * 且因后定义而胜出, 导致按钮设 hidden 仍占位 ── 在基类层显式声明
+ * [hidden] = display: none, 任何 __icon-btn 子类 (delete / fullscreen /
+ * collapse) 设 hidden 都能正确隐藏。 */
+.markdown-editor .agent-thread-card__icon-btn[hidden] {
+  display: none;
+}
+
+/* 折叠按钮 ── 14×14 Caret 图标。
+ * 颜色与 meta 文字一致 (muted-foreground), hover 时背景 var(--muted) 形成
+ * "可点击"暗示。不用圆形是因为只有 22px, 圆角 5px 与 agent-icon 视觉对齐。 */
+.markdown-editor .agent-thread-card__collapse {
+  /* 视觉由 __icon-btn 提供 ── 这里仅放独有扩展点 (当前无) */
+}
+
+.markdown-editor .agent-thread-card__chevron-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+  /* 折叠态旋转 180° ── DOM 只挂一个 chevron-down SVG, 通过 CSS transform
+   * 翻成 chevron-up, 比 TS 端 replaceChildren+append 重建节点更省 ──
+   * SVG path 不变, 不重新创建节点, 不重新触发 layout, 旋转也走 GPU
+   * 合成层。transition 配合状态切换给出 150ms 的平滑动画, 比硬切更
+   * 柔和。 */
+  transition: transform 150ms ease;
+}
+
+.markdown-editor
+  .agent-thread-card--collapsed
+  .agent-thread-card__chevron-icon {
+  transform: rotate(180deg);
+}
+
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__collapse {
+  display: none;
+}
+
+/* reasoning 消息折叠态旋转 ── 与卡片级 collapse 按钮同源思路, 复用
+ * .agent-thread-card__chevron-icon class 命中 SVG。父级折叠类挂在
+ * per-message item 上 (agent-thread-card__message--reasoning-collapsed),
+ * 不与 card 根的 .--collapsed 耦合 ── 卡片折叠时 body display:none 整体
+ * 隐藏, reasoning chevron 不会渲染; 反之卡片展开、某条 reasoning 折叠
+ * 时, 这里的修饰类仍然能命中。每条 reasoning 独立切旋转, 与父级
+ * card 折叠态解耦。 */
+.markdown-editor
+  .agent-thread-card__message--reasoning:not(
+    .agent-thread-card__message--reasoning-collapsed
+  )
+  .agent-thread-card__chevron-icon {
+  transform: rotate(90deg);
+}
+
+.markdown-editor
+  .agent-thread-card__message--reasoning-collapsed
+  .agent-thread-card__chevron-icon {
+  transform: rotate(0deg);
+}
+
+/* 删除对话按钮 ── 位于折叠按钮左侧, 视觉同 __icon-btn 基类 ──
+ * hover 色不用 destructive: 当前是文件 icon 在 muted 体系里, hover 走 var(--muted)
+ * 跟其他三个按钮保持一致; 真要做 destructive 高亮应该放在删除确认弹窗阶段, 而
+ * 不是把单按钮 hover 染色 ── 那会跟其他三个按钮形成视觉不协调, 反而弱化警示。
+ *
+ * ── 为什么保留独立 className ──
+ *   - 语义解耦: __collapse 是'折叠/展开', __delete 是'删除对话', 行为完全不同。
+ *   - 未来扩展: __delete 可能加二次确认 / loading 态 / 错误提示, __collapse 不会。
+ *   - DevTools 可读性: 看 className 就能直接区分。 */
+.markdown-editor .agent-thread-card__delete {
+  /* 视觉由 __icon-btn 提供 ── 这里仅放独有扩展点 (当前无) */
+}
+
+/* 复用 __copy-icon 口径 ── 14×14, color 继承按钮文字色, 不缩小。
+ * 之所以独立类不复用, 是因为以后可能给删除按钮单独调 hover 色或加危险态, 独立类
+ * 给未来留扩展空间。 */
+.markdown-editor .agent-thread-card__trash-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+/* 全屏按钮 ── 视觉同 __icon-btn 基类。 */
+.markdown-editor .agent-thread-card__fullscreen {
+  /* 视觉由 __icon-btn 提供 ── 这里仅放独有扩展点 (当前无) */
+}
+
+.markdown-editor .agent-thread-card__fullscreen-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+/* 全屏 / 删除按钮之间的竖向分割线 ── 把"视图操作"与"破坏性操作"
+ * 在视觉上明确分组, 减少误删概率。
+ *
+ * ── 几何 ──
+ *   - 1px × 16px, 比按钮 28px 短, 让分割线"漂浮"在按钮中部而非顶满。
+ *     这样视觉上更像一个分隔标记, 不至于与按钮边框抢眼。
+ *   - background-color 而非 border ── 1px border 在 28px flexbox 容器
+ *     里会因 box-sizing 撑大 0.5px, 而 background 完全不影响几何。
+ *   - border-radius 0.5px 让两端圆滑, 避免 1px 实心方块的"硬边"感。
+ *
+ * ── 颜色 ──
+ *   - var(--border) ── 跨三套主题 (light/dark/rock) 都有定义, 与卡片
+ *     其它 1px 描边 (e.g. agent-type-badge) 用同一 token, 视觉一致。
+ *   - 不用 var(--muted-foreground) ── 那是文字色 token, 在分割线这
+ *     种"非文字"几何元素上复用偏亮, 会让分割线变成"第二条文字"。 */
+.markdown-editor .agent-thread-card__actions-divider {
+  display: block;
+  width: 1px;
+  height: 16px;
+  align-self: center;
+  background-color: var(--border);
+  border-radius: 0.5px;
+}
+
+.markdown-editor .agent-thread-card__actions-divider[hidden] {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__copy-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+/* 消息区 ── grid 1fr 中间行, min-height: 0 允许被 max-height 收缩。
+ *
+ *  - grid 1fr 在显式 grid-template-rows 下 = 父级高度 - 头尾,
+ *    永远确定, overflow-y: auto 触发条件天然满足。
+ *  - min-height: 0 允许 body 行被 max-height 父级收缩 (否则 grid
+ *    行默认 min-height: auto 会被内容撑开, max-height 形同虚设)。
+ *  - padding 上下 3.6rem / 左右 12px ── 上下留白让首/末条消息
+ *    不会"贴"在 header 下沿 / composer 上沿, 滚动到边界时消息与
+ *    卡片边缘有缓冲。3.6rem ≈ 57.6px (16px 根字号), 接近 composer
+ *    高度 (≈55px), 给消息"与 composer 对齐的呼吸感"。左右 12px
+ *    保持与原来一致, 不影响消息气泡的左右间距。 */
+.markdown-editor .agent-thread-card__body {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 2rem 1.5rem 0 1.5rem;
+  /* transition 配合 .--collapsed 折叠: padding 3.6rem 12px → 0, 150ms ease 塌缩。
+   * 注: 现在折叠改用 display: none ── body 直接消失; padding transition
+   * 仍保留, 给后续若想"保留行只压内容"的玩法留接口。 */
+  opacity: 1;
+  transition:
+    padding 150ms ease,
+    opacity 120ms ease;
+}
+
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__body {
+  overflow-y: scroll;
+  scrollbar-gutter: stable both-edges;
+  padding-inline: 0;
+}
+
+.markdown-editor
+  .agent-thread-card--thread-cache-loading
+  .agent-thread-card__body {
+  pointer-events: none;
+}
+
+/* 折叠态 ── 隐藏 body / error / composer, 卡片仅保留 header。
+ * grid 容器 (.agent-thread-card__container) 中 1fr 行在 body
+ * display: none 时, grid 把它的轨道高缩到 0, composer 行被
+ * grid-template-rows 推到 body 顶 ── 视觉上等同于"body 消失,
+ * composer 顶到 header 下"。注意: --collapsed 类仍挂在卡片根
+ * (.agent-thread-card) 上, 通过后代选择器跨过 __container 命中
+ * 各子元素。
+ *
+ * min-height 显式归 0 ── 否则基线 13rem 会把折叠态撑成 13rem
+ * 高 (只剩 header 时仍锁在 13rem, 折叠按钮毫无意义)。 */
+.markdown-editor .agent-thread-card--collapsed .agent-thread-card__container {
+  min-height: 0;
+}
+
+.markdown-editor .agent-thread-card--collapsed .agent-thread-card__body {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card--collapsed .agent-thread-card__error {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card--collapsed .agent-thread-card__composer {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.markdown-editor .agent-thread-card__skeleton {
+  display: flex;
+  width: 100%;
+  max-width: 780px;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0 auto;
+  padding: 2px 0 4px;
+}
+
+.markdown-editor .agent-thread-card__skeleton-item {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.markdown-editor .agent-thread-card__skeleton-item--assistant,
+.markdown-editor .agent-thread-card__skeleton-item--user {
+  flex-direction: column;
+}
+
+.markdown-editor .agent-thread-card__skeleton-item--user {
+  width: min(76%, 420px);
+  align-self: flex-end;
+}
+
+.markdown-editor .agent-thread-card__skeleton-item--user.agent-thread-card__skeleton-item--left {
+  align-self: flex-start;
+}
+
+.markdown-editor .agent-thread-card__skeleton-line {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--muted-foreground) 7%, transparent);
+}
+
+.markdown-editor .agent-thread-card__skeleton-lines {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.markdown-editor .agent-thread-card__skeleton-line {
+  height: 14px;
+}
+
+.markdown-editor .agent-thread-card__skeleton-line--long {
+  width: 88%;
+}
+
+.markdown-editor .agent-thread-card__skeleton-line--medium {
+  width: 64%;
+}
+
+.markdown-editor .agent-thread-card__skeleton-line--short {
+  width: 38%;
+}
+
+.markdown-editor
+  .agent-thread-card__skeleton-item--user
+  .agent-thread-card__skeleton-lines {
+  align-items: flex-end;
+}
+
+.markdown-editor
+  .agent-thread-card__skeleton-item--user.agent-thread-card__skeleton-item--left
+  .agent-thread-card__skeleton-lines {
+  align-items: flex-start;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__skeleton {
+  width: calc(100% - 3rem);
+}
+
+.markdown-editor .agent-thread-card--fullscreen .agent-thread-card__messages {
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin-inline: auto;
+}
+
+.markdown-editor .agent-thread-card__messages > * {
+  max-width: 100%;
+}
+
+

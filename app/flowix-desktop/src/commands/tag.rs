@@ -22,6 +22,12 @@ pub struct TagWithId {
     pub name: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTagReport {
+    pub path: String,
+}
+
 #[tauri::command]
 pub fn get_all_tags(notebook_id: Option<String>, state: State<AppState>) -> GetAllTagsResponse {
     let tags = read_lock(&state.memo_file, "memo_file")
@@ -35,6 +41,18 @@ pub fn get_all_tags(notebook_id: Option<String>, state: State<AppState>) -> GetA
             })
             .collect(),
     }
+}
+
+#[tauri::command]
+pub fn create_notebook_tag(
+    notebook_id: String,
+    path: String,
+    state: State<AppState>,
+) -> Result<CreateTagReport, String> {
+    let path = read_lock(&state.memo_file, "memo_file")
+        .create_notebook_tag(&notebook_id, &path)
+        .map_err(|error| error.to_string())?;
+    Ok(CreateTagReport { path })
 }
 
 /// 移动 subtag: �?`old_path` 整棵子树重命�?(�?prefix 替换),

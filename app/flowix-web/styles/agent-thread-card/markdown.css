@@ -1,0 +1,567 @@
+/* ── end: 居中小字 + 时间戳 ────────────────────────────────────
+ * 面板 message-end = `text-xs text-[var(--muted-foreground)]
+ * text-center`, 内容或时间戳。卡片里 mt-2 让 end 消息与前一条
+ * 有视觉间距, 不与下一条 user/assistant "贴" 一起。 */
+.markdown-editor .agent-thread-card__message--end {
+  display: block;
+  margin: 4px 0;
+  text-align: center;
+}
+
+.markdown-editor
+  .agent-thread-card__message--end
+  .agent-thread-card__message-content {
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  text-align: center;
+}
+
+/* 消息正文容器 ── 现在内容是 marked 输出的 HTML 树, 不能再用
+ * white-space: pre-wrap (会把 <p> 节点当文本节点, 不再分段)。改成
+ * 默认 block 流式 + overflow-wrap: anywhere (替代 word-break:
+ * break-word, 语义更准), 字号 14px 与面板 message-assistant 节奏
+ * 接近。 */
+.markdown-editor .agent-thread-card__message-content {
+  color: var(--foreground);
+  cursor: text;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  :where(:not(a):not(button):not([role="button"])) {
+  cursor: text;
+}
+
+/* reasoning 的正文用 muted-foreground + 13px, 与面板 reasoning
+ * 颜色一致。 */
+.markdown-editor
+  .agent-thread-card__message--reasoning
+  .agent-thread-card__message-content {
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+
+/* end 角色的 content: 居中灰字 (保留在 .--end 修饰里)。 */
+.markdown-editor
+  .agent-thread-card__message--end
+  .agent-thread-card__message-content {
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  text-align: center;
+}
+
+/* ── markdown 元素排版 ── 对齐面板 markdown-renderer WRAPPER_CLASS
+ * 子选择器 (面板走 Tailwind arbitrary variant, 卡片走原生 CSS 子选择器,
+ * 效果相同)。面板整体节奏 text-[0.82rem] / leading-[1.8] / mt-1.5,
+ * 卡片统一为 13px / 1.6 / mt-6px ── 比面板略紧凑, 让卡片小尺寸下
+ * 信息密度更合适。 */
+.markdown-editor .agent-thread-card__message-content > *:first-child {
+  margin-top: 0;
+}
+.markdown-editor .agent-thread-card__message-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-editor .agent-thread-card__message-content p {
+  margin: 6px 0;
+}
+
+.markdown-editor .agent-thread-card__message-display-toggle {
+  justify-self: flex-start;
+  width: fit-content;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: calc(var(--app-font-size, 15px) * 0.82);
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.markdown-editor .agent-thread-card__message-display-toggle:hover {
+  color: var(--foreground);
+}
+
+.markdown-editor
+  .agent-thread-card__message--user
+  .agent-thread-card__message-display-toggle {
+  margin-left: auto;
+}
+
+.markdown-editor .agent-thread-card__message-content h1,
+.markdown-editor .agent-thread-card__message-content h2,
+.markdown-editor .agent-thread-card__message-content h3,
+.markdown-editor .agent-thread-card__message-content h4 {
+  margin: 8px 0 4px;
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown-editor .agent-thread-card__message-content h1 {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+.markdown-editor .agent-thread-card__message-content h2 {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+.markdown-editor .agent-thread-card__message-content h3 {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+.markdown-editor .agent-thread-card__message-content h4 {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 500;
+}
+
+.markdown-editor .agent-thread-card__message-content ul,
+.markdown-editor .agent-thread-card__message-content ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.markdown-editor .agent-thread-card__message-content ul {
+  list-style: disc;
+}
+.markdown-editor .agent-thread-card__message-content ol {
+  list-style: decimal;
+}
+.markdown-editor .agent-thread-card__message-content li {
+  margin: 2px 0;
+  line-height: 1.7;
+}
+.markdown-editor .agent-thread-card__message-content li > p {
+  margin: 2px 0;
+}
+
+.markdown-editor .agent-thread-card__message-content strong {
+  font-weight: 600;
+}
+.markdown-editor .agent-thread-card__message-content em {
+  font-style: italic;
+}
+.markdown-editor .agent-thread-card__message-content del {
+  color: var(--muted-foreground);
+}
+
+/* 链接 ── 面板走 text-primary + hover:underline; 卡片用 var(--brand)
+ * + hover:underline。target=_blank / rel=noopener 在 marked 输出
+ * 不会自动加, 后续如需可注入属性 (此处保留基础样式)。 */
+.markdown-editor .agent-thread-card__message-content a {
+  color: var(--brand);
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in oklch, var(--brand) 35%, transparent);
+}
+
+.markdown-editor .agent-thread-card__message-content a *,
+.markdown-editor .agent-thread-card__message-content button *,
+.markdown-editor .agent-thread-card__message-content [role="button"] * {
+  cursor: inherit;
+}
+.markdown-editor .agent-thread-card__message-content a:hover {
+  border-bottom-color: var(--brand);
+}
+
+/* 引用块 ── 颜色对齐编辑器内的 quote (tiptap blockquote border-left:
+ * 0.1875rem solid #ddd), 用 var(--border) token 做三主题自适应
+ * (与右栏面板 markdown-renderer 同源, 不硬编码 #ddd)。卡片
+ * 映射到 3px 左边框 + 12px 左 padding, italic + muted-foreground
+ * 跟编辑器一致。 */
+.markdown-editor .agent-thread-card__message-content blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* 分隔线 ── 面板 border-t 10% 透明; 卡片走 1px 透明分割。 */
+.markdown-editor .agent-thread-card__message-content hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid
+    color-mix(in oklch, var(--muted-foreground) 12%, transparent);
+}
+
+/* 内联 code ── 严格对齐 .markdown-editor .tiptap p code 的视觉口径:
+ *   border: 1px solid color-mix(in oklch, var(--border) 90%, transparent)
+ *   border-radius: 0.4rem
+ *   padding: 0 0.3rem
+ *   color:   color-mix(in oklch, var(--foreground) 80%, transparent)
+ *   font-family: inherit; font-size: 0.84rem
+ *
+ * 选择器用 :not(pre) > code ── 让 inline code 规则只命中"pre 之外
+ * 的直接子 code", <pre><code> 内的 code 不会被这条规则命中, 避免
+ * 与下面 pre 块样式叠加 (双重 border / 双重 border-radius / 字色
+ * 被 color-mix 改写 等)。
+ *  - <p><code>foo</code></p>              命中 (p 不是 pre)
+ *  - <li>foo <code>bar</code></li>        命中 (li 不是 pre)
+ *  - <h1>foo <code>bar</code></h1>        命中 (h1 不是 pre)
+ *  - <pre><code>foo</code></pre>          不命中 (pre 是 pre)
+ * 编辑器正文也不带背景色 ── 仅靠 1px 边框 + 字色 80% 透明弱化做区分。
+ * 卡片跨三处 (Tiptap 正文 / 卡片 / 右栏面板) 走同一套 token。 */
+.markdown-editor .agent-thread-card__message-content :not(pre) > code {
+  padding: 0 0.3rem;
+  border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
+  border-radius: 0.4rem;
+  color: color-mix(in oklch, var(--foreground) 80%, transparent);
+  font-family: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* was 0.84rem ≈ 13.44px */
+}
+
+/* fenced code 块 ── 严格对齐 .markdown-editor .tiptap pre / pre code
+ * 的视觉口径: 把"边框 / 底色 / 圆角 / padding / 字号 / 行高"全部
+ * 挂在 pre 上 (跟编辑器一致), pre code 只还原 padding 与透明背景
+ * (让内层 code 不再叠加边框/底色 ── 避免双层视觉)。
+ *
+ *   pre:     background  var(--editor-block-bg)
+ *            border      var(--border)
+ *            radius      0.5rem
+ *            padding     0.5rem 1rem 1rem
+ *            margin      1rem 0
+ *            font-size   0.85em  (相对父级 message-content 14px ≈ 12px)
+ *            line-height inherit (from message-content)
+ *            white-space pre-wrap (跟编辑器一致, 长代码在卡片宽度下自动换行)
+ *   pre code: padding 0 / background transparent (还原内层, 让 pre
+ *            的样式不被 code 覆盖)
+ *
+ * 卡片之前把样式挂在 pre code 上 ── 与编辑器结构相反, 这里收口到
+ * pre。pre-wrap + 卡片宽度窄, 代码块天然按卡片宽换行, 不需要
+ * overflow-x: auto (编辑器是 overflow-x: visible, 同源)。 */
+.markdown-editor .agent-thread-card__message-content pre {
+  margin: 1rem 0;
+  padding: 0.5rem 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--editor-block-bg);
+  font-family: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* 从 0.85em (≈ 11.9px @ 父级 14px) 升到 0.82rem ≈ 13.12px, 与右栏面板代码块对齐 */
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.markdown-editor .agent-thread-card__message-content pre code {
+  /* 还原: 1) 上方 :not(pre) > code 已经让 inline code 规则不命中
+   * pre code ── 但浏览器 UA stylesheet 默认给 code 元素
+   * font-family: monospace, 会盖过 pre 的 font-family: inherit,
+   * 这里显式把字体 / 字号 / 颜色全部按 pre 继承, 让 pre code 视觉
+   * 与 pre 完全一致; 2) 背景 / 边框 / 内边距全部归零, 防止任何
+   * 残留样式 ── 这条规则是"边界声明", 写在这里表达 pre code 故意
+   * 不带 inline code 视觉, 后续若改 inline code 选择器, 这条不需
+   * 跟着改。 */
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* 表格 ── 沿用编辑器 .tiptap table 的视觉规格 (separate + 单边 border)
+ * 但圆角职责收口到 tbody ── tbody 自身 8px 圆角 + overflow: hidden
+ * 把内部 cell 边框按 tbody 形状自然裁剪, 不再按行在角 cell 上单独设
+ * border-radius。 border-collapse: separate + border-spacing: 0 是
+ * 实现 tbody border-radius 视觉生效的前提。 */
+.markdown-editor .agent-thread-card__message-content table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+.markdown-editor .agent-thread-card__message-content thead {
+  background: transparent;
+}
+/* tbody 是外层圆角容器 ── 8px 圆角 + overflow: hidden 把内部 cell
+ * 边框按 tbody 形状裁剪成圆角视觉。 thead 紧贴 tbody 上沿, tbody
+ * 顶 2 角圆角与 thead 接缝形成"圆角下行"的整体外观; 底 2 角圆角
+ * 则是表整体的视觉收口。 */
+.markdown-editor .agent-thread-card__message-content tbody {
+  border-radius: 8px;
+  overflow: hidden;
+}
+.markdown-editor .agent-thread-card__message-content th,
+.markdown-editor .agent-thread-card__message-content td {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+}
+/* 头行底色对齐编辑器 (--muted); thead transparent 让 th 的底色
+ * 直接透出, 不与 table 自身重叠。 */
+.markdown-editor .agent-thread-card__message-content th {
+  background: var(--muted);
+  font-weight: 600;
+}
+/* 相邻 cell 共用一条边 ── 把每条边归属到"左/上"侧, 让行内/列内交界
+ * 不出现双倍 1px 视觉。 */
+.markdown-editor .agent-thread-card__message-content th + th,
+.markdown-editor .agent-thread-card__message-content td + td,
+.markdown-editor .agent-thread-card__message-content th + td,
+.markdown-editor .agent-thread-card__message-content td + th {
+  border-left: 0;
+}
+.markdown-editor .agent-thread-card__message-content tr + tr th,
+.markdown-editor .agent-thread-card__message-content tr + tr td {
+  border-top: 0;
+}
+/* thead ↔ tbody 接缝去重 ── 默认两段 cell 各画一条边会在接缝处叠
+ * 成 2px, 这里压掉 tbody 首行 cell 的 border-top, 让 thead 末行 cell
+ * 的 border-bottom 独自承担"分隔线"职责, 视觉上仍是 1px。 */
+.markdown-editor .agent-thread-card__message-content
+  tbody
+  tr:first-child
+  th,
+.markdown-editor .agent-thread-card__message-content
+  tbody
+  tr:first-child
+  td {
+  border-top: 0;
+}
+
+.markdown-editor .agent-thread-card__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+
+.markdown-editor .agent-thread-card__empty--codex-settings {
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 46px;
+  padding: 4px 10px;
+}
+
+.markdown-editor .agent-thread-card__empty-control {
+  display: inline-flex;
+  align-items: center;
+  max-width: 190px;
+  min-width: 0;
+  height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.markdown-editor .agent-thread-card__empty-control:hover,
+.markdown-editor .agent-thread-card__empty-control--open,
+.markdown-editor .agent-thread-card__empty-control:focus-visible {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.markdown-editor .agent-thread-card__empty-control-label {
+  flex: 0 0 auto;
+}
+
+.markdown-editor .agent-thread-card__empty-control-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  line-height: 1.6;
+}
+
+.markdown-editor .agent-thread-card__empty-control-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.agent-thread-card__codex-settings-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1050;
+  width: 176px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0.375rem 0.25rem 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--agent-foreground);
+  box-shadow: 0 10px 30px
+    color-mix(in oklch, var(--foreground) 16%, transparent);
+  opacity: 0;
+  transform: scale(0.96);
+  transform-origin: top left;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.agent-thread-card__codex-settings-popover:not([hidden]) {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.agent-thread-card__codex-settings-popover[hidden] {
+  display: none;
+}
+
+.agent-thread-card__codex-settings-title {
+  padding: 0.15rem 0.375rem 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.agent-thread-card__codex-settings-section {
+  padding: 0.15rem 0.375rem 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.agent-thread-card__codex-settings-divider {
+  margin: 0.25rem 0.5rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+  opacity: 0.5;
+}
+
+.agent-thread-card__codex-settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 32px;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.agent-thread-card__codex-settings-item:hover,
+.agent-thread-card__codex-settings-item:focus-visible {
+  background: var(--muted);
+}
+
+.agent-thread-card__codex-settings-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-card__codex-settings-item .agent-thread-card__copy-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.markdown-editor .agent-thread-card__loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: fit-content;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0rem;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* was 0.78rem ≈ 12.48px */
+  font-weight: 500;
+  line-height: 1;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__loading-indicator {
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin-inline: auto;
+}
+
+.markdown-editor .agent-thread-card__loading-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  animation:
+    agentThinkingDot 1.45s ease-in-out infinite,
+    agentThreadCardWorkingDot 1.45s linear infinite;
+}
+
+.markdown-editor .agent-thread-card__loading-text {
+  color: transparent;
+  /* 单层扫光: 3 stop (暗→亮→暗) — 只一个亮度峰, 没有 white 核叠在 foreground 晕上 */
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--muted-foreground) 55%, transparent) 0%,
+    var(--foreground) 50%,
+    color-mix(in oklch, var(--muted-foreground) 55%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 100% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: agentThreadCardWorkingText 1.2s linear infinite;
+}
+
+.markdown-editor .agent-thread-card__loading-dot[hidden],
+.markdown-editor .agent-thread-card__loading-text[hidden] {
+  display: none;
+}
+
+@keyframes agentThreadCardWorkingText {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: -100% 50%;
+  }
+}
+
+@keyframes agentThreadCardWorkingDot {
+  0%,
+  100% {
+    background: var(--muted-foreground);
+  }
+  45%,
+  55% {
+    background: white;
+  }
+}
+
+/* 折叠态 ── 与 body 一起消失, 不留孤立的 24px 空白带。 */
+.markdown-editor
+  .agent-thread-card--collapsed
+  .agent-thread-card__loading-indicator {
+  display: none;
+}
+
+

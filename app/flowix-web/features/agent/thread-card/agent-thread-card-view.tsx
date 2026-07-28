@@ -66,46 +66,12 @@ import {
 import {
   selectAgentThreadCardRuntimeView,
 } from "@features/agent/thread-card/agent-thread-card-selectors";
+import {
+  isMarkdownFilePath,
+  localFilePathFromAgentHref,
+} from "@features/agent/thread-card/link-navigation";
 
-function decodeLocalFilePath(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-export function localFilePathFromAgentHref(
-  rawHref: string | null | undefined,
-): string | null {
-  const href = rawHref?.trim() ?? "";
-  if (!href) return null;
-
-  if (/^file:/i.test(href)) {
-    try {
-      const url = new URL(href);
-      if (url.protocol !== "file:") return null;
-      let path = decodeLocalFilePath(url.pathname);
-      if (/^\/[a-z]:\//i.test(path)) path = path.slice(1);
-      if (url.hostname && url.hostname !== "localhost") {
-        path = `//${url.hostname}${path}`;
-      }
-      return path || null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (href.startsWith("/") || /^[a-z]:[\\/]/i.test(href)) {
-    return decodeLocalFilePath(href);
-  }
-
-  return null;
-}
-
-function isMarkdownFilePath(path: string): boolean {
-  return /\.(?:md|markdown)$/i.test(path);
-}
+export { localFilePathFromAgentHref } from "@features/agent/thread-card/link-navigation";
 
 // OS 顶部控件区高度 ── AgentThreadCard 全屏时把卡片向上探出这条带状区
 // 高度, 覆盖到 webview 顶端 (而不是停在文档区顶边)。

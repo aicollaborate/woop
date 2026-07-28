@@ -1,0 +1,152 @@
+use super::*;
+
+impl SyncManager {
+    pub async fn register(
+        &self,
+        email: &str,
+        password: &str,
+        display_name: &str,
+    ) -> Result<AuthOutcome, SyncError> {
+        let auth = self.client.register(email, password, display_name).await?;
+        let workspace = auth.workspace.clone().ok_or_else(|| {
+            SyncError::InvalidState("registration did not return a workspace".into())
+        })?;
+        self.accept_auth(
+            CloudAccount {
+                user: auth.user,
+                workspace,
+            },
+            auth.session.into(),
+        )
+        .await
+    }
+
+    pub async fn login(&self, email: &str, password: &str) -> Result<AuthOutcome, SyncError> {
+        let auth = self.client.login(email, password).await?;
+        let runtime: RuntimeSession = auth.session.into();
+        let me = self.client.me(&runtime.access_token).await?;
+        let workspace = me
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.kind.as_deref() == Some("personal"))
+            .or_else(|| auth.workspace)
+            .ok_or_else(|| SyncError::InvalidState("account has no workspace".into()))?;
+        self.accept_auth(
+            CloudAccount {
+                user: me.user,
+                workspace,
+            },
+            runtime,
+        )
+        .await
+    }
+
+    pub async fn apple_challenge(&self) -> Result<AppleAuthChallenge, SyncError> {
+        self.client.apple_challenge().await
+    }
+
+    pub async fn sign_in_with_apple(
+        &self,
+        authorization: &AppleAuthorization,
+    ) -> Result<AuthOutcome, SyncError> {
+        let auth = self.client.apple_exchange(authorization).await?;
+        let runtime: RuntimeSession = auth.session.into();
+        let me = self.client.me(&runtime.access_token).await?;
+        let workspace = me
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.kind.as_deref() == Some("personal"))
+            .or(auth.workspace)
+            .ok_or_else(|| SyncError::InvalidState("account has no workspace".into()))?;
+        self.accept_auth(
+            CloudAccount {
+                user: me.user,
+                workspace,
+            },
+            runtime,
+        )
+        .await
+    }
+
+    pub async fn link_apple(
+        &self,
+        authorization: &AppleAuthorization,
+    ) -> Result<CloudState, SyncError> {
+        let access_token = self.access_token().await?;
+        self.client.apple_link(&access_token, authorization).await?;
+        self.state()
+    }
+
+    pub async fn restore(&self, refresh_token: &str) -> Result<AuthOutcome, SyncError> {
+        let account = self.store.account()?.ok_or(SyncError::NotAuthenticated)?;
+        let refreshed = self.client.refresh(refresh_token).await?;
+        self.accept_auth(account, refreshed.session.into()).await
+    }
+
+    async fn accept_auth(
+        &self,
+        account: CloudAccount,
+        runtime: RuntimeSession,
+    ) -> Result<AuthOutcome, SyncError> {
+        let refresh_token = runtime.refresh_token.clone();
+        self.store.save_account(&account)?;
+        *self
+            .session
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(runtime);
+        *self
+            .last_error
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        let _ = self.refresh_membership().await;
+        Ok(AuthOutcome {
+            state: self.state()?,
+            refresh_token,
+        })
+    }
+
+    pub async fn logout(&self) -> Result<(), SyncError> {
+        let token = self
+            .session
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|session| session.access_token.clone());
+        if let Some(token) = token {
+            let _ = self.client.logout(&token).await;
+        }
+        *self
+            .session
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        *self
+            .membership
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        self.store.clear_account()?;
+        Ok(())
+    }
+
+    pub(super) async fn access_token(&self) -> Result<String, SyncError> {
+        let current = self
+            .session
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or(SyncError::NotAuthenticated)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        if current.access_token_expires_at > now + 30_000 {
+            return Ok(current.access_token);
+        }
+        if current.refresh_token_expires_at <= now {
+            return Err(SyncError::NotAuthenticated);
+        }
+        let refreshed = self.client.refresh(&current.refresh_token).await?;
+        let access_token = refreshed.session.access_token.clone();
+        *self
+            .session
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(refreshed.session.into());
+        Ok(access_token)
+    }
+}

@@ -5,6 +5,7 @@ import { DocumentContainer } from '@features/document/components/document-contai
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
+import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
 import { MemoListTitlebarWin } from '@features/memo/components/memo-list-titlebar-win';
 import { MemoListTitlebarMac } from '@features/memo/components/memo-list-titlebar-mac';
 import { NoteNavigationPanel } from '@features/memo/components/note-navigation-panel';
@@ -173,6 +174,15 @@ export function MainLayout() {
     memoListVisible,
     noteNavigationWidth: noteNavigationColumnWidth,
   });
+  const {
+    phase: memoListPreviewPhase,
+    handleTriggerEnter: handleMemoListPreviewTriggerEnter,
+    handleTriggerLeave: handleMemoListPreviewTriggerLeave,
+    handlePreviewEnter: handleMemoListPreviewEnter,
+    handlePreviewLeave: handleMemoListPreviewLeave,
+  } = useMemoListHoverPreview(isMemoListHidden);
+  const memoListPreviewVisible =
+    isMemoListHidden && memoListPreviewPhase !== 'closed';
 
   useEffect(() => {
     const notebookId = selectedNotebook?.id ?? null;
@@ -465,6 +475,8 @@ export function MainLayout() {
     sidebar: {
       hidden: isMemoListHidden,
       onToggle: handleToggleMemoList,
+      onPreviewTriggerEnter: handleMemoListPreviewTriggerEnter,
+      onPreviewTriggerLeave: handleMemoListPreviewTriggerLeave,
     },
     navigation: {
       canNavigateBack,
@@ -528,31 +540,58 @@ export function MainLayout() {
           )}
           {/* Memo list column */}
           <div
-            className={`flex flex-col overflow-hidden will-change-[width] ${
+            className={`flex flex-col ${
+              memoListPreviewVisible ? 'overflow-visible' : 'overflow-hidden'
+            } will-change-[width] ${
               isDraggingListDivider ? 'transition-none' : 'transition-[width] duration-150 ease-out'
             }`}
             style={{ width: memoListWidth, flexShrink: 0 }}
-            aria-hidden={isMemoListHidden}
+            aria-hidden={isMemoListHidden && !memoListPreviewVisible}
           >
             <div
-              className="flex flex-col overflow-hidden h-full bg-[var(--card)] border-[var(--border)] border-r"
-              style={{ width: memoColWidth }}
+              className={`flex h-full flex-col ${
+                memoListPreviewVisible
+                  ? 'overflow-visible'
+                  : 'overflow-hidden bg-[var(--card)] border-[var(--border)] border-r'
+              }`}
+              style={{ width: memoListPreviewVisible ? 0 : memoColWidth }}
             >
-              {isWindowsPlatform() ? (
-                <MemoListTitlebarWin
-                  onCollapseSidebar={closeMemoListAndNoteNavigation}
-                  onToggleNoteNavigation={handleToggleNoteNavigation}
-                  onOpenPreferences={() => windows.openPreferences()}
-                />
-              ) : (
-                <MemoListTitlebarMac
-                  noteNavigationVisible={noteNavigationVisible}
-                  onCollapseSidebar={closeMemoListAndNoteNavigation}
-                  onToggleNoteNavigation={handleToggleNoteNavigation}
-                  onOpenPreferences={() => windows.openPreferences()}
-                />
+              {!isMemoListHidden && (
+                isWindowsPlatform() ? (
+                  <MemoListTitlebarWin
+                    onCollapseSidebar={closeMemoListAndNoteNavigation}
+                    onToggleNoteNavigation={handleToggleNoteNavigation}
+                    onOpenPreferences={() => windows.openPreferences()}
+                  />
+                ) : (
+                  <MemoListTitlebarMac
+                    noteNavigationVisible={noteNavigationVisible}
+                    onCollapseSidebar={closeMemoListAndNoteNavigation}
+                    onToggleNoteNavigation={handleToggleNoteNavigation}
+                    onOpenPreferences={() => windows.openPreferences()}
+                  />
+                )
               )}
-              <div className="flex-1 min-h-0">
+              <div
+                data-memo-list-hover-preview={memoListPreviewVisible ? '' : undefined}
+                data-preview-state={
+                  memoListPreviewVisible ? memoListPreviewPhase : undefined
+                }
+                onMouseEnter={
+                  memoListPreviewVisible ? handleMemoListPreviewEnter : undefined
+                }
+                onMouseLeave={
+                  memoListPreviewVisible ? handleMemoListPreviewLeave : undefined
+                }
+                className={
+                  memoListPreviewVisible
+                    ? 'fixed left-1 top-[6vh] z-[1200] flex h-[88vh] w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-[12px_0_25px_-5px_rgb(0_0_0/_0.1)] [&>div]:pt-2 ' +
+                      (memoListPreviewPhase === 'open'
+                        ? 'flowix-hover-preview-enter'
+                        : 'flowix-hover-preview-leave')
+                    : 'flex-1 min-h-0'
+                }
+              >
                 <MemoList />
               </div>
             </div>

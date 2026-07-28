@@ -10,6 +10,37 @@ import {
 } from "@features/agent/tool-display";
 
 describe("Codex protocol tool summaries", () => {
+  it("hides opaque web-search placeholders and prefers the completed query", () => {
+    const started = createAgentToolDisplay({
+      agentType: "codex",
+      toolName: "web_search",
+      input: {
+        query: "",
+        action: { type: "other" },
+      },
+    });
+    expect(started).toMatchObject({
+      summary: "Web search",
+      kind: "search",
+    });
+
+    const completed = createAgentToolDisplay({
+      agentType: "codex",
+      toolName: "web_search",
+      input: {
+        query: "Flowix Codex web search",
+        action: {
+          type: "search",
+          queries: ["Flowix Codex web search", "Flowix agent notes"],
+        },
+      },
+    });
+    expect(completed).toMatchObject({
+      summary: "Flowix Codex web search",
+      kind: "search",
+    });
+  });
+
   it("shows the concrete MCP server and tool instead of empty arguments", () => {
     const display = createAgentToolDisplay({
       agentType: "codex",

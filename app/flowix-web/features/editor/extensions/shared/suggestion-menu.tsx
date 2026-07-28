@@ -3,11 +3,15 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ReactNode } from 'react';
+import {
+  clampSuggestionMenuLeft,
+  SUGGESTION_MENU_VIEWPORT_PADDING,
+} from '@features/editor/extensions/shared/suggestion-menu-position';
 
 const PAGE_SIZE = 20;
 const MENU_MAX_HEIGHT = 288;
 const MENU_GAP = 6;
-const VIEWPORT_PADDING = 8;
+const VIEWPORT_PADDING = SUGGESTION_MENU_VIEWPORT_PADDING;
 const MENU_MIN_HEIGHT = 96;
 const MENU_FLIP_BELOW_THRESHOLD = 10 * 16;
 
@@ -39,6 +43,8 @@ export interface SuggestionMenuConfig<TItem> {
   trigger: string;
   /** 弹窗宽度 (px) */
   width: number;
+  /** Let rendered content determine width; `width` remains the positioning fallback. */
+  adaptiveWidth?: boolean;
   /** 校验触发位置, 返回 false 表示不开弹窗 (例: `#` 需行首/空白后) */
   isValidTriggerPosition?: (view: EditorView, from: number) => boolean;
   /** 解析当前查询; 返回 null 表示关闭弹窗 */
@@ -188,9 +194,11 @@ function updatePosition(view: EditorView, width: number) {
   const availableHeight = menuPlacement === 'above'
     ? Math.max(MENU_MIN_HEIGHT, spaceAbove - MENU_GAP)
     : Math.max(MENU_MIN_HEIGHT, spaceBelow - MENU_GAP);
-  const left = Math.min(
-    Math.max(anchorCoords.left, VIEWPORT_PADDING),
-    Math.max(VIEWPORT_PADDING, window.innerWidth - width - VIEWPORT_PADDING),
+  const renderedWidth = menuContainer.getBoundingClientRect().width || width;
+  const left = clampSuggestionMenuLeft(
+    anchorCoords.left,
+    renderedWidth,
+    window.innerWidth,
   );
 
   menuContainer.style.setProperty(
@@ -337,7 +345,7 @@ function openMenu(
   menuContainer = document.createElement('div');
   menuContainer.style.position = 'fixed';
   menuContainer.style.zIndex = '2147483647';
-  menuContainer.style.width = `${config.width}px`;
+  menuContainer.style.width = config.adaptiveWidth ? 'max-content' : `${config.width}px`;
   menuContainer.style.maxHeight = `${MENU_MAX_HEIGHT}px`;
   menuContainer.style.maxWidth = 'calc(100vw - 16px)';
   document.body.appendChild(menuContainer);

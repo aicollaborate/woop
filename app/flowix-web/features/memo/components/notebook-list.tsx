@@ -1,14 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Cloud, Pencil, Plus } from 'lucide-react';
+import { Check, CircleAlert, Cloud, LoaderCircle, Pencil, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
 import { useI18n } from '@/lib/i18n';
-import { cloud, listenToCloudStateChanges } from '@platform/tauri/client';
+import {
+  cloud,
+  listenToCloudStateChanges,
+  listenToCloudSyncStatusChanges,
+  type CloudSyncStatus,
+} from '@platform/tauri/client';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
 import {
@@ -74,6 +79,9 @@ export function NotebookList({
   const [cloudSyncedNotebookIds, setCloudSyncedNotebookIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [cloudSyncStatuses, setCloudSyncStatuses] = useState<Map<string, CloudSyncStatus>>(
+    () => new Map(),
+  );
   const notebookScrollerRef = useRef<HTMLDivElement | null>(null);
   const collapseTimerRef = useRef<number | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -102,6 +110,39 @@ export function NotebookList({
     if (!experimental) return;
     return listenToCloudStateChanges(refreshCloudSyncedNotebookIds);
   }, [experimental, refreshCloudSyncedNotebookIds]);
+
+  useEffect(() => {
+    if (!experimental) return;
+    return listenToCloudSyncStatusChanges((status) => {
+      setCloudSyncStatuses((previous) => {
+        const current = previous.get(status.notebookId);
+        if (current && status.startedAt < current.startedAt) {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.set(status.notebookId, status);
+        return next;
+      });
+    });
+  }, [experimental]);
+
+  useEffect(() => {
+    if (!experimental || cloudSyncedNotebookIds.size === 0) return;
+    const syncAfterConnectivityReturns = () => {
+      void cloud.syncNow().catch(() => {
+        // The native sync status event owns user-visible error reporting.
+      });
+    };
+    const syncAfterForeground = () => {
+      if (document.visibilityState === 'visible') syncAfterConnectivityReturns();
+    };
+    window.addEventListener('online', syncAfterConnectivityReturns);
+    document.addEventListener('visibilitychange', syncAfterForeground);
+    return () => {
+      window.removeEventListener('online', syncAfterConnectivityReturns);
+      document.removeEventListener('visibilitychange', syncAfterForeground);
+    };
+  }, [cloudSyncedNotebookIds, experimental]);
 
   // 笔记本行点击: 与 NotebookSwitcher 保持一致 ── 失效路径直接 toast 警告,
   // 不切换。有效路径走 onSelectNotebook 回调。
@@ -235,6 +276,12 @@ export function NotebookList({
                 notebookDropTarget?.id === notebook.id &&
                 notebookDropTarget.position === 'after' &&
                 !isNotebookDragging;
+              const cloudSyncStatus = cloudSyncStatuses.get(notebook.id);
+              const cloudSyncInProgress =
+                cloudSyncStatus?.state === 'queued' ||
+                cloudSyncStatus?.state === 'checking' ||
+                cloudSyncStatus?.state === 'syncing' ||
+                cloudSyncStatus?.state === 'finalizing';
               return (
                 <div
                   key={notebook.id}
@@ -303,11 +350,38 @@ export function NotebookList({
                   {(isCloudSynced || (isActive && !notebookListCollapsed)) && (
                     <div className="pointer-events-none absolute right-1.5 top-1/2 z-10 flex -translate-y-1/2 items-center transition-opacity group-hover:opacity-0">
                       {isCloudSynced && (
-                        <span className="flex h-6 w-6 items-center justify-center">
-                          <Cloud
-                            className="h-3.5 w-3.5 text-[var(--primary)]"
-                            aria-label={t('notebook.cloudSync.title')}
-                          />
+                        <span
+                          className="flex h-6 w-6 items-center justify-center"
+                          title={
+                            cloudSyncStatus?.lastError ??
+                            (cloudSyncInProgress
+                              ? t('notebook.cloudSync.syncing')
+                              : cloudSyncStatus?.state === 'success'
+                                ? t('notebook.cloudSync.complete')
+                                : t('notebook.cloudSync.title'))
+                          }
+                        >
+                          {cloudSyncInProgress ? (
+                            <LoaderCircle
+                              className="h-3.5 w-3.5 animate-spin text-[var(--primary)]"
+                              aria-label={t('notebook.cloudSync.syncing')}
+                            />
+                          ) : cloudSyncStatus?.state === 'error' ? (
+                            <CircleAlert
+                              className="h-3.5 w-3.5 text-[var(--destructive)]"
+                              aria-label={t('notebook.cloudSync.syncFailed')}
+                            />
+                          ) : cloudSyncStatus?.state === 'success' ? (
+                            <Check
+                              className="h-3.5 w-3.5 text-[var(--primary)]"
+                              aria-label={t('notebook.cloudSync.complete')}
+                            />
+                          ) : (
+                            <Cloud
+                              className="h-3.5 w-3.5 text-[var(--primary)]"
+                              aria-label={t('notebook.cloudSync.title')}
+                            />
+                          )}
                         </span>
                       )}
                       {isActive && !notebookListCollapsed && (

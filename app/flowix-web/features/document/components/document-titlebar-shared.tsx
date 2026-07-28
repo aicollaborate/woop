@@ -67,6 +67,8 @@ export interface DocumentTitlebarProps {
   sidebar: {
     hidden: boolean;
     onToggle: () => void;
+    onPreviewTriggerEnter?: () => void;
+    onPreviewTriggerLeave?: () => void;
   };
   navigation: {
     canNavigateBack: boolean;

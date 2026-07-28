@@ -4,9 +4,9 @@ use serde_json::json;
 
 use crate::error::SyncError;
 use crate::models::{
-    ApiErrorEnvelope, AppleAuthChallenge, AppleAuthorization, AuthData, CloudCheckout,
-    CloudNotebook, CloudProduct, DataEnvelope, EntitlementData, ManifestData, MeData, PutNoteData,
-    RefreshData,
+    ApiErrorEnvelope, AppleAuthChallenge, AppleAuthorization, AuthData, ChangeVersion,
+    CloudCheckout, CloudNotebook, CloudProduct, DataEnvelope, EntitlementData, ManifestData,
+    MeData, PutNoteData, RefreshData, SyncStatusData,
 };
 
 fn apple_authorization_body(authorization: &AppleAuthorization) -> serde_json::Value {
@@ -309,6 +309,22 @@ impl CloudClient {
         .map(|value| value.data)
     }
 
+    pub(crate) async fn sync_status(
+        &self,
+        access_token: &str,
+        workspace_id: &str,
+        cursor: i64,
+    ) -> Result<SyncStatusData, SyncError> {
+        self.send::<DataEnvelope<SyncStatusData>>(
+            Method::GET,
+            &format!("/v1/workspaces/{workspace_id}/sync/status?cursor={cursor}"),
+            Some(access_token),
+            None,
+        )
+        .await
+        .map(|value| value.data)
+    }
+
     pub(crate) async fn delete_note(
         &self,
         access_token: &str,
@@ -316,12 +332,16 @@ impl CloudClient {
         notebook_id: &str,
         note_id: &str,
         base_revision: Option<&str>,
+        change_version: &ChangeVersion,
     ) -> Result<(), SyncError> {
         self.send::<DataEnvelope<serde_json::Value>>(
             Method::DELETE,
             &format!("/v1/workspaces/{workspace_id}/notebooks/{notebook_id}/notes/{note_id}"),
             Some(access_token),
-            Some(json!({ "baseRevision": base_revision })),
+            Some(json!({
+                "baseRevision": base_revision,
+                "changeVersion": change_version,
+            })),
         )
         .await
         .map(|_| ())
@@ -336,6 +356,7 @@ impl CloudClient {
         filename: &str,
         content: &str,
         base_revision: Option<&str>,
+        change_version: &ChangeVersion,
     ) -> Result<PutNoteData, SyncError> {
         self.send::<DataEnvelope<PutNoteData>>(
             Method::PUT,
@@ -345,6 +366,7 @@ impl CloudClient {
                 "filename": filename,
                 "content": content,
                 "baseRevision": base_revision,
+                "changeVersion": change_version,
             })),
         )
         .await

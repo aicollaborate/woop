@@ -343,7 +343,7 @@ function DetailedMemoCardBody({
         </p>
       </div>
       <div className="flex w-full items-center justify-between gap-2 pt-2">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           {(memo.favorited || hasTodos) && (
             <span className="inline-flex shrink-0 items-center gap-1">
               {memo.favorited && (
@@ -358,17 +358,24 @@ function DetailedMemoCardBody({
             </span>
           )}
           {memo.tags && memo.tags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {memo.tags.slice(0, 2).map((tagId) => (
-                <span
-                  key={tagId}
-                  className="inline-flex items-center rounded-[6px] border border-[var(--border)] px-1 py-0 text-xs text-[var(--muted-foreground)]"
-                >
-                  #{tagMap[tagId] || tagId}
-                </span>
-              ))}
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+              {memo.tags.slice(0, 2).map((tagId) => {
+                const tagLabel = tagMap[tagId] || tagId;
+
+                return (
+                  <span
+                    key={tagId}
+                    title={`#${tagLabel}`}
+                    className="inline-flex min-w-0 max-w-full items-center rounded-[6px] border border-[var(--border)] px-1 py-0 text-xs text-[var(--muted-foreground)]"
+                  >
+                    <span className="min-w-0 truncate">#{tagLabel}</span>
+                  </span>
+                );
+              })}
               {memo.tags.length > 2 && (
-                <span className="text-xs text-[var(--muted-foreground)]">+{memo.tags.length - 2}</span>
+                <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
+                  +{memo.tags.length - 2}
+                </span>
               )}
             </div>
           )}

@@ -15,7 +15,8 @@ import type { LiveMessageState } from "@features/agent/store/chunk-result";
 import { STORAGE_KEYS } from "@/lib/constants";
 import { translate } from "@/lib/i18n";
 import { applyExternalSessionResolved } from "@features/agent/store/external-session";
-import { agentClient, listenToAgentChunks } from "@features/agent/store/agent-client";
+import { agentClient } from "@features/agent/store/agent-client";
+import { createAgentChunkBridge } from "@features/agent/store/agent-chunk-bridge";
 import {
   applyOptimisticUserRun,
   createSendErrorMessage,
@@ -887,43 +888,7 @@ export const useChatStore = create<ChatStore>()(
 // logical subscription remains active. Dispatch stays here to avoid a reverse
 // dependency from client.ts to the store.
 
-let bridgeReferences = 0;
-let bridgeUnlisten: (() => void) | null = null;
-let bridgeReady = false;
-const bridgeReadyHandlers = new Set<() => void>();
-
-function notifyAgentChunkBridgeReady(): void {
-  bridgeReady = true;
-  for (const handler of [...bridgeReadyHandlers]) handler();
-}
-
 /** Acquire this Webview's single agent-chunk projection bridge. */
-export function acquireAgentChunkBridge(onReady?: () => void): () => void {
-  bridgeReferences += 1;
-  if (onReady) bridgeReadyHandlers.add(onReady);
-
-  if (!bridgeUnlisten) {
-    bridgeUnlisten = listenToAgentChunks(
-      (chunk) => useChatStore.getState().dispatchAgentChunk(chunk),
-      { onListenerReady: notifyAgentChunkBridgeReady },
-    );
-  } else if (bridgeReady && onReady) {
-    queueMicrotask(() => {
-      if (bridgeReadyHandlers.has(onReady)) onReady();
-    });
-  }
-
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    if (onReady) bridgeReadyHandlers.delete(onReady);
-    bridgeReferences = Math.max(0, bridgeReferences - 1);
-    if (bridgeReferences > 0) return;
-
-    bridgeUnlisten?.();
-    bridgeUnlisten = null;
-    bridgeReady = false;
-    bridgeReadyHandlers.clear();
-  };
-}
+export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
+  useChatStore.getState().dispatchAgentChunk(chunk);
+});

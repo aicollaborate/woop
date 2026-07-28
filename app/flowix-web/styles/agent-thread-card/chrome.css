@@ -1,0 +1,396 @@
+.markdown-editor {
+  --atc-send-size: 28px;
+  --atc-bottom-pad: 10px;
+  --atc-min-height: 13rem;
+  --atc-max-height: 24rem;
+  --atc-composer-max-h: 200px;
+  --atc-header-h: 40px;
+}
+
+.agent-type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem; /* h-5 w-5 = 20px ── 跟按钮 28px / chevron 14px 视觉节奏
+                   * 匹配; header 总高 40px, 20px 方形 icon 居中后上下
+                   * 各留 10px 呼吸, 不顶到 header 边缘。 */
+  height: 1.25rem;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: transparent;
+  flex: 0 0 auto;
+  user-select: none;
+  cursor: default;
+  transition: border-color 180ms ease;
+}
+
+.agent-type-badge--unavailable {
+  border-color: color-mix(in oklch, var(--border) 70%, transparent);
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.agent-type-badge__icon {
+  display: block;
+  width: 0.875rem; /* 14px ── 20px 方块留 3px 内边距, 视觉重量跟
+                    * 28px 按钮 + 14px icon 节奏一致。 */
+  height: 0.875rem;
+  flex: 0 0 auto;
+  object-fit: contain;
+  object-position: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.agent-type-badge__icon--unavailable {
+  filter: grayscale(1);
+}
+
+/* __name 元素在 header 中 hidden (badge 改为纯 icon), 样式只留
+ * 兜底: 任何意外显示的实例也不会撑破 badge 容器。 */
+.agent-type-badge__name[hidden] {
+  display: none;
+}
+
+.agent-type-badge__name {
+  display: inline-block;
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  line-height: 1;
+  font-weight: 400; /* 明确非加粗 ── 不被父级 600 继承 */
+  color: var(--foreground);
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.agent-type-badge--unavailable .agent-type-badge__name {
+  color: var(--muted-foreground);
+}
+
+.markdown-editor
+  .agent-thread-card--running
+  .agent-type-badge:not(.agent-type-badge--unavailable) {
+  animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes agent-type-badge-running-border {
+  from {
+    border-color: var(--border);
+  }
+  to {
+    border-color: color-mix(in oklch, var(--brand) 50%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-editor
+    .agent-thread-card--running
+    .agent-type-badge:not(.agent-type-badge--unavailable) {
+    animation: none;
+    border-color: color-mix(in oklch, var(--brand) 50%, transparent);
+  }
+}
+
+.markdown-editor .agent-thread-card {
+  margin: 1rem 0;
+  background: var(--document-bg);
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  outline: none;
+}
+
+.markdown-editor .agent-thread-card * {
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.markdown-editor .agent-thread-card:focus,
+.markdown-editor .agent-thread-card:focus-within {
+  outline: none;
+  box-shadow: none;
+}
+
+.markdown-editor .agent-thread-card button,
+.markdown-editor .agent-thread-card a,
+.markdown-editor .agent-thread-card [role="button"] {
+  cursor: pointer;
+}
+
+.markdown-editor .agent-thread-card button *,
+.markdown-editor .agent-thread-card a *,
+.markdown-editor .agent-thread-card [role="button"] * {
+  cursor: inherit;
+}
+
+.markdown-editor .agent-thread-card__container {
+  display: grid;
+  grid-template-rows: var(--atc-header-h) 1fr auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  /* min-height 同时作为"无 threadId"态与"有 threadId"态的显式下限 ──
+   * 两端都用显式值, transition min-height 才能从 13rem → 24rem 线性
+   * 插值; 否则从隐式 0 起步会停在内容高度上"卡" ~ 一半时长才开始动
+   * (浏览器只在 min-height > 内容高度时才影响渲染高度)。
+   * 折叠态由下方 .--collapsed 分支 reset 到 0, 不被这里锁住。 */
+  min-height: var(--atc-min-height);
+  max-height: var(--atc-max-height);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--editor-block-bg);
+  color: var(--foreground);
+  outline: none;
+  /* 首条消息发出后 threadId 注入 → min-height 13rem → 24rem 撑开 ──
+   * 250ms 略长于通用 150ms (padding / opacity) 但短于 collapsed 风格
+   * 的明显塌缩, 符合"撑开"语义的轻盈感。 cubic-bezier(0.4, 0, 0.2, 1)
+   * 与全站过渡曲线一致 (ease-out 偏重, 起势快收势稳)。 */
+  transition: min-height 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 已绑定 threadId 的卡片: 提升到与 max-height 一致的最小高度,
+   避免短消息时卡片被压扁到 13rem 显得空荡。 */
+.markdown-editor
+  .agent-thread-card--has-threadid:not(.agent-thread-card--fullscreen):not(.agent-thread-card--collapsed)
+  .agent-thread-card__container {
+  min-height: var(--atc-max-height);
+}
+
+.markdown-editor .agent-thread-card--fullscreen {
+  position: fixed;
+  top: var(--atc-fullscreen-top, 0px);
+  left: var(--atc-fullscreen-left, 0px);
+  width: var(--atc-fullscreen-width, 100vw);
+  height: var(--atc-fullscreen-height, 100vh);
+  /* height 不显式写 ── 由 top + bottom 推出 = 100vh - statusbar-height */
+  max-height: none;
+  margin: 0;
+  margin-top: 0 !important;
+  padding: 0;
+  background: var(--editor-block-bg);
+  z-index: 1000;
+}
+
+/* 文档进入时的持久化全屏恢复在首个布局帧内完成。恢复期间先隐藏卡片并
+ * 关闭后代 transition，避免消息内容先按内联卡片宽度排版、再可见地扩展
+ * 到全屏宽度。下一帧边界与滚动位置稳定后移除此类，直接呈现最终布局。
+ * 手动全屏不挂此类，因此原有交互过渡保持不变。 */
+.markdown-editor .agent-thread-card--restoring-fullscreen {
+  visibility: hidden;
+  transition: none !important;
+}
+
+.markdown-editor .agent-thread-card--restoring-fullscreen * {
+  transition: none !important;
+}
+
+/* 全屏态: container 必须拉满根的 padding 内侧, 否则会因自己的
+ * margin / max-height 在 fixed 容器里留出多余空隙 / 被高度上限
+ * 截断。把 margin 与 max-height 全部归零, 让它按根的尺寸 1:1
+ * 跟随。
+ *
+ * container 的 padding 不在这里归零 ── 它本就是 0 (base 规则
+ * padding: 0), 这里再写一次是冗余的, 删掉。 */
+.markdown-editor
+  .agent-thread-card--fullscreen
+  > .agent-thread-card__container {
+  margin: 0;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* NodeSelection 选中态 ── 覆盖 editor.css:729 的全局 .ProseMirror-selectednode
+ * (outline: 2px; outline-offset: 2px; 给 image/videoAttachment 等用)。
+ *
+ * Agent 卡片是 1px border, 要让选中外描边"贴"在 border 上:
+ * - outline 1px 厚: 与原 border 同粗, 不出现 2px 厚重感
+ * - outline-offset: -1px: outline 从元素 box 外侧往内缩 1px ──
+ *   元素有 1px border, 所以 outline 落在"border 内边沿"上,
+ *   视觉上"正好覆盖"原 border (从外面看就是 brand 色替换了 --border 色)
+ * - border-radius: 8px: 显式继承卡片圆角, 防止 outline 在圆角处变直角
+ *   (现代浏览器 outline 已支持 border-radius, 但显式写更稳)
+ * - 选择器特异性: .agent-thread-card.ProseMirror-selectednode = (0,2,0)
+ *   高于全局 .ProseMirror-selectednode = (0,1,0), 本规则胜出 */
+.markdown-editor .ProseMirror .agent-thread-card.ProseMirror-selectednode {
+  outline: 1px solid var(--brand);
+  outline-offset: -1px;
+  border-radius: 8px;
+  transition: outline-color 120ms ease-out;
+}
+
+.markdown-editor
+  .ProseMirror
+  .agent-thread-card.agent-thread-card--fullscreen.ProseMirror-selectednode {
+  outline: none;
+}
+
+/* 头部 ── grid auto 行, 高度由 grid-template-rows 显式控制 (40px)。
+ * 取消旧的 min-height 写法, 用 height 让 grid 行严格等于 token。
+ * 背景透明,继承 container 的 --editor-block-bg: 与 body 严格同色 ──
+ * 卡片视觉是一个整体, header 仅靠 1px 下边框或字重差异与 body 分区,
+ * 不用半透明 + 模糊制造"分块感"。
+ *
+ * ── 圆角裁剪责任收口到 card 根 ──
+ * 之前 header 自己写 border-top-left-radius + border-top-right-radius
+ * + overflow: hidden, 把"圆角裁剪 header 背景"的责任扛在 header 上。
+ * 现在 card 根加了 overflow: hidden, 8px border-radius 已经是硬裁剪
+ * 边界 ── header 矩形背景自动被夹在 card 圆角内, 顶部 8px 圆角
+ * 跟 card 顶部 8px 圆角重合, 不需要在 header 重复声明。
+ *
+ * 收口的好处: 圆角裁剪的"责任唯一真源"在 .agent-thread-card, 后续
+ * 若改 card 圆角 (e.g. 8px → 12px) 只需改一处, header 不会忘记
+ * 同步。 */
+.markdown-editor .agent-thread-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: var(--atc-header-h);
+  min-width: 0;
+  padding: 0 0.8rem;
+  box-sizing: border-box;
+  /* 与 body 视觉合一: 背景透明, header 继承 container 的
+   * --editor-block-bg, 头/体在视觉上是同一块, 靠文字层级和组件
+   * 内部 padding 区分。去掉 backdrop-filter ── 半透明 + 模糊只在
+   * 背景透出时才有意义, 实色背景下无效果且徒增 GPU 开销。 */
+  background: transparent;
+  cursor: grab;
+  user-select: none;
+}
+
+.markdown-editor .agent-thread-card--dragging .agent-thread-card__header {
+  cursor: grabbing;
+}
+
+.markdown-editor .agent-thread-card__header button,
+.markdown-editor .agent-thread-card__header [role="button"],
+.markdown-editor .agent-thread-card__header a[href] {
+  cursor: pointer;
+}
+
+/* 左侧: agent-type-badge (icon + role 名) + 对话标题 单行排版, 整体
+ * flex 1 让 meta 推到右边。role 名称已迁出到 badge 内, 这里只剩 title。
+ * badge 样式见本文件顶部的 .agent-type-badge 块, 这里只负责外层布局。 */
+.markdown-editor .agent-thread-card__agent {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 8px;
+}
+
+/* 右侧 actions: meta + collapse 按钮, 整体右对齐 flex 容器。 */
+.markdown-editor .agent-thread-card__actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  transform: translateX(0.4rem);
+}
+
+/* 标题挂在 __agent 下 ── role 标识由 badge 承担, 这里只渲染对话标题
+ * (this.title), 不再拼接 role.name 前缀。
+ *
+ * line-height: 1 ── title 行高 14px, badge 高度 1.3rem (20.8px), 通过
+ * __agent 的 align-items: center 让 title 在 badge 行盒内垂直居中,
+ * 视觉上"标题贴在 badge 中线", 没有'图标挂在文字下面'的假象。
+ * nowrap + ellipsis ── 长标题截断不换行, badge 保持自然宽度。 */
+.markdown-editor .agent-thread-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  cursor: text;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 600;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__title-input {
+  width: 100%;
+  min-width: 0;
+  height: 1em;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  cursor: text;
+  font: inherit;
+  line-height: 1;
+  outline: none;
+}
+
+.markdown-editor .agent-thread-card__meta {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__run-status {
+  display: inline-flex;
+  align-items: center;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.markdown-editor .agent-thread-card__run-status::before {
+  content: none;
+}
+
+.markdown-editor .agent-thread-card__run-status--running {
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__run-status--running::before {
+  animation: none;
+}
+
+.markdown-editor .agent-thread-card__run-status--failed {
+  color: var(--destructive);
+}
+
+.markdown-editor .agent-thread-card__run-status--cancelled {
+  color: var(--muted-foreground);
+}
+
+@keyframes agent-thread-card-run-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+

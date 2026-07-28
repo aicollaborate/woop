@@ -16,8 +16,8 @@ pub use manager::SyncManager;
 pub use models::{
     AppleAuthChallenge, AppleAuthorization, AuthOutcome, CloudAccount, CloudCheckout,
     CloudMembership, CloudNotebook, CloudPrice, CloudProduct, CloudState, CloudUser,
-    CloudWorkspace, LocalNote, NotebookLink, ProductDuration, ProductEntitlement, RemoteApply,
-    RemoteApplyKind, SyncReport,
+    CloudWorkspace, LocalChangeKind, LocalNote, NotebookLink, ProductDuration, ProductEntitlement,
+    RemoteApply, RemoteApplyKind, SyncReport,
 };
 pub use store::SyncStore;
 

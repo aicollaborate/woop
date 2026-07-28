@@ -15,6 +15,7 @@ function isValidTagTriggerPosition(view: EditorView, from: number): boolean {
 export const TagMention = createSuggestionExtension<MentionTagItem>({
   trigger: TRIGGER,
   width: WIDTH,
+  adaptiveWidth: true,
   isValidTriggerPosition: isValidTagTriggerPosition,
 
   parseQuery: (view: EditorView, triggerFrom, trigger) => {

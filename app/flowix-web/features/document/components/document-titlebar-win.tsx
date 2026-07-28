@@ -3,7 +3,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { SidebarToggleIcon } from '@shared/icons/sidebar-toggle-icon';
 import { Tooltip } from '@shared/ui/tooltip';
-import { MemoListHoverPreview } from '@features/memo/components/memo-list-hover-preview';
 import {
   type DocumentTitlebarProps,
   type DocumentState,
@@ -17,7 +16,12 @@ const ICON_BTN =
 
 export function DocumentTitlebarWin({
   document: { currentMemo, externalFilePath = null },
-  sidebar: { hidden: isSidebarHidden, onToggle: onToggleSidebar },
+  sidebar: {
+    hidden: isSidebarHidden,
+    onToggle: onToggleSidebar,
+    onPreviewTriggerEnter,
+    onPreviewTriggerLeave,
+  },
   navigation: {
     canNavigateBack,
     canNavigateForward,
@@ -55,19 +59,17 @@ export function DocumentTitlebarWin({
     >
       <div className="flex shrink-0 items-center gap-1">
         {isSidebarHidden && (
-          <MemoListHoverPreview
-            trigger={
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                aria-label={t("document.titlebar.showSidebar")}
-                title={t("document.titlebar.showSidebarTooltip")}
-                className="w-7 h-7 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-[opacity,transform,color] duration-[400ms] animate-in fade-in zoom-in-95"
-              >
-                <SidebarToggleIcon className="w-4 h-4" variant="collapsed" />
-              </button>
-            }
-          />
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            onMouseEnter={onPreviewTriggerEnter}
+            onMouseLeave={onPreviewTriggerLeave}
+            aria-label={t("document.titlebar.showSidebar")}
+            title={t("document.titlebar.showSidebarTooltip")}
+            className="w-7 h-7 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-[opacity,transform,color] duration-[400ms] animate-in fade-in zoom-in-95"
+          >
+            <SidebarToggleIcon className="w-4 h-4" variant="collapsed" />
+          </button>
         )}
         {showNavigationButtons && (
           <>

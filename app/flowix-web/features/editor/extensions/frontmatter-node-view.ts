@@ -13,9 +13,12 @@ import {
   filterMentionTags,
   type MentionTagItem,
 } from '@features/editor/extensions/tag-mention/tag-mention-filter';
+import { appendTagMentionName } from '@features/editor/extensions/tag-mention/tag-mention-label';
 import {
   scrollSelectedItemIntoView,
 } from '@features/editor/extensions/shared/scroll-selected-item';
+import { clampSuggestionMenuLeft } from '@features/editor/extensions/shared/suggestion-menu-position';
+import { createOverlayScrollbarDom } from '@shared/ui/overlay-scrollbar-dom';
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -35,6 +38,8 @@ export class FrontmatterPropertyNodeView implements NodeView {
   private tagDraft = '';
   private tagInputBaseWidth: number | null = null;
   private validationError: string | null = null;
+  private cleanupTagMenuPosition: (() => void) | null = null;
+  private cleanupTagScrollbar: (() => void) | null = null;
   private readonly unsubscribeSettings: () => void;
   private readonly handleDocumentPointerDown = (event: Event) => {
     if (!this.isAddingTag) return;
@@ -170,7 +175,7 @@ export class FrontmatterPropertyNodeView implements NodeView {
 
       const menu = createElement(
         'div',
-        'mention-note-dropdown frontmatter-property__tag-suggestions',
+        'mention-note-dropdown tag-mention-dropdown frontmatter-property__tag-suggestions',
       );
       menu.hidden = true;
       menu.setAttribute('role', 'listbox');
@@ -180,15 +185,36 @@ export class FrontmatterPropertyNodeView implements NodeView {
         'mention-note-header',
         this.t('editor.tagMention.header'),
       ));
-      const items = createElement(
-        'div',
-        'mention-note-items frontmatter-property__tag-suggestion-items',
-      );
-      menu.append(items);
+      const overlayScrollbar = createOverlayScrollbarDom(menu.ownerDocument, {
+        frameClassName: 'mention-note-items-frame',
+        scrollerClassName: 'mention-note-items frontmatter-property__tag-suggestion-items',
+      });
+      const items = overlayScrollbar.scroller;
+      menu.append(overlayScrollbar.frame);
+      this.cleanupTagScrollbar = overlayScrollbar.destroy;
 
       let menuOpen = false;
       let suggestions: MentionTagItem[] = [];
       let selectedIndex = 0;
+      const updateMenuPosition = () => {
+        if (!menuOpen || menu.hidden) return;
+        const ownerWindow = menu.ownerDocument.defaultView;
+        if (!ownerWindow) return;
+        const anchorRect = input.getBoundingClientRect();
+        const wrapRect = inputWrap.getBoundingClientRect();
+        const menuWidth = menu.getBoundingClientRect().width;
+        const viewportLeft = clampSuggestionMenuLeft(
+          anchorRect.left,
+          menuWidth,
+          ownerWindow.innerWidth,
+        );
+        menu.style.left = `${viewportLeft - wrapRect.left}px`;
+      };
+      const ownerWindow = menu.ownerDocument.defaultView;
+      ownerWindow?.addEventListener('resize', updateMenuPosition);
+      this.cleanupTagMenuPosition = () => {
+        ownerWindow?.removeEventListener('resize', updateMenuPosition);
+      };
 
       const selectSuggestion = (item: MentionTagItem) => {
         input.value = item.name;
@@ -222,6 +248,8 @@ export class FrontmatterPropertyNodeView implements NodeView {
             'mention-note-empty',
             this.t('editor.tagMention.empty'),
           ));
+          overlayScrollbar.update({ reveal: false, schedule: false });
+          updateMenuPosition();
           return;
         }
 
@@ -238,13 +266,13 @@ export class FrontmatterPropertyNodeView implements NodeView {
             'span',
             'mention-note-title mention-tag-title',
           );
+          const name = createElement('span', 'mention-tag-name');
+          appendTagMentionName(name, item.name);
+          const icon = createElement('span', 'mention-tag-icon');
+          icon.setAttribute('aria-hidden', 'true');
           title.append(
-            createElement(
-              'span',
-              'mention-tag-icon frontmatter-property__tag-suggestion-hash',
-              '#',
-            ),
-            createElement('span', 'mention-tag-name', item.name),
+            icon,
+            name,
           );
           option.append(title);
           if (item.create) {
@@ -267,6 +295,8 @@ export class FrontmatterPropertyNodeView implements NodeView {
         if (selectedItem) {
           scrollSelectedItemIntoView(items, selectedItem);
         }
+        overlayScrollbar.update({ reveal: false, schedule: false });
+        updateMenuPosition();
       };
       const refreshSuggestions = () => {
         suggestions = filterMentionTags(
@@ -357,6 +387,10 @@ export class FrontmatterPropertyNodeView implements NodeView {
   }
 
   private render() {
+    this.cleanupTagMenuPosition?.();
+    this.cleanupTagMenuPosition = null;
+    this.cleanupTagScrollbar?.();
+    this.cleanupTagScrollbar = null;
     const parsed = parseVisibleFrontmatter(String(this.node.attrs.yamlContent ?? ''));
     const container = createElement('div', 'frontmatter-property');
 
@@ -411,6 +445,10 @@ export class FrontmatterPropertyNodeView implements NodeView {
   }
 
   destroy() {
+    this.cleanupTagMenuPosition?.();
+    this.cleanupTagMenuPosition = null;
+    this.cleanupTagScrollbar?.();
+    this.cleanupTagScrollbar = null;
     this.dom.ownerDocument.removeEventListener(
       'pointerdown',
       this.handleDocumentPointerDown,

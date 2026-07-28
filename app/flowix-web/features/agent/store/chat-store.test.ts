@@ -877,7 +877,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(Object.values(idleState.runs)).toHaveLength(0);
   });
 
-  it("merges late tool chunks after stream_end without reviving the run", async () => {
+  it("ignores late tool chunks after stream_end", async () => {
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const { useAgentConversationStore } = await import(
       "@features/agent/store/agent-conversation-store"
@@ -921,14 +921,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const messageState =
       useAgentConversationStore.getState().messageStates[threadId];
-    expect(messageState.messages).toHaveLength(1);
-    expect(messageState.messages[0]).toMatchObject({
-      role: "tool",
-      toolCallId: "late-tool-1",
-      toolName: "exec_command",
-      isLoading: false,
-    });
-    expect(messageState.messages[0].toolData).toContain("/tmp/project");
+    expect(messageState?.messages ?? []).toHaveLength(0);
 
     const idleState = useChatStore.getState().threadStates[threadId];
     expect(idleState.isLoading).toBe(false);

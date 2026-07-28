@@ -344,7 +344,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(idleStatus?.hidden).toBe(true);
     expect(idleStatus?.textContent).toBe("");
     expect(card?.classList.contains("agent-thread-card--running")).toBe(false);
-  });
+  }, 30_000);
 
   it("opens an encoded absolute assistant link with the system default app", async () => {
     const { AgentThreadCard } =

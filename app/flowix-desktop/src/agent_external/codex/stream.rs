@@ -33,9 +33,10 @@ where
     let mut seen_sessions = HashSet::new();
     let mut resolved_session_id = is_codex_session_id(&thread_id).then(|| thread_id.clone());
     let mut emit_thread_id = thread_id.clone();
-    let mut terminal_turn_seen = false;
+    let mut terminal_signal = CodexRunSignal::Continue;
     let mut emitted_tool_ids = HashSet::new();
     let mut emitted_tool_signatures = HashMap::new();
+    let mut blocked_post_completion_chunks = 0usize;
     while let Some((line, line_truncated_by_reader)) =
         read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await?
     {
@@ -161,6 +162,10 @@ where
         }
 
         for chunk in codex_event_to_chunks(&emit_thread_id, &value) {
+            if !should_emit_following_stdout_chunks(terminal_signal) {
+                blocked_post_completion_chunks += 1;
+                continue;
+            }
             record_stdout_tool_call(&chunk, &mut emitted_tool_ids, &mut emitted_tool_signatures);
             persist_and_emit_codex_chunk(&app_handle, &thread_manager, &chunk, &run_id, Some(line))
                 .await;
@@ -168,23 +173,22 @@ where
 
         match codex_run_signal(&value) {
             CodexRunSignal::TerminalCompleted => {
-                terminal_turn_seen = true;
-                // 与 Claude 一致: terminal 只做标记,继续排空 stdout 到 EOF。
-                // StreamEnd 由 run_codex 返回后的统一尾部发送,保证任何 trailing
-                // tool item 和 rollout 补发都先于终态到达前端。
+                terminal_signal = CodexRunSignal::TerminalCompleted;
+                // terminal 只做标记,继续排空 stdout 到 EOF。正常完成的 stdout
+                // 是本轮唯一可见数据源;EOF 后不得再用 rollout 补发工具。
             }
             CodexRunSignal::TerminalFailed => {
                 // turn.failed 不提前: 它需要 Error chunk + 失败 reason, 由
                 // run_codex 末尾据 exit status 发 StreamEnd(reason)。提前发 None
                 // 会把 failed 误标成 completed。
-                terminal_turn_seen = true;
+                terminal_signal = CodexRunSignal::TerminalFailed;
             }
             CodexRunSignal::Continue => {}
         }
     }
 
     let mut reconciled_tool_chunks = 0usize;
-    if !stream_end_emitted.load(Ordering::Acquire) {
+    if should_reconcile_rollout(terminal_signal, stream_end_emitted.load(Ordering::Acquire)) {
         if let Some(session_id) = resolved_session_id.as_deref() {
             match get_rollout_tool_response_items_since(session_id, started_at_millis).await {
                 Ok(events) => {
@@ -233,11 +237,24 @@ where
         Some(&thread_id),
         Some(AGENT_TYPE),
         Some(serde_json::json!({
-            "terminal_turn_seen": terminal_turn_seen,
+            "terminal_signal": match terminal_signal {
+                CodexRunSignal::Continue => "none",
+                CodexRunSignal::TerminalCompleted => "completed",
+                CodexRunSignal::TerminalFailed => "failed",
+            },
             "reconciled_tool_chunks": reconciled_tool_chunks,
+            "blocked_post_completion_chunks": blocked_post_completion_chunks,
         })),
     );
     Ok(())
+}
+
+fn should_reconcile_rollout(terminal_signal: CodexRunSignal, stream_end_emitted: bool) -> bool {
+    !stream_end_emitted && terminal_signal != CodexRunSignal::TerminalCompleted
+}
+
+fn should_emit_following_stdout_chunks(terminal_signal: CodexRunSignal) -> bool {
+    terminal_signal != CodexRunSignal::TerminalCompleted
 }
 
 fn record_stdout_tool_call(
@@ -392,7 +409,7 @@ fn looks_like_codex_json_event_line(line: &str) -> bool {
 pub(crate) enum CodexRunSignal {
     Continue,
     /// `turn.completed` / legacy `task_complete`: 成功完成。reader 继续排空
-    /// stdout 并完成 rollout 对账,随后由统一 tail 发送 StreamEnd。
+    /// stdout,但不再读取 rollout;随后由统一 tail 发送 StreamEnd。
     TerminalCompleted,
     /// `turn.failed` (非 reconnect): 失败, 需 Error chunk + 失败 reason, 走原
     /// tail 路径, 不提前结束 (避免把 failed 误标成 completed)。
@@ -592,6 +609,26 @@ mod tests {
                 && result_id == id
                 && name == "exec"
                 && result_name == name
+        ));
+    }
+
+    #[test]
+    fn rollout_reconciliation_is_disabled_after_normal_completion() {
+        assert!(!should_reconcile_rollout(
+            CodexRunSignal::TerminalCompleted,
+            false
+        ));
+        assert!(should_reconcile_rollout(CodexRunSignal::Continue, false));
+        assert!(should_reconcile_rollout(
+            CodexRunSignal::TerminalFailed,
+            false
+        ));
+        assert!(!should_reconcile_rollout(CodexRunSignal::Continue, true));
+        assert!(!should_emit_following_stdout_chunks(
+            CodexRunSignal::TerminalCompleted
+        ));
+        assert!(should_emit_following_stdout_chunks(
+            CodexRunSignal::TerminalFailed
         ));
     }
 

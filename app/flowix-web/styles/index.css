@@ -244,7 +244,7 @@
 
 	/* 侧栏标签树节点 # 图标 + 右下角展开三角:
 	   - 默认: # 图标 60% 透明度, 三角 72% 透明度的 muted-foreground
-	   - hover: 加深到 100% (前景色)
+	   - hover 或标签已展开: 三角加深到前景色
 	   - :focus-visible (键盘 Tab, 非鼠标点击): 同样加深
 	   鼠标点击图标获得焦点不触发 (`:focus-visible` 只在键盘 focus 命中),
 	   移开鼠标后样式立即消失。三角本身 pointer-events: none,
@@ -256,6 +256,7 @@
 	[data-tag-icon]:focus-visible {
 		opacity: 1;
 	}
+	[data-tag-icon][aria-expanded="true"] .tag-expand-indicator,
 	[data-tag-icon]:hover .tag-expand-indicator,
 	[data-tag-icon]:focus-visible .tag-expand-indicator {
 		border-bottom-color: color-mix(in oklch, var(--foreground) 55%, var(--muted-foreground));
@@ -264,13 +265,16 @@
 	/* 侧栏标签树: 折叠/展开子列表的高度 + 透明度过渡。
 	   行外层 .tag-collapse-track 用 max-height 2rem(=行高 h-8)<->0 实现双向高度
 	   过渡 (行高固定, max-height 取精确值过渡最自然), overflow:hidden 裁剪收缩
-	   内容; margin-top:0 抹掉 space-y 在折叠行上的间距使其真正塌缩不占高度。
+	   内容; 行间距直接设在轨道上，折叠时同步归零使其真正塌缩不占高度。
 	   折叠子树行仍留在 DOM 中 (unmount 无法 CSS 过渡), 仅视觉收缩, 由 data-collapsed 切换。 */
 	.tag-collapse-track {
 		max-height: 2rem;
 		opacity: 1;
 		overflow: hidden;
 		transition: max-height 80ms ease, opacity 80ms ease, margin-top 80ms ease;
+	}
+	.tag-tree-list > .tag-collapse-track {
+		margin-top: 0.125rem;
 	}
 	.tag-collapse-track[data-collapsed] {
 		max-height: 0;

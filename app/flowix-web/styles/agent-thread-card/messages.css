@@ -1,0 +1,302 @@
+/* ─────────────────────────────────────────────────────────────────
+ * 消息卡片 ── 完全对齐 Agent 面板 message-*.tsx 的视觉与布局。
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * 面板 5 种 role 的视觉规范:
+ *   user       气泡 (bg-muted), 靠右, 圆角 8/16/8/8
+ *   assistant  纯文本, 占满, 无气泡, mt-1 顶部留白
+ *   reasoning  折叠按钮 + 左边竖线 (border-l) + 缩进, 灰字
+ *   tool       单行 flex: icon + 名称 + summary, 无气泡
+ *   end        居中小字, 灰字, 时间戳
+ *
+ * 卡片 base 默认 "无背景无圆角", 5 个 role 修饰类各自按面板
+ * 对应风格覆盖 ── 不再是"一统气泡"模式。 */
+.markdown-editor .agent-thread-card__message {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── user: 气泡 + 靠右 ──────────────────────────────────────────
+ * 圆角体系 (与面板 Tailwind token 对应):
+ *   rounded-lg  = 0.5rem = 8px
+ *   rounded-2xl = 1rem   = 16px
+ * 面板 user 圆角: 8px 16px 8px 8px (右上 2xl 最圆, 其它 lg)。
+ * margin-left: auto 在 flex column 容器里把 user 推右 (CSS 端
+ * 替代 row-reverse, 不破坏 assistant 左对齐)。 */
+.markdown-editor .agent-thread-card__message--user {
+  margin-top: 1rem;
+  margin-left: auto;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px 16px 8px 8px;
+  background: var(--muted);
+}
+
+/* ── assistant: 纯文本, 无气泡, 顶部 mt-1 留白 ────────────────
+ * 面板 assistant = `text-sm mt-1`, 无背景无圆角, 占满左侧。 */
+.markdown-editor .agent-thread-card__message--assistant {
+  padding: 4px 0 0;
+  color: var(--foreground);
+}
+
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__message--user
+  .agent-thread-card__message-content,
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__message--user
+  .agent-thread-card__message-content
+  *,
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__message--assistant
+  .agent-thread-card__message-content,
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__message--assistant
+  .agent-thread-card__message-content
+  * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ── reasoning: 可折叠 ── 对齐面板 message-reasoning 布局 ─────────
+ * 面板结构:
+ *   <div flex gap-3>
+ *     <div flex-col gap-1 w-full>
+ *       <button> {ChevronDown|Right + "思考中/思考完成"} </button>
+ *       {!reasoningCollapsed && <div pl-4 ml-1.5 border-l> ...content </div>}
+ *     </div>
+ *   </div>
+ *
+ * 卡片版 (per-message 折叠态, 不走全局 store):
+ *   .__message--reasoning { gap: 4px }
+ *     .__message-reasoning-header (button) { flex 排 caret + label,
+ *       hover 反馈用 var(--muted-foreground) → var(--agent-foreground) }
+ *     .__message-reasoning-body { pl-12px + border-l + mt-4px }
+ *     .__message--reasoning-collapsed .__message-reasoning-body { display: none }
+ * 数值: pl-4 = 12px (这里 12px 与 6px ml-1.5 视觉接近, 同时让缩进在
+ * 卡片宽度下不至于挤掉内容), border-l = 2px (卡片小尺寸下更可见)。 */
+.markdown-editor .agent-thread-card__message--reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__message-reasoning-header {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  padding: 2px 4px 2px 0;
+  margin-left: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  font-weight: 500;
+  line-height: 1.1;
+  cursor: pointer;
+  /* hover 反馈改为纯字色变化 ── reasoning 折叠按钮嵌入在消息流里,
+   * 视觉权重本就低, 鼠标悬停时给一个"高亮"色就够了, 加背景块会
+   * 跟上下相邻消息之间制造色块边界, 反而打断阅读节奏。颜色用
+   * 前景色 var(--foreground) ── 比 --muted-foreground 对比度高,
+   * 鼠标移上去按钮文本"亮起来"的暗示清晰。 */
+  transition: color 150ms ease;
+}
+
+.markdown-editor .agent-thread-card__message-reasoning-header:hover {
+  color: var(--foreground);
+}
+
+.markdown-editor .agent-thread-card__message-reasoning-header svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: currentColor;
+  transition: transform 150ms ease;
+}
+
+.markdown-editor .agent-thread-card__message-reasoning-body {
+  padding: 2px 0 4px 12px;
+  margin-left: 5px;
+  border-left: 1px solid var(--border);
+}
+
+.markdown-editor
+  .agent-thread-card__message--reasoning-collapsed
+  .agent-thread-card__message-reasoning-body {
+  display: none;
+}
+
+/* ── tool: 单行 flex: icon + 名称 + summary ─────────────────────
+ * 面板 message-tool 容器 = `w-full pr-1 py-1.5` 内部
+ *   `flex items-center gap-2`:
+ *     - ToolIcon (h-3.5 w-3.5 text-muted-foreground, 按 toolName 切换)
+ *     - 工具名 (text-sm text-agent-foreground) ── 走 getToolLabel
+ *       做中英映射, e.g. read → 读取, bash → 执行命令
+ *     - summary (text-xs font-mono text-muted-foreground) ── pathLike 字段
+ *
+ * 卡片场景没有 React 组件, 改用内联 SVG 路径 ── toolName → 图标
+ * 走 features/agent/message/tools 单源 registry (getToolIconPath),
+ * 与面板 (inline SVG 同样 path) 共用 TOOL_ICON_PATHS regular weight 数据,
+ * 视觉完全一致 (同样 14×14 渲染, 同样 muted-foreground 颜色)。未命中 → terminal。 */
+.markdown-editor .agent-thread-card__message--tool {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.4;
+}
+
+.markdown-editor .agent-thread-card__message--tool-command {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  /* 命令块是多行容器 (含 head + body + 多条 command-line),
+   * 不能继承父级 --tool 的 1.4 (那是给单行摘要用的) ──
+   * 显式声明 1.7 = __message-content 的行高, 让 command-name / args
+   * 与正文 p 的行节奏一致, 视觉上不"压扁"。 */
+  line-height: 1.7;
+}
+
+.markdown-editor .agent-thread-card__message-tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.markdown-editor .agent-thread-card__message-tool-body {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.markdown-editor .agent-thread-card__message-tool-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__message--tool-command .agent-thread-card__message-tool-icon {
+  transform: translateY(2px);
+}
+
+/* 工具名视觉规格: __message-tool-name + __command-name 共享 ──
+ * 颜色 (前景) + 字重 (500) + 横向布局 (auto) 同步,
+ * command-name 额外保留 45% 宽度上限 + ellipsis 截断。 */
+.markdown-editor .agent-thread-card__message-tool-name,
+.markdown-editor .agent-thread-card__message-tool-concrete-name,
+.markdown-editor .agent-thread-card__command-name {
+  flex: 0 0 auto;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.markdown-editor .agent-thread-card__message-tool-concrete-name {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* tool-name 不需要水平截断, command-name 需要 ——
+ * flex/color/weight 已在上一规则声明, 此处仅追加独有的截断属性 */
+.markdown-editor .agent-thread-card__command-name {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__message-tool-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__command-list {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  /* 字体: 与工具描述信息统一为 sans (默认), 删除原先的 mono, 让命令列表跟其它工具描述在视觉上无法区分 */
+}
+
+.markdown-editor .agent-thread-card__command-list--nested {
+  max-width: calc(100% - 10px);
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.markdown-editor .agent-thread-card__command-item {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 1px 0;
+}
+
+.markdown-editor .agent-thread-card__command-line {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  /* 字体/字号/行高 全部走 inherit (跟工具描述信息统一 sans 视觉) */
+}
+
+/* command 输入信息视觉对齐工具描述 (tool-name / tool-summary), 字体一律 inherit (sans) */
+
+.markdown-editor .agent-thread-card__command-args-inline,
+.markdown-editor .agent-thread-card__command-env,
+.markdown-editor .agent-thread-card__command-more {
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__command-args-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__command-env,
+.markdown-editor .agent-thread-card__command-more {
+  flex: 0 0 auto;
+}
+
+.markdown-editor .agent-thread-card__command-env {
+  margin-right: 4px;
+}
+
+

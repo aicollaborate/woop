@@ -1,8 +1,7 @@
 'use client';
 
 import { displayTitleFromFilename } from '@/lib/utils';
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react';
-import { createPortal } from 'react-dom';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useShortcutScope, pushHandler } from '@features/shortcuts';
 import { SquarePen, Search, ChevronDown, Check, ChevronRight, Loader2 } from 'lucide-react';
@@ -18,7 +17,6 @@ import {
 import {
   getVisibleCreateFilter,
   getNotebookIconOption,
-  MEMO_COLORS,
   MEMO_COLOR_HEX,
   useMemoLibraryMetadataStore,
   useMemoStore,
@@ -70,6 +68,11 @@ import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
 
+import {
+  COLOR_LABEL_KEYS,
+  ColorFilterSubmenu,
+} from './memo-list/color-filter-submenu';
+import { useMemoListWindow } from './memo-list/use-memo-list-window';
 const logger = createLogger('memo-list');
 
 const LazyNotebookDialogs = lazy(() =>
@@ -77,189 +80,6 @@ const LazyNotebookDialogs = lazy(() =>
     default: module.NotebookDialogs,
   })),
 );
-
-/**
- * 颜色筛选二级弹窗。Hover/聚焦父项时, 通过 portal 渲染到 body,
- * 浮在父级 DropdownMenuContent 右侧。子项点击后, 设置
- *   - activeFilter = 'color'
- *   - colorFilter  = 选定值 ('any' | 'none' | MemoColor)
- * 父级 dropdown 关闭后此弹窗随之销毁。
- *
- * 打开/关闭由父级 (MemoList) 通过 `active` prop 控制:
- *   - 父 trigger onMouseEnter → 父 setColorSubmenuOpen(true)
- *   - 父 trigger onMouseLeave → 父 setTimeout(setColorSubmenuOpen(false), 120)
- *   - 父级 dropdown 关闭 → 父 setColorSubmenuOpen(false)
- * 子菜单自身不再管 timer, 只在 onCancelClose 被调用时通知父级撤销关闭
- * (即用户从 trigger 移到了子菜单上, 父级那个 setTimeout 应当清掉)。
- */
-interface ColorFilterSubmenuProps {
-  parentRef: React.RefObject<HTMLButtonElement | null>;
-  active: boolean;
-  onClose: () => void;
-  onCancelClose: () => void;
-  value: ColorFilterValue;
-  onSelect: (value: ColorFilterValue) => void;
-}
-
-const COLOR_LABEL_KEYS: Record<MemoColor, import('@/lib/i18n').I18nKey> = {
-  red: 'document.color.red',
-  orange: 'document.color.orange',
-  yellow: 'document.color.yellow',
-  green: 'document.color.green',
-  cyan: 'document.color.cyan',
-  blue: 'document.color.blue',
-  gray: 'document.color.gray',
-};
-
-function ColorFilterSubmenu({
-  parentRef,
-  active,
-  onClose,
-  onCancelClose,
-  value,
-  onSelect,
-}: ColorFilterSubmenuProps) {
-  const { t } = useI18n();
-  const submenuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-
-  // 计算位置: 浮在父 trigger 右侧, 高度对齐 trigger 中线, 顶不过 viewport
-  useLayoutEffect(() => {
-    if (!active || !parentRef.current) {
-      setPosition(null);
-      return;
-    }
-    const update = () => {
-      const trigger = parentRef.current;
-      if (!trigger) return;
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = 168;
-      const menuHeight = submenuRef.current?.offsetHeight ?? 240;
-      const top = Math.max(
-        4,
-        Math.min(
-          rect.top + rect.height / 2 - 16,
-          window.innerHeight - menuHeight - 4,
-        ),
-      );
-      const left = Math.min(
-        rect.right + 4,
-        window.innerWidth - menuWidth - 4,
-      );
-      setPosition({ top, left });
-    };
-    update();
-    const raf = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(raf);
-  }, [active, parentRef]);
-
-  // 外部点击关闭
-  useEffect(() => {
-    if (!active) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        submenuRef.current?.contains(target) ||
-        parentRef.current?.contains(target)
-      ) {
-        return;
-      }
-      onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [active, onClose, parentRef]);
-
-  // Esc 关闭
-  useEffect(() => {
-    if (!active) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [active, onClose]);
-
-  if (!active || !position) return null;
-
-  const handleSelect = (next: ColorFilterValue) => {
-    onSelect(next);
-    onClose();
-  };
-
-  const handleMouseEnter = () => {
-    onCancelClose();
-  };
-
-  const renderRow = (
-    key: string,
-    label: string,
-    swatch: React.ReactNode,
-    next: ColorFilterValue,
-  ) => {
-    const isActive = value === next;
-    return (
-      <button
-        key={key}
-        type="button"
-        onClick={() => handleSelect(next)}
-        className={cn(
-          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--foreground)] hover:bg-[var(--muted)] cursor-pointer outline-none',
-        )}
-      >
-        <span className="inline-flex h-3.5 w-7 shrink-0 items-center justify-center">
-          {swatch}
-        </span>
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {isActive && <Check className="h-3.5 w-3.5 text-[var(--primary)]" />}
-      </button>
-    );
-  };
-
-  return createPortal(
-    <div
-      ref={submenuRef}
-      onMouseEnter={handleMouseEnter}
-      // 阻止 mousedown 冒泡到 document — 父 DropdownMenu 的 click-outside
-      // 监听挂在 document 上, 一旦冒泡到 document 就会 setOpen(false),
-      // 引发 re-render, 我们的 useLayoutEffect 看到 parentRef.current === null
-      // (trigger 已被父 dropdown 卸载) 就 setPosition(null) 把自己也卸载掉,
-      // 紧接着的 click 事件就落到脱离 DOM 的按钮上, onClick 不触发。
-      // 在 portal 根节点 stopPropagation, 父 dropdown 维持打开, click 落
-      // 到还在 mounted 的按钮, 走 handleSelect 把 colorFilter / activeFilter
-      // 真正 set 进去。
-      onMouseDown={(e) => e.stopPropagation()}
-      style={{ top: position.top, left: position.left }}
-      className="fixed z-[1600] w-[168px] rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-lg animate-in fade-in-0 zoom-in-95"
-    >
-      {renderRow(
-        'any',
-        t('memo.list.filterColorAny'),
-        <span className="inline-flex h-3 w-3 rounded-full border border-dashed border-[var(--muted-foreground)]" />,
-        'any',
-      )}
-      {renderRow(
-        'none',
-        t('memo.list.filterColorNone'),
-        <span className="inline-block h-3 w-3 rounded-full border border-[var(--border)] bg-transparent" />,
-        'none',
-      )}
-      <hr className="mx-2 my-1 border-t border-[var(--border)] opacity-50" />
-      {MEMO_COLORS.map((c) =>
-        renderRow(
-          c,
-          t(COLOR_LABEL_KEYS[c]),
-          <span
-            className="block h-3 w-3 rounded-full"
-            style={{ backgroundColor: MEMO_COLOR_HEX[c] }}
-          />,
-          c,
-        ),
-      )}
-    </div>,
-    document.body,
-  );
-}
 
 function normalizeNotebookIconId(icon: string | null | undefined): string | null {
   return getNotebookIconOption(icon) ? icon! : null;
@@ -330,19 +150,7 @@ function EmptyState() {
   );
 }
 
-const MEMO_LIST_INITIAL_RENDER_COUNT = 120;
-const MEMO_LIST_RENDER_BATCH_SIZE = 80;
-const MEMO_LIST_LOAD_MORE_THRESHOLD_PX = 720;
-interface MemoListProps {
-  /**
-   * 隐藏顶部的 Memo Tab(笔记本下拉 / 搜索 / 新建按钮等)。浮层视图不需要
-   * 重复展示这些列内已有的工具栏 ── 列内的 Memo Tab 仍然在背后可见, 这里
-   * 只是不渲染第二份。
-   */
-  hideHeader?: boolean;
-}
-
-export function MemoList({ hideHeader = false }: MemoListProps = {}) {
+export function MemoList() {
   const { request } = useTauriRpc();
   const { t } = useI18n();
   const { registerCard, prepareForInsert, onListRendered } =
@@ -442,7 +250,6 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   const [tagMap, setTagMap] = useState<Record<string, string>>({});
   const [isMemoListLoading, setIsMemoListLoading] = useState(false);
   const [loadedMemoListQueryKey, setLoadedMemoListQueryKey] = useState<string | null>(null);
-  const [visibleMemoCount, setVisibleMemoCount] = useState(MEMO_LIST_INITIAL_RENDER_COUNT);
   const loadDataSeqRef = useRef(0);
   const emptyNotebookPromptedRef = useRef(false);
   const { blockingLoadingText, createNotebook } = useCreateNotebookFlow({
@@ -474,18 +281,15 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   }, [editNotebookOpen, editingNotebook]);
 
   useEffect(() => {
-    if (hideHeader) return;
     return listenToCloudStateChanges((cloudState) => {
       setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
     });
-  }, [hideHeader]);
+  }, []);
 
   // 全局事件监听器 ── 跨组件 shortcut / dispatchEvent 解耦点。
-  // 主列表始终挂载（侧栏收起时只是宽度变为 0），所以只让主列表持有这些监听器。
-  // hover 浮层通过 hideHeader 标识为只读复用实例，不能重复响应全局事件。
+  // MemoList 始终挂载（侧栏收起时只是切换为隐藏/浮层形态），因此这些监听器
+  // 只有一份，不需要跨实例去重。
   useEffect(() => {
-    if (hideHeader) return;
-
     const cleanups: Array<() => void> = [];
     const handleOpenNotebook = () => {
       setNewNotebookName('');
@@ -524,7 +328,7 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
     return () => {
       for (const cleanup of cleanups) cleanup();
     };
-  }, [hideHeader]);
+  }, []);
 
   // Shared delete path for both the dialog button and Enter shortcut.
   const handleDeleteConfirm = useCallback(() => {
@@ -724,70 +528,18 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   //   'none' → memo.colors.length === 0
   //   具体颜色 → memo.colors.includes(c)
   // 仅当 activeFilter === 'color' 时启用, 其他 filter 原样透传。
-  const filteredMemos = useMemo(() => {
-    if (activeFilter !== 'color') return memos;
-    if (colorFilter === 'any') {
-      return memos.filter((memo) => memo.colors.length > 0);
-    }
-    if (colorFilter === 'none') {
-      return memos.filter((memo) => memo.colors.length === 0);
-    }
-    return memos.filter((memo) => memo.colors.includes(colorFilter));
-  }, [memos, activeFilter, colorFilter]);
-
-  const selectedMemoIndex = useMemo(
-    () => selectedMemo ? filteredMemos.findIndex((memo) => memo.id === selectedMemo.id) : -1,
-    [filteredMemos, selectedMemo?.id]
-  );
-  const minimumVisibleMemoCount = selectedMemoIndex >= 0
-    ? Math.max(MEMO_LIST_INITIAL_RENDER_COUNT, selectedMemoIndex + 1)
-    : MEMO_LIST_INITIAL_RENDER_COUNT;
-  const normalizedVisibleMemoCount = Math.min(filteredMemos.length, Math.max(visibleMemoCount, minimumVisibleMemoCount));
-  const renderedMemos = useMemo(
-    () => filteredMemos.slice(0, normalizedVisibleMemoCount),
-    [filteredMemos, normalizedVisibleMemoCount]
-  );
-  const hasMoreMemos = normalizedVisibleMemoCount < filteredMemos.length;
-
-  useEffect(() => {
-    setVisibleMemoCount(minimumVisibleMemoCount);
-  }, [currentMemoListQueryKey, minimumVisibleMemoCount]);
-
-  const loadMoreRenderedMemos = useCallback(() => {
-    setVisibleMemoCount((count) => {
-      const nextCount = Math.max(count, minimumVisibleMemoCount) + MEMO_LIST_RENDER_BATCH_SIZE;
-      return Math.min(filteredMemos.length, nextCount);
-    });
-  }, [filteredMemos.length, minimumVisibleMemoCount]);
-
-  const handleMemoListScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
-    if (!hasMoreMemos) return;
-    const scroller = event.currentTarget;
-    const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    if (distanceToBottom <= MEMO_LIST_LOAD_MORE_THRESHOLD_PX) {
-      loadMoreRenderedMemos();
-    }
-  }, [hasMoreMemos, loadMoreRenderedMemos]);
-
-  useLayoutEffect(() => {
-    if (showMemoListLoading || !hasMoreMemos) return;
-    const scroller = listContainerRef.current;
-    if (!scroller) return;
-    if (scroller.scrollHeight - scroller.clientHeight <= MEMO_LIST_LOAD_MORE_THRESHOLD_PX) {
-      loadMoreRenderedMemos();
-    }
-  }, [
-    hasMoreMemos,
-    loadMoreRenderedMemos,
-    normalizedVisibleMemoCount,
-    showMemoListLoading,
-  ]);
-  // 不再使用虚拟列表 ── @tanstack/react-virtual 在行高变化 + 入场动画叠加的
-  // 场景下频繁出现 row 之间错位/重叠 (estimateSize 与 measureElement 实测
-  // 高度在动画期间/重渲期间的瞬时不一致, 加上 GSAP 与 translateY(start)
-  // 互相踩 transform 的历史遗留问题)。改为普通 flex 列渲染, 5k+ 笔记的
-  // 性能可在后续用 windowing / start 切片再优化, 但正确性优先。
-  // 列表自然高度由内容撑开, listContainer 自身的 overflow-y-auto 仍负责滚动。
+  const {
+    renderedMemos,
+    onScroll: handleMemoListScroll,
+  } = useMemoListWindow({
+    memos,
+    activeFilter,
+    colorFilter,
+    selectedMemoId: selectedMemo?.id,
+    queryKey: currentMemoListQueryKey,
+    loading: showMemoListLoading,
+    scrollerRef: listContainerRef,
+  });
 
   // ─── row ref 缓存 ──────────────────────────────────────────────
   // 同一 memo.id 跨 render 拿到**稳定**的 ref 回调, 避免 React 在重渲时
@@ -921,14 +673,12 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
   ]);
 
   useEffect(() => {
-    if (hideHeader) return;
-
     const handleRequest = () => {
       void handleCreateMemo();
     };
     window.addEventListener('flowix:create-memo', handleRequest);
     return () => window.removeEventListener('flowix:create-memo', handleRequest);
-  }, [handleCreateMemo, hideHeader]);
+  }, [handleCreateMemo]);
 
   // 入场动画入口: 每次 memos 变化时 (含新建/更新/删除) 在 layout 阶段同步
   // 询问 useMemoInsertAnimation 是否有 pending 新 card, 有就跑一次入场
@@ -1053,7 +803,6 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
 
   return (
     <div className="relative flex h-full select-none flex-col bg-[var(--card)]">
-      {!hideHeader && (
       <>
       {/* Memo Tab */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
@@ -1226,7 +975,6 @@ export function MemoList({ hideHeader = false }: MemoListProps = {}) {
         </div>
       </div>
       </>
-      )}
 
       <OverlayScrollbar
         className="flex min-h-0 flex-1"

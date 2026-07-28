@@ -25,6 +25,7 @@ interface TagStore {
   setSelectedTagId: (id: string | null) => void;
   triggerMetadataRefresh: () => void;
   loadTags: (notebookId?: string) => Promise<void>;
+  createTag: (notebookId: string, path: string) => Promise<{ path: string }>;
   /**
    * 移动 subtag: 把 `oldPath` 整棵子树重命名为 `newPath` (含 prefix
    * 替换), 批量改写所有受影响 memo 的 YAML `tags` + 同步 memo index。
@@ -68,6 +69,12 @@ export const useTagStore = create<TagStore>()(
       loadTags: async (notebookId?: string) => {
         const response = await tags.getAll(notebookId);
         set({ tags: response.tags });
+      },
+
+      createTag: async (notebookId: string, path: string) => {
+        const report = await tags.create(notebookId, path);
+        get().triggerMetadataRefresh();
+        return report;
       },
 
       moveTag: async (

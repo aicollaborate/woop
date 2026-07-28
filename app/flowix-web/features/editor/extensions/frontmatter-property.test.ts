@@ -335,6 +335,21 @@ describe('frontmatter property helpers', () => {
       )?.hidden).toBe(false);
       expect([...host.querySelectorAll('.mention-tag-name')]
         .map((element) => element.textContent)).toEqual(['gammaLongTag', 'work/path']);
+      const hierarchicalTag = [...host.querySelectorAll<HTMLElement>('.mention-tag-name')]
+        .find((element) => element.textContent === 'work/path');
+      expect([...hierarchicalTag?.querySelectorAll('.mention-tag-segment') ?? []]
+        .map((element) => element.textContent)).toEqual(['work', 'path']);
+      expect(hierarchicalTag?.querySelector('.mention-tag-name-content')?.textContent)
+        .toBe('work/path');
+      expect(hierarchicalTag?.querySelector('.mention-tag-separator')?.textContent).toBe('/');
+      expect(host.querySelector('.frontmatter-property__tag-suggestions .mention-tag-icon')
+        ?.textContent).toBe('');
+      expect(host.querySelector(
+        '.frontmatter-property__tag-suggestions .overlay-scrollbar-frame',
+      )).not.toBeNull();
+      expect(host.querySelector(
+        '.frontmatter-property__tag-suggestions .overlay-scrollbar-thumb',
+      )).not.toBeNull();
       const suggestionItems = host.querySelector<HTMLElement>(
         '.frontmatter-property__tag-suggestion-items',
       );

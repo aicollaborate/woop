@@ -3,6 +3,7 @@ import type { NodeViewRendererProps } from '@tiptap/core'
 import svgPanZoom from 'svg-pan-zoom'
 import { translate, type I18nKey } from '@/lib/i18n'
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store'
+import { CodeBlockClipboardController } from './clipboard-controller'
 
 // svg-pan-zoom 实例类型 ── 库本身没有导出类型, 用 ReturnType 推断。
 // 用在 fullscreen overlay 内 ── 用户的 mermaid 流程图常因节点多而显示
@@ -60,15 +61,6 @@ const ZOOM_IN_ICON = '<svg class="code-block-fullscreen-icon" viewBox="0 0 256 2
 // 顶层做常量, 不再每次 click 时从 DOM 读 innerHTML 当「原始态」保存 ──
 // 那种保存方式在快速重复点击下会让第二次点击把 check icon 当成原态,
 // 后续 timer 全部还原成 check icon, 状态卡死。
-const COPY_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-</svg>`
-
-const COPY_CHECK_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-  <polyline points="20 6 9 17 4 12"></polyline>
-</svg>`
-
 type BundledLanguageInfo = {
   id: string
   name: string
@@ -107,6 +99,7 @@ class CodeBlockShikiView implements NodeView {
   private header: HTMLElement | null = null
   private languageBtn: HTMLButtonElement | null = null
   private copyBtn: HTMLButtonElement | null = null
+  private clipboardController: CodeBlockClipboardController | null = null
   private modeTabs: HTMLElement | null = null
   private previewTabBtn: HTMLButtonElement | null = null
   private codeTabBtn: HTMLButtonElement | null = null
@@ -135,7 +128,6 @@ class CodeBlockShikiView implements NodeView {
   // 复制成功态 reset timer ── 每次点击复制都重新调度, 旧的必须先
   // clearTimeout, 否则快速重复点击会让多个 timer 串行触发, 后发的
   // 把先发的还原给覆盖掉, 状态卡在 check icon 上不去。
-  private copyResetTimer: ReturnType<typeof setTimeout> | null = null
   // 全屏 overlay ── 独立的 DOM 树, 挂在 document.body 上, 跟原
   // code-block-wrapper 解耦, 避免与 wrapper 自身的预览态 / 折叠态
   // 互相影响。fullscreenContainer 是 overlay 的"定位参照物"
@@ -219,7 +211,10 @@ class CodeBlockShikiView implements NodeView {
     this.copyBtn.type = 'button'
     this.copyBtn.tabIndex = -1
     this.copyBtn.title = 'Copy code'
-    this.copyBtn.innerHTML = COPY_ICON_SVG
+    this.clipboardController = new CodeBlockClipboardController(
+      this.copyBtn,
+      () => this.node.textContent,
+    )
 
     // Mermaid preview/code tabs
     this.modeTabs = document.createElement('div')
@@ -670,12 +665,6 @@ class CodeBlockShikiView implements NodeView {
       this.toggleDropdown()
     })
 
-    // Copy button click
-    this.copyBtn?.addEventListener('click', (e) => {
-      e.stopPropagation()
-      this.handleCopy()
-    })
-
     this.previewTabBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
       this.setViewMode('preview')
@@ -1087,65 +1076,6 @@ private unmountFullscreenOverlay(): void {
     return container instanceof HTMLElement ? container : null;
   }
 
-  private handleCopy() {
-    const code = this.node.textContent
-
-    try {
-      navigator.clipboard.writeText(code).then(() => {
-        this.showCopySuccess()
-      }).catch(() => {
-        // Fallback for older browsers
-        this.fallbackCopy(code)
-      })
-    } catch {
-      this.fallbackCopy(code)
-    }
-  }
-
-  private fallbackCopy(text: string) {
-    const textArea = document.createElement('textarea')
-    textArea.value = text
-    textArea.style.position = 'fixed'
-    textArea.style.top = '-1000px'
-    textArea.style.left = '-1000px'
-    textArea.style.opacity = '0'
-    document.body.appendChild(textArea)
-    textArea.select()
-
-    try {
-      document.execCommand('copy')
-      this.showCopySuccess()
-    } catch (err) {
-      console.error('Failed to copy:', err)
-    }
-
-    document.body.removeChild(textArea)
-  }
-
-  private showCopySuccess() {
-    if (!this.copyBtn) return
-
-    // 取消上一次点击的 reset timer ── 防止快速重复点击下多个 timer
-    // 串行触发, 后发 timer 把先发 timer 的还原给覆盖, 状态卡在
-    // check icon 上不去。直接复用「原态是 COPY_ICON_SVG」这一恒定
-    // 不变量, 不再从 DOM 读 innerHTML 存「原态」(后者在 check 态
-    // 下会捕获到错误值, 是 bug 的直接成因)。
-    if (this.copyResetTimer !== null) {
-      clearTimeout(this.copyResetTimer)
-      this.copyResetTimer = null
-    }
-
-    this.copyBtn.innerHTML = COPY_CHECK_ICON_SVG
-    this.copyBtn.classList.add('copied')
-
-    this.copyResetTimer = setTimeout(() => {
-      this.copyResetTimer = null
-      if (!this.copyBtn) return
-      this.copyBtn.innerHTML = COPY_ICON_SVG
-      this.copyBtn.classList.remove('copied')
-    }, 2000)
-  }
-
   private getPos(): number | null {
     return typeof this.getPosFn === 'function' ? (this.getPosFn() ?? null) : null
   }
@@ -1186,14 +1116,8 @@ private unmountFullscreenOverlay(): void {
       window.removeEventListener('app-theme-changed', this.boundThemeChangeHandler)
       this.boundThemeChangeHandler = null
     }
-    // 取消 pending 的 copy reset timer ── 不清的话, NodeView 销毁
-    // (用户切走文档 / 关闭代码块) 后 timer 仍会触发, 对已 detach 的
-    // copyBtn 做 innerHTML 写入, 既无效也浪费 CPU, 还可能触发
-    // MutationObserver 噪声。
-    if (this.copyResetTimer !== null) {
-      clearTimeout(this.copyResetTimer)
-      this.copyResetTimer = null
-    }
+    this.clipboardController?.destroy()
+    this.clipboardController = null
   }
 }
 
