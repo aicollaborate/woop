@@ -67,7 +67,29 @@ impl SyncStore {
         )?;
         Self::migrate_workspace_scoped_tables(&mut connection)?;
         Self::migrate_outbox_version_columns(&connection)?;
+        Self::backfill_outbox_device_ids(&connection)?;
         Ok(connection)
+    }
+
+    fn backfill_outbox_device_ids(connection: &Connection) -> Result<(), SyncError> {
+        let device_id = connection
+            .query_row(
+                "SELECT value FROM sync_settings WHERE key = 'device_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        connection.execute(
+            "INSERT OR IGNORE INTO sync_settings(key, value) VALUES ('device_id', ?1)",
+            [&device_id],
+        )?;
+        connection.execute(
+            "UPDATE sync_outbox SET device_id = ?1 WHERE device_id = ''",
+            [&device_id],
+        )?;
+        Ok(())
     }
 
     fn migrate_outbox_version_columns(connection: &Connection) -> Result<(), SyncError> {

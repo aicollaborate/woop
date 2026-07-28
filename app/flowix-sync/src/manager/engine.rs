@@ -6,6 +6,21 @@ impl SyncManager {
         notebook_id: &str,
         local_notes: Vec<LocalNote>,
     ) -> Result<SyncReport, SyncError> {
+        let first = self
+            .sync_notebook_once(notebook_id, local_notes.clone())
+            .await;
+        if first.as_ref().is_err_and(SyncError::is_unauthorized) {
+            self.force_refresh_access_token().await?;
+            return self.sync_notebook_once(notebook_id, local_notes).await;
+        }
+        first
+    }
+
+    async fn sync_notebook_once(
+        &self,
+        notebook_id: &str,
+        local_notes: Vec<LocalNote>,
+    ) -> Result<SyncReport, SyncError> {
         if !self.store.enabled()? {
             return Err(SyncError::Disabled);
         }
@@ -117,16 +132,16 @@ impl SyncManager {
                             // resurrect the note with no base revision.
                             let put = self
                                 .client
-                                .put_note(
-                                    &token,
-                                    &link.workspace_id,
-                                    &link.cloud_notebook_id,
-                                    &note.id,
-                                    &note.filename,
-                                    &note.content,
-                                    None,
-                                    &local_version,
-                                )
+                                .put_note(PutNoteRequest {
+                                    access_token: &token,
+                                    workspace_id: &link.workspace_id,
+                                    notebook_id: &link.cloud_notebook_id,
+                                    note_id: &note.id,
+                                    filename: &note.filename,
+                                    content: &note.content,
+                                    base_revision: None,
+                                    change_version: &local_version,
+                                })
                                 .await?;
                             self.store.save_note_state(
                                 &workspace_id,
@@ -172,16 +187,16 @@ impl SyncManager {
                     if local_wins_lww(&local_version, &remote_version(change)) {
                         let put = self
                             .client
-                            .put_note(
-                                &token,
-                                &link.workspace_id,
-                                &link.cloud_notebook_id,
-                                &note.id,
-                                &note.filename,
-                                &note.content,
-                                change.revision.as_deref(),
-                                &local_version,
-                            )
+                            .put_note(PutNoteRequest {
+                                access_token: &token,
+                                workspace_id: &link.workspace_id,
+                                notebook_id: &link.cloud_notebook_id,
+                                note_id: &note.id,
+                                filename: &note.filename,
+                                content: &note.content,
+                                base_revision: change.revision.as_deref(),
+                                change_version: &local_version,
+                            })
                             .await?;
                         self.store.save_note_state(
                             &workspace_id,
@@ -209,16 +224,16 @@ impl SyncManager {
             if local_dirty {
                 let put = self
                     .client
-                    .put_note(
-                        &token,
-                        &link.workspace_id,
-                        &link.cloud_notebook_id,
-                        &note.id,
-                        &note.filename,
-                        &note.content,
-                        state.as_ref().map(|state| state.revision.as_str()),
-                        &local_version,
-                    )
+                    .put_note(PutNoteRequest {
+                        access_token: &token,
+                        workspace_id: &link.workspace_id,
+                        notebook_id: &link.cloud_notebook_id,
+                        note_id: &note.id,
+                        filename: &note.filename,
+                        content: &note.content,
+                        base_revision: state.as_ref().map(|state| state.revision.as_str()),
+                        change_version: &local_version,
+                    })
                     .await?;
                 self.store.save_note_state(
                     &workspace_id,

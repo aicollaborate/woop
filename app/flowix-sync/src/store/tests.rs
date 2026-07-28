@@ -1,4 +1,24 @@
 use super::*;
+
+fn enqueue(
+    store: &SyncStore,
+    note_id: &str,
+    operation: LocalChangeKind,
+    occurred_at: i64,
+    logical_counter: i64,
+) {
+    store
+        .enqueue_outbox(OutboxWrite {
+            workspace_id: "ws_1",
+            notebook_id: "nb_1",
+            note_id,
+            operation,
+            occurred_at,
+            logical_counter,
+            device_id: "device-a",
+        })
+        .unwrap();
+}
 use crate::models::{CloudAccount, CloudUser, CloudWorkspace};
 
 #[test]
@@ -198,6 +218,10 @@ fn migrates_legacy_sync_state_into_its_workspace() {
             .revision,
         "rev_legacy"
     );
+    let migrated = store.outbox("ws_legacy", "nb_1").unwrap();
+    assert_eq!(migrated.len(), 1);
+    assert!(!migrated[0].device_id.is_empty());
+    assert_eq!(migrated[0].device_id, store.device_id().unwrap());
 }
 
 #[test]
@@ -208,39 +232,9 @@ fn outbox_coalesces_latest_operation_and_clears_only_processed_entries() {
         .set_notebook("nb_1", "ws_1", "cloud_nb_1", true)
         .unwrap();
 
-    store
-        .enqueue_outbox(
-            "ws_1",
-            "nb_1",
-            "note_1",
-            LocalChangeKind::Put,
-            10,
-            1,
-            "device-a",
-        )
-        .unwrap();
-    store
-        .enqueue_outbox(
-            "ws_1",
-            "nb_1",
-            "note_1",
-            LocalChangeKind::Delete,
-            20,
-            2,
-            "device-a",
-        )
-        .unwrap();
-    store
-        .enqueue_outbox(
-            "ws_1",
-            "nb_1",
-            "note_2",
-            LocalChangeKind::Put,
-            30,
-            3,
-            "device-a",
-        )
-        .unwrap();
+    enqueue(&store, "note_1", LocalChangeKind::Put, 10, 1);
+    enqueue(&store, "note_1", LocalChangeKind::Delete, 20, 2);
+    enqueue(&store, "note_2", LocalChangeKind::Put, 30, 3);
 
     let entries = store.outbox("ws_1", "nb_1").unwrap();
     assert_eq!(entries.len(), 2);
@@ -264,17 +258,7 @@ fn retry_backoff_is_persisted_and_a_new_change_resets_it() {
     store
         .set_notebook("nb_1", "ws_1", "cloud_nb_1", true)
         .unwrap();
-    store
-        .enqueue_outbox(
-            "ws_1",
-            "nb_1",
-            "note_1",
-            LocalChangeKind::Put,
-            10,
-            1,
-            "device-a",
-        )
-        .unwrap();
+    enqueue(&store, "note_1", LocalChangeKind::Put, 10, 1);
 
     let retry_at = store
         .defer_outbox_retry("ws_1", "nb_1", 1_000)
@@ -283,17 +267,7 @@ fn retry_backoff_is_persisted_and_a_new_change_resets_it() {
     assert!((6_000..=7_001).contains(&retry_at));
     assert_eq!(store.retry_due_at("ws_1", "nb_1").unwrap(), Some(retry_at));
 
-    store
-        .enqueue_outbox(
-            "ws_1",
-            "nb_1",
-            "note_1",
-            LocalChangeKind::Put,
-            20,
-            2,
-            "device-a",
-        )
-        .unwrap();
+    enqueue(&store, "note_1", LocalChangeKind::Put, 20, 2);
     assert_eq!(store.retry_due_at("ws_1", "nb_1").unwrap(), Some(0));
 }
 

@@ -247,6 +247,16 @@ pub(crate) struct OutboxEntry {
     pub device_id: String,
 }
 
+pub(crate) struct OutboxWrite<'a> {
+    pub workspace_id: &'a str,
+    pub notebook_id: &'a str,
+    pub note_id: &'a str,
+    pub operation: LocalChangeKind,
+    pub occurred_at: i64,
+    pub logical_counter: i64,
+    pub device_id: &'a str,
+}
+
 impl OutboxEntry {
     pub(crate) fn version(&self) -> ChangeVersion {
         ChangeVersion {

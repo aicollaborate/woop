@@ -30,4 +30,8 @@ impl SyncError {
             _ => None,
         }
     }
+
+    pub(crate) fn is_unauthorized(&self) -> bool {
+        matches!(self, Self::Api { status: 401, .. })
+    }
 }

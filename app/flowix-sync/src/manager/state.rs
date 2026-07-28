@@ -8,6 +8,7 @@ impl SyncManager {
             session: Arc::new(RwLock::new(None)),
             membership: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 

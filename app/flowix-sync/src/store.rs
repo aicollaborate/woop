@@ -4,7 +4,9 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::SyncError;
-use crate::models::{CloudAccount, LocalChangeKind, NoteState, NotebookLink, OutboxEntry};
+use crate::models::{
+    CloudAccount, LocalChangeKind, NoteState, NotebookLink, OutboxEntry, OutboxWrite,
+};
 
 #[derive(Clone)]
 pub struct SyncStore {

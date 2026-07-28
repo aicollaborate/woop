@@ -1,29 +1,20 @@
 use super::*;
 
 impl SyncStore {
-    pub(crate) fn enqueue_outbox(
-        &self,
-        workspace_id: &str,
-        notebook_id: &str,
-        note_id: &str,
-        operation: LocalChangeKind,
-        occurred_at: i64,
-        logical_counter: i64,
-        device_id: &str,
-    ) -> Result<(), SyncError> {
+    pub(crate) fn enqueue_outbox(&self, input: OutboxWrite<'_>) -> Result<(), SyncError> {
         self.open()?.execute(
             r#"INSERT OR REPLACE INTO sync_outbox
                   (workspace_id, local_notebook_id, note_id, operation,
                   attempts, next_retry_at, created_at, logical_counter, device_id)
                VALUES (?1, ?2, ?3, ?4, 0, 0, ?5, ?6, ?7)"#,
             params![
-                workspace_id,
-                notebook_id,
-                note_id,
-                operation.as_str(),
-                occurred_at,
-                logical_counter,
-                device_id
+                input.workspace_id,
+                input.notebook_id,
+                input.note_id,
+                input.operation.as_str(),
+                input.occurred_at,
+                input.logical_counter,
+                input.device_id
             ],
         )?;
         Ok(())

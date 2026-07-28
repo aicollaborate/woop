@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
-use crate::client::CloudClient;
+use crate::client::{CloudClient, PutNoteRequest};
 use crate::error::SyncError;
 use crate::models::{
     AppleAuthChallenge, AppleAuthorization, AuthOutcome, ChangeVersion, CloudAccount,
@@ -21,6 +21,7 @@ pub struct SyncManager {
     session: Arc<RwLock<Option<RuntimeSession>>>,
     membership: Arc<RwLock<Option<CloudMembership>>>,
     last_error: Arc<RwLock<Option<String>>>,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 mod auth;

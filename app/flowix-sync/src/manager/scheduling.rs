@@ -34,15 +34,16 @@ impl SyncManager {
         let occurred_at = Utc::now()
             .timestamp_millis()
             .saturating_add(self.store.server_time_offset()?);
-        self.store.enqueue_outbox(
-            &link.workspace_id,
+        let device_id = self.store.device_id()?;
+        self.store.enqueue_outbox(crate::models::OutboxWrite {
+            workspace_id: &link.workspace_id,
             notebook_id,
             note_id,
             operation,
             occurred_at,
-            self.store.next_logical_counter()?,
-            &self.store.device_id()?,
-        )
+            logical_counter: self.store.next_logical_counter()?,
+            device_id: &device_id,
+        })
     }
 
     pub fn automatic_sync_due(&self, notebook_id: &str, now: i64) -> Result<bool, SyncError> {
@@ -108,11 +109,19 @@ impl SyncManager {
             .filter(|link| link.enabled)
             .ok_or(SyncError::NotebookDisabled)?;
         let token = self.access_token().await?;
-        match self
+        let first = self
             .client
             .sync_status(&token, &link.workspace_id, link.last_cursor)
-            .await
-        {
+            .await;
+        let result = if first.as_ref().is_err_and(SyncError::is_unauthorized) {
+            let refreshed = self.force_refresh_access_token().await?;
+            self.client
+                .sync_status(&refreshed, &link.workspace_id, link.last_cursor)
+                .await
+        } else {
+            first
+        };
+        match result {
             Ok(status) => {
                 if let Some(server_time) = status.server_time {
                     self.store

@@ -9,6 +9,17 @@ use crate::models::{
     MeData, PutNoteData, RefreshData, SyncStatusData,
 };
 
+pub(crate) struct PutNoteRequest<'a> {
+    pub access_token: &'a str,
+    pub workspace_id: &'a str,
+    pub notebook_id: &'a str,
+    pub note_id: &'a str,
+    pub filename: &'a str,
+    pub content: &'a str,
+    pub base_revision: Option<&'a str>,
+    pub change_version: &'a ChangeVersion,
+}
+
 fn apple_authorization_body(authorization: &AppleAuthorization) -> serde_json::Value {
     let mut body = serde_json::Map::from_iter([
         (
@@ -349,24 +360,20 @@ impl CloudClient {
 
     pub(crate) async fn put_note(
         &self,
-        access_token: &str,
-        workspace_id: &str,
-        notebook_id: &str,
-        note_id: &str,
-        filename: &str,
-        content: &str,
-        base_revision: Option<&str>,
-        change_version: &ChangeVersion,
+        input: PutNoteRequest<'_>,
     ) -> Result<PutNoteData, SyncError> {
         self.send::<DataEnvelope<PutNoteData>>(
             Method::PUT,
-            &format!("/v1/workspaces/{workspace_id}/notebooks/{notebook_id}/notes/{note_id}"),
-            Some(access_token),
+            &format!(
+                "/v1/workspaces/{}/notebooks/{}/notes/{}",
+                input.workspace_id, input.notebook_id, input.note_id
+            ),
+            Some(input.access_token),
             Some(json!({
-                "filename": filename,
-                "content": content,
-                "baseRevision": base_revision,
-                "changeVersion": change_version,
+                "filename": input.filename,
+                "content": input.content,
+                "baseRevision": input.base_revision,
+                "changeVersion": input.change_version,
             })),
         )
         .await

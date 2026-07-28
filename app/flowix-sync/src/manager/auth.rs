@@ -29,7 +29,7 @@ impl SyncManager {
             .workspaces
             .into_iter()
             .find(|workspace| workspace.kind.as_deref() == Some("personal"))
-            .or_else(|| auth.workspace)
+            .or(auth.workspace)
             .ok_or_else(|| SyncError::InvalidState("account has no workspace".into()))?;
         self.accept_auth(
             CloudAccount {
@@ -73,7 +73,13 @@ impl SyncManager {
         authorization: &AppleAuthorization,
     ) -> Result<CloudState, SyncError> {
         let access_token = self.access_token().await?;
-        self.client.apple_link(&access_token, authorization).await?;
+        let first = self.client.apple_link(&access_token, authorization).await;
+        if first.as_ref().is_err_and(SyncError::is_unauthorized) {
+            let refreshed = self.force_refresh_access_token().await?;
+            self.client.apple_link(&refreshed, authorization).await?;
+        } else {
+            first?;
+        }
         self.state()
     }
 
@@ -139,6 +145,37 @@ impl SyncManager {
             return Ok(current.access_token);
         }
         if current.refresh_token_expires_at <= now {
+            return Err(SyncError::NotAuthenticated);
+        }
+        self.refresh_access_token(&current.access_token).await
+    }
+
+    pub(super) async fn force_refresh_access_token(&self) -> Result<String, SyncError> {
+        let stale_access_token = self
+            .session
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|session| session.access_token.clone())
+            .ok_or(SyncError::NotAuthenticated)?;
+        self.refresh_access_token(&stale_access_token).await
+    }
+
+    async fn refresh_access_token(&self, stale_access_token: &str) -> Result<String, SyncError> {
+        let _guard = self.refresh_lock.lock().await;
+        let current = self
+            .session
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or(SyncError::NotAuthenticated)?;
+        // Another concurrent request already rotated this session while we
+        // were waiting for the lock; reuse its result instead of rotating the
+        // new refresh token a second time.
+        if current.access_token != stale_access_token {
+            return Ok(current.access_token);
+        }
+        if current.refresh_token_expires_at <= chrono::Utc::now().timestamp_millis() {
             return Err(SyncError::NotAuthenticated);
         }
         let refreshed = self.client.refresh(&current.refresh_token).await?;
