@@ -1,4 +1,5 @@
 import type { AgentTypeKey } from '@/types/agent';
+import type { ChatMessage } from '@/types';
 import { getAgentType } from '@/lib/agent-types';
 import { useAgentConversationStore } from '@features/agent/store/agent-conversation-store';
 import {
@@ -14,6 +15,17 @@ export interface LoadAgentThreadCardCacheInput {
 export interface LoadAgentThreadCardCacheResult {
   resolvedSessionId: string | null;
   loadedThreadId: string | null;
+  messages: ChatMessage[];
+}
+
+async function loadThreadMessages(
+  typeKey: AgentTypeKey,
+  threadId: string
+): Promise<ChatMessage[]> {
+  await useAgentConversationStore.getState().loadMessages(typeKey, threadId);
+  return (
+    useAgentConversationStore.getState().messageStates[threadId]?.messages ?? []
+  );
 }
 
 export async function loadAgentThreadCardCache(
@@ -29,17 +41,22 @@ export async function loadAgentThreadCardCache(
       : threadId;
 
     if (isLocalThreadId && sessionId && sessionId !== threadId) {
-      return { resolvedSessionId: sessionId, loadedThreadId: null };
+      const messages = await loadThreadMessages(typeKey, sessionId);
+      return {
+        resolvedSessionId: sessionId,
+        loadedThreadId: sessionId,
+        messages,
+      };
     }
 
     if (sessionId) {
-      await useAgentConversationStore.getState().loadMessages(typeKey, sessionId);
-      return { resolvedSessionId: null, loadedThreadId: sessionId };
+      const messages = await loadThreadMessages(typeKey, sessionId);
+      return { resolvedSessionId: null, loadedThreadId: sessionId, messages };
     }
 
-    return { resolvedSessionId: null, loadedThreadId: null };
+    return { resolvedSessionId: null, loadedThreadId: null, messages: [] };
   }
 
-  await useAgentConversationStore.getState().loadMessages(typeKey, threadId);
-  return { resolvedSessionId: null, loadedThreadId: threadId };
+  const messages = await loadThreadMessages(typeKey, threadId);
+  return { resolvedSessionId: null, loadedThreadId: threadId, messages };
 }

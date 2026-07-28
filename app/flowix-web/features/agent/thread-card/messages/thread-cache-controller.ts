@@ -1,4 +1,5 @@
 import type { AgentTypeKey } from "@/types/agent";
+import type { ChatMessage } from "@/types";
 import { loadAgentThreadCardCache } from "@features/agent/thread-card/agent-thread-card-cache";
 
 export interface ThreadCacheControllerOptions {
@@ -9,6 +10,7 @@ export interface ThreadCacheControllerOptions {
   getMessageCount: () => number;
   shouldLoad: () => boolean;
   render: () => void;
+  renderResolvedSessionMessages: (messages: ChatMessage[]) => void;
   applyResolvedSession: (
     threadId: string,
     sessionId: string,
@@ -24,6 +26,9 @@ export class ThreadCacheController {
   private readonly getMessageCount: () => number;
   private readonly shouldLoad: () => boolean;
   private readonly render: () => void;
+  private readonly renderResolvedSessionMessages: (
+    messages: ChatMessage[],
+  ) => void;
   private readonly applyResolvedSession: (
     threadId: string,
     sessionId: string,
@@ -49,6 +54,7 @@ export class ThreadCacheController {
     this.getMessageCount = options.getMessageCount;
     this.shouldLoad = options.shouldLoad;
     this.render = options.render;
+    this.renderResolvedSessionMessages = options.renderResolvedSessionMessages;
     this.applyResolvedSession = options.applyResolvedSession;
   }
 
@@ -126,6 +132,7 @@ export class ThreadCacheController {
           const typeKey = this.getTypeKey();
           const result = await loadAgentThreadCardCache({ threadId, typeKey });
           if (result.resolvedSessionId) {
+            this.renderResolvedSessionMessages(result.messages);
             this.applyResolvedSession(threadId, result.resolvedSessionId, typeKey);
             return;
           }

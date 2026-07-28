@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const agentConversationStoreMock = vi.hoisted(() => ({
   loadMessages: vi.fn(async () => undefined),
+  messageStates: {},
 }));
 
 vi.mock('@features/agent/store/agent-conversation-store', () => ({
@@ -38,10 +39,11 @@ describe('agent thread card cache helper', () => {
     expect(result).toEqual({
       resolvedSessionId: null,
       loadedThreadId: 'flowix-thread',
+      messages: [],
     });
   });
 
-  it('returns a resolved Codex session without loading when local id is resolved', async () => {
+  it('loads a resolved Codex session before replacing its local id', async () => {
     const { resolveExternalSessionId } = await import('@features/agent/services/external-agent-runtime-service');
     vi.mocked(resolveExternalSessionId).mockResolvedValueOnce('codex-real-session');
     const { loadAgentThreadCardCache } = await import('./agent-thread-card-cache');
@@ -53,9 +55,13 @@ describe('agent thread card cache helper', () => {
 
     expect(result).toEqual({
       resolvedSessionId: 'codex-real-session',
-      loadedThreadId: null,
+      loadedThreadId: 'codex-real-session',
+      messages: [],
     });
-    expect(agentConversationStoreMock.loadMessages).not.toHaveBeenCalled();
+    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+      'codex',
+      'codex-real-session'
+    );
   });
 
   it('loads Codex history for a resolved session id', async () => {
