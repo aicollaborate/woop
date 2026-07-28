@@ -203,6 +203,88 @@
  *  - <pre><code>foo</code></pre>          不命中 (pre 是 pre)
  * 编辑器正文也不带背景色 ── 仅靠 1px 边框 + 字色 80% 透明弱化做区分。
  * 卡片跨三处 (Tiptap 正文 / 卡片 / 右栏面板) 走同一套 token。 */
+.markdown-editor .agent-thread-card__message-content .agent-thread-card__math,
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math
+  * {
+  cursor: copy;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math--inline {
+  display: inline;
+  max-width: 100%;
+  border-radius: 4px;
+  padding: 0 2px;
+  vertical-align: baseline;
+  white-space: nowrap;
+  transition: background-color 120ms ease;
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math--block {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0;
+  padding: 0 10px;
+  overflow: visible;
+  border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--muted) 58%, transparent);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+/* Keep display math naturally sized while allowing long formulas to scroll. */
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math-scroller {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 12px 0;
+  box-sizing: border-box;
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--primary) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math--copied {
+  background: color-mix(in oklch, var(--primary) 16%, transparent);
+}
+
+.markdown-editor
+  .agent-thread-card__message-content
+  .agent-thread-card__math--block.agent-thread-card__math--copied {
+  border-color: color-mix(in oklch, var(--primary) 35%, var(--border));
+}
+
+.markdown-editor .agent-thread-card__message-content .katex-display {
+  margin: 0;
+}
+
 .markdown-editor .agent-thread-card__message-content :not(pre) > code {
   padding: 0 0.3rem;
   border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
@@ -563,5 +645,4 @@
   .agent-thread-card__loading-indicator {
   display: none;
 }
-
 

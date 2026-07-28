@@ -1,4 +1,4 @@
-import type { AppLanguage } from "@/lib/i18n";
+import { translate, type AppLanguage } from "@/lib/i18n";
 import type { ThreadState } from "@features/agent/store/chat-store";
 import {
   createAgentMessageViewModel,
@@ -69,6 +69,7 @@ export function renderAgentThreadCardBudgetedMarkdown(options: {
   fillWithAgentThreadCardMarkdownHtml(
     content,
     renderAgentThreadCardMarkdownToHtml(display.text),
+    translate(context.language, "editor.threadCard.copyLatex"),
   );
 
   let toggle = directChildDisplayToggle(toggleParent);
