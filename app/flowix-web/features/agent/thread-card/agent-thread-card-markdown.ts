@@ -72,10 +72,117 @@ export function decodeAgentThreadCardInputImages(
   }
 }
 
+type KatexModule = typeof import("katex");
+
+const AGENT_MATH_SELECTOR = ".agent-thread-card__math[data-latex]";
+const BLOCK_MATH_RE =
+  /^ {0,3}(?:\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$)/;
+const BLOCK_MATH_START_RE = /^ {0,3}(?:\\\[|\$\$)/m;
+const INLINE_MATH_RE = /^\\\(([\s\S]*?)\\\)/;
+const mathCopyContainers = new WeakSet<HTMLElement>();
+let katexPromise: Promise<KatexModule> | null = null;
+let katexLoaded: KatexModule | null = null;
+
+function escapeAgentThreadCardHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeAgentThreadCardHtmlAttr(value: string): string {
+  return escapeAgentThreadCardHtml(value)
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function ensureAgentThreadCardKatex(): Promise<KatexModule> {
+  if (katexLoaded) return Promise.resolve(katexLoaded);
+  if (!katexPromise) {
+    katexPromise = Promise.all([
+      import("katex"),
+      import("katex/dist/katex.min.css"),
+    ])
+      .then(([module]) => {
+        katexLoaded = module;
+        return module;
+      })
+      .catch((error) => {
+        katexPromise = null;
+        throw error;
+      });
+  }
+  return katexPromise;
+}
+
+function renderAgentMathHtml(latex: string, displayMode: boolean): string {
+  const normalizedLatex = latex.trim();
+  const className = displayMode
+    ? "agent-thread-card__math agent-thread-card__math--block"
+    : "agent-thread-card__math agent-thread-card__math--inline";
+  const attrLatex = escapeAgentThreadCardHtmlAttr(normalizedLatex);
+  const escapedLatex = escapeAgentThreadCardHtml(normalizedLatex);
+  const content = displayMode
+    ? `<span class="agent-thread-card__math-scroller">${escapedLatex}</span>`
+    : escapedLatex;
+
+  return `<span class="${className}" data-latex="${attrLatex}" data-display-mode="${displayMode ? "block" : "inline"}" role="button" tabindex="0">${content}</span>`;
+}
+
+/**
+ * 行为约束：
+ * - 数学语法必须由 Marked tokenizer 识别，让 Markdown lexer 统一处理代码、链接和转义边界。
+ * - tokenizer 只消费到公式结束符，结束符后的 Markdown 必须继续参与解析。
+ * - data-latex 始终保存原始公式；KaTeX 只替换展示内容，复制功能不得依赖渲染后的 DOM。
+ */
 const cardMarked = new Marked({
   async: false,
   gfm: true,
   breaks: true,
+});
+
+cardMarked.use({
+  extensions: [
+    {
+      name: "agentMathBlock",
+      level: "block",
+      start(src) {
+        return BLOCK_MATH_START_RE.exec(src)?.index;
+      },
+      tokenizer(src) {
+        const match = BLOCK_MATH_RE.exec(src);
+        if (!match) return;
+        return {
+          type: "agentMathBlock",
+          raw: match[0],
+          text: match[1] ?? match[2] ?? "",
+        };
+      },
+      renderer(token) {
+        return `${renderAgentMathHtml(token.text, true)}\n`;
+      },
+    },
+    {
+      name: "agentMathInline",
+      level: "inline",
+      start(src) {
+        const index = src.indexOf("\\(");
+        return index >= 0 ? index : undefined;
+      },
+      tokenizer(src) {
+        const match = INLINE_MATH_RE.exec(src);
+        if (!match) return;
+        return {
+          type: "agentMathInline",
+          raw: match[0],
+          text: match[1],
+        };
+      },
+      renderer(token) {
+        return renderAgentMathHtml(token.text, false);
+      },
+    },
+  ],
 });
 
 export function renderAgentThreadCardMarkdownToHtml(content: string): string {
@@ -83,9 +190,88 @@ export function renderAgentThreadCardMarkdownToHtml(content: string): string {
   return cardMarked.parse(content) as string;
 }
 
+function findAgentMathElement(
+  container: HTMLElement,
+  target: EventTarget | null,
+): HTMLElement | null {
+  if (!(target instanceof Element)) return null;
+  const math = target.closest<HTMLElement>(AGENT_MATH_SELECTOR);
+  return math && container.contains(math) ? math : null;
+}
+
+async function copyAgentMath(math: HTMLElement): Promise<void> {
+  const latex = math.dataset.latex;
+  if (!latex || !navigator.clipboard?.writeText) return;
+
+  try {
+    await navigator.clipboard.writeText(latex);
+    math.classList.add("agent-thread-card__math--copied");
+    window.setTimeout(() => {
+      math.classList.remove("agent-thread-card__math--copied");
+    }, 700);
+  } catch {
+    // Clipboard access is optional in browser previews and may be denied.
+  }
+}
+
+function attachAgentThreadCardMathCopyHandlers(container: HTMLElement): void {
+  if (mathCopyContainers.has(container)) return;
+  mathCopyContainers.add(container);
+
+  container.addEventListener("click", (event) => {
+    const math = findAgentMathElement(container, event.target);
+    if (!math) return;
+    event.stopPropagation();
+    void copyAgentMath(math);
+  });
+
+  container.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const math = findAgentMathElement(container, event.target);
+    if (!math) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void copyAgentMath(math);
+  });
+}
+
+async function renderAgentThreadCardMath(container: HTMLElement): Promise<void> {
+  const mathNodes = Array.from(
+    container.querySelectorAll<HTMLElement>(AGENT_MATH_SELECTOR),
+  );
+  if (!mathNodes.length) return;
+
+  let katex: KatexModule;
+  try {
+    katex = await ensureAgentThreadCardKatex();
+  } catch {
+    return;
+  }
+
+  mathNodes.forEach((math) => {
+    const latex = math.dataset.latex;
+    if (!latex || math.dataset.katexRendered === "true") return;
+    const renderTarget =
+      math.querySelector<HTMLElement>(".agent-thread-card__math-scroller") ??
+      math;
+
+    try {
+      katex.render(latex, renderTarget, {
+        displayMode: math.dataset.displayMode === "block",
+        throwOnError: false,
+        strict: false,
+      });
+      math.dataset.katexRendered = "true";
+    } catch {
+      renderTarget.textContent = latex;
+    }
+  });
+}
+
 export function fillWithAgentThreadCardMarkdownHtml(
   container: HTMLElement,
   html: string,
+  mathCopyLabel = "Copy LaTeX",
 ): void {
   container.replaceChildren();
   if (!html) return;
@@ -93,6 +279,12 @@ export function fillWithAgentThreadCardMarkdownHtml(
   const template = document.createElement("template");
   template.innerHTML = html;
   container.append(template.content.cloneNode(true));
+  container.querySelectorAll<HTMLElement>(AGENT_MATH_SELECTOR).forEach((math) => {
+    math.setAttribute("aria-label", mathCopyLabel);
+    math.title = mathCopyLabel;
+  });
+  attachAgentThreadCardMathCopyHandlers(container);
+  void renderAgentThreadCardMath(container);
 }
 
 export function parseAgentThreadCardMarkdown(token: unknown) {

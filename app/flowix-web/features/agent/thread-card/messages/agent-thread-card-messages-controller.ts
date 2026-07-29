@@ -1,4 +1,5 @@
 import type { AgentTypeKey } from "@/types/agent";
+import type { ChatMessage } from "@/types";
 import type { AppLanguage, I18nKey } from "@/lib/i18n";
 import type { ThreadState } from "@features/agent/store/chat-store";
 import {
@@ -27,6 +28,7 @@ export interface AgentThreadCardMessagesControllerOptions {
   getMessageCount: () => number;
   shouldLoadThreadMessages: () => boolean;
   renderThreadState: () => void;
+  renderResolvedSessionMessages: (messages: ChatMessage[]) => void;
   applyResolvedSession: (
     threadId: string,
     sessionId: string,
@@ -78,6 +80,7 @@ export class AgentThreadCardMessagesController {
       getMessageCount: options.getMessageCount,
       shouldLoad: options.shouldLoadThreadMessages,
       render: options.renderThreadState,
+      renderResolvedSessionMessages: options.renderResolvedSessionMessages,
       applyResolvedSession: options.applyResolvedSession,
     });
   }

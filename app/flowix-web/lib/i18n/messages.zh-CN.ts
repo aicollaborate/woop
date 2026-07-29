@@ -970,6 +970,7 @@ const zhCN = {
     "editor.threadCard.expand": "展开",
     "editor.threadCard.collapse": "收起",
     "editor.threadCard.copySessionId": "复制 Session ID",
+    "editor.threadCard.copyLatex": "复制 LaTeX",
     "editor.threadCard.model": "模型",
     "editor.threadCard.lastRun": "上次运行",
     "editor.threadCard.totalTokens": "Tokens",

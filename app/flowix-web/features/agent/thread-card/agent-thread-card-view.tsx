@@ -417,6 +417,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getMessageCount: () => this.currentMessages().length,
       shouldLoadThreadMessages: () => this.shouldLoadThreadMessages(),
       renderThreadState: () => this.renderThreadState(),
+      renderResolvedSessionMessages: (messages) =>
+        this.renderResolvedSessionMessages(messages),
       applyResolvedSession: (threadId, sessionId, typeKey) => {
         this.applyResolvedExternalSessionId(threadId, sessionId, typeKey);
       },
@@ -1141,6 +1143,20 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.messages.render({
       messages,
       isLoading: runtimeView.showLoadingIndicator,
+      shouldRenderMessages,
+    });
+  }
+
+  private renderResolvedSessionMessages(
+    messages: ThreadState["messages"],
+  ): void {
+    if (this.isDestroyed || !this.dom.isConnected) return;
+    if (messages.length === 0) return;
+    const shouldRenderMessages = !this.collapsed || this.isFullscreen;
+    this.dom.classList.remove("agent-thread-card--thread-cache-loading");
+    this.messages.render({
+      messages: shouldRenderMessages ? messages : [],
+      isLoading: false,
       shouldRenderMessages,
     });
   }

@@ -1000,6 +1000,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "editor.threadCard.expand": "Expand",
     "editor.threadCard.collapse": "Collapse",
     "editor.threadCard.copySessionId": "Copy Session ID",
+    "editor.threadCard.copyLatex": "Copy LaTeX",
     "editor.threadCard.model": "Model",
     "editor.threadCard.lastRun": "Last run",
     "editor.threadCard.totalTokens": "Total tokens",
