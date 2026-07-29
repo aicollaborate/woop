@@ -22,19 +22,21 @@
 	--foreground: oklch(0.930 0.005 var(--neutral-hue));
 	--card: oklch(0.213 0.013 var(--neutral-hue));
 
-	/* 浮层底: 中灰, 与暗桌主底形成中等明度差, 浮层读作"亮一档" */
-	--popover: oklch(0.24 0 0);
+	/* 浮层底: 沿用 neutral-hue 的冷蓝灰轴, 避免纯中灰浮层与其余暗色
+	 * surface 产生色温断层; 比 card / secondary 亮一档, 再由 muted / border
+	 * 承接 hover 与边界层级。 */
+	--popover: oklch(0.248 0.014 var(--neutral-hue));
 	--popover-foreground: var(--foreground);
 
 	--secondary: oklch(0.244 0.014 var(--neutral-hue));
 	--secondary-foreground: oklch(0.865 0.008 var(--neutral-hue));
-	--muted: oklch(0.284 0.016 var(--neutral-hue));
+	--muted: oklch(0.292 0.016 var(--neutral-hue));
 	--muted-foreground: oklch(0.716 0.015 var(--neutral-hue));
-	--accent: oklch(0.273 0.022 var(--neutral-hue));
+	--accent: oklch(0.310 0.022 var(--neutral-hue));
 
-	--border: oklch(0.284 0.014 var(--neutral-hue));
+	--border: oklch(0.300 0.014 var(--neutral-hue));
 	--input: var(--border);
-	--divider: color-mix(in oklch, var(--background) 50%, var(--border));
+	--divider: color-mix(in oklch, var(--background) 35%, var(--border));
 	/* Keyboard focus ring follows the theme primary color. */
 	--ring: var(--primary);
 

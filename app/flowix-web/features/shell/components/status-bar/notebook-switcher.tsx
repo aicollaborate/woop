@@ -273,7 +273,11 @@ export function NotebookSwitcher({
                   : null;
               const rowClassName = cn(
                 'group relative flex select-none items-center gap-2 rounded-md px-2 py-1.5 pr-14 transition-colors',
-                isSource ? 'opacity-30' : 'cursor-pointer hover:bg-[var(--muted)]'
+                isSource
+                  ? 'opacity-30'
+                  : isActive
+                    ? 'cursor-pointer bg-[var(--accent)]'
+                    : 'cursor-pointer hover:bg-[var(--muted)]'
               );
 
               // 行内容 fragment, 在拖拽态和非拖拽态复用。

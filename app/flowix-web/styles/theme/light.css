@@ -49,7 +49,7 @@
 	/* muted-foreground: 原 0.613 + chroma 0.018 — 偏色相. 降到 0.009
 	 * 与 rock 一致. */
 	--muted-foreground: oklch(0.62 0.009 var(--neutral-hue));
-	--accent: oklch(0.972 0.006 var(--neutral-hue));
+	--accent: oklch(0.95 0.006 var(--neutral-hue));
 
 	/* border: L 从原 0.928 提到 0.946 — 原值偏深, 在白底上读作
 	 * "深灰描边"; 与 rock 一致后, ΔL vs bg = 0.040, 读作"浅纸痕". */

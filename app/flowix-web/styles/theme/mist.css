@@ -25,7 +25,7 @@
 	--secondary-foreground: oklch(0.36 0.010 var(--neutral-hue));
 	--muted: oklch(0.948 0.006 var(--neutral-hue));
 	--muted-foreground: oklch(0.62 0.009 var(--neutral-hue));
-	--accent: oklch(0.972 0.006 var(--neutral-hue));
+	--accent: oklch(0.95 0.006 var(--neutral-hue));
 
 	--border: oklch(0.946 0.006 var(--neutral-hue));
 	--input: var(--border);
