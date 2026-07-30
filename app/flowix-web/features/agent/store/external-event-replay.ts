@@ -1,11 +1,14 @@
 import type { AgentChunk, AgentTypeKey } from "@/types/agent";
+import type { AgentExternalEvent } from "@platform/tauri/client";
 import { agentClient } from "@features/agent/store/agent-client";
 import type { ChatStore } from "@features/agent/store/chat-store";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
 
 const REPLAY_PAGE_SIZE = 1000;
+const MAX_COMPLETE_EXTERNAL_EVENTS = 10_000;
 const AGENT_CHUNK_KINDS = new Set<AgentChunk["kind"]>([
+  "user_message",
   "stream_start",
   "text",
   "reasoning",
@@ -16,14 +19,6 @@ const AGENT_CHUNK_KINDS = new Set<AgentChunk["kind"]>([
   "stream_end",
   "session_resolved",
 ]);
-const DISPLAY_CHUNK_KINDS = new Set<AgentChunk["kind"]>([
-  "text",
-  "reasoning",
-  "tool_call",
-  "tool_result",
-  "error",
-]);
-
 function resetReplayState(state: ThreadState | undefined): ThreadState {
   return {
     messages: [],
@@ -46,6 +41,24 @@ function parseReplayChunk(normalizedJson: string): AgentChunk | null {
     return value;
   } catch (err) {
     console.warn("[AgentExternalReplay] skipped malformed event payload:", err);
+    return null;
+  }
+}
+
+function isTruncatedHistoryEvent(event: AgentExternalEvent): boolean {
+  try {
+    const value = JSON.parse(event.normalizedJson) as { kind?: string };
+    return value.kind === "history_truncated";
+  } catch {
+    return false;
+  }
+}
+
+function replayEventKind(event: AgentExternalEvent): string | null {
+  try {
+    const value = JSON.parse(event.normalizedJson) as { kind?: unknown };
+    return typeof value.kind === "string" ? value.kind : null;
+  } catch {
     return null;
   }
 }
@@ -76,37 +89,58 @@ export async function replayExternalEventsForThread(
   threadId: string,
 ): Promise<boolean> {
   let afterId: number | null = null;
-  let replayedDisplay = false;
+  const persistedEvents: AgentExternalEvent[] = [];
   const resetThreadIds = new Set<string>();
   resetThreadsForReplay(set, [threadId], typeKey);
   resetThreadIds.add(threadId);
 
   for (;;) {
-    const events = await agentClient.externalEvents(
-      threadId,
-      afterId,
-      REPLAY_PAGE_SIZE,
-    );
+    let events: AgentExternalEvent[];
+    try {
+      events = await agentClient.externalEvents(
+        threadId,
+        afterId,
+        REPLAY_PAGE_SIZE,
+      );
+    } catch (err) {
+      console.warn(
+        "[AgentExternalReplay] database replay failed; using external history:",
+        err,
+      );
+      return false;
+    }
     if (events.length === 0) break;
-
-    const newThreadIds = events
-      .map((event) => event.threadId)
-      .filter((id) => !resetThreadIds.has(id));
-    if (newThreadIds.length > 0) {
-      resetThreadsForReplay(set, newThreadIds, typeKey);
-      for (const id of newThreadIds) resetThreadIds.add(id);
-    }
-
-    for (const event of events) {
-      const chunk = parseReplayChunk(event.normalizedJson);
-      if (!chunk) continue;
-      if (DISPLAY_CHUNK_KINDS.has(chunk.kind)) replayedDisplay = true;
-      get().dispatchAgentChunk(chunk);
-    }
+    persistedEvents.push(...events);
 
     afterId = events[events.length - 1]?.id ?? afterId;
     if (events.length < REPLAY_PAGE_SIZE) break;
   }
+
+  if (persistedEvents.length === 0) return false;
+  if (
+    persistedEvents.length >= MAX_COMPLETE_EXTERNAL_EVENTS ||
+    persistedEvents.some(isTruncatedHistoryEvent) ||
+    // user_message became the first normalized event in the complete-history
+    // protocol. Older databases started at stream_start and therefore lack
+    // user turns; treat those as incomplete and use transcript/main history.
+    replayEventKind(persistedEvents[0]) !== "user_message"
+  ) {
+    return false;
+  }
+
+  const newThreadIds = persistedEvents
+    .map((event) => event.threadId)
+    .filter((id) => !resetThreadIds.has(id));
+  if (newThreadIds.length > 0) {
+    resetThreadsForReplay(set, newThreadIds, typeKey);
+    for (const id of newThreadIds) resetThreadIds.add(id);
+  }
+
+  for (const event of persistedEvents) {
+    const chunk = parseReplayChunk(event.normalizedJson);
+    if (!chunk) continue;
+    get().dispatchAgentChunk(chunk);
+  }
   get().flushAgentEventBuffer();
-  return replayedDisplay;
+  return true;
 }

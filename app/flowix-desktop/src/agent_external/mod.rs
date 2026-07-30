@@ -44,9 +44,9 @@ pub(crate) fn acquire_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 // submodules.
 pub use shared::{
     append_workspace_context, default_thread_title, emit_chunk_with_run_id,
-    persist_and_emit_external_chunk, persist_external_chunk, read_capped_line,
-    read_stderr_to_string, read_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,
-    select_external_session_for_runtime, truncate_chars, truncate_for_log, ExternalRunRegistry,
-    StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
-    USER_STOPPED_REASON,
+    persist_and_emit_external_chunk, persist_and_emit_external_chunk_with_metadata,
+    persist_external_chunk, read_capped_line, read_stderr_to_string, read_to_string,
+    resolve_and_freeze_runtime_cwd, resolve_run_id, select_external_session_for_runtime,
+    truncate_chars, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry, StreamingEmitBuffer,
+    MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES, USER_STOPPED_REASON,
 };

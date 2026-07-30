@@ -13,6 +13,14 @@ import {
   truncateToolResultForDisplay,
   truncateToolResultOutputPreview,
 } from "@features/agent/message/display-limits";
+import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-order";
+import type { MessageChunkMetadata } from "@features/agent/store/message-chunks";
+
+function toolMessageTimestamp(sourceTimestamp?: number): string {
+  return Number.isFinite(sourceTimestamp)
+    ? new Date(sourceTimestamp!).toISOString()
+    : new Date().toISOString();
+}
 
 /**
  * tool_call chunk ── 插入一条 `role: "tool"` 的消息, `isLoading=true` 等
@@ -29,13 +37,17 @@ export function applyToolCallChunk(
   input: unknown,
   agentType?: AgentTypeKey,
   display?: ChatMessage["toolDisplay"],
+  metadata: MessageChunkMetadata = {},
 ): ApplyResult {
   const toolInput = normalizeToolInput(input);
   const toolMessage: ChatMessage = {
-    id: `tool-${id || Date.now()}`,
+    id: metadata.id ?? `tool-${id || Date.now()}`,
     role: "tool",
     content: "",
-    timestamp: new Date().toISOString(),
+    timestamp: toolMessageTimestamp(metadata.sourceTimestamp),
+    sourceTimestamp: metadata.sourceTimestamp,
+    sourceSequence: metadata.sourceSequence,
+    sourceSubsequence: metadata.sourceSubsequence,
     toolCallId: id,
     toolName: name,
     toolAgentType: agentType,
@@ -61,6 +73,11 @@ export function applyToolCallChunk(
       toolAgentType: agentType ?? existing.toolAgentType,
       toolInput: toolInput ?? existing.toolInput,
       toolDisplay: display ?? toolMessage.toolDisplay ?? existing.toolDisplay,
+      timestamp: existing.timestamp || toolMessage.timestamp,
+      sourceTimestamp: existing.sourceTimestamp ?? metadata.sourceTimestamp,
+      sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
+      sourceSubsequence:
+        existing.sourceSubsequence ?? metadata.sourceSubsequence,
       // Replayed/complete events must never reopen an already-finished row.
       isLoading: existing.isLoading === false ? false : true,
     };
@@ -71,7 +88,7 @@ export function applyToolCallChunk(
     };
   }
   return {
-    messages: [...st.messages, toolMessage],
+    messages: insertAgentMessageBySourceOrder(st.messages, toolMessage),
     pendingAssistantId: null,
     pendingReasoningId: st.pendingReasoningId,
   };
@@ -89,6 +106,7 @@ export function applyToolResultChunk(
   name: string,
   result: unknown,
   agentType?: AgentTypeKey,
+  metadata: MessageChunkMetadata = {},
 ): ApplyResult {
   const resultContent = summarizeToolResult(result);
   const resultToolName = name && name !== "tool_result" ? name : "";
@@ -107,20 +125,20 @@ export function applyToolResultChunk(
             }
           : m,
       )
-    : [
-        ...st.messages,
-        {
-          id: `tool-${id || Date.now()}`,
-          role: "tool" as const,
-          content: resultContent,
-          timestamp: new Date().toISOString(),
-          toolCallId: id,
-          toolName: resultToolName || "unknown_tool",
-          toolAgentType: agentType,
-          toolData: resultContent,
-          isLoading: false,
-        },
-      ];
+    : insertAgentMessageBySourceOrder(st.messages, {
+        id: metadata.id ?? `tool-${id || Date.now()}`,
+        role: "tool" as const,
+        content: resultContent,
+        timestamp: toolMessageTimestamp(metadata.sourceTimestamp),
+        sourceTimestamp: metadata.sourceTimestamp,
+        sourceSequence: metadata.sourceSequence,
+        sourceSubsequence: metadata.sourceSubsequence,
+        toolCallId: id,
+        toolName: resultToolName || "unknown_tool",
+        toolAgentType: agentType,
+        toolData: resultContent,
+        isLoading: false,
+      });
   return {
     messages,
     pendingAssistantId: st.pendingAssistantId,

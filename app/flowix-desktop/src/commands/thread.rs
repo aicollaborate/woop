@@ -222,6 +222,15 @@ pub async fn claude_thread_get(thread_id: String) -> Result<GetThreadResponse, S
 }
 
 #[tauri::command]
+pub async fn claude_thread_get_page(
+    thread_id: String,
+    before_sequence: Option<i64>,
+    limit: i64,
+) -> Result<ThreadMessagesPage, String> {
+    crate::agent_external::claude::get_session_page(&thread_id, before_sequence, limit).await
+}
+
+#[tauri::command]
 pub async fn claude_thread_session_id(
     thread_id: String,
     state: State<'_, AppState>,

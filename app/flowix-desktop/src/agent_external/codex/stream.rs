@@ -5,13 +5,18 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::io::BufReader;
 
-use super::events::{codex_event_to_chunks, is_transient_codex_reconnect_event};
-use super::history::{get_rollout_tool_response_items_since, is_codex_session_id};
+use super::events::{
+    codex_chunk_metadata, codex_event_to_chunks, is_transient_codex_reconnect_event,
+    parse_event_timestamp_millis,
+};
+use super::history::{
+    get_rollout_tool_response_items_since, is_codex_session_id, CodexRolloutEvent,
+};
 use super::io::read_capped_line;
-use super::runtime::persist_and_emit_codex_chunk;
+use super::runtime::{persist_and_emit_codex_chunk, persist_and_emit_codex_chunk_with_metadata};
 use super::tool_events::nested_exec_tool_names;
 use super::{AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
-use crate::agent_external::{truncate_for_log, ExternalRunRegistry};
+use crate::agent_external::{truncate_for_log, AgentChunkMetadata, ExternalRunRegistry};
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
@@ -37,6 +42,7 @@ where
     let mut emitted_tool_ids = HashSet::new();
     let mut emitted_tool_signatures = HashMap::new();
     let mut blocked_post_completion_chunks = 0usize;
+    let mut source_sequence = 0u64;
     while let Some((line, line_truncated_by_reader)) =
         read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await?
     {
@@ -44,6 +50,7 @@ where
         if line.is_empty() {
             continue;
         }
+        source_sequence = source_sequence.saturating_add(1);
         // dev-only: 鎶婂瓙杩涚▼ stdout 鍘熷琛岄暅鍍忓埌 ~/.flowix/debug/, 1:1 杩樺師
         // Mirror raw vendor output in debug builds; release builds are a no-op.
         runtime_log::dump_debug_stdout_line(AGENT_TYPE, &thread_id, &run_id, line);
@@ -161,14 +168,34 @@ where
             }
         }
 
-        for chunk in codex_event_to_chunks(&emit_thread_id, &value) {
+        let source_timestamp = parse_event_timestamp_millis(&value)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+        for (source_subsequence, chunk) in codex_event_to_chunks(&emit_thread_id, &value)
+            .into_iter()
+            .enumerate()
+        {
             if !should_emit_following_stdout_chunks(terminal_signal) {
                 blocked_post_completion_chunks += 1;
                 continue;
             }
             record_stdout_tool_call(&chunk, &mut emitted_tool_ids, &mut emitted_tool_signatures);
-            persist_and_emit_codex_chunk(&app_handle, &thread_manager, &chunk, &run_id, Some(line))
-                .await;
+            let metadata = complete_chunk_metadata(
+                codex_chunk_metadata(&value, &chunk),
+                &chunk,
+                &run_id,
+                source_timestamp,
+                source_sequence,
+                source_subsequence as u32,
+            );
+            persist_and_emit_codex_chunk_with_metadata(
+                &app_handle,
+                &thread_manager,
+                &chunk,
+                &run_id,
+                Some(line),
+                &metadata,
+            )
+            .await;
         }
 
         match codex_run_signal(&value) {
@@ -192,7 +219,7 @@ where
         if let Some(session_id) = resolved_session_id.as_deref() {
             match get_rollout_tool_response_items_since(session_id, started_at_millis).await {
                 Ok(events) => {
-                    for chunk in reconcile_rollout_tool_events(
+                    for (chunk, metadata) in reconcile_rollout_tool_events(
                         &emit_thread_id,
                         &events,
                         &emitted_tool_ids,
@@ -201,12 +228,13 @@ where
                         if stream_end_emitted.load(Ordering::Acquire) {
                             break;
                         }
-                        persist_and_emit_codex_chunk(
+                        persist_and_emit_codex_chunk_with_metadata(
                             &app_handle,
                             &thread_manager,
                             &chunk,
                             &run_id,
                             None,
+                            &metadata,
                         )
                         .await;
                         reconciled_tool_chunks += 1;
@@ -277,16 +305,16 @@ fn record_stdout_tool_call(
 
 fn reconcile_rollout_tool_events(
     thread_id: &str,
-    events: &[Value],
+    events: &[CodexRolloutEvent],
     stdout_tool_ids: &HashSet<String>,
     stdout_tool_signatures: &mut HashMap<String, usize>,
-) -> Vec<AgentChunk> {
+) -> Vec<(AgentChunk, AgentChunkMetadata)> {
     let mut chunks = Vec::new();
     let mut skipped_rollout_ids = HashSet::new();
     let mut rollout_tool_names = HashMap::new();
 
     for event in events {
-        let payload = event.get("payload").unwrap_or(event);
+        let payload = event.value.get("payload").unwrap_or(&event.value);
         let nested_exec_names = if payload.get("type").and_then(Value::as_str)
             == Some("custom_tool_call")
             && payload.get("name").and_then(Value::as_str) == Some("exec")
@@ -298,7 +326,20 @@ fn reconcile_rollout_tool_events(
         let skip_nested_exec = !nested_exec_names.is_empty()
             && consume_all_tool_signatures(stdout_tool_signatures, &nested_exec_names);
 
-        for mut chunk in codex_event_to_chunks(thread_id, event) {
+        for (source_subsequence, mut chunk) in codex_event_to_chunks(thread_id, &event.value)
+            .into_iter()
+            .enumerate()
+        {
+            let metadata = complete_chunk_metadata(
+                codex_chunk_metadata(&event.value, &chunk),
+                &chunk,
+                "rollout",
+                event
+                    .source_timestamp
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                event.source_sequence,
+                source_subsequence as u32,
+            );
             match &mut chunk {
                 AgentChunk::ToolCall {
                     id, name, input, ..
@@ -317,7 +358,7 @@ fn reconcile_rollout_tool_events(
                         skipped_rollout_ids.insert(id.clone());
                     } else {
                         rollout_tool_names.insert(id.clone(), name.clone());
-                        chunks.push(chunk);
+                        chunks.push((chunk, metadata));
                     }
                 }
                 AgentChunk::ToolResult { id, name, .. } => {
@@ -332,7 +373,7 @@ fn reconcile_rollout_tool_events(
                     // Paired results complete calls backfilled above. Result-only
                     // records are also useful: the frontend can create a completed
                     // row when a call record was absent or malformed.
-                    chunks.push(chunk);
+                    chunks.push((chunk, metadata));
                 }
                 _ => {}
             }
@@ -340,6 +381,32 @@ fn reconcile_rollout_tool_events(
     }
 
     chunks
+}
+
+fn complete_chunk_metadata(
+    mut metadata: AgentChunkMetadata,
+    chunk: &AgentChunk,
+    run_id: &str,
+    source_timestamp: i64,
+    source_sequence: u64,
+    source_subsequence: u32,
+) -> AgentChunkMetadata {
+    if metadata.message_id.is_none() {
+        let kind = match chunk {
+            AgentChunk::Text { .. } => Some("assistant"),
+            AgentChunk::Reasoning { .. } => Some("reasoning"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            metadata.message_id = Some(format!(
+                "{kind}-{run_id}-{source_sequence}-{source_subsequence}"
+            ));
+        }
+    }
+    metadata.source_timestamp = Some(source_timestamp);
+    metadata.source_sequence = Some(source_sequence);
+    metadata.source_subsequence = Some(source_subsequence);
+    metadata
 }
 
 fn consume_all_tool_signatures(
@@ -591,7 +658,15 @@ mod tests {
                     "output": "tool metadata"
                 }
             }),
-        ];
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| CodexRolloutEvent {
+            value,
+            source_sequence: index as u64,
+            source_timestamp: Some(1_700_000_000_000 + index as i64),
+        })
+        .collect::<Vec<_>>();
 
         let chunks =
             reconcile_rollout_tool_events("thread_1", &events, &stdout_ids, &mut stdout_signatures);
@@ -599,16 +674,22 @@ mod tests {
         assert!(matches!(
             chunks.as_slice(),
             [
-                AgentChunk::ToolCall { id, name, .. },
-                AgentChunk::ToolResult {
-                    id: result_id,
-                    name: result_name,
-                    ..
-                }
+                (AgentChunk::ToolCall { id, name, .. }, call_metadata),
+                (
+                    AgentChunk::ToolResult {
+                        id: result_id,
+                        name: result_name,
+                        ..
+                    },
+                    result_metadata
+                )
             ] if id == "call_pure_exec"
                 && result_id == id
                 && name == "exec"
                 && result_name == name
+                && call_metadata.message_id.as_deref() == Some("tool-call_pure_exec")
+                && result_metadata.message_id == call_metadata.message_id
+                && call_metadata.source_sequence == Some(2)
         ));
     }
 

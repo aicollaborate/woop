@@ -25,6 +25,49 @@ fn rejects_local_claude_thread_ids() {
 }
 
 #[test]
+fn paginates_claude_messages_backwards_with_stable_sequence_cursors() {
+    let messages = (0..5)
+        .map(|index| {
+            base_message(
+                format!("message-{index}"),
+                "assistant",
+                format!("body {index}"),
+                "2026-07-30T00:00:00Z".to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let latest = paginate_claude_messages(messages.clone(), None, 2);
+    assert_eq!(
+        latest
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["message-3", "message-4"]
+    );
+    assert_eq!(latest.oldest_sequence, Some(4));
+    assert!(latest.has_more);
+
+    let previous = paginate_claude_messages(messages.clone(), latest.oldest_sequence, 2);
+    assert_eq!(
+        previous
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["message-1", "message-2"]
+    );
+    assert_eq!(previous.oldest_sequence, Some(2));
+    assert!(previous.has_more);
+
+    let oldest = paginate_claude_messages(messages, previous.oldest_sequence, 2);
+    assert_eq!(oldest.messages[0].id, "message-0");
+    assert_eq!(oldest.oldest_sequence, Some(1));
+    assert!(!oldest.has_more);
+}
+
+#[test]
 fn maps_assistant_message_to_chat_message() {
     let value = serde_json::json!({
         "type": "assistant",

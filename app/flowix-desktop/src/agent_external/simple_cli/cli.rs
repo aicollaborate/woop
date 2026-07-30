@@ -155,6 +155,9 @@ impl SimpleCliManager {
 
         tokio::spawn(async move {
             manager
+                .emit_user_message(&app_handle, &thread_id, &message, &run_id)
+                .await;
+            manager
                 .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
                 .await;
 

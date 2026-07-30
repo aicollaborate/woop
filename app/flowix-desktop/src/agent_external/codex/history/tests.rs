@@ -101,6 +101,11 @@ fn reads_only_current_turn_tool_response_items_for_stream_reconciliation() {
         events[1].pointer("/payload/type").and_then(Value::as_str),
         Some("custom_tool_call_output")
     );
+    assert_eq!(events[0].source_sequence, 2);
+    assert_eq!(
+        events[0].source_timestamp,
+        parse_timestamp_millis("2026-07-25T09:31:42.000Z")
+    );
 }
 
 #[test]

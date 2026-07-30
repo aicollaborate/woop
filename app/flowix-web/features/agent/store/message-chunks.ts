@@ -2,6 +2,68 @@ import type {
   ApplyResult,
   LiveMessageState,
 } from "@features/agent/store/chunk-result";
+import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-order";
+
+export interface MessageChunkMetadata {
+  id?: string;
+  phase?: "started" | "updated" | "completed";
+  contentMode?: "delta" | "snapshot";
+  sourceTimestamp?: number;
+  sourceSequence?: number;
+  sourceSubsequence?: number;
+}
+
+export function applyUserMessageChunk(
+  st: LiveMessageState,
+  text: string,
+  metadata: MessageChunkMetadata & { id: string },
+): ApplyResult {
+  const existingIndex = st.messages.findIndex(
+    (message) => message.id === metadata.id && message.role === "user",
+  );
+  if (existingIndex >= 0) {
+    const existing = st.messages[existingIndex];
+    const messages = [...st.messages];
+    messages[existingIndex] = {
+      ...existing,
+      content: text,
+      timestamp:
+        existing.sourceTimestamp === undefined &&
+        metadata.sourceTimestamp !== undefined
+          ? messageTimestamp(metadata.sourceTimestamp)
+          : existing.timestamp,
+      sourceTimestamp: existing.sourceTimestamp ?? metadata.sourceTimestamp,
+      sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
+      sourceSubsequence:
+        existing.sourceSubsequence ?? metadata.sourceSubsequence,
+    };
+    return {
+      messages,
+      pendingAssistantId: st.pendingAssistantId,
+      pendingReasoningId: st.pendingReasoningId,
+    };
+  }
+
+  return {
+    messages: insertAgentMessageBySourceOrder(st.messages, {
+      id: metadata.id,
+      role: "user",
+      content: text,
+      timestamp: messageTimestamp(metadata.sourceTimestamp),
+      sourceTimestamp: metadata.sourceTimestamp,
+      sourceSequence: metadata.sourceSequence,
+      sourceSubsequence: metadata.sourceSubsequence,
+    }),
+    pendingAssistantId: st.pendingAssistantId,
+    pendingReasoningId: st.pendingReasoningId,
+  };
+}
+
+function messageTimestamp(sourceTimestamp?: number): string {
+  return Number.isFinite(sourceTimestamp)
+    ? new Date(sourceTimestamp!).toISOString()
+    : new Date().toISOString();
+}
 
 /**
  * 文本 chunk ── assistant 出文字。 流式断点 ↔ `pendingAssistantId`:
@@ -11,13 +73,46 @@ import type {
  * 同时把上一条未完成的 reasoning 行 `isCompleted=true` 收尾 ── assistant
  * 接 reasoning 是常规 Pattern, 不收尾会留着"思考中"视觉残留。
  */
-export function applyTextChunk(st: LiveMessageState, text: string): ApplyResult {
+export function applyTextChunk(
+  st: LiveMessageState,
+  text: string,
+  metadata: MessageChunkMetadata = {},
+): ApplyResult {
   const closedMessages = st.pendingReasoningId
     ? st.messages.map((m) =>
         m.id === st.pendingReasoningId ? { ...m, isCompleted: true } : m,
       )
     : st.messages;
-  if (!st.pendingAssistantId) {
+  const targetId = metadata.id ?? st.pendingAssistantId;
+  const existingIndex = targetId
+    ? closedMessages.findIndex(
+        (message) => message.id === targetId && message.role === "assistant",
+      )
+    : -1;
+  if (existingIndex >= 0 && targetId) {
+    const existing = closedMessages[existingIndex];
+    const messages = [...closedMessages];
+    messages[existingIndex] = {
+      ...existing,
+      content:
+        metadata.contentMode === "snapshot" ? text : existing.content + text,
+      timestamp:
+        existing.sourceTimestamp === undefined &&
+        metadata.sourceTimestamp !== undefined
+          ? messageTimestamp(metadata.sourceTimestamp)
+          : existing.timestamp,
+      sourceTimestamp: existing.sourceTimestamp ?? metadata.sourceTimestamp,
+      sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
+      sourceSubsequence:
+        existing.sourceSubsequence ?? metadata.sourceSubsequence,
+    };
+    return {
+      messages,
+      pendingAssistantId: metadata.phase === "completed" ? null : targetId,
+      pendingReasoningId: null,
+    };
+  }
+  if (!targetId) {
     const id = `assistant-${Date.now()}`;
     return {
       messages: [
@@ -33,11 +128,19 @@ export function applyTextChunk(st: LiveMessageState, text: string): ApplyResult 
       pendingReasoningId: null,
     };
   }
+
+  const message = {
+    id: targetId,
+    role: "assistant" as const,
+    content: text,
+    timestamp: messageTimestamp(metadata.sourceTimestamp),
+    sourceTimestamp: metadata.sourceTimestamp,
+    sourceSequence: metadata.sourceSequence,
+    sourceSubsequence: metadata.sourceSubsequence,
+  };
   return {
-    messages: closedMessages.map((m) =>
-      m.id === st.pendingAssistantId ? { ...m, content: m.content + text } : m,
-    ),
-    pendingAssistantId: st.pendingAssistantId,
+    messages: insertAgentMessageBySourceOrder(closedMessages, message),
+    pendingAssistantId: metadata.phase === "completed" ? null : targetId,
     pendingReasoningId: null,
   };
 }
@@ -50,8 +153,41 @@ export function applyTextChunk(st: LiveMessageState, text: string): ApplyResult 
 export function applyReasoningChunk(
   st: LiveMessageState,
   text: string,
+  metadata: MessageChunkMetadata = {},
 ): ApplyResult {
-  if (!st.pendingReasoningId) {
+  const targetId = metadata.id ?? st.pendingReasoningId;
+  const existingIndex = targetId
+    ? st.messages.findIndex(
+        (message) => message.id === targetId && message.role === "reasoning",
+      )
+    : -1;
+  if (existingIndex >= 0 && targetId) {
+    const existing = st.messages[existingIndex];
+    const messages = [...st.messages];
+    messages[existingIndex] = {
+      ...existing,
+      content:
+        metadata.contentMode === "snapshot" ? text : existing.content + text,
+      timestamp:
+        existing.sourceTimestamp === undefined &&
+        metadata.sourceTimestamp !== undefined
+          ? messageTimestamp(metadata.sourceTimestamp)
+          : existing.timestamp,
+      sourceTimestamp: existing.sourceTimestamp ?? metadata.sourceTimestamp,
+      sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
+      sourceSubsequence:
+        existing.sourceSubsequence ?? metadata.sourceSubsequence,
+      // A later Claude tool cycle may append to the same run-scoped reasoning
+      // row after assistant/tool output temporarily closed it.
+      isCompleted: metadata.phase === "completed",
+    };
+    return {
+      messages,
+      pendingReasoningId: metadata.phase === "completed" ? null : targetId,
+      pendingAssistantId: st.pendingAssistantId,
+    };
+  }
+  if (!targetId) {
     const id = `reasoning-${Date.now()}`;
     return {
       messages: [
@@ -68,11 +204,20 @@ export function applyReasoningChunk(
       pendingAssistantId: st.pendingAssistantId,
     };
   }
+
+  const message = {
+    id: targetId,
+    role: "reasoning" as const,
+    content: text,
+    timestamp: messageTimestamp(metadata.sourceTimestamp),
+    sourceTimestamp: metadata.sourceTimestamp,
+    sourceSequence: metadata.sourceSequence,
+    sourceSubsequence: metadata.sourceSubsequence,
+    isCompleted: metadata.phase === "completed",
+  };
   return {
-    messages: st.messages.map((m) =>
-      m.id === st.pendingReasoningId ? { ...m, content: m.content + text } : m,
-    ),
-    pendingReasoningId: st.pendingReasoningId,
+    messages: insertAgentMessageBySourceOrder(st.messages, message),
+    pendingReasoningId: metadata.phase === "completed" ? null : targetId,
     pendingAssistantId: st.pendingAssistantId,
   };
 }

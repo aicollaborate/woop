@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -14,6 +15,21 @@ use super::tool_events::{
 
 const AGENT_TYPE: &str = "codex";
 const MAX_HISTORY_TOOL_OUTPUT_CHARS: usize = 4096;
+
+#[derive(Clone, Debug)]
+pub(crate) struct CodexRolloutEvent {
+    pub value: Value,
+    pub source_sequence: u64,
+    pub source_timestamp: Option<i64>,
+}
+
+impl Deref for CodexRolloutEvent {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
 
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_codex_sessions)
@@ -49,7 +65,7 @@ pub async fn get_session_page(
 pub(crate) async fn get_rollout_tool_response_items_since(
     session_id: &str,
     started_at_millis: i64,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<CodexRolloutEvent>, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || {
         let Some(path) = find_codex_session_file(&session_id)? else {
@@ -65,10 +81,18 @@ pub(crate) async fn get_rollout_tool_response_items_since(
     .map_err(|e| e.to_string())?
 }
 
-fn parse_rollout_tool_response_items_since(text: &str, started_at_millis: i64) -> Vec<Value> {
+fn parse_rollout_tool_response_items_since(
+    text: &str,
+    started_at_millis: i64,
+) -> Vec<CodexRolloutEvent> {
     text.lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|value| {
+        .enumerate()
+        .filter_map(|(index, line)| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .map(|value| (index, value))
+        })
+        .filter(|(_, value)| {
             value.get("type").and_then(Value::as_str) == Some("response_item")
                 && value
                     .get("timestamp")
@@ -76,7 +100,7 @@ fn parse_rollout_tool_response_items_since(text: &str, started_at_millis: i64) -
                     .and_then(parse_timestamp_millis)
                     .is_some_and(|timestamp| timestamp >= started_at_millis)
         })
-        .filter(|value| {
+        .filter(|(_, value)| {
             let payload = value.get("payload").unwrap_or(value);
             let item_type = payload
                 .get("type")
@@ -84,6 +108,14 @@ fn parse_rollout_tool_response_items_since(text: &str, started_at_millis: i64) -
                 .unwrap_or_default();
             tool_event_definition(item_type).is_some()
                 || looks_like_unknown_tool_event(item_type, payload)
+        })
+        .map(|(index, value)| CodexRolloutEvent {
+            source_timestamp: value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_timestamp_millis),
+            value,
+            source_sequence: index as u64,
         })
         .collect()
 }

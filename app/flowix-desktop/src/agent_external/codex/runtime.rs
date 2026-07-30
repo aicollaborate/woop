@@ -2,7 +2,9 @@
 //! gate on a Codex-named env var. Generic chunk emission lives in
 //! `crate::agent_external` and is reused by the Codex persistence adapter.
 
-use crate::agent_external::emit_chunk_with_run_id;
+use crate::agent_external::{
+    emit_chunk_with_run_id, persist_and_emit_external_chunk_with_metadata, AgentChunkMetadata,
+};
 
 use std::sync::Arc;
 
@@ -43,4 +45,24 @@ pub async fn persist_and_emit_codex_chunk(
 ) {
     persist_codex_chunk(thread_manager, chunk, run_id, raw_json).await;
     emit_chunk_with_run_id(app_handle, chunk, super::AGENT_TYPE, run_id);
+}
+
+pub async fn persist_and_emit_codex_chunk_with_metadata(
+    app_handle: &tauri::AppHandle,
+    thread_manager: &Arc<ThreadManager>,
+    chunk: &AgentChunk,
+    run_id: &str,
+    raw_json: Option<&str>,
+    metadata: &AgentChunkMetadata,
+) {
+    persist_and_emit_external_chunk_with_metadata(
+        app_handle,
+        thread_manager,
+        super::AGENT_TYPE,
+        chunk,
+        run_id,
+        raw_json,
+        metadata,
+    )
+    .await;
 }

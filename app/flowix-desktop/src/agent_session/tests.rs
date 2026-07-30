@@ -498,6 +498,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_external_event_pruning_persists_truncation_sentinel() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "thread-pruned-history";
+        {
+            let mut conn = manager.lock_conn();
+            let tx = conn.transaction().expect("start seed transaction");
+            tx.execute(
+                "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
+                 VALUES (?1, 'claude', 'Claude thread', 1, 1)",
+                [thread_id],
+            )
+            .expect("seed thread");
+            {
+                let mut insert = tx
+                    .prepare(
+                        "INSERT INTO agent_external_events (
+                            runtime, thread_id, normalized_json, raw_json, created_at
+                         ) VALUES ('claude', ?1, ?2, NULL, ?3)",
+                    )
+                    .expect("prepare event insert");
+                for index in 0..10_000_i64 {
+                    insert
+                        .execute(params![
+                            thread_id,
+                            format!(r#"{{"kind":"text","index":{index}}}"#),
+                            index,
+                        ])
+                        .expect("seed event");
+                }
+            }
+            tx.commit().expect("commit seeded events");
+        }
+
+        manager
+            .insert_agent_external_event(NewAgentExternalEvent {
+                runtime: "claude".to_string(),
+                thread_id: thread_id.to_string(),
+                normalized_json: r#"{"kind":"stream_end"}"#.to_string(),
+                raw_json: None,
+                created_at: Some(10_001),
+            })
+            .await
+            .expect("insert event that triggers pruning");
+
+        let conn = manager.lock_conn();
+        let ordinary_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM agent_external_events
+                 WHERE thread_id = ?1
+                   AND normalized_json <> '{\"kind\":\"history_truncated\",\"version\":1}'",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .expect("count ordinary events");
+        let sentinel_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM agent_external_events
+                 WHERE thread_id = ?1
+                   AND normalized_json = '{\"kind\":\"history_truncated\",\"version\":1}'",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .expect("count sentinel events");
+        assert_eq!(ordinary_count, 10_000);
+        assert_eq!(sentinel_count, 1);
+    }
+
+    #[tokio::test]
     async fn agent_external_events_migration_fills_missing_optional_columns() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("thread.db");

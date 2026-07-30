@@ -40,7 +40,7 @@ pub fn append_workspace_context(prompt: &str, cwd: &Path, workspace_paths: &[Str
 pub struct ExternalRunRegistry {
     pub(super) agent_type: &'static str,
     pub(super) current_tool: &'static str,
-    children: Arc<Mutex<HashMap<String, ExternalRunningChild>>>,
+    pub(super) children: Arc<Mutex<HashMap<String, ExternalRunningChild>>>,
 }
 
 pub struct ExternalRunningChild {
@@ -94,7 +94,7 @@ impl ExternalRunRegistry {
     }
 
     #[cfg(test)]
-    async fn insert(
+    pub(super) async fn insert(
         &self,
         thread_id: String,
         child: Child,
@@ -193,7 +193,7 @@ impl ExternalRunRegistry {
     }
 
     #[cfg(test)]
-    async fn contains(&self, thread_id: &str) -> bool {
+    pub(super) async fn contains(&self, thread_id: &str) -> bool {
         let children = self.children.lock().await;
         children.contains_key(thread_id)
     }

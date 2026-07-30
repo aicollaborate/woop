@@ -71,6 +71,11 @@ vi.mock("@platform/tauri/client", () => ({
       hasMore: false,
     })),
     getClaudeThread: vi.fn(async () => ({ messages: [] })),
+    getClaudeThreadPage: vi.fn(async () => ({
+      messages: [],
+      oldestSequence: null,
+      hasMore: false,
+    })),
     getHermesThread: vi.fn(async () => ({ messages: [] })),
     getHermesThreadPage: vi.fn(async () => ({
       messages: [],
@@ -1268,6 +1273,80 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     );
   });
 
+  it("does not load rollout history when Codex has lifecycle-only database events", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const threadId = "codex-database-only-history";
+    const runId = "codex-database-only-run";
+
+    vi.mocked(agent.listCodexThreads).mockResolvedValueOnce([
+      { threadId, title: "Database replay", createdAt: 1, updatedAt: 2 },
+    ]);
+    vi.mocked(agent.externalEvents).mockResolvedValueOnce([
+      {
+        id: 1,
+        runtime: "codex",
+        threadId,
+        normalizedJson: JSON.stringify({
+          kind: "user_message",
+          thread_id: threadId,
+          run_id: runId,
+          agent_type: "codex",
+          id: "user-database-only",
+          text: "Database question",
+          timestamp: 1,
+        }),
+        rawJson: null,
+        createdAt: 1,
+      },
+      {
+        id: 2,
+        runtime: "codex",
+        threadId,
+        normalizedJson: JSON.stringify({
+          kind: "stream_start",
+          thread_id: threadId,
+          run_id: runId,
+          agent_type: "codex",
+        }),
+        rawJson: null,
+        createdAt: 1,
+      },
+      {
+        id: 3,
+        runtime: "codex",
+        threadId,
+        normalizedJson: JSON.stringify({
+          kind: "stream_end",
+          thread_id: threadId,
+          run_id: runId,
+          agent_type: "codex",
+          reason: null,
+        }),
+        rawJson: null,
+        createdAt: 2,
+      },
+    ]);
+
+    await useChatStore.getState().loadCodexThread(threadId);
+
+    expect(agent.externalEvents).toHaveBeenCalledWith(threadId, null, 1000);
+    expect(agent.getCodexThreadPage).not.toHaveBeenCalled();
+    expect(agent.getCodexThread).not.toHaveBeenCalled();
+    expect(
+      useAgentConversationStore.getState().messageStates[threadId].messages,
+    ).toMatchObject([
+      {
+        id: "user-database-only",
+        role: "user",
+        content: "Database question",
+      },
+    ]);
+  });
+
   it("hydrates tool display when loading Codex history", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
@@ -1353,7 +1432,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     vi.mocked(agent.listClaudeThreads).mockResolvedValueOnce([
       { threadId, title: "Claude Tool Merge", createdAt: 1, updatedAt: 2 },
     ]);
-    vi.mocked(agent.getClaudeThread).mockResolvedValueOnce({
+    vi.mocked(agent.getClaudeThreadPage).mockResolvedValueOnce({
       messages: [
         {
           id: "history-user",
@@ -1378,6 +1457,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
           timestamp: new Date().toISOString(),
         },
       ],
+      oldestSequence: 1,
+      hasMore: false,
     });
 
     await store.loadClaudeThread(threadId);

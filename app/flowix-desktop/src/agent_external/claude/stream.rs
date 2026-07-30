@@ -5,11 +5,13 @@ use std::time::Instant;
 use tokio::io::BufReader;
 
 use super::events::{
-    parse_claude_stdout_line_with_state, ClaudeStreamState, ParsedClaudeStdoutLine,
+    claude_chunk_metadata, claude_event_timestamp_millis, parse_claude_stdout_line_with_state,
+    ClaudeStreamState, ParsedClaudeStdoutLine,
 };
 use super::AGENT_TYPE;
 use crate::agent_external::{
-    persist_and_emit_external_chunk, read_capped_line, truncate_for_log, ExternalRunRegistry,
+    persist_and_emit_external_chunk, persist_and_emit_external_chunk_with_metadata,
+    read_capped_line, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
     StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
 };
 use crate::agent_flowix::AgentChunk;
@@ -26,14 +28,15 @@ async fn flush_emit_buffer(
     if emit_buf.is_empty() {
         return;
     }
-    for chunk in emit_buf.flush() {
-        persist_and_emit_external_chunk(
+    for (chunk, metadata) in emit_buf.flush_with_metadata() {
+        persist_and_emit_external_chunk_with_metadata(
             app_handle,
             thread_manager,
             AGENT_TYPE,
             &chunk,
             run_id,
             None,
+            &metadata,
         )
         .await;
     }
@@ -84,6 +87,7 @@ where
     // 解析失败�?�� non_json 文本回显�?行末时间检�?�?read_capped_line 完整返回一
     // 行后才�?查时�? �?drop 风险�?
     let mut last_flush_at = Instant::now();
+    let mut source_sequence = 0u64;
 
     loop {
         let line_opt = match read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await {
@@ -119,6 +123,7 @@ where
         if line.is_empty() {
             continue;
         }
+        source_sequence = source_sequence.saturating_add(1);
         // dev-only: 鎶婂瓙杩涚▼ stdout 鍘熷琛岄暅鍍忓埌 ~/.flowix/debug/, 1:1 杩樺師
         // vendor CLI 回包供排障。release 构建�?no-op, 不落盘�?
         runtime_log::dump_debug_stdout_line(AGENT_TYPE, &thread_id, &run_id, line);
@@ -159,7 +164,29 @@ where
                     })),
                 );
                 // �?JSON 行作为文�?���?── �?buffer 合并 (最多延迟一�?�?
-                emit_buf.append_text(&text);
+                let chunk = AgentChunk::Text {
+                    thread_id: thread_id.clone(),
+                    text: text.clone(),
+                };
+                let metadata = complete_claude_chunk_metadata(
+                    AgentChunkMetadata {
+                        message_phase: Some("updated"),
+                        content_mode: Some("delta"),
+                        ..Default::default()
+                    },
+                    &chunk,
+                    &run_id,
+                    chrono::Utc::now().timestamp_millis(),
+                    source_sequence,
+                    0,
+                );
+                if emit_buf.has_text()
+                    && emit_buf.text_message_id() != metadata.message_id.as_deref()
+                {
+                    flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+                    last_flush_at = Instant::now();
+                }
+                emit_buf.append_text_with_metadata(&text, metadata);
                 flush_emit_buffer_if_full(
                     &app_handle,
                     &thread_manager,
@@ -234,10 +261,27 @@ where
             }
         }
 
-        for chunk in parsed.chunks {
+        let source_timestamp = claude_event_timestamp_millis(&value)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+        for (source_subsequence, chunk) in parsed.chunks.into_iter().enumerate() {
+            let metadata = complete_claude_chunk_metadata(
+                claude_chunk_metadata(&value, &chunk, &stream_state),
+                &chunk,
+                &run_id,
+                source_timestamp,
+                source_sequence,
+                source_subsequence as u32,
+            );
             match chunk {
                 AgentChunk::Text { text, .. } => {
-                    emit_buf.append_text(&text);
+                    if emit_buf.has_text()
+                        && emit_buf.text_message_id() != metadata.message_id.as_deref()
+                    {
+                        flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id)
+                            .await;
+                        last_flush_at = Instant::now();
+                    }
+                    emit_buf.append_text_with_metadata(&text, metadata);
                     flush_emit_buffer_if_full(
                         &app_handle,
                         &thread_manager,
@@ -248,7 +292,14 @@ where
                     .await;
                 }
                 AgentChunk::Reasoning { text, .. } => {
-                    emit_buf.append_reasoning(&text);
+                    if emit_buf.has_reasoning()
+                        && emit_buf.reasoning_message_id() != metadata.message_id.as_deref()
+                    {
+                        flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id)
+                            .await;
+                        last_flush_at = Instant::now();
+                    }
+                    emit_buf.append_reasoning_with_metadata(&text, metadata);
                     flush_emit_buffer_if_full(
                         &app_handle,
                         &thread_manager,
@@ -285,13 +336,14 @@ where
                             }
                         }
                     }
-                    persist_and_emit_external_chunk(
+                    persist_and_emit_external_chunk_with_metadata(
                         &app_handle,
                         &thread_manager,
                         AGENT_TYPE,
                         &chunk,
                         &run_id,
                         None,
+                        &metadata,
                     )
                     .await;
                 }
@@ -318,6 +370,37 @@ where
     Ok(())
 }
 
+fn complete_claude_chunk_metadata(
+    mut metadata: AgentChunkMetadata,
+    chunk: &AgentChunk,
+    run_id: &str,
+    source_timestamp: i64,
+    source_sequence: u64,
+    source_subsequence: u32,
+) -> AgentChunkMetadata {
+    // Claude opens a new provider message around every tool cycle, but the UI
+    // models the reasoning produced by one product run as a single expandable
+    // row. Keep provider message ids for assistant text while folding every
+    // thinking block in this run into one stable reasoning id.
+    if matches!(chunk, AgentChunk::Reasoning { .. }) {
+        metadata.message_id = Some(format!("reasoning-{run_id}"));
+    } else if metadata.message_id.is_none() {
+        let kind = match chunk {
+            AgentChunk::Text { .. } => Some("assistant"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            metadata.message_id = Some(format!(
+                "{kind}-{run_id}-{source_sequence}-{source_subsequence}"
+            ));
+        }
+    }
+    metadata.source_timestamp = Some(source_timestamp);
+    metadata.source_sequence = Some(source_sequence);
+    metadata.source_subsequence = Some(source_subsequence);
+    metadata
+}
+
 fn non_json_stdout_text(parsed: &ParsedClaudeStdoutLine, line: &str) -> Option<String> {
     if parsed.chunks.is_empty() {
         return None;
@@ -342,6 +425,41 @@ fn non_json_stdout_text(parsed: &ParsedClaudeStdoutLine, line: &str) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_metadata_is_stable_across_claude_provider_messages_in_one_run() {
+        let chunk = AgentChunk::Reasoning {
+            thread_id: "thread-1".to_string(),
+            text: "thinking".to_string(),
+        };
+        let first = complete_claude_chunk_metadata(
+            AgentChunkMetadata {
+                message_id: Some("reasoning-provider-message-1-block-0".to_string()),
+                ..Default::default()
+            },
+            &chunk,
+            "run-1",
+            100,
+            1,
+            0,
+        );
+        let second = complete_claude_chunk_metadata(
+            AgentChunkMetadata {
+                message_id: Some("reasoning-provider-message-2-block-0".to_string()),
+                ..Default::default()
+            },
+            &chunk,
+            "run-1",
+            200,
+            20,
+            0,
+        );
+
+        assert_eq!(first.message_id.as_deref(), Some("reasoning-run-1"));
+        assert_eq!(second.message_id, first.message_id);
+        assert_eq!(first.source_sequence, Some(1));
+        assert_eq!(second.source_sequence, Some(20));
+    }
 
     #[test]
     fn truncate_for_log_marks_long_output() {

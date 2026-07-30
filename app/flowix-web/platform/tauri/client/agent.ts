@@ -251,6 +251,16 @@ export const agent = {
     invoke<ThreadInfo[]>('claude_thread_list'),
   getClaudeThread: (threadId: string) =>
     invoke<{ messages: ChatMessage[] }>('claude_thread_get', { threadId }),
+  getClaudeThreadPage: (
+    threadId: string,
+    beforeSequence: number | null,
+    limit: number,
+  ) =>
+    invoke<{
+      messages: ChatMessage[];
+      oldestSequence: number | null;
+      hasMore: boolean;
+    }>('claude_thread_get_page', { threadId, beforeSequence, limit }),
   getClaudeSessionId: (threadId: string) =>
     invoke<string | null>('claude_thread_session_id', { threadId }),
   listHermesThreads: () =>
@@ -380,4 +390,3 @@ export function listenToNotebookImportStatus(
 ): UnlistenFn {
   return subscribe<NotebookImportStatus>('notebook-import-status', handler);
 }
-

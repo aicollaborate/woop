@@ -36,6 +36,14 @@ export function mapAgentChunkToEvent(
   state: AgentEventMapperState,
   now: () => number = Date.now,
 ): AgentEvent {
+  const messageMetadata = chunk as AgentChunk & {
+    message_id?: string;
+    message_phase?: "started" | "updated" | "completed";
+    content_mode?: "delta" | "snapshot";
+    source_timestamp?: number;
+    source_sequence?: number;
+    source_subsequence?: number;
+  };
   const sourceThreadId = chunk.thread_id;
   const threadId = resolveExternalChunkThreadId(
     chunk,
@@ -54,15 +62,43 @@ export function mapAgentChunkToEvent(
     threadId,
     runId: resolveChunkRunId(chunk, threadId, st),
     timestamp: now(),
+    messageId: messageMetadata.message_id,
+    messagePhase: messageMetadata.message_phase,
+    contentMode: messageMetadata.content_mode,
+    sourceTimestamp: messageMetadata.source_timestamp,
+    sourceSequence: messageMetadata.source_sequence,
+    sourceSubsequence: messageMetadata.source_subsequence,
   };
 
   switch (chunk.kind) {
+    case "user_message":
+      return {
+        ...base,
+        kind: "user_message",
+        id: chunk.id,
+        text: chunk.text,
+        messageId: chunk.id,
+        sourceTimestamp: chunk.timestamp,
+        sourceSequence: 0,
+        sourceSubsequence: 0,
+      };
     case "text":
       return supportsTextStreaming(base.agentType)
         ? { ...base, kind: "text_delta", text: chunk.text }
         : { ...base, kind: "final_message", text: chunk.text };
     case "reasoning":
-      return { ...base, kind: "reasoning_delta", text: chunk.text };
+      return {
+        ...base,
+        kind: "reasoning_delta",
+        text: chunk.text,
+        // Claude starts a new provider message around every tool cycle. Its
+        // reasoning is one product-run panel, including replay of rows written
+        // before the backend adopted the run-scoped id.
+        messageId:
+          base.agentType === "claude"
+            ? `reasoning-${base.runId}`
+            : base.messageId,
+      };
     case "tool_call":
       return {
         ...base,

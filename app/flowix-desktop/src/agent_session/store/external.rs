@@ -7,6 +7,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Arc;
 
 const MAX_EXTERNAL_EVENTS_PER_THREAD: i64 = 10_000;
+const EXTERNAL_HISTORY_TRUNCATED_JSON: &str =
+    r#"{"kind":"history_truncated","version":1}"#;
 
 fn session_metadata_cwd(metadata: Option<&serde_json::Value>) -> Option<String> {
     let value = metadata?;
@@ -243,18 +245,43 @@ impl ThreadManager {
         conn: &Connection,
         thread_id: &str,
     ) -> Result<(), ThreadError> {
-        conn.execute(
+        let deleted = conn.execute(
             "DELETE FROM agent_external_events
              WHERE thread_id = ?1
+               AND normalized_json <> ?3
                AND id NOT IN (
                    SELECT id
                    FROM agent_external_events
-                   WHERE thread_id = ?1
+                   WHERE thread_id = ?1 AND normalized_json <> ?3
                    ORDER BY id DESC
                    LIMIT ?2
                )",
-            params![thread_id, MAX_EXTERNAL_EVENTS_PER_THREAD],
+            params![
+                thread_id,
+                MAX_EXTERNAL_EVENTS_PER_THREAD,
+                EXTERNAL_HISTORY_TRUNCATED_JSON
+            ],
         )?;
+        if deleted > 0 {
+            conn.execute(
+                "INSERT INTO agent_external_events (
+                    runtime, thread_id, normalized_json, raw_json, created_at
+                 )
+                 SELECT agent_id, ?1, ?2, NULL, ?3
+                 FROM threads
+                 WHERE thread_id = ?1
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM agent_external_events
+                       WHERE thread_id = ?1 AND normalized_json = ?2
+                   )",
+                params![
+                    thread_id,
+                    EXTERNAL_HISTORY_TRUNCATED_JSON,
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )?;
+        }
         Ok(())
     }
 

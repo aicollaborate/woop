@@ -611,6 +611,7 @@ export const useChatStore = create<ChatStore>()(
               options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
           });
           const runId = createRunId(threadId);
+          userMessage.id = `user-${runId}`;
 
           set((state) => {
             const st = state.threadStates[threadId] ?? emptyThreadState();

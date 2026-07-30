@@ -184,6 +184,15 @@ impl RunInfo {
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentChunk {
+    /// Product-owned user message. External runtimes persist this before
+    /// StreamStart so their normalized event log is a complete display source
+    /// and does not need transcript rows mixed into it on replay.
+    UserMessage {
+        thread_id: String,
+        id: String,
+        text: String,
+        timestamp: i64,
+    },
     /// 鍔╂墜娴佸紡鍥炵瓟 (鏅€?content)
     Text { thread_id: String, text: String },
     /// 推理模型的思考过�?(reasoning_content)
@@ -255,6 +264,7 @@ pub enum AgentChunk {
 impl AgentChunk {
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::UserMessage { .. } => "user_message",
             Self::Text { .. } => "text",
             Self::Reasoning { .. } => "reasoning",
             Self::ToolCall { .. } => "tool_call",
@@ -269,7 +279,8 @@ impl AgentChunk {
 
     pub fn thread_id(&self) -> &str {
         match self {
-            Self::Text { thread_id, .. }
+            Self::UserMessage { thread_id, .. }
+            | Self::Text { thread_id, .. }
             | Self::Reasoning { thread_id, .. }
             | Self::ToolCall { thread_id, .. }
             | Self::ToolResult { thread_id, .. }

@@ -1,5 +1,7 @@
 import { openPath, openUrl } from "@platform/tauri/opener";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { GapCursor } from "@tiptap/pm/gapcursor";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type {
   EditorView,
   NodeView as ProseMirrorNodeView,
@@ -217,6 +219,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private boundHandleOutsidePointerDown = (event: PointerEvent): void => {
     this.blurOwnedFocusForOutsidePointer(event);
   };
+  private boundHandleInputFocus = (): void => {
+    this.clearCardNodeSelection();
+  };
   /** 当前 AppLanguage ── NodeView 不在 React 树里, 不能用 useI18n,
    *  走 user-settings-store 读最新值 (跨窗口同步跟 I18nProvider 一致)。 */
   private get language(): AppLanguage {
@@ -318,6 +323,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.composerRoleIcon = domParts.composerRoleIcon;
     this.input = domParts.input;
     this.sendButtonMount = domParts.sendButtonMount;
+    this.input.addEventListener("focus", this.boundHandleInputFocus);
 
     const { codexSettingsPopover, composerRolePopover } = domParts;
     this.externalAgentSettings = new ExternalAgentSettingsController({
@@ -1001,6 +1007,36 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.restoreScrollSnapshotAfterFocusChange(snapshot);
   }
 
+  private clearCardNodeSelection(): void {
+    if (this.isDestroyed || this.view.isDestroyed) return;
+    const pos = this.getPos?.();
+    if (pos === undefined) return;
+
+    const { doc, selection } = this.view.state;
+    if (
+      !(selection instanceof NodeSelection) ||
+      selection.from !== pos ||
+      selection.node.type.name !== "agentThreadCard"
+    ) {
+      return;
+    }
+
+    const afterPos = Math.min(pos + this.node.nodeSize, doc.content.size);
+    let nextSelection = TextSelection.near(doc.resolve(afterPos), 1);
+    if (nextSelection instanceof NodeSelection) {
+      nextSelection = TextSelection.near(doc.resolve(pos), -1);
+    }
+
+    // A document containing only cards has no valid text cursor position.
+    // Leave a gap cursor beside this card so the textarea can own keyboard
+    // input without keeping a destructive NodeSelection on the card.
+    if (nextSelection instanceof NodeSelection) {
+      nextSelection = new GapCursor(doc.resolve(afterPos));
+    }
+
+    this.view.dispatch(this.view.state.tr.setSelection(nextSelection));
+  }
+
   private captureFullscreenReturnAnchor(): void {
     this.fullscreenLayout.captureReturnAnchor();
   }
@@ -1336,6 +1372,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.unsubscribeQuickPhrases?.();
     this.unsubscribeQuickPhrases = null;
     this.dom.removeEventListener("mousedown", this.boundHandleCardMouseDown);
+    this.input.removeEventListener("focus", this.boundHandleInputFocus);
     this.chrome.dispose();
     document.removeEventListener(
       "pointerdown",

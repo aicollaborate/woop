@@ -14,6 +14,31 @@ function state(
 }
 
 describe("agent event mapper", () => {
+  it("maps persisted user messages with their stable ordering anchor", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "user_message",
+        thread_id: "claude-thread",
+        id: "user-1",
+        text: "question",
+        timestamp: 456,
+        agent_type: "claude",
+        run_id: "run-1",
+      },
+      state(),
+      () => 123,
+    );
+
+    expect(event).toMatchObject({
+      kind: "user_message",
+      id: "user-1",
+      text: "question",
+      messageId: "user-1",
+      sourceTimestamp: 456,
+      sourceSequence: 0,
+    });
+  });
+
   it("maps Flowix text chunks to streaming deltas", () => {
     const event = mapAgentChunkToEvent(
       {
@@ -44,6 +69,12 @@ describe("agent event mapper", () => {
         text: "complete answer",
         agent_type: "codex",
         run_id: "run-1",
+        message_id: "assistant-item-1",
+        message_phase: "completed",
+        content_mode: "snapshot",
+        source_timestamp: 456,
+        source_sequence: 7,
+        source_subsequence: 0,
       },
       state(),
       () => 123,
@@ -54,6 +85,12 @@ describe("agent event mapper", () => {
       threadId: "codex-thread",
       agentType: "codex",
       text: "complete answer",
+      messageId: "assistant-item-1",
+      messagePhase: "completed",
+      contentMode: "snapshot",
+      sourceTimestamp: 456,
+      sourceSequence: 7,
+      sourceSubsequence: 0,
     });
   });
 
@@ -124,6 +161,35 @@ describe("agent event mapper", () => {
 
     expect(event.runId).toBe("active-run");
     vi.restoreAllMocks();
+  });
+
+  it("folds Claude reasoning from multiple provider messages into one run id", () => {
+    const mapperState = state();
+    const first = mapAgentChunkToEvent(
+      {
+        kind: "reasoning",
+        thread_id: "claude-thread",
+        text: "first",
+        agent_type: "claude",
+        run_id: "run-1",
+        message_id: "reasoning-provider-message-1-block-0",
+      },
+      mapperState,
+    );
+    const second = mapAgentChunkToEvent(
+      {
+        kind: "reasoning",
+        thread_id: "claude-thread",
+        text: "second",
+        agent_type: "claude",
+        run_id: "run-1",
+        message_id: "reasoning-provider-message-2-block-0",
+      },
+      mapperState,
+    );
+
+    expect(first.messageId).toBe("reasoning-run-1");
+    expect(second.messageId).toBe(first.messageId);
   });
 
   it("adds a stable tool display summary without requiring UI schema knowledge", () => {

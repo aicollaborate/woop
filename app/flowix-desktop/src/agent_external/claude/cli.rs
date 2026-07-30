@@ -106,6 +106,9 @@ impl ClaudeCliManager {
 
         tokio::spawn(async move {
             manager
+                .emit_user_message(&app_handle, &thread_id, &message, &run_id)
+                .await;
+            manager
                 .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
                 .await;
 
@@ -148,6 +151,7 @@ impl ClaudeCliManager {
         run_id: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) -> bool {
+        let mut event_thread_id = thread_id.to_string();
         let mut stopped = self
             .runs
             .stop_run(thread_id, thread_id, run_id, "ClaudeCli")
@@ -166,6 +170,9 @@ impl ClaudeCliManager {
                         .runs
                         .stop_run(&mapped_thread_id, thread_id, run_id, "ClaudeCli")
                         .await;
+                    if stopped.is_some() {
+                        event_thread_id = mapped_thread_id;
+                    }
                 }
             }
         }
@@ -176,7 +183,7 @@ impl ClaudeCliManager {
         let run_id_for_chunk = stopped.run_id;
         self.emit_stream_end(
             app_handle,
-            thread_id,
+            &event_thread_id,
             &run_id_for_chunk,
             Some(USER_STOPPED_REASON.to_string()),
             &stopped.stream_end_emitted,

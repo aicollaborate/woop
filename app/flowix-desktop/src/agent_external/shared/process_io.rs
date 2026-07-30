@@ -75,6 +75,8 @@ pub struct StreamingEmitBuffer {
     thread_id: String,
     text: String,
     reasoning: String,
+    text_metadata: Option<AgentChunkMetadata>,
+    reasoning_metadata: Option<AgentChunkMetadata>,
 }
 
 impl StreamingEmitBuffer {
@@ -83,6 +85,8 @@ impl StreamingEmitBuffer {
             thread_id,
             text: String::new(),
             reasoning: String::new(),
+            text_metadata: None,
+            reasoning_metadata: None,
         }
     }
 
@@ -95,28 +99,79 @@ impl StreamingEmitBuffer {
         self.text.is_empty() && self.reasoning.is_empty()
     }
 
+    pub fn has_text(&self) -> bool {
+        !self.text.is_empty()
+    }
+
+    pub fn has_reasoning(&self) -> bool {
+        !self.reasoning.is_empty()
+    }
+
     pub fn append_text(&mut self, text: &str) {
-        self.text.push_str(text);
+        self.append_text_with_metadata(text, AgentChunkMetadata::default());
     }
 
     pub fn append_reasoning(&mut self, text: &str) {
+        self.append_reasoning_with_metadata(text, AgentChunkMetadata::default());
+    }
+
+    pub fn append_text_with_metadata(&mut self, text: &str, metadata: AgentChunkMetadata) {
+        if self.text_metadata.is_none() {
+            self.text_metadata = Some(metadata);
+        }
+        self.text.push_str(text);
+    }
+
+    pub fn append_reasoning_with_metadata(
+        &mut self,
+        text: &str,
+        metadata: AgentChunkMetadata,
+    ) {
+        if self.reasoning_metadata.is_none() {
+            self.reasoning_metadata = Some(metadata);
+        }
         self.reasoning.push_str(text);
+    }
+
+    pub fn text_message_id(&self) -> Option<&str> {
+        self.text_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.message_id.as_deref())
+    }
+
+    pub fn reasoning_message_id(&self) -> Option<&str> {
+        self.reasoning_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.message_id.as_deref())
     }
 
     /// 取走缓冲文本, �?reasoning �?text, 各自拼成单条 `AgentChunk` 返回�?    /// 空缓冲返回空 vec (调用方无需判空)�?
     pub fn flush(&mut self) -> Vec<AgentChunk> {
+        self.flush_with_metadata()
+            .into_iter()
+            .map(|(chunk, _)| chunk)
+            .collect()
+    }
+
+    pub fn flush_with_metadata(&mut self) -> Vec<(AgentChunk, AgentChunkMetadata)> {
         let mut out = Vec::new();
         if !self.reasoning.is_empty() {
-            out.push(AgentChunk::Reasoning {
-                thread_id: self.thread_id.clone(),
-                text: std::mem::take(&mut self.reasoning),
-            });
+            out.push((
+                AgentChunk::Reasoning {
+                    thread_id: self.thread_id.clone(),
+                    text: std::mem::take(&mut self.reasoning),
+                },
+                self.reasoning_metadata.take().unwrap_or_default(),
+            ));
         }
         if !self.text.is_empty() {
-            out.push(AgentChunk::Text {
-                thread_id: self.thread_id.clone(),
-                text: std::mem::take(&mut self.text),
-            });
+            out.push((
+                AgentChunk::Text {
+                    thread_id: self.thread_id.clone(),
+                    text: std::mem::take(&mut self.text),
+                },
+                self.text_metadata.take().unwrap_or_default(),
+            ));
         }
         out
     }

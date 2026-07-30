@@ -21,14 +21,6 @@ export interface AgentHistoryAdapter {
   ): Promise<ThreadHistoryPage>;
 }
 
-function emptyPage(messages: ChatMessage[]): ThreadHistoryPage {
-  return {
-    messages,
-    oldestSequence: null,
-    hasMore: false,
-  };
-}
-
 function createFlowixHistoryAdapter(): AgentHistoryAdapter {
   return {
     typeKey: "flowix",
@@ -66,12 +58,10 @@ function createClaudeHistoryAdapter(): AgentHistoryAdapter {
     async getFullHistory(threadId) {
       return (await agentClient.getClaudeThread(threadId)).messages;
     },
-    async getInitialHistory(threadId) {
-      return emptyPage((await agentClient.getClaudeThread(threadId)).messages);
-    },
-    async getPage(threadId) {
-      return emptyPage((await agentClient.getClaudeThread(threadId)).messages);
-    },
+    getInitialHistory: (threadId, limit) =>
+      agentClient.getClaudeThreadPage(threadId, null, limit),
+    getPage: (threadId, beforeSequence, limit) =>
+      agentClient.getClaudeThreadPage(threadId, beforeSequence, limit),
   };
 }
 

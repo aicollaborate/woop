@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use crate::agent_external::AgentChunkMetadata;
 use crate::agent_flowix::{AgentChunk, StatusInfo, UsageInfo};
 
 use super::tool_events::{
@@ -164,6 +165,67 @@ pub fn codex_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> 
             message,
         }],
     }
+}
+
+pub(crate) fn codex_chunk_metadata(value: &Value, chunk: &AgentChunk) -> AgentChunkMetadata {
+    let event_type = value
+        .get("type")
+        .or_else(|| value.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let source_item_id = codex_source_item_id(value);
+
+    match chunk {
+        AgentChunk::Text { .. } => AgentChunkMetadata {
+            message_id: source_item_id.map(|id| format!("assistant-{id}")),
+            message_phase: Some(match event_type.as_str() {
+                "item.started" => "started",
+                "item.updated" => "updated",
+                _ => "completed",
+            }),
+            content_mode: Some("snapshot"),
+            ..Default::default()
+        },
+        AgentChunk::Reasoning { .. } => AgentChunkMetadata {
+            message_id: source_item_id.map(|id| format!("reasoning-{id}")),
+            message_phase: Some(match event_type.as_str() {
+                "item.started" => "started",
+                "item.updated" => "updated",
+                _ => "completed",
+            }),
+            content_mode: Some("snapshot"),
+            ..Default::default()
+        },
+        AgentChunk::ToolCall { id, .. } => AgentChunkMetadata {
+            message_id: Some(format!("tool-{id}")),
+            message_phase: Some(if event_type == "item.started" {
+                "started"
+            } else {
+                "updated"
+            }),
+            ..Default::default()
+        },
+        AgentChunk::ToolResult { id, .. } => AgentChunkMetadata {
+            message_id: Some(format!("tool-{id}")),
+            message_phase: Some("completed"),
+            ..Default::default()
+        },
+        _ => AgentChunkMetadata::default(),
+    }
+}
+
+fn codex_source_item_id(value: &Value) -> Option<String> {
+    let payload = value
+        .get("item")
+        .or_else(|| value.get("payload").and_then(|payload| payload.get("item")))
+        .or_else(|| value.get("payload"))
+        .unwrap_or(value);
+    ["id", "call_id", "tool_call_id"]
+        .into_iter()
+        .find_map(|key| payload.get(key).and_then(Value::as_str))
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
 }
 
 fn parse_codex_event(value: &Value) -> CodexEvent {
@@ -738,7 +800,7 @@ fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     }
 }
 
-fn parse_event_timestamp_millis(value: &Value) -> Option<i64> {
+pub(crate) fn parse_event_timestamp_millis(value: &Value) -> Option<i64> {
     let timestamp = value.get("timestamp").or_else(|| {
         value
             .get("payload")

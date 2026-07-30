@@ -59,13 +59,13 @@ export async function loadThreadForType(
       };
     });
     if (type.key !== "flowix") {
-      const replayedDisplay = await replayExternalEventsForThread(
+      const replayedPersistedEvents = await replayExternalEventsForThread(
         set,
         get,
         type.key,
         threadId,
       );
-      if (!replayedDisplay) {
+      if (!replayedPersistedEvents) {
         await useAgentConversationStore.getState().loadMessages(type.key, threadId);
       }
       return;

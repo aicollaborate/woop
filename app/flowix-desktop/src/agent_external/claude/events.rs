@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
+use crate::agent_external::AgentChunkMetadata;
 use crate::agent_flowix::AgentChunk;
 use crate::agent_types::UsageInfo;
 
@@ -18,6 +19,7 @@ pub(crate) struct ParsedClaudeStdoutLine {
 /// `index` �?�� `arguments`), 仅作用于 Claude partial 流式�?���?
 #[derive(Default)]
 pub(crate) struct ClaudeStreamState {
+    current_message_id: Option<String>,
     /// content_block `index` -> �?���?�� tool_use 输入�?
     /// `content_block_start`(tool_use) �?entry;`input_json_delta` 追加
     /// `partial_json`;`content_block_stop` flush 鎴?`AgentChunk::ToolCall`銆?
@@ -27,6 +29,80 @@ pub(crate) struct ClaudeStreamState {
     /// (WebSearch / Agent / TaskOutput 等无 stream_event 增量的工具)只出现在完整
     /// 快照里,靠本集合判定"是否已被增量发过"以决定是否从快照补发。
     emitted_tool_call_ids: HashSet<String>,
+}
+
+pub(crate) fn claude_chunk_metadata(
+    value: &Value,
+    chunk: &AgentChunk,
+    state: &ClaudeStreamState,
+) -> AgentChunkMetadata {
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let block_index = value
+        .get("event")
+        .and_then(|event| event.get("index"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let source_message_id = value
+        .pointer("/event/message/id")
+        .or_else(|| value.pointer("/message/id"))
+        .or_else(|| value.get("uuid"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| state.current_message_id.clone());
+
+    match chunk {
+        AgentChunk::Text { .. } => AgentChunkMetadata {
+            message_id: source_message_id.map(|id| format!("assistant-{id}-block-{block_index}")),
+            message_phase: Some("updated"),
+            content_mode: Some(if event_type == "stream_event" {
+                "delta"
+            } else {
+                "snapshot"
+            }),
+            ..Default::default()
+        },
+        AgentChunk::Reasoning { .. } => AgentChunkMetadata {
+            message_id: source_message_id.map(|id| format!("reasoning-{id}-block-{block_index}")),
+            message_phase: Some("updated"),
+            content_mode: Some(if event_type == "stream_event" {
+                "delta"
+            } else {
+                "snapshot"
+            }),
+            ..Default::default()
+        },
+        AgentChunk::ToolCall { id, .. } => AgentChunkMetadata {
+            message_id: Some(format!("tool-{id}")),
+            message_phase: Some("started"),
+            ..Default::default()
+        },
+        AgentChunk::ToolResult { id, .. } => AgentChunkMetadata {
+            message_id: Some(format!("tool-{id}")),
+            message_phase: Some("completed"),
+            ..Default::default()
+        },
+        _ => AgentChunkMetadata::default(),
+    }
+}
+
+pub(crate) fn claude_event_timestamp_millis(value: &Value) -> Option<i64> {
+    let timestamp = value.get("timestamp")?;
+    if let Some(value) = timestamp.as_i64() {
+        return Some(if value.abs() < 10_000_000_000 {
+            value.saturating_mul(1000)
+        } else {
+            value
+        });
+    }
+    timestamp.as_str().and_then(|text| {
+        chrono::DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|date| date.timestamp_millis())
+    })
 }
 
 struct PendingToolInput {
@@ -345,8 +421,9 @@ pub(crate) fn claude_event_to_chunks_with_state(
         return chunks;
     }
 
-    // [stream path] type=user 分发 ── text �?�?AgentChunk::Text;
-    // tool_result �?�?AgentChunk::ToolResult;image / attachment �?�?静默
+    // [stream path] type=user 只分发 tool_result。真实用户文本由产品侧
+    // optimistic message 持有，不能转成 AgentChunk::Text 后误标为 assistant。
+    // image / attachment 等其余 block 静默
     // 丢弃。合成消�?isMeta / isSynthetic /
     // task-notification)�?entry guard `silence_reason` 在分发前拦截,
     // 涓嶄細鍒拌繖閲屻€?
@@ -359,16 +436,7 @@ pub(crate) fn claude_event_to_chunks_with_state(
         {
             for block in content {
                 match block.get("type").and_then(Value::as_str) {
-                    Some("text") => {
-                        if let Some(text) = block.get("text").and_then(Value::as_str) {
-                            if !text.trim().is_empty() {
-                                chunks.push(AgentChunk::Text {
-                                    thread_id: thread_id.to_string(),
-                                    text: text.to_string(),
-                                });
-                            }
-                        }
-                    }
+                    Some("text") => {}
                     Some("tool_result") => {
                         let id = block
                             .get("tool_use_id")
@@ -443,6 +511,11 @@ fn stream_event_to_chunks(
         // �?message 开�? 清掉上一�?��留的 pending tool input, 防跨�?��漏�?
         "message_start" => {
             state.pending_tool_inputs.clear();
+            state.current_message_id = ev
+                .pointer("/message/id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string);
             Vec::new()
         }
         // tool_use 块开�? �?id / name, input �?input_json_delta �?���?
@@ -558,7 +631,11 @@ fn stream_event_to_chunks(
             }],
             None => Vec::new(),
         },
-        // message_stop / 其他: �?chunk�?
+        "message_stop" => {
+            state.current_message_id = None;
+            Vec::new()
+        }
+        // 其他: �?chunk�?
         _ => Vec::new(),
     }
 }
@@ -693,6 +770,63 @@ fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_metadata_uses_claude_message_and_tool_ids() {
+        let mut state = ClaudeStreamState::default();
+        let message_start = serde_json::json!({
+            "type": "stream_event",
+            "timestamp": "2026-07-30T01:02:03.456Z",
+            "event": {
+                "type": "message_start",
+                "message": { "id": "msg_claude_1" }
+            }
+        });
+        assert!(
+            claude_event_to_chunks_with_state("thread_1", &message_start, true, &mut state,)
+                .is_empty()
+        );
+
+        let text_delta = serde_json::json!({
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": { "type": "text_delta", "text": "hello" }
+            }
+        });
+        let chunks = claude_event_to_chunks_with_state("thread_1", &text_delta, true, &mut state);
+        let text_metadata = claude_chunk_metadata(&text_delta, &chunks[0], &state);
+        assert_eq!(
+            text_metadata.message_id.as_deref(),
+            Some("assistant-msg_claude_1-block-2")
+        );
+        assert_eq!(text_metadata.content_mode, Some("delta"));
+
+        let call = AgentChunk::ToolCall {
+            thread_id: "thread_1".to_string(),
+            id: "toolu_1".to_string(),
+            name: "Read".to_string(),
+            input: serde_json::json!({}),
+        };
+        let result = AgentChunk::ToolResult {
+            thread_id: "thread_1".to_string(),
+            id: "toolu_1".to_string(),
+            name: "Read".to_string(),
+            result: serde_json::json!({ "content": "done" }),
+        };
+        let call_metadata = claude_chunk_metadata(&serde_json::json!({}), &call, &state);
+        let result_metadata = claude_chunk_metadata(&serde_json::json!({}), &result, &state);
+        assert_eq!(call_metadata.message_id, result_metadata.message_id);
+        assert_eq!(call_metadata.message_id.as_deref(), Some("tool-toolu_1"));
+        assert_eq!(call_metadata.message_phase, Some("started"));
+        assert_eq!(result_metadata.message_phase, Some("completed"));
+
+        assert_eq!(
+            claude_event_timestamp_millis(&message_start),
+            Some(1_785_373_323_456)
+        );
+    }
 
     #[test]
     fn maps_claude_stdout_contract_fixture_to_expected_chunks() {

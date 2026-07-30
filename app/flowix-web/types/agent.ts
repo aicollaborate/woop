@@ -183,6 +183,10 @@ export interface ChatMessage {
   systemReminderDirectory?: string;
   systemReminderDocumentPath?: string;
   timestamp: string;
+  /** Provider/source ordering metadata. `timestamp` remains display data. */
+  sourceTimestamp?: number;
+  sourceSequence?: number;
+  sourceSubsequence?: number;
   isLoading?: boolean;
   toolCallId?: string;
   toolName?: string;
@@ -212,6 +216,7 @@ export interface ToolCall {
 // TS 绔闂?`chunk.thread_id`銆傝繖璺?IPC command args/returns 鐨?camelCase
 // 绾﹀畾鏄袱濂楄鍒?鈹€鈹€ 鍚庤€呮湁 Tauri 鑷姩杞崲, 鍓嶈€呮病鏈? 涓嶈娣?// (涓?`memo-event` 鐨?`payload.memo` / `payload.source` 鍚屽舰)銆?
 export type AgentChunk =
+  | AgentChunkUserMessage
   | AgentChunkText
   | AgentChunkReasoning
   | AgentChunkToolCall
@@ -222,12 +227,28 @@ export type AgentChunk =
   | AgentChunkSessionResolved
   | AgentChunkUsage;
 
+export interface AgentChunkUserMessage {
+  kind: "user_message";
+  thread_id: string;
+  id: string;
+  text: string;
+  timestamp: number;
+  agent_type?: AgentTypeKey;
+  run_id?: string;
+}
+
 export interface AgentChunkText {
   kind: "text";
   thread_id: string;
   text: string;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  message_phase?: "started" | "updated" | "completed";
+  content_mode?: "delta" | "snapshot";
+  source_timestamp?: number;
+  source_sequence?: number;
+  source_subsequence?: number;
 }
 
 export interface AgentChunkReasoning {
@@ -236,6 +257,12 @@ export interface AgentChunkReasoning {
   text: string;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  message_phase?: "started" | "updated" | "completed";
+  content_mode?: "delta" | "snapshot";
+  source_timestamp?: number;
+  source_sequence?: number;
+  source_subsequence?: number;
 }
 
 export interface AgentChunkToolCall {
@@ -246,6 +273,11 @@ export interface AgentChunkToolCall {
   input: unknown;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  message_phase?: "started" | "updated" | "completed";
+  source_timestamp?: number;
+  source_sequence?: number;
+  source_subsequence?: number;
 }
 
 export interface AgentChunkToolResult {
@@ -256,6 +288,11 @@ export interface AgentChunkToolResult {
   result: unknown;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  message_phase?: "started" | "updated" | "completed";
+  source_timestamp?: number;
+  source_sequence?: number;
+  source_subsequence?: number;
 }
 
 export interface AgentChunkError {
@@ -406,6 +443,12 @@ interface AgentEventBase {
   threadId: string;
   runId: string;
   timestamp: number;
+  messageId?: string;
+  messagePhase?: "started" | "updated" | "completed";
+  contentMode?: "delta" | "snapshot";
+  sourceTimestamp?: number;
+  sourceSequence?: number;
+  sourceSubsequence?: number;
 }
 
 export type AgentEvent =
@@ -419,6 +462,11 @@ export type AgentEvent =
       reasoningEffort?: string;
     })
   | (AgentEventBase & { kind: "text_delta"; text: string })
+  | (AgentEventBase & {
+      kind: "user_message";
+      id: string;
+      text: string;
+    })
   | (AgentEventBase & { kind: "final_message"; text: string })
   | (AgentEventBase & { kind: "reasoning_delta"; text: string })
   | (AgentEventBase & {

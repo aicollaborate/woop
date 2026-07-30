@@ -1,5 +1,53 @@
 use super::*;
 
+#[derive(Clone, Debug, Default)]
+pub struct AgentChunkMetadata {
+    pub message_id: Option<String>,
+    pub message_phase: Option<&'static str>,
+    pub content_mode: Option<&'static str>,
+    pub source_timestamp: Option<i64>,
+    pub source_sequence: Option<u64>,
+    pub source_subsequence: Option<u32>,
+}
+
+impl AgentChunkMetadata {
+    fn apply_to_payload(&self, object: &mut serde_json::Map<String, Value>) {
+        if let Some(message_id) = self.message_id.as_ref() {
+            object.insert("message_id".to_string(), Value::String(message_id.clone()));
+        }
+        if let Some(message_phase) = self.message_phase {
+            object.insert(
+                "message_phase".to_string(),
+                Value::String(message_phase.to_string()),
+            );
+        }
+        if let Some(content_mode) = self.content_mode {
+            object.insert(
+                "content_mode".to_string(),
+                Value::String(content_mode.to_string()),
+            );
+        }
+        if let Some(source_timestamp) = self.source_timestamp {
+            object.insert(
+                "source_timestamp".to_string(),
+                Value::Number(source_timestamp.into()),
+            );
+        }
+        if let Some(source_sequence) = self.source_sequence {
+            object.insert(
+                "source_sequence".to_string(),
+                Value::Number(source_sequence.into()),
+            );
+        }
+        if let Some(source_subsequence) = self.source_subsequence {
+            object.insert(
+                "source_subsequence".to_string(),
+                Value::Number(source_subsequence.into()),
+            );
+        }
+    }
+}
+
 /// Build a run id when the caller did not provide one. Format keeps it
 /// grep-friendly in `runtime_log::agent.log`: `{thread_id}-{unix_millis}`.
 pub fn create_run_id(thread_id: &str) -> String {
@@ -31,7 +79,23 @@ pub fn emit_chunk_with_run_id(
     agent_type: &'static str,
     run_id: &str,
 ) {
-    let mut payload = match serde_json::to_value(chunk) {
+    emit_chunk_with_run_id_and_metadata(
+        app_handle,
+        chunk,
+        agent_type,
+        run_id,
+        &AgentChunkMetadata::default(),
+    );
+}
+
+pub fn emit_chunk_with_run_id_and_metadata(
+    app_handle: &tauri::AppHandle,
+    chunk: &AgentChunk,
+    agent_type: &'static str,
+    run_id: &str,
+    metadata: &AgentChunkMetadata,
+) {
+    let payload = match chunk_payload_value(chunk, agent_type, run_id, metadata) {
         Ok(value) => value,
         Err(err) => {
             runtime_log::record_agent_event(
@@ -50,13 +114,6 @@ pub fn emit_chunk_with_run_id(
             return;
         }
     };
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("run_id".to_string(), Value::String(run_id.to_string()));
-        object.insert(
-            "agent_type".to_string(),
-            Value::String(agent_type.to_string()),
-        );
-    }
     if !dispatcher::emit_to(app_handle, "agent-chunk", payload) {
         runtime_log::record_agent_event(
             "warn",
@@ -87,7 +144,26 @@ pub async fn persist_external_chunk(
     run_id: &str,
     raw_json: Option<&str>,
 ) {
-    let payload_json = match chunk_payload_json(chunk, agent_type, run_id) {
+    persist_external_chunk_with_metadata(
+        thread_manager,
+        agent_type,
+        chunk,
+        run_id,
+        raw_json,
+        &AgentChunkMetadata::default(),
+    )
+    .await;
+}
+
+pub async fn persist_external_chunk_with_metadata(
+    thread_manager: &Arc<ThreadManager>,
+    agent_type: &'static str,
+    chunk: &AgentChunk,
+    run_id: &str,
+    raw_json: Option<&str>,
+    metadata: &AgentChunkMetadata,
+) {
+    let payload_json = match chunk_payload_json(chunk, agent_type, run_id, metadata) {
         Some(payload) => payload,
         None => return,
     };
@@ -126,24 +202,65 @@ pub async fn persist_and_emit_external_chunk(
     run_id: &str,
     raw_json: Option<&str>,
 ) {
-    persist_external_chunk(thread_manager, agent_type, chunk, run_id, raw_json).await;
-    emit_chunk_with_run_id(app_handle, chunk, agent_type, run_id);
+    persist_and_emit_external_chunk_with_metadata(
+        app_handle,
+        thread_manager,
+        agent_type,
+        chunk,
+        run_id,
+        raw_json,
+        &AgentChunkMetadata::default(),
+    )
+    .await;
+}
+
+pub async fn persist_and_emit_external_chunk_with_metadata(
+    app_handle: &tauri::AppHandle,
+    thread_manager: &Arc<ThreadManager>,
+    agent_type: &'static str,
+    chunk: &AgentChunk,
+    run_id: &str,
+    raw_json: Option<&str>,
+    metadata: &AgentChunkMetadata,
+) {
+    persist_external_chunk_with_metadata(
+        thread_manager,
+        agent_type,
+        chunk,
+        run_id,
+        raw_json,
+        metadata,
+    )
+    .await;
+    emit_chunk_with_run_id_and_metadata(app_handle, chunk, agent_type, run_id, metadata);
 }
 
 fn chunk_payload_json(
     chunk: &AgentChunk,
     agent_type: &'static str,
     run_id: &str,
+    metadata: &AgentChunkMetadata,
 ) -> Option<String> {
-    let mut payload = serde_json::to_value(chunk).ok()?;
+    let payload = chunk_payload_value(chunk, agent_type, run_id, metadata).ok()?;
+    serde_json::to_string(&payload).ok()
+}
+
+fn chunk_payload_value(
+    chunk: &AgentChunk,
+    agent_type: &'static str,
+    run_id: &str,
+    metadata: &AgentChunkMetadata,
+) -> Result<Value, serde_json::Error> {
+    let mut payload = serde_json::to_value(chunk)?;
     if let Value::Object(object) = &mut payload {
         object.insert("run_id".to_string(), Value::String(run_id.to_string()));
         object.insert(
             "agent_type".to_string(),
             Value::String(agent_type.to_string()),
         );
+        metadata.apply_to_payload(object);
     }
-    serde_json::to_string(&payload).ok()
+    Ok(payload)
 }
 
 fn external_event_raw_json_enabled(agent_type: &str) -> bool {

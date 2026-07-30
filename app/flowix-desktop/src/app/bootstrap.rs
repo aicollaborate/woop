@@ -627,6 +627,7 @@ pub fn run() {
             commands::agent::model_catalog::agent_supported_models,
             commands::thread::claude_thread_list,
             commands::thread::claude_thread_get,
+            commands::thread::claude_thread_get_page,
             commands::thread::claude_thread_session_id,
             commands::thread::hermes_thread_list,
             commands::thread::hermes_thread_get,

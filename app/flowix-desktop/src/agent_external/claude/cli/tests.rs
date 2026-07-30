@@ -245,8 +245,7 @@ fn maps_claude_tool_blocks_to_chunks() {
 }
 
 #[test]
-fn emits_text_and_tool_result_blocks_from_user_array_content() {
-    // type=user �?content array 里同时含 text �?tool_result 块时,两个�?        // 都发——text 块发 AgentChunk::Text,tool_result 块发 AgentChunk::ToolResult�?        // 这是 events.rs 流式�?��的当前�?�?�?history.rs 走过的路�?        // 一致——文�?���?�� user ChatMessage、tool_result 保留�?tool 消息)�?
+fn skips_user_text_but_keeps_tool_result_blocks_while_streaming() {
     let value = serde_json::json!({
         "type": "user",
         "message": {
@@ -267,11 +266,8 @@ fn emits_text_and_tool_result_blocks_from_user_array_content() {
     let chunks = claude_event_to_chunks("thread_1", &value);
     assert!(matches!(
         chunks.as_slice(),
-        [
-            AgentChunk::Text { text, .. },
-            AgentChunk::ToolResult { id, result, .. }
-        ] if text == "Plain user text before a tool result"
-            && id == "toolu_1"
+        [AgentChunk::ToolResult { id, result, .. }]
+            if id == "toolu_1"
             && result["content"] == "loaded"
     ));
 }

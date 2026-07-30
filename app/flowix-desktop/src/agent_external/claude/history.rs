@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::agent_session::{ChatMessage, ThreadInfo};
+use crate::agent_session::{ChatMessage, ThreadInfo, ThreadMessagesPage};
 use crate::agent_types::AgentId;
 
 use super::{
@@ -28,6 +28,42 @@ pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     tokio::task::spawn_blocking(move || read_claude_session_messages(&session_id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+pub async fn get_session_page(
+    session_id: &str,
+    before_sequence: Option<i64>,
+    limit: i64,
+) -> Result<ThreadMessagesPage, String> {
+    let session_id = session_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let messages = read_claude_session_messages(&session_id)?;
+        Ok(paginate_claude_messages(messages, before_sequence, limit))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn paginate_claude_messages(
+    messages: Vec<ChatMessage>,
+    before_sequence: Option<i64>,
+    limit: i64,
+) -> ThreadMessagesPage {
+    let total = messages.len();
+    let limit = limit.clamp(1, 1000) as usize;
+    let end = before_sequence
+        .map(|sequence| (sequence - 1).clamp(0, total as i64) as usize)
+        .unwrap_or(total);
+    let start = end.saturating_sub(limit);
+    ThreadMessagesPage {
+        messages: if start < end {
+            messages[start..end].to_vec()
+        } else {
+            Vec::new()
+        },
+        oldest_sequence: (start < end).then_some((start + 1) as i64),
+        has_more: start > 0,
+    }
 }
 
 pub fn is_claude_session_id(text: &str) -> bool {

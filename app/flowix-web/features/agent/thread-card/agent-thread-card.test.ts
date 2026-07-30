@@ -1,4 +1,5 @@
 import { Editor } from "@tiptap/core";
+import { NodeSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types/agent";
@@ -71,6 +72,11 @@ vi.mock("@platform/tauri/client", () => ({
       hasMore: false,
     })),
     getClaudeThread: vi.fn(async () => ({ messages: [] })),
+    getClaudeThreadPage: vi.fn(async () => ({
+      messages: [],
+      oldestSequence: null,
+      hasMore: false,
+    })),
     getCodexSessionId: vi.fn(async () => null),
     getClaudeSessionId: vi.fn(async () => null),
     getCodexDefaultModel: vi.fn(async () => "gpt-5.5"),
@@ -2140,6 +2146,66 @@ describe("AgentThreadCard NodeView streaming", () => {
     );
 
     expect(hostMouseDown).not.toHaveBeenCalled();
+  });
+
+  it("clears the card node selection when its composer input receives focus", async () => {
+    const { AgentThreadCard } =
+      await import("@features/agent/thread-card");
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "before" }],
+          },
+          {
+            type: "agentThreadCard",
+            attrs: {
+              threadId: "thread-card-focus-deselect",
+              title: "Focus Deselect",
+              typeKey: "flowix",
+              collapsed: false,
+            },
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "after" }],
+          },
+        ],
+      },
+    });
+
+    let cardPos: number | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "agentThreadCard") {
+        cardPos = pos;
+        return false;
+      }
+      return true;
+    });
+    expect(cardPos).not.toBeNull();
+    editor.commands.setNodeSelection(cardPos!);
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+
+    const card = host.querySelector<HTMLElement>(".agent-thread-card");
+    const input = card?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(card).not.toBeNull();
+    expect(input).not.toBeNull();
+    expect(card!.classList.contains("ProseMirror-selectednode")).toBe(true);
+
+    input!.focus();
+
+    expect(document.activeElement).toBe(input);
+    expect(editor.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect(card!.classList.contains("ProseMirror-selectednode")).toBe(false);
+    expect(editor.state.doc.childCount).toBe(3);
+    expect(editor.state.doc.child(1).type.name).toBe("agentThreadCard");
   });
 
   it("blurs a focused card input before outside pointer interactions", async () => {

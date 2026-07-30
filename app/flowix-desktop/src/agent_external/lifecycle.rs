@@ -42,6 +42,21 @@ pub trait ExternalLifecycleEmitter: Send + Sync {
             .await;
     }
 
+    /// Persist and emit the product-owned user row before StreamStart. The
+    /// frontend already has the same id optimistically, so live delivery is an
+    /// idempotent update while cold replay gains the missing user turn.
+    async fn emit_user_message(
+        &self,
+        app_handle: &tauri::AppHandle,
+        thread_id: &str,
+        message: &AgentUserMessage,
+        run_id: &str,
+    ) {
+        let chunk = user_message_chunk(thread_id, message, run_id);
+        self.emit_and_persist_lifecycle_chunk(app_handle, &chunk, run_id)
+            .await;
+    }
+
     async fn emit_run_error(
         &self,
         app_handle: &tauri::AppHandle,
@@ -120,6 +135,18 @@ fn stream_start_chunk(
     }
 }
 
+fn user_message_chunk(thread_id: &str, message: &AgentUserMessage, run_id: &str) -> AgentChunk {
+    AgentChunk::UserMessage {
+        thread_id: thread_id.to_string(),
+        id: format!("user-{run_id}"),
+        text: message
+            .llm_content
+            .clone()
+            .unwrap_or_else(|| message.content.clone()),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
 fn watchdog_chunks(run: &ExternalWatchdogFinalizedRun) -> Vec<AgentChunk> {
     let mut chunks = Vec::with_capacity(2);
     if let Some(reason) = &run.reason {
@@ -164,6 +191,33 @@ mod tests {
         assert!(matches!(
             chunks.as_slice(),
             [AgentChunk::StreamEnd { reason: None, .. }]
+        ));
+    }
+
+    #[test]
+    fn user_message_chunk_uses_run_scoped_id_and_llm_content() {
+        let message = AgentUserMessage {
+            content: "visible".to_string(),
+            llm_content: Some("visible with context".to_string()),
+            image_paths: Vec::new(),
+            run_id: None,
+            system_reminder_directory: None,
+            agent_type: Some("claude".to_string()),
+            runtime_config: None,
+            permission_mode: None,
+            codex_model: None,
+            codex_reasoning_effort: None,
+            agent_role_memo_id: None,
+            agent_role_name: None,
+            conversation_title: None,
+        };
+
+        assert!(matches!(
+            user_message_chunk("thread-1", &message, "run-1"),
+            AgentChunk::UserMessage { id, text, timestamp, .. }
+                if id == "user-run-1"
+                    && text == "visible with context"
+                    && timestamp > 0
         ));
     }
 }

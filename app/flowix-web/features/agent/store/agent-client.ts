@@ -23,6 +23,7 @@ export const agentClient = {
   getCodexThreadPage: agent.getCodexThreadPage,
   listClaudeThreads: agent.listClaudeThreads,
   getClaudeThread: agent.getClaudeThread,
+  getClaudeThreadPage: agent.getClaudeThreadPage,
   listHermesThreads: agent.listHermesThreads,
   getHermesThread: agent.getHermesThread,
   getHermesThreadPage: agent.getHermesThreadPage,

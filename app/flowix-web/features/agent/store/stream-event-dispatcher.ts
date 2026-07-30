@@ -4,6 +4,7 @@ import {
   applyErrorChunk,
   applyReasoningChunk,
   applyTextChunk,
+  applyUserMessageChunk,
 } from "@features/agent/store/message-chunks";
 import {
   applyToolCallChunk,
@@ -109,6 +110,7 @@ function activeThreadUpdate(
 function isDataChunk(kind: AgentEvent["kind"]): boolean {
   return (
     kind === "text_delta" ||
+    kind === "user_message" ||
     kind === "reasoning_delta" ||
     kind === "final_message" ||
     kind === "tool_call" ||
@@ -133,6 +135,27 @@ function applyEventToChatSlice(
     event,
   );
   switch (event.kind) {
+    case "user_message": {
+      const liveState = getConversationLiveMessageState(tid, st);
+      const next = applyUserMessageChunk(liveState, event.text, {
+        id: event.id,
+        phase: "completed",
+        contentMode: "snapshot",
+        sourceTimestamp: event.sourceTimestamp,
+        sourceSequence: event.sourceSequence,
+        sourceSubsequence: event.sourceSubsequence,
+      });
+      const nextThreadState: ThreadState = {
+        ...st,
+        messages: next.messages,
+        pendingAssistantId: next.pendingAssistantId,
+        pendingReasoningId: next.pendingReasoningId,
+      };
+      syncLiveMessageState(event.agentType, tid, nextThreadState);
+      return {
+        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
+      };
+    }
     case "session_resolved": {
       if (!event.sessionId || event.sessionId === tid) return null;
       const resolved = applyExternalSessionResolved(
@@ -194,9 +217,58 @@ function applyEventToChatSlice(
         threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
       };
     }
+    case "text_delta": {
+      const liveState = getConversationLiveMessageState(tid, st);
+      const next = applyTextChunk(liveState, event.text, {
+        id: event.messageId,
+        phase: event.messagePhase,
+        contentMode: event.contentMode,
+        sourceTimestamp: event.sourceTimestamp,
+        sourceSequence: event.sourceSequence,
+        sourceSubsequence: event.sourceSubsequence,
+      });
+      const nextThreadState: ThreadState = {
+        ...applyRunToolState(st, event, null),
+        messages: next.messages,
+        pendingAssistantId: next.pendingAssistantId,
+        pendingReasoningId: null,
+      };
+      syncLiveMessageState(event.agentType, tid, nextThreadState);
+      return {
+        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
+      };
+    }
+    case "reasoning_delta": {
+      const liveState = getConversationLiveMessageState(tid, st);
+      const next = applyReasoningChunk(liveState, event.text, {
+        id: event.messageId,
+        phase: event.messagePhase,
+        contentMode: event.contentMode,
+        sourceTimestamp: event.sourceTimestamp,
+        sourceSequence: event.sourceSequence,
+        sourceSubsequence: event.sourceSubsequence,
+      });
+      const nextThreadState: ThreadState = {
+        ...st,
+        messages: next.messages,
+        pendingAssistantId: next.pendingAssistantId,
+        pendingReasoningId: next.pendingReasoningId,
+      };
+      syncLiveMessageState(event.agentType, tid, nextThreadState);
+      return {
+        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
+      };
+    }
     case "final_message": {
       const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyTextChunk(liveState, event.text);
+      const next = applyTextChunk(liveState, event.text, {
+        id: event.messageId,
+        phase: event.messagePhase,
+        contentMode: event.contentMode,
+        sourceTimestamp: event.sourceTimestamp,
+        sourceSequence: event.sourceSequence,
+        sourceSubsequence: event.sourceSubsequence,
+      });
       const nextThreadState: ThreadState = {
         ...applyRunToolState(st, event, null),
         messages: next.messages,
@@ -217,6 +289,13 @@ function applyEventToChatSlice(
         event.input,
         event.agentType,
         event.display,
+        {
+          id: event.messageId,
+          phase: event.messagePhase,
+          sourceTimestamp: event.sourceTimestamp,
+          sourceSequence: event.sourceSequence,
+          sourceSubsequence: event.sourceSubsequence,
+        },
       );
       const nextThreadState: ThreadState = {
         ...applyRunToolState(st, event, event.name),
@@ -236,6 +315,13 @@ function applyEventToChatSlice(
         event.name,
         event.result,
         event.agentType,
+        {
+          id: event.messageId,
+          phase: event.messagePhase,
+          sourceTimestamp: event.sourceTimestamp,
+          sourceSequence: event.sourceSequence,
+          sourceSubsequence: event.sourceSubsequence,
+        },
       );
       const nextThreadState: ThreadState = {
         ...applyRunToolState(st, event, null),
@@ -377,6 +463,10 @@ export function createStreamEventDispatcher(
             threadStates: threadRunUpdate(slice.threadStates, tid, ensured),
           });
         }
+        if (event.messageId || event.contentMode === "snapshot") {
+          streamingBuffer.flushSync();
+          break;
+        }
         streamingBuffer.appendText(tid, event.text);
         return;
       }
@@ -386,6 +476,10 @@ export function createStreamEventDispatcher(
           host.applyPatch({
             threadStates: threadRunUpdate(slice.threadStates, tid, ensured),
           });
+        }
+        if (event.messageId || event.contentMode === "snapshot") {
+          streamingBuffer.flushSync();
+          break;
         }
         streamingBuffer.appendReasoning(tid, event.text);
         return;

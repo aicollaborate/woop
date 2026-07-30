@@ -58,6 +58,51 @@ fn streaming_emit_buffer_flush_only_emits_non_empty() {
 }
 
 #[test]
+fn streaming_emit_buffer_keeps_first_metadata_anchor_and_clears_it_on_flush() {
+    let mut buf = StreamingEmitBuffer::new("metadata-thread".to_string());
+    let first = AgentChunkMetadata {
+        message_id: Some("assistant-message-1".to_string()),
+        source_timestamp: Some(100),
+        source_sequence: Some(7),
+        source_subsequence: Some(0),
+        ..Default::default()
+    };
+    let later = AgentChunkMetadata {
+        message_id: Some("assistant-message-1".to_string()),
+        source_timestamp: Some(101),
+        source_sequence: Some(8),
+        source_subsequence: Some(0),
+        ..Default::default()
+    };
+
+    buf.append_text_with_metadata("first", first);
+    buf.append_text_with_metadata(" second", later);
+
+    let flushed = buf.flush_with_metadata();
+    assert_eq!(flushed.len(), 1);
+    assert!(matches!(
+        &flushed[0].0,
+        AgentChunk::Text { text, .. } if text == "first second"
+    ));
+    assert_eq!(
+        flushed[0].1.message_id.as_deref(),
+        Some("assistant-message-1")
+    );
+    assert_eq!(flushed[0].1.source_timestamp, Some(100));
+    assert_eq!(flushed[0].1.source_sequence, Some(7));
+    assert_eq!(buf.text_message_id(), None);
+
+    buf.append_text_with_metadata(
+        "next",
+        AgentChunkMetadata {
+            message_id: Some("assistant-message-2".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(buf.text_message_id(), Some("assistant-message-2"));
+}
+
+#[test]
 fn registry_metadata_is_thread_scoped() {
     let registry = ExternalRunRegistry::new("codex", "codex");
     assert_eq!(registry.agent_type, "codex");

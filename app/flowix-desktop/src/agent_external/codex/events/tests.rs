@@ -833,3 +833,45 @@ fn refreshes_web_search_card_with_completed_query_and_action() {
                 && input.pointer("/action/type").and_then(Value::as_str) == Some("search")
     ));
 }
+
+#[test]
+fn preserves_codex_item_ids_as_message_metadata() {
+    let assistant = serde_json::json!({
+        "type": "item.completed",
+        "item": {
+            "id": "item_assistant_1",
+            "type": "agent_message",
+            "text": "done"
+        }
+    });
+    let assistant_chunk = codex_event_to_chunks("thread_1", &assistant)
+        .into_iter()
+        .next()
+        .expect("assistant chunk");
+    let assistant_metadata = codex_chunk_metadata(&assistant, &assistant_chunk);
+    assert_eq!(
+        assistant_metadata.message_id.as_deref(),
+        Some("assistant-item_assistant_1")
+    );
+    assert_eq!(assistant_metadata.message_phase, Some("completed"));
+    assert_eq!(assistant_metadata.content_mode, Some("snapshot"));
+
+    let tool = serde_json::json!({
+        "type": "item.started",
+        "item": {
+            "id": "item_tool_1",
+            "type": "command_execution",
+            "command": "pwd"
+        }
+    });
+    let tool_chunk = codex_event_to_chunks("thread_1", &tool)
+        .into_iter()
+        .next()
+        .expect("tool chunk");
+    let tool_metadata = codex_chunk_metadata(&tool, &tool_chunk);
+    assert_eq!(
+        tool_metadata.message_id.as_deref(),
+        Some("tool-item_tool_1")
+    );
+    assert_eq!(tool_metadata.message_phase, Some("started"));
+}
