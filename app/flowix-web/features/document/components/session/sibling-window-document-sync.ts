@@ -1,6 +1,11 @@
 import type { DocumentIdentity } from '@features/document/store/document-identity';
+import type { MemoContentCommit } from '@/types/memo';
+import {
+  markMemoCommitApplied,
+  shouldApplyMemoCommit,
+} from '@features/document/store/memo-content-revision';
 
-export interface MemoContentUpdatedEvent {
+export interface MemoContentUpdatedEvent extends MemoContentCommit {
   id: string;
   path: string;
 }
@@ -10,6 +15,7 @@ interface HandleSiblingWindowContentUpdateOptions {
   identity: DocumentIdentity;
   isDirty: boolean;
   onConflict: () => void;
+  onDeferred?: (event: MemoContentUpdatedEvent) => void;
   clearSaveTimer: () => void;
   reloadDocument: (path: string, options: {
     preservePending: boolean;
@@ -24,6 +30,7 @@ export async function handleSiblingWindowContentUpdate({
   identity,
   isDirty,
   onConflict,
+  onDeferred,
   clearSaveTimer,
   reloadDocument,
 }: HandleSiblingWindowContentUpdateOptions): Promise<SiblingWindowContentUpdateResult> {
@@ -31,12 +38,16 @@ export async function handleSiblingWindowContentUpdate({
     return 'ignored';
   }
 
+  if (!shouldApplyMemoCommit(event.id, event)) return 'ignored';
+
   if (isDirty) {
     onConflict();
+    onDeferred?.(event);
     return 'conflict';
   }
 
   clearSaveTimer();
   await reloadDocument(event.path, { preservePending: false, showLoading: false });
+  markMemoCommitApplied(event.id, event);
   return 'reloaded';
 }

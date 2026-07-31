@@ -8,6 +8,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
+use crate::document_mutation::{DocumentCommit, DocumentMutationCoordinator};
+use crate::lock_utils::read_lock;
 use flowix_core::memo_file::Memo;
 
 pub const MEMO_EVENT: &str = "memo-event";
@@ -166,6 +168,8 @@ pub enum MemoEvent {
 pub struct MemoContentUpdated {
     pub id: String,
     pub path: String,
+    #[serde(flatten)]
+    pub commit: DocumentCommit,
 }
 
 fn is_sibling_window_target(target: &EventTarget, origin_window_label: &str) -> bool {
@@ -184,10 +188,12 @@ pub fn emit_content_updated_to_sibling_windows<R: tauri::Runtime>(
     origin_window_label: &str,
     id: &str,
     path: &str,
+    commit: DocumentCommit,
 ) {
     let payload = MemoContentUpdated {
         id: id.to_string(),
         path: path.to_string(),
+        commit,
     };
     let _ = app.emit_filter(MEMO_CONTENT_UPDATED_EVENT, payload, |target| {
         is_sibling_window_target(target, origin_window_label)
@@ -216,6 +222,10 @@ impl MemoEvent {
 /// �?emit 风格保持一�?—IPC 通道关闭时不该�?业务逻辑�?�?///
 /// v3 改造后物理 rename 不再发生, 不再需�?id 二级兜底�?
 pub fn emit(app: &AppHandle, event: MemoEvent) {
+    let _ = emit_with_commit(app, event);
+}
+
+pub fn emit_with_commit(app: &AppHandle, event: MemoEvent) -> Option<DocumentCommit> {
     let sync_change = match &event {
         MemoEvent::Created {
             memo,
@@ -249,12 +259,19 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
         )),
         _ => None,
     };
+    let commit = commit_for_event(app, &event);
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
     // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
-        emit_via_dispatcher(&dispatcher, event);
+        emit_committed_via_dispatcher(&dispatcher, &event, commit.as_ref());
     } else {
-        let _ = app.emit(MEMO_EVENT, &event);
+        let _ = app.emit(
+            MEMO_EVENT,
+            MemoEventPayload {
+                event: &event,
+                commit: commit.as_ref(),
+            },
+        );
     }
     if let Some((notebook_id, note_id, operation)) = sync_change {
         if let Some(state) = app.try_state::<crate::app::state::AppState>() {
@@ -270,6 +287,46 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
         }
         crate::commands::cloud::schedule_notebook_sync(app.clone(), notebook_id);
     }
+    commit
+}
+
+#[derive(Serialize, Clone)]
+struct MemoEventPayload<'a> {
+    #[serde(flatten)]
+    event: &'a MemoEvent,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    commit: Option<&'a DocumentCommit>,
+}
+
+fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Option<DocumentCommit> {
+    let (memo_id, notebook_id, path) = match event {
+        MemoEvent::Created {
+            memo, notebook_id, ..
+        } => {
+            let state = app.try_state::<crate::app::state::AppState>()?;
+            let resolved = flowix_core::MemoService::new(&read_lock(&state.memo_file, "memo_file"))
+                .resolve_memo(&memo.id)
+                .ok()?;
+            (memo.id.as_str(), notebook_id.as_str(), resolved.path)
+        }
+        MemoEvent::Updated {
+            id,
+            notebook_id,
+            path,
+            ..
+        } if !path.is_empty() => (
+            id.as_str(),
+            notebook_id.as_str(),
+            std::path::PathBuf::from(path),
+        ),
+        MemoEvent::Deleted {
+            id, notebook_id, ..
+        } => {
+            return DocumentMutationCoordinator::commit_deletion(app, id, notebook_id);
+        }
+        _ => return None,
+    };
+    DocumentMutationCoordinator::commit(app, memo_id, notebook_id, &path)
 }
 
 /// 通过 dispatcher 派发 —�?`crate::events::EventDispatcher`
@@ -278,8 +335,17 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
 /// tag-event) �?dispatcher 里�?�? 业务调用点仍�?`emit()`�?///
 
 pub fn emit_via_dispatcher(dispatcher: &crate::events::SharedDispatcher, event: MemoEvent) {
+    emit_committed_via_dispatcher(dispatcher, &event, None);
+}
+
+fn emit_committed_via_dispatcher(
+    dispatcher: &crate::events::SharedDispatcher,
+    event: &MemoEvent,
+    commit: Option<&DocumentCommit>,
+) {
     let _ = event.memo_id();
-    let payload = serde_json::to_value(&event).expect("MemoEvent serialization must not fail");
+    let payload = serde_json::to_value(MemoEventPayload { event, commit })
+        .expect("MemoEvent serialization must not fail");
     dispatcher.publish(MEMO_EVENT, payload);
 }
 
@@ -350,6 +416,32 @@ mod tests {
     }
 
     #[test]
+    fn committed_event_flattens_revision_contract_in_camel_case() {
+        let event = MemoEvent::Updated {
+            id: "m_abc".to_string(),
+            path: "/tmp/foo.md".to_string(),
+            notebook_id: "nb_default".to_string(),
+            memo: sample_memo(),
+            derived_changed: MemoDerivedChanged::default(),
+            source: MemoChangeSource::ExternalTool,
+        };
+        let commit = DocumentCommit {
+            content_hash: "abc123".to_string(),
+            revision: 7,
+            change_id: "change-7".to_string(),
+        };
+        let value = serde_json::to_value(MemoEventPayload {
+            event: &event,
+            commit: Some(&commit),
+        })
+        .unwrap();
+
+        assert_eq!(value["contentHash"], "abc123");
+        assert_eq!(value["revision"], 7);
+        assert_eq!(value["changeId"], "change-7");
+    }
+
+    #[test]
     fn content_update_targets_only_sibling_windows() {
         assert!(!is_sibling_window_target(
             &EventTarget::window("tab-host-abc"),
@@ -393,12 +485,19 @@ mod tests {
             tab_host.label(),
             "memo-1",
             "/notes/memo-1.md",
+            DocumentCommit {
+                content_hash: "hash-1".to_string(),
+                revision: 1,
+                change_id: "change-1".to_string(),
+            },
         );
 
         let (recipient, payload) = rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(recipient, "main");
         assert_eq!(payload["id"], "memo-1");
         assert_eq!(payload["path"], "/notes/memo-1.md");
+        assert_eq!(payload["revision"], 1);
+        assert_eq!(payload["changeId"], "change-1");
         assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
 
         emit_content_updated_to_sibling_windows(
@@ -406,6 +505,11 @@ mod tests {
             main.label(),
             "memo-1",
             "/notes/memo-1-renamed.md",
+            DocumentCommit {
+                content_hash: "hash-2".to_string(),
+                revision: 2,
+                change_id: "change-2".to_string(),
+            },
         );
 
         let (recipient, payload) = rx.recv_timeout(Duration::from_secs(1)).unwrap();

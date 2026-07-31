@@ -37,6 +37,7 @@
  * ordering.
  */
 import { externalDocuments, memos as memosClient } from '@platform/tauri/client';
+import { markMemoCommitApplied } from '@features/document/store/memo-content-revision';
 
 export interface SaveContext {
   /** Stable queue key for this editing session (`memo:<id>` or `external:<path>`). */
@@ -199,6 +200,7 @@ async function runOne(ctx: SaveContext, content: string): Promise<boolean> {
       expectedContent: expected,
     });
     if (result !== null) {
+      if (ctx.key) markMemoCommitApplied(ctx.key, result);
       ctx.onSaved(result.path, result.content);
       return true;
     }

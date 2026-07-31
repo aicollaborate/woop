@@ -14,7 +14,18 @@ export type MemoChangeSource =
   | 'user_new'
   | 'user_import'
   | 'user_edit'
-  | 'external_tool';
+  | 'external_tool'
+  | 'user_delete'
+  | 'cloud_sync';
+
+export type MemoContentCommit = {
+  /** SHA-256 of the exact committed markdown bytes. */
+  contentHash?: string;
+  /** Backend-authoritative, monotonically increasing local memo revision. */
+  revision?: number;
+  /** Stable identity for duplicate observations of the same commit. */
+  changeId?: string;
+};
 
 export type MemoDerivedChanged = {
   tags: boolean;
@@ -23,14 +34,14 @@ export type MemoDerivedChanged = {
 };
 
 export type MemoEvent =
-  | {
+  | ({
       kind: 'created';
       memo: MemoItem;
       notebookId: string;
       derivedChanged: MemoDerivedChanged;
       source: MemoChangeSource;
-    }
-  | {
+    } & MemoContentCommit)
+  | ({
       kind: 'updated';
       id: string;
       path: string;
@@ -38,14 +49,15 @@ export type MemoEvent =
       notebookId: string;
       derivedChanged: MemoDerivedChanged;
       source: MemoChangeSource;
-    }
-  | {
+    } & MemoContentCommit)
+  | ({
       kind: 'deleted';
       id: string;
       path: string;
       notebookId: string;
       derivedChanged: MemoDerivedChanged;
-    }
+      source?: MemoChangeSource;
+    } & MemoContentCommit)
   | {
       kind: 'tags_renamed';
       notebookId: string;

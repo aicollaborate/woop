@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { MemoColor, MemoItem } from '@/types/memo-item';
+import type { MemoContentCommit } from '@/types/memo';
 import type { AgentRoleMemoItem } from './general';
 
 export type FilterType = 'all' | 'todos' | 'agents' | 'favorited' | 'tagged' | 'thisWeek' | 'thisMonth';
@@ -98,7 +99,7 @@ export const memos = {
     key: string;
     content: string;
     expectedContent?: string;
-  }) => invoke<{ path: string; content: string } | null>('write_document', {
+  }) => invoke<({ path: string; content: string } & MemoContentCommit) | null>('write_document', {
     key: params.key,
     content: params.content,
     expectedContent: params.expectedContent,
@@ -123,7 +124,7 @@ export const memos = {
   listVersions: (id: string) =>
     invoke<MemoVersionMeta[]>('list_memo_versions', { id }),
   restoreVersion: (id: string, versionId: string, expectedContent?: string) =>
-    invoke<{ path: string; content: string } | null>('restore_memo_version', {
+    invoke<({ path: string; content: string } & MemoContentCommit) | null>('restore_memo_version', {
       id,
       versionId,
       expectedContent,
@@ -242,5 +243,3 @@ export const notebooks = {
   reorder: (order: NotebookSortEntry[]) =>
     invoke<NotebookRecord[]>('reorder_notebooks', { order }),
 };
-
-

@@ -97,7 +97,7 @@ pub fn restore_memo_version(
         .save_memo(&id, &target_content)
     {
         Ok(_) => {
-            emit_updated_after_write(state.inner(), &app, &id, before);
+            let commit = emit_updated_after_write(state.inner(), &app, &id, before);
             let final_path = MemoService::new(&read_lock(&state.memo_file, "memo_file"))
                 .resolve_memo(&id)
                 .ok()?
@@ -107,6 +107,7 @@ pub fn restore_memo_version(
             Some(WriteDocumentResult {
                 path: final_path.to_string_lossy().to_string(),
                 content: final_content,
+                commit,
             })
         }
         Err(e) => {

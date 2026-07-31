@@ -13,10 +13,16 @@ import { toast } from '@/lib/toast';
 import { canonicalPath } from '@/lib/path';
 import { registerMemoEventHandler } from '@/lib/memo-dispatcher';
 import type { MemoEvent } from '@/types/memo';
+import type { MemoContentCommit } from '@/types/memo';
 import {
   handleSiblingWindowContentUpdate,
   type MemoContentUpdatedEvent,
 } from './sibling-window-document-sync';
+import {
+  markMemoCommitApplied,
+  newerPendingMemoCommit,
+  shouldApplyMemoCommit,
+} from '@features/document/store/memo-content-revision';
 
 interface Options {
   filePath: string;
@@ -72,6 +78,7 @@ export function classifyUpdatedMemoDocumentAction(
   if (event.kind !== 'updated' || event.source === 'user_edit' || !event.path) return 'ignore';
   if (event.id !== identity.id) return 'ignore';
   if (canonicalPath(event.path) !== canonicalPath(filePath)) return 'ignore';
+  if (!shouldApplyMemoCommit(event.id, event)) return 'ignore';
   return isDirty ? 'defer' : 'reload';
 }
 
@@ -82,27 +89,41 @@ export function useMemoDocumentChangeWatch({
   reloadDocument,
 }: Options) {
   const lastConflictWarningAtRef = useRef(0);
-  const pendingExternalReloadRef = useRef(false);
+  type PendingMemoReload = MemoContentCommit & { id: string; path: string };
+  const pendingExternalReloadRef = useRef<PendingMemoReload | null>(null);
 
   useEffect(() => {
     if (!filePath || identity.kind !== 'memo') return;
     let disposed = false;
 
-    const reloadLatestExternalContent = async () => {
-      pendingExternalReloadRef.current = false;
+    const reloadLatestExternalContent = async (
+      event: PendingMemoReload,
+    ) => {
+      pendingExternalReloadRef.current = null;
       clearSaveTimer();
       await reloadDocument(filePath, { preservePending: false, showLoading: false });
+      markMemoCommitApplied(event.id, event);
     };
 
-    const deferExternalReloadUntilClean = () => {
-      pendingExternalReloadRef.current = true;
+    const deferExternalReloadUntilClean = (
+      event: PendingMemoReload,
+    ) => {
+      pendingExternalReloadRef.current = newerPendingMemoCommit(
+        pendingExternalReloadRef.current,
+        event,
+      );
     };
 
     const unsubscribeBufferChanges = subscribeDocumentBufferChanges((changedIdentity) => {
-      if (disposed || !pendingExternalReloadRef.current) return;
+      const pending = pendingExternalReloadRef.current;
+      if (disposed || !pending) return;
       if (documentIdentityKey(changedIdentity) !== documentIdentityKey(identity)) return;
       if (hasDocumentUnsavedChanges(identity)) return;
-      void reloadLatestExternalContent();
+      if (!shouldApplyMemoCommit(pending.id, pending)) {
+        pendingExternalReloadRef.current = null;
+        return;
+      }
+      void reloadLatestExternalContent(pending);
     });
     const warnAboutConflict = () => {
       if (!hasDocumentUnsavedChanges(identity)) return;
@@ -140,6 +161,7 @@ export function useMemoDocumentChangeWatch({
           await reloadDocument(filePath, { preservePending: false, showLoading: false });
           return;
         }
+        if (event.kind !== 'updated') return;
         const action = classifyUpdatedMemoDocumentAction(
           event,
           identity,
@@ -149,10 +171,10 @@ export function useMemoDocumentChangeWatch({
         if (action === 'ignore') return;
         if (action === 'defer') {
           warnAboutConflict();
-          deferExternalReloadUntilClean();
+          deferExternalReloadUntilClean(event);
           return;
         }
-        await reloadLatestExternalContent();
+        await reloadLatestExternalContent(event);
       },
       (event) =>
         // tags_renamed / tags_deleted: 接收 ── 但内部按 affectedMemoIds 收窄。
@@ -172,6 +194,7 @@ export function useMemoDocumentChangeWatch({
           identity,
           isDirty: hasDocumentUnsavedChanges(identity),
           onConflict: warnAboutConflict,
+          onDeferred: deferExternalReloadUntilClean,
           clearSaveTimer,
           reloadDocument,
         });
@@ -185,7 +208,7 @@ export function useMemoDocumentChangeWatch({
 
     return () => {
       disposed = true;
-      pendingExternalReloadRef.current = false;
+      pendingExternalReloadRef.current = null;
       unsubscribeBufferChanges();
       unsubscribeMemoEvents();
       unsubscribeContentUpdates?.();

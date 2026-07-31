@@ -8,6 +8,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
+use crate::document_mutation::DocumentCommit;
 use crate::lock_utils::read_lock;
 use crate::memo_events::{self, MemoChangeSource, MemoDerivedChanged, MemoEvent};
 use flowix_core::memo_file::{extract_body_content, Memo};
@@ -59,9 +60,9 @@ pub(super) fn emit_updated_memo_event(
     notebook_id: String,
     derived_changed: MemoDerivedChanged,
     source: MemoChangeSource,
-) {
+) -> Option<DocumentCommit> {
     try_index_upsert(state, id);
-    memo_events::emit(
+    memo_events::emit_with_commit(
         app,
         MemoEvent::Updated {
             id: id.to_string(),
@@ -71,7 +72,7 @@ pub(super) fn emit_updated_memo_event(
             derived_changed,
             source,
         },
-    );
+    )
 }
 
 /// Mark the written file, refresh the search index, and notify the UI.
@@ -80,7 +81,7 @@ pub(crate) fn emit_updated_after_write(
     app: &AppHandle,
     id: &str,
     before: Option<Memo>,
-) {
+) -> Option<DocumentCommit> {
     let path = abs_path_for(state, id);
     if !path.is_empty() {
         mark_self_write_for(app, Path::new(&path));
@@ -97,7 +98,7 @@ pub(crate) fn emit_updated_after_write(
         notebook_id,
         derived_changed,
         MemoChangeSource::UserEdit,
-    );
+    )
 }
 
 /// Lightweight CAS fallback normalization.

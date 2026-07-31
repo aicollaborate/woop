@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { handleSiblingWindowContentUpdate } from '@features/document/components/session/sibling-window-document-sync';
+import {
+  markMemoCommitApplied,
+  resetMemoContentRevisionsForTests,
+} from '@features/document/store/memo-content-revision';
+import { beforeEach } from 'vitest';
 
 function createDependencies() {
   return {
@@ -11,6 +16,7 @@ function createDependencies() {
 }
 
 describe('sibling window document sync', () => {
+  beforeEach(resetMemoContentRevisionsForTests);
   it('reloads the matching clean memo from the committed path', async () => {
     const dependencies = createDependencies();
     const result = await handleSiblingWindowContentUpdate({
@@ -55,6 +61,25 @@ describe('sibling window document sync', () => {
     expect(result).toBe('conflict');
     expect(dependencies.onConflict).toHaveBeenCalledOnce();
     expect(dependencies.clearSaveTimer).not.toHaveBeenCalled();
+    expect(dependencies.reloadDocument).not.toHaveBeenCalled();
+  });
+
+  it('does not reload a duplicate or stale committed revision', async () => {
+    markMemoCommitApplied('memo-1', { revision: 4, changeId: 'change-4' });
+    const dependencies = createDependencies();
+    const result = await handleSiblingWindowContentUpdate({
+      event: {
+        id: 'memo-1',
+        path: '/notes/one.md',
+        revision: 3,
+        changeId: 'change-3',
+      },
+      identity: { kind: 'memo', id: 'memo-1' },
+      isDirty: false,
+      ...dependencies,
+    });
+
+    expect(result).toBe('ignored');
     expect(dependencies.reloadDocument).not.toHaveBeenCalled();
   });
 });

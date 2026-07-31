@@ -414,7 +414,7 @@ impl MemoEventProcessor {
                         if let MemoEvent::Updated { id, .. } = &event {
                             try_update_search_index(app, id);
                         }
-                        emit(app, event)
+                        emit(app, event);
                     }
                     Ok(DispatchOutcome::Created {
                         event,

@@ -9,6 +9,7 @@ mod cli_link;
 mod commands;
 mod config;
 mod device_registration;
+mod document_mutation;
 mod events;
 mod lock_utils;
 mod memo_events;

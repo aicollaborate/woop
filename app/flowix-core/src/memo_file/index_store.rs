@@ -14,6 +14,27 @@ use super::types::{
 };
 use super::MemoFile;
 
+/// Durable identity of the latest committed bytes for one memo.
+///
+/// `revision` is a local, monotonically increasing counter. `change_id`
+/// identifies one concrete content transition and is stable when duplicate
+/// filesystem notifications observe the same bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoContentRevision {
+    pub memo_id: String,
+    pub notebook_id: String,
+    pub content_hash: String,
+    pub revision: i64,
+    pub change_id: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoContentCommit {
+    pub state: MemoContentRevision,
+    pub changed: bool,
+}
+
 // Pending markers only bridge a live Desktop watcher and a concurrent CLI/MCP
 // process. Expiry prevents an offline create from being mistaken for a create
 // when that document is edited much later.

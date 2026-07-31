@@ -98,6 +98,78 @@ fn notebook_json_is_migrated_to_index_db() {
 }
 
 #[test]
+fn content_revision_is_created_and_advanced_only_for_changed_bytes() {
+    let (mf, _tmp) = fresh_memo_file();
+    let memo = mf.create_memo("Revision", "# Revision", None).unwrap();
+
+    let first = mf
+        .commit_memo_content_revision(&memo.id, "nb_test", "hash-a", "change-a")
+        .unwrap();
+    assert!(first.changed);
+    assert_eq!(first.state.revision, 1);
+    assert_eq!(first.state.change_id, "change-a");
+
+    let duplicate = mf
+        .commit_memo_content_revision(&memo.id, "nb_test", "hash-a", "discarded")
+        .unwrap();
+    assert!(!duplicate.changed);
+    assert_eq!(duplicate.state.revision, 1);
+    assert_eq!(duplicate.state.change_id, "change-a");
+
+    let second = mf
+        .commit_memo_content_revision(&memo.id, "nb_test", "hash-b", "change-b")
+        .unwrap();
+    assert!(second.changed);
+    assert_eq!(second.state.revision, 2);
+    assert_eq!(second.state.change_id, "change-b");
+
+    let reverted = mf
+        .commit_memo_content_revision(&memo.id, "nb_test", "hash-a", "change-c")
+        .unwrap();
+    assert!(reverted.changed);
+    assert_eq!(reverted.state.revision, 3);
+    assert_eq!(reverted.state.change_id, "change-c");
+    assert_eq!(
+        mf.read_memo_content_revision(&memo.id).unwrap(),
+        Some(reverted.state)
+    );
+
+    // Full metadata index rewrites must not reset the independent content
+    // revision stream.
+    let index = mf.read_index().unwrap();
+    mf.write_index(&index).unwrap();
+    assert_eq!(
+        mf.read_memo_content_revision(&memo.id)
+            .unwrap()
+            .unwrap()
+            .revision,
+        3,
+    );
+}
+
+#[test]
+fn opening_legacy_index_creates_content_revision_table() {
+    let (mf, _tmp) = fresh_memo_file();
+    let conn = rusqlite::Connection::open(mf.get_index_db_path()).unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS memo_content_revisions;")
+        .unwrap();
+    drop(conn);
+
+    // Any memo-index operation runs the additive schema migration.
+    mf.invalidate_caches();
+    let _ = mf.read_index();
+    let conn = rusqlite::Connection::open(mf.get_index_db_path()).unwrap();
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memo_content_revisions'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(exists, 1);
+}
+
+#[test]
 fn writing_notebook_configs_preserves_existing_memo_rows() {
     let (mf, tmp) = fresh_memo_file();
     let memo = mf.create_memo("Keep", "# Keep", None).unwrap();

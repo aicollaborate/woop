@@ -331,6 +331,8 @@ fn resolve_missing_document_path_from_notebook_index(
 pub struct WriteDocumentResult {
     pub path: String,
     pub content: String,
+    #[serde(flatten)]
+    pub commit: Option<crate::document_mutation::DocumentCommit>,
 }
 
 /// Write an indexed memo. Standalone Markdown files use the independent
@@ -435,7 +437,7 @@ fn write_document_internal(
             let event_path = final_path.to_string_lossy().to_string();
             let notebook_id = notebook_id_for_memo(state.inner(), key);
             let derived_changed = MemoDerivedChanged::from_memos(before.as_ref(), &updated);
-            emit_updated_memo_event(
+            let commit = emit_updated_memo_event(
                 state.inner(),
                 app,
                 key,
@@ -445,15 +447,19 @@ fn write_document_internal(
                 derived_changed,
                 MemoChangeSource::UserEdit,
             );
-            memo_events::emit_content_updated_to_sibling_windows(
-                app,
-                origin_window_label,
-                key,
-                &event_path,
-            );
+            if let Some(commit) = commit.as_ref() {
+                memo_events::emit_content_updated_to_sibling_windows(
+                    app,
+                    origin_window_label,
+                    key,
+                    &event_path,
+                    commit.clone(),
+                );
+            }
             Some(WriteDocumentResult {
                 path: event_path,
                 content: final_content,
+                commit,
             })
         }
         Err(e) => {

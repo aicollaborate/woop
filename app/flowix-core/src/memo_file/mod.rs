@@ -64,6 +64,7 @@ pub use frontmatter::{
     extract_frontmatter_properties, merge_frontmatter, normalize_document_tags,
     replace_frontmatter_tags, DocumentMetadata, FrontmatterMetadataError, MergeOverrides,
 };
+pub use index_store::{MemoContentCommit, MemoContentRevision};
 pub use ops::{
     atomic_write_bytes, base_filename, resolve_filename_conflict, sanitize_filename_component, IsMd,
 };

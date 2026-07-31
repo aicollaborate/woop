@@ -82,6 +82,17 @@ impl MemoFile {
                 notebook_id TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memo_content_revisions (
+                memo_id TEXT PRIMARY KEY,
+                notebook_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                local_revision INTEGER NOT NULL,
+                change_id TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_memo_content_revisions_notebook
+                ON memo_content_revisions(notebook_id);
             CREATE TABLE IF NOT EXISTS memo_tags (
                 memo_id TEXT NOT NULL,
                 tag TEXT NOT NULL,
@@ -251,6 +262,122 @@ impl MemoFile {
         )
         .map_err(sqlite_to_io)?;
         Ok(())
+    }
+
+    /// Atomically records a stable content revision for a memo.
+    ///
+    /// Re-observing identical bytes returns the existing revision/change id.
+    /// Returning to an older hash after another commit is a new transition and
+    /// therefore advances the counter as well.
+    pub fn commit_memo_content_revision(
+        &self,
+        memo_id: &str,
+        notebook_id: &str,
+        content_hash: &str,
+        next_change_id: &str,
+    ) -> std::io::Result<MemoContentCommit> {
+        let mut conn = self.open_memo_index_db()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_to_io)?;
+        let current = tx
+            .query_row(
+                "SELECT content_hash, local_revision, change_id, updated_at
+                 FROM memo_content_revisions WHERE memo_id = ?1",
+                params![memo_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(sqlite_to_io)?;
+
+        if let Some((existing_hash, revision, change_id, updated_at)) = current.as_ref() {
+            if existing_hash == content_hash {
+                tx.commit().map_err(sqlite_to_io)?;
+                return Ok(MemoContentCommit {
+                    state: MemoContentRevision {
+                        memo_id: memo_id.to_string(),
+                        notebook_id: notebook_id.to_string(),
+                        content_hash: existing_hash.clone(),
+                        revision: *revision,
+                        change_id: change_id.clone(),
+                        updated_at: *updated_at,
+                    },
+                    changed: false,
+                });
+            }
+        }
+
+        let revision = current
+            .as_ref()
+            .map(|(_, revision, _, _)| revision.saturating_add(1))
+            .unwrap_or(1);
+        let updated_at = chrono::Utc::now().timestamp_millis();
+        tx.execute(
+            r#"
+            INSERT INTO memo_content_revisions
+                (memo_id, notebook_id, content_hash, local_revision, change_id, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(memo_id) DO UPDATE SET
+                notebook_id = excluded.notebook_id,
+                content_hash = excluded.content_hash,
+                local_revision = excluded.local_revision,
+                change_id = excluded.change_id,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                memo_id,
+                notebook_id,
+                content_hash,
+                revision,
+                next_change_id,
+                updated_at,
+            ],
+        )
+        .map_err(sqlite_to_io)?;
+        tx.commit().map_err(sqlite_to_io)?;
+
+        Ok(MemoContentCommit {
+            state: MemoContentRevision {
+                memo_id: memo_id.to_string(),
+                notebook_id: notebook_id.to_string(),
+                content_hash: content_hash.to_string(),
+                revision,
+                change_id: next_change_id.to_string(),
+                updated_at,
+            },
+            changed: true,
+        })
+    }
+
+    pub fn read_memo_content_revision(
+        &self,
+        memo_id: &str,
+    ) -> std::io::Result<Option<MemoContentRevision>> {
+        let conn = self.open_memo_index_db()?;
+        conn.query_row(
+            "SELECT notebook_id, content_hash, local_revision, change_id, updated_at
+             FROM memo_content_revisions WHERE memo_id = ?1",
+            params![memo_id],
+            |row| {
+                Ok(MemoContentRevision {
+                    memo_id: memo_id.to_string(),
+                    notebook_id: row.get(0)?,
+                    content_hash: row.get(1)?,
+                    revision: row.get(2)?,
+                    change_id: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(sqlite_to_io)
     }
 
     pub(super) fn mark_index_state(
