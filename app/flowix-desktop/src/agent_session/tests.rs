@@ -498,6 +498,163 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn opencode_compact_events_page_by_complete_turn_and_session_id() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "opencode-local-card-page";
+        let session_id = "ses-opencode-page";
+        manager
+            .upsert_external_session(thread_id, "opencode", session_id, None)
+            .await
+            .unwrap();
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-1","text":"question 1"}"#,
+            r#"{"kind":"reasoning","message_id":"reasoning-1","message_phase":"completed","content_mode":"snapshot","text":"thought 1"}"#,
+            r#"{"kind":"text","message_id":"assistant-1","message_phase":"completed","content_mode":"snapshot","text":"answer 1"}"#,
+            r#"{"kind":"stream_end"}"#,
+            r#"{"kind":"user_message","id":"user-2","text":"question 2"}"#,
+            r#"{"kind":"tool_call","id":"call-2","name":"read","input":{"filePath":"/tmp/a"}}"#,
+            r#"{"kind":"tool_result","id":"call-2","name":"read","result":{"content":"ok"}}"#,
+            r#"{"kind":"text","message_id":"assistant-2","message_phase":"completed","content_mode":"snapshot","text":"answer 2"}"#,
+            r#"{"kind":"stream_end"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "opencode".to_string(),
+                    // Reproduce the refresh bug: the first turn is owned by the
+                    // local thread, while the next turn was written using the
+                    // resolved session id.
+                    thread_id: if index < 4 { thread_id } else { session_id }.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(100 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+        let latest = manager
+            .get_opencode_event_messages_page(session_id, None, 1)
+            .await
+            .unwrap()
+            .expect("database events should be preferred");
+        assert_eq!(
+            latest
+                .messages
+                .iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            vec!["user", "tool", "assistant"]
+        );
+        assert_eq!(latest.messages[1].tool_call_id.as_deref(), Some("call-2"));
+        assert_eq!(latest.messages[1].is_loading, Some(false));
+        assert!(latest.has_more);
+
+        let older = manager
+            .get_opencode_event_messages_page(session_id, latest.oldest_sequence, 1)
+            .await
+            .unwrap()
+            .expect("database events should be preferred");
+        assert_eq!(
+            older
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["question 1", "thought 1", "answer 1"]
+        );
+        assert!(!older.has_more);
+
+        let latest_from_local_id = manager
+            .get_opencode_event_messages_page(thread_id, None, 1)
+            .await
+            .unwrap()
+            .expect("database events should be preferred");
+        assert_eq!(latest_from_local_id.messages[0].content, "question 2");
+
+        let listed = manager.list_opencode_event_threads().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].thread_id, thread_id);
+
+        let empty = ThreadManager::for_tests()
+            .get_opencode_event_messages_page("missing-opencode-session", None, 10)
+            .await
+            .unwrap();
+        assert!(empty.is_none(), "empty events must select external fallback");
+    }
+
+    #[tokio::test]
+    async fn claude_event_page_materializes_snapshots_and_merges_deltas() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "claude-local-card-page";
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-1","text":"inspect"}"#,
+            r#"{"kind":"reasoning","message_id":"reasoning-run-1","message_phase":"updated","content_mode":"delta","text":"think "}"#,
+            r#"{"kind":"reasoning","message_id":"reasoning-run-1","message_phase":"completed","content_mode":"delta","text":"carefully"}"#,
+            r#"{"kind":"tool_call","id":"call-1","name":"Read","input":{"file_path":"/tmp/a"}}"#,
+            r#"{"kind":"tool_result","id":"call-1","name":"Read","result":{"content":"ok"}}"#,
+            r#"{"kind":"text","message_id":"assistant-1","message_phase":"completed","content_mode":"snapshot","text":"done"}"#,
+            r#"{"kind":"stream_end"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "claude".to_string(),
+                    thread_id: thread_id.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(200 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let page = manager
+            .get_claude_event_messages_page(thread_id, None, 10)
+            .await
+            .unwrap()
+            .expect("database history should win when a complete user turn exists");
+        assert_eq!(page.messages.len(), 4);
+        assert_eq!(page.messages[1].role, "reasoning");
+        assert_eq!(page.messages[1].content, "think carefully");
+        assert_eq!(page.messages[2].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(page.messages[2].is_loading, Some(false));
+        assert_eq!(page.messages[3].content, "done");
+
+        let empty = ThreadManager::for_tests()
+            .get_claude_event_messages_page("missing-session", None, 10)
+            .await
+            .unwrap();
+        assert!(empty.is_none(), "empty database history must use rollout fallback");
+
+        let legacy = ThreadManager::for_tests();
+        for (index, payload) in [
+            r#"{"kind":"stream_start","run_id":"legacy-run"}"#,
+            r#"{"kind":"text","run_id":"legacy-run","text":"legacy answer"}"#,
+            r#"{"kind":"stream_end","run_id":"legacy-run"}"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            legacy
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "claude".to_string(),
+                    thread_id: "legacy-claude".to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(300 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+        let legacy_page = legacy
+            .get_claude_event_messages_page("legacy-claude", None, 10)
+            .await
+            .unwrap()
+            .expect("non-empty legacy events must not use rollout fallback");
+        assert_eq!(legacy_page.messages[0].content, "legacy answer");
+    }
+
+    #[tokio::test]
     async fn agent_external_event_pruning_persists_truncation_sentinel() {
         let manager = ThreadManager::for_tests();
         let thread_id = "thread-pruned-history";
@@ -562,6 +719,72 @@ mod tests {
             )
             .expect("count sentinel events");
         assert_eq!(ordinary_count, 10_000);
+        assert_eq!(sentinel_count, 1);
+    }
+
+    #[tokio::test]
+    async fn opencode_compact_event_history_uses_standard_bounded_retention() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "thread-opencode-complete-history";
+        {
+            let mut conn = manager.lock_conn();
+            let tx = conn.transaction().expect("start seed transaction");
+            tx.execute(
+                "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
+                 VALUES (?1, 'opencode', 'OpenCode thread', 1, 1)",
+                [thread_id],
+            )
+            .expect("seed thread");
+            {
+                let mut insert = tx
+                    .prepare(
+                        "INSERT INTO agent_external_events (
+                            runtime, thread_id, normalized_json, raw_json, created_at
+                         ) VALUES ('opencode', ?1, ?2, NULL, ?3)",
+                    )
+                    .expect("prepare event insert");
+                for index in 0..10_000_i64 {
+                    insert
+                        .execute(params![
+                            thread_id,
+                            format!(r#"{{"kind":"text","index":{index}}}"#),
+                            index,
+                        ])
+                        .expect("seed event");
+                }
+            }
+            tx.commit().expect("commit seeded events");
+        }
+
+        manager
+            .insert_agent_external_event(NewAgentExternalEvent {
+                runtime: "opencode".to_string(),
+                thread_id: thread_id.to_string(),
+                normalized_json: r#"{"kind":"stream_end"}"#.to_string(),
+                raw_json: None,
+                created_at: Some(10_001),
+            })
+            .await
+            .expect("append compact OpenCode event");
+
+        let conn = manager.lock_conn();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM agent_external_events WHERE thread_id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .expect("count OpenCode events");
+        let sentinel_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM agent_external_events
+                 WHERE thread_id = ?1
+                   AND normalized_json = '{\"kind\":\"history_truncated\",\"version\":1}'",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .expect("count truncation sentinels");
+        assert_eq!(count, 10_001);
         assert_eq!(sentinel_count, 1);
     }
 

@@ -163,13 +163,38 @@ pub async fn persist_external_chunk_with_metadata(
     raw_json: Option<&str>,
     metadata: &AgentChunkMetadata,
 ) {
+    persist_external_chunk_for_thread_with_metadata(
+        thread_manager,
+        agent_type,
+        chunk.thread_id(),
+        chunk,
+        run_id,
+        raw_json,
+        metadata,
+    )
+    .await;
+}
+
+/// Persist a chunk under a product-owned thread while preserving the chunk's
+/// delivery thread id in its normalized payload. External runtimes whose UI
+/// identity changes from a local id to a vendor session id use this to avoid
+/// splitting one conversation across multiple database owners.
+pub async fn persist_external_chunk_for_thread_with_metadata(
+    thread_manager: &Arc<ThreadManager>,
+    agent_type: &'static str,
+    storage_thread_id: &str,
+    chunk: &AgentChunk,
+    run_id: &str,
+    raw_json: Option<&str>,
+    metadata: &AgentChunkMetadata,
+) {
     let payload_json = match chunk_payload_json(chunk, agent_type, run_id, metadata) {
         Some(payload) => payload,
         None => return,
     };
     let event = NewAgentExternalEvent {
         runtime: agent_type.to_string(),
-        thread_id: chunk.thread_id().to_string(),
+        thread_id: storage_thread_id.to_string(),
         normalized_json: payload_json,
         raw_json: raw_json
             .filter(|_| external_event_raw_json_enabled(agent_type))

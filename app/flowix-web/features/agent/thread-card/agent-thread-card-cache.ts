@@ -2,6 +2,8 @@ import type { AgentTypeKey } from '@/types/agent';
 import type { ChatMessage } from '@/types';
 import { getAgentType } from '@/lib/agent-types';
 import { useAgentConversationStore } from '@features/agent/store/agent-conversation-store';
+import { useChatStore } from '@features/agent/store/chat-store';
+import { replayExternalEventsForThread } from '@features/agent/store/external-event-replay';
 import {
   isLocalExternalThreadId,
   resolveExternalSessionId,
@@ -18,14 +20,40 @@ export interface LoadAgentThreadCardCacheResult {
   messages: ChatMessage[];
 }
 
-async function loadThreadMessages(
+const inFlightThreadLoads = new Map<string, Promise<ChatMessage[]>>();
+
+function loadThreadMessages(
   typeKey: AgentTypeKey,
   threadId: string
 ): Promise<ChatMessage[]> {
-  await useAgentConversationStore.getState().loadMessages(typeKey, threadId);
-  return (
-    useAgentConversationStore.getState().messageStates[threadId]?.messages ?? []
-  );
+  const key = `${typeKey}:${threadId}`;
+  const existing = inFlightThreadLoads.get(key);
+  if (existing) return existing;
+
+  const load = (async () => {
+    const replayedDatabase =
+      typeKey !== 'flowix' &&
+      typeKey !== 'opencode' &&
+      typeKey !== 'claude' &&
+      (await replayExternalEventsForThread(
+        useChatStore.setState,
+        useChatStore.getState,
+        typeKey,
+        threadId
+      ));
+    if (!replayedDatabase) {
+      await useAgentConversationStore.getState().loadMessages(typeKey, threadId);
+    }
+    return (
+      useAgentConversationStore.getState().messageStates[threadId]?.messages ?? []
+    );
+  })().finally(() => {
+    if (inFlightThreadLoads.get(key) === load) {
+      inFlightThreadLoads.delete(key);
+    }
+  });
+  inFlightThreadLoads.set(key, load);
+  return load;
 }
 
 export async function loadAgentThreadCardCache(

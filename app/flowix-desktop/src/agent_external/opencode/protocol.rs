@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 
 use crate::agent_flowix::AgentChunk;
@@ -179,7 +181,54 @@ pub fn session_id_from_result(result: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn chunks_from_message(thread_id: &str, message: &Value) -> Vec<AgentChunk> {
+/// Resolve the canonical tool name from an ACP `tool_call` / `tool_call_update`
+/// update.
+///
+/// opencode ACP puts the real tool name in `title` at the initial `tool_call`
+/// (`kind` there is only a coarse category: `execute` / `search` / `fetch` /
+/// `other` ── and `write` even reports `kind: "edit"`). Other ACP servers
+/// (Claude Code) put a target file path in `title` and the tool name in `kind`.
+/// So we prefer `title` unless it looks like a file reference.
+pub fn tool_call_name(update: &Value) -> String {
+    let title = string_at(update, &["title"]);
+    let kind = string_at(update, &["kind"]);
+    match (title.as_deref(), kind.as_deref()) {
+        (Some(title), _) if !looks_like_file_reference(title) => title.to_string(),
+        (_, Some(kind)) => kind.to_string(),
+        (Some(title), None) => title.to_string(),
+        _ => "tool".to_string(),
+    }
+}
+
+/// `true` when a `title` is more likely a file reference (path or bare
+/// filename with extension) than a plain tool name.
+fn looks_like_file_reference(title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return true;
+    }
+    if title.contains('/') || title.contains('\\') {
+        return true;
+    }
+    match title.rsplit_once('.') {
+        Some((stem, extension)) => {
+            !stem.is_empty() && !extension.is_empty() && extension.len() <= 10
+        }
+        None => false,
+    }
+}
+
+/// `rawInput` is a non-empty JSON object ── the shape opencode ACP uses to
+/// carry real tool arguments on `in_progress` updates.
+fn non_empty_object(value: &Value) -> bool {
+    value.as_object().is_some_and(|object| !object.is_empty())
+}
+
+pub fn chunks_from_message(
+    thread_id: &str,
+    message: &Value,
+    tool_inputs: &mut HashMap<String, Value>,
+) -> Vec<AgentChunk> {
     if message.get("method").and_then(Value::as_str) != Some("session/update") {
         return Vec::new();
     }
@@ -203,12 +252,34 @@ pub fn chunks_from_message(thread_id: &str, message: &Value) -> Vec<AgentChunk> 
             .collect(),
         Some("tool_call") => {
             let id = string_at(update, &["toolCallId", "id"]).unwrap_or_else(|| "tool".into());
-            let name = string_at(update, &["kind", "title"]).unwrap_or_else(|| "tool".into());
+            let name = tool_call_name(update);
+            let input = update.get("rawInput").cloned().unwrap_or(Value::Null);
+            tool_inputs.insert(id.clone(), input.clone());
             vec![AgentChunk::ToolCall {
                 thread_id: thread_id.to_string(),
                 id,
                 name,
-                input: update.get("rawInput").cloned().unwrap_or(Value::Null),
+                input,
+            }]
+        }
+        Some("tool_call_update") if !is_terminal_tool_status(update) => {
+            // opencode sends the actual tool arguments on `in_progress` updates
+            // (the initial `tool_call` rawInput is usually `{}`). Re-emit a
+            // ToolCall so the frontend refreshes the row ── only when the input
+            // actually changed, so identical repeats don't spam the event log.
+            let id = string_at(update, &["toolCallId", "id"]).unwrap_or_else(|| "tool".into());
+            let Some(input) = update.get("rawInput") else {
+                return Vec::new();
+            };
+            if !non_empty_object(input) || tool_inputs.get(&id) == Some(input) {
+                return Vec::new();
+            }
+            tool_inputs.insert(id.clone(), input.clone());
+            vec![AgentChunk::ToolCall {
+                thread_id: thread_id.to_string(),
+                id,
+                name: tool_call_name(update),
+                input: input.clone(),
             }]
         }
         Some("tool_call_update") if is_terminal_tool_status(update) => {
@@ -391,6 +462,10 @@ fn normalized_path(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn chunks(message: &Value) -> Vec<AgentChunk> {
+        chunks_from_message("thread", message, &mut HashMap::new())
+    }
+
     #[test]
     fn maps_streamed_agent_text() {
         let value = json!({
@@ -405,7 +480,7 @@ mod tests {
             }
         });
         assert!(matches!(
-            chunks_from_message("thread", &value).as_slice(),
+            chunks(&value).as_slice(),
             [AgentChunk::Text { text, .. }] if text == "hello"
         ));
     }
@@ -431,7 +506,7 @@ mod tests {
         });
 
         assert!(matches!(
-            chunks_from_message("thread", &value).as_slice(),
+            chunks(&value).as_slice(),
             [AgentChunk::ToolCall { id, name, input, .. }]
                 if id == "call_1"
                     && name == "read"
@@ -465,7 +540,7 @@ mod tests {
         });
 
         assert!(matches!(
-            chunks_from_message("thread", &value).as_slice(),
+            chunks(&value).as_slice(),
             [
                 AgentChunk::ToolCall { id, input, .. },
                 AgentChunk::ToolResult { id: result_id, .. }
@@ -473,6 +548,195 @@ mod tests {
                 && result_id == "call_1"
                 && input.get("filePath").and_then(Value::as_str)
                     == Some("D:\\Notes\\presentation\\Agent 评测框架.md")
+        ));
+    }
+
+    fn update_with(update: Value) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": { "sessionId": "ses_1", "update": update }
+        })
+    }
+
+    fn tool_update(session_update: &str, fields: &[(&str, Value)]) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("sessionUpdate".into(), json!(session_update));
+        for (key, value) in fields {
+            object.insert((*key).into(), value.clone());
+        }
+        update_with(Value::Object(object))
+    }
+
+    #[test]
+    fn bash_pending_tool_call_keeps_plain_tool_name() {
+        let value = tool_update(
+            "tool_call",
+            &[
+                ("toolCallId", json!("call_bash")),
+                ("kind", json!("execute")),
+                ("title", json!("bash")),
+                ("status", json!("pending")),
+                ("rawInput", json!({ "cwd": "/tmp/opencode/probe-project" })),
+            ],
+        );
+        assert!(matches!(
+            chunks(&value).as_slice(),
+            [AgentChunk::ToolCall { id, name, input, .. }]
+                if id == "call_bash"
+                    && name == "bash"
+                    && input.get("cwd").and_then(Value::as_str)
+                        == Some("/tmp/opencode/probe-project")
+        ));
+    }
+
+    #[test]
+    fn bash_in_progress_update_re_emits_call_with_command_once() {
+        let mut tool_inputs = HashMap::new();
+        let pending = tool_update(
+            "tool_call",
+            &[
+                ("toolCallId", json!("call_bash")),
+                ("kind", json!("execute")),
+                ("title", json!("bash")),
+                ("status", json!("pending")),
+                ("rawInput", json!({ "cwd": "/tmp/opencode/probe-project" })),
+            ],
+        );
+        let in_progress = tool_update(
+            "tool_call_update",
+            &[
+                ("toolCallId", json!("call_bash")),
+                ("title", json!("ls -la")),
+                ("status", json!("in_progress")),
+                (
+                    "rawInput",
+                    json!({
+                        "command": "ls -la",
+                        "cwd": "/tmp/opencode/probe-project"
+                    }),
+                ),
+            ],
+        );
+
+        let first = chunks_from_message("thread", &pending, &mut tool_inputs);
+        let second = chunks_from_message("thread", &in_progress, &mut tool_inputs);
+        let third = chunks_from_message("thread", &in_progress, &mut tool_inputs);
+
+        assert!(matches!(
+            first.as_slice(),
+            [AgentChunk::ToolCall { name, .. }] if name == "bash"
+        ));
+        assert!(matches!(
+            second.as_slice(),
+            [AgentChunk::ToolCall { id, name, input, .. }]
+                if id == "call_bash"
+                    && name == "ls -la"
+                    && input.get("command").and_then(Value::as_str) == Some("ls -la")
+        ));
+        assert!(
+            third.is_empty(),
+            "identical in_progress update must not re-emit the call"
+        );
+    }
+
+    #[test]
+    fn read_tool_input_arrives_on_in_progress_update() {
+        let mut tool_inputs = HashMap::new();
+        let pending = tool_update(
+            "tool_call",
+            &[
+                ("toolCallId", json!("call_read")),
+                ("title", json!("read")),
+                ("status", json!("pending")),
+                ("rawInput", json!({})),
+            ],
+        );
+        let in_progress = tool_update(
+            "tool_call_update",
+            &[
+                ("toolCallId", json!("call_read")),
+                ("title", json!("read")),
+                ("status", json!("in_progress")),
+                (
+                    "rawInput",
+                    json!({
+                        "filePath": "/private/tmp/opencode/probe-project/README.md"
+                    }),
+                ),
+            ],
+        );
+
+        let first = chunks_from_message("thread", &pending, &mut tool_inputs);
+        let second = chunks_from_message("thread", &in_progress, &mut tool_inputs);
+
+        assert!(matches!(
+            first.as_slice(),
+            [AgentChunk::ToolCall { name, input, .. }]
+                if name == "read" && input.as_object().is_some_and(|o| o.is_empty())
+        ));
+        assert!(matches!(
+            second.as_slice(),
+            [AgentChunk::ToolCall { name, input, .. }]
+                if name == "read"
+                    && input.get("filePath").and_then(Value::as_str)
+                        == Some("/private/tmp/opencode/probe-project/README.md")
+        ));
+    }
+
+    #[test]
+    fn websearch_input_arrives_on_in_progress_update() {
+        let mut tool_inputs = HashMap::new();
+        let pending = tool_update(
+            "tool_call",
+            &[
+                ("toolCallId", json!("call_search")),
+                ("kind", json!("other")),
+                ("title", json!("websearch")),
+                ("status", json!("pending")),
+                ("rawInput", json!({})),
+            ],
+        );
+        let in_progress = tool_update(
+            "tool_call_update",
+            &[
+                ("toolCallId", json!("call_search")),
+                ("title", json!("Parallel Web Search \"rust tokio 2026\"")),
+                ("status", json!("in_progress")),
+                ("rawInput", json!({ "query": "rust tokio 2026" })),
+            ],
+        );
+
+        let first = chunks_from_message("thread", &pending, &mut tool_inputs);
+        let second = chunks_from_message("thread", &in_progress, &mut tool_inputs);
+
+        assert!(matches!(
+            first.as_slice(),
+            [AgentChunk::ToolCall { name, .. }] if name == "websearch"
+        ));
+        assert!(matches!(
+            second.as_slice(),
+            [AgentChunk::ToolCall { id, name, input, .. }]
+                if id == "call_search"
+                    && name == "Parallel Web Search \"rust tokio 2026\""
+                    && input.get("query").and_then(Value::as_str) == Some("rust tokio 2026")
+        ));
+    }
+
+    #[test]
+    fn completed_update_without_raw_input_emits_result_only() {
+        let value = tool_update(
+            "tool_call_update",
+            &[
+                ("toolCallId", json!("call_bash")),
+                ("title", json!("ls -la")),
+                ("status", json!("completed")),
+                ("rawOutput", json!({ "stdout": "-rw-r--r--", "exit_code": 0 })),
+            ],
+        );
+        assert!(matches!(
+            chunks(&value).as_slice(),
+            [AgentChunk::ToolResult { id, .. }] if id == "call_bash"
         ));
     }
 

@@ -58,7 +58,11 @@ export async function loadThreadForType(
         ),
       };
     });
-    if (type.key !== "flowix") {
+    if (
+      type.key !== "flowix" &&
+      type.key !== "opencode" &&
+      type.key !== "claude"
+    ) {
       const replayedPersistedEvents = await replayExternalEventsForThread(
         set,
         get,

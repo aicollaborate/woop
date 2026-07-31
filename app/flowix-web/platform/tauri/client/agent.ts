@@ -282,6 +282,18 @@ export const agent = {
     invoke<string | null>('hermes_thread_session_id', { threadId }),
   getOpenCodeSessionId: (threadId: string) =>
     invoke<string | null>('opencode_thread_session_id', { threadId }),
+  listOpenCodeThreads: () =>
+    invoke<ThreadInfo[]>('opencode_thread_list'),
+  getOpenCodeThreadPage: (
+    threadId: string,
+    beforeSequence: number | null,
+    limit: number,
+  ) =>
+    invoke<{
+      messages: ChatMessage[];
+      oldestSequence: number | null;
+      hasMore: boolean;
+    }>('opencode_thread_get_page', { threadId, beforeSequence, limit }),
   deleteThread: (threadId: string) =>
     invoke<void>('thread_delete', { threadId }),
   // 閲嶅懡鍚?thread 鈹€鈹€ 棣栨潯鐢ㄦ埛娑堟伅钀藉湴鍚庤皟涓€娆? 瑕嗙洊 ensureThread 璧?early return

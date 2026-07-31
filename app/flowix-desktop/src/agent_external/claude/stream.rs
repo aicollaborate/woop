@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,35 +10,111 @@ use super::events::{
 };
 use super::AGENT_TYPE;
 use crate::agent_external::{
-    persist_and_emit_external_chunk, persist_and_emit_external_chunk_with_metadata,
-    read_capped_line, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
-    StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES, STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
+    emit_chunk_with_run_id_and_metadata, persist_and_emit_external_chunk,
+    persist_external_chunk_for_thread_with_metadata, read_capped_line, truncate_for_log,
+    AgentChunkMetadata, ExternalRunRegistry, StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES,
+    STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
 };
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
 
-/// flush `emit_buf` 的全部缓�?chunk 并逐条 emit。空缓冲�?no-op�?
+#[derive(Default)]
+struct ClaudeTurnEvents {
+    events: Vec<(AgentChunk, AgentChunkMetadata)>,
+    message_indexes: HashMap<String, usize>,
+    tool_call_indexes: HashMap<String, usize>,
+    tool_result_indexes: HashMap<String, usize>,
+    usage_index: Option<usize>,
+    next_message_id: usize,
+}
+
+impl ClaudeTurnEvents {
+    fn observe(&mut self, chunk: &AgentChunk, metadata: &AgentChunkMetadata, run_id: &str) {
+        match chunk {
+            AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
+                if text.is_empty() {
+                    return;
+                }
+                let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
+                    "reasoning"
+                } else {
+                    "assistant"
+                };
+                let message_id = metadata.message_id.clone().unwrap_or_else(|| {
+                    self.next_message_id += 1;
+                    format!("claude-{run_id}-{role}-{}", self.next_message_id)
+                });
+                let key = format!("{role}:{message_id}");
+                if let Some(index) = self.message_indexes.get(&key).copied() {
+                    let replace = metadata.content_mode == Some("snapshot");
+                    match (&mut self.events[index].0, chunk) {
+                        (AgentChunk::Text { text: stored, .. }, AgentChunk::Text { text, .. })
+                        | (
+                            AgentChunk::Reasoning { text: stored, .. },
+                            AgentChunk::Reasoning { text, .. },
+                        ) => {
+                            if replace {
+                                *stored = text.clone();
+                            } else {
+                                stored.push_str(text);
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+                let mut stored_metadata = metadata.clone();
+                stored_metadata.message_id = Some(message_id);
+                stored_metadata.content_mode = Some("snapshot");
+                stored_metadata.message_phase = Some("completed");
+                self.message_indexes.insert(key, self.events.len());
+                self.events.push((chunk.clone(), stored_metadata));
+            }
+            AgentChunk::ToolCall { id, .. } => {
+                if let Some(index) = self.tool_call_indexes.get(id).copied() {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.tool_call_indexes.insert(id.clone(), self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::ToolResult { id, .. } => {
+                if let Some(index) = self.tool_result_indexes.get(id).copied() {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.tool_result_indexes.insert(id.clone(), self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::Usage { .. } => {
+                if let Some(index) = self.usage_index {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.usage_index = Some(self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::Error { .. } => self.events.push((chunk.clone(), metadata.clone())),
+            _ => {}
+        }
+    }
+}
+
+/// Flush the frame buffer to the live UI and fold it into the turn snapshot.
+/// Database persistence happens once at the end of the turn.
 async fn flush_emit_buffer(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<ThreadManager>,
     emit_buf: &mut StreamingEmitBuffer,
+    turn_events: &mut ClaudeTurnEvents,
     run_id: &str,
 ) {
     if emit_buf.is_empty() {
         return;
     }
     for (chunk, metadata) in emit_buf.flush_with_metadata() {
-        persist_and_emit_external_chunk_with_metadata(
-            app_handle,
-            thread_manager,
-            AGENT_TYPE,
-            &chunk,
-            run_id,
-            None,
-            &metadata,
-        )
-        .await;
+        turn_events.observe(&chunk, &metadata, run_id);
+        emit_chunk_with_run_id_and_metadata(app_handle, &chunk, AGENT_TYPE, run_id, &metadata);
     }
 }
 
@@ -47,14 +123,40 @@ async fn flush_emit_buffer(
 /// read_capped_line 持续返回高�? text 行的极�? burst 才会触达�?
 async fn flush_emit_buffer_if_full(
     app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<ThreadManager>,
     emit_buf: &mut StreamingEmitBuffer,
+    turn_events: &mut ClaudeTurnEvents,
     run_id: &str,
     last_flush_at: &mut Instant,
 ) {
     if emit_buf.pending_bytes() >= STREAM_FLUSH_MAX_BYTES {
-        flush_emit_buffer(app_handle, thread_manager, emit_buf, run_id).await;
+        flush_emit_buffer(app_handle, emit_buf, turn_events, run_id).await;
         *last_flush_at = Instant::now();
+    }
+}
+
+async fn persist_turn_events(
+    thread_manager: &Arc<ThreadManager>,
+    thread_id: &str,
+    turn_events: &mut ClaudeTurnEvents,
+    run_id: &str,
+) {
+    let storage_thread_id = thread_manager
+        .find_thread_by_external_session(thread_id, AGENT_TYPE)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| thread_id.to_string());
+    for (chunk, metadata) in std::mem::take(turn_events).events {
+        persist_external_chunk_for_thread_with_metadata(
+            thread_manager,
+            AGENT_TYPE,
+            &storage_thread_id,
+            &chunk,
+            run_id,
+            None,
+            &metadata,
+        )
+        .await;
     }
 }
 
@@ -81,6 +183,7 @@ where
     // emit 次数 (�?StreamingEmitBuffer doc)。Text/Reasoning �?buffer; 其它 chunk
     // �?flush �?emit, 保证呈现顺序�?
     let mut emit_buf = StreamingEmitBuffer::new(thread_id.clone());
+    let mut turn_events = ClaudeTurnEvents::default();
     // 帧级 flush 计时 ── 与前�?rAF 帧率 (~16ms) 对齐。每读完一整�?检�?elapsed,
     // burst 期间约每�?flush 一欰�?    //
     // 不用 select! + interval: read_capped_line �?> BufReader 容量 (8 KiB) 的长�?    // 时会跨�?�?fill_buf �?�� out, select! 在中�?drop �?future 会丢失已�?��的部�?    // �?(reader cursor �?consume �?out �?��), 导致�?tool_result 行损�?-> JSON
@@ -94,14 +197,15 @@ where
             Ok(opt) => opt,
             Err(err) => {
                 // 绠￠亾寮傚父: 灏介噺 flush 宸叉敹鍒扮殑鏂囨湰鍐嶄笂鎶涖€?
-                flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+                flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
+                persist_turn_events(&thread_manager, &thread_id, &mut turn_events, &run_id).await;
                 return Err(err);
             }
         };
         let Some((raw, truncated_by_reader)) = line_opt else {
             // EOF: 必须在返回前 flush 残留文本 ── 否则 spawn tail �?
             // emit_stream_end_once 浼氬厛浜庡熬閮ㄦ枃鏈埌杈惧墠绔€?
-            flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+            flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
             break;
         };
         if truncated_by_reader {
@@ -183,14 +287,14 @@ where
                 if emit_buf.has_text()
                     && emit_buf.text_message_id() != metadata.message_id.as_deref()
                 {
-                    flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+                    flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
                     last_flush_at = Instant::now();
                 }
                 emit_buf.append_text_with_metadata(&text, metadata);
                 flush_emit_buffer_if_full(
                     &app_handle,
-                    &thread_manager,
                     &mut emit_buf,
+                    &mut turn_events,
                     &run_id,
                     &mut last_flush_at,
                 )
@@ -241,7 +345,7 @@ where
                 }
                 // SessionResolved �?��文本 chunk ── �?flush 文本 buffer, 保证它之�?
                 // 的文�?��落地, �?emit�?
-                flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+                flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
                 last_flush_at = Instant::now();
                 let chunk = AgentChunk::SessionResolved {
                     thread_id: thread_id.clone(),
@@ -277,15 +381,15 @@ where
                     if emit_buf.has_text()
                         && emit_buf.text_message_id() != metadata.message_id.as_deref()
                     {
-                        flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id)
+                        flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id)
                             .await;
                         last_flush_at = Instant::now();
                     }
                     emit_buf.append_text_with_metadata(&text, metadata);
                     flush_emit_buffer_if_full(
                         &app_handle,
-                        &thread_manager,
                         &mut emit_buf,
+                        &mut turn_events,
                         &run_id,
                         &mut last_flush_at,
                     )
@@ -295,15 +399,15 @@ where
                     if emit_buf.has_reasoning()
                         && emit_buf.reasoning_message_id() != metadata.message_id.as_deref()
                     {
-                        flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id)
+                        flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id)
                             .await;
                         last_flush_at = Instant::now();
                     }
                     emit_buf.append_reasoning_with_metadata(&text, metadata);
                     flush_emit_buffer_if_full(
                         &app_handle,
-                        &thread_manager,
                         &mut emit_buf,
+                        &mut turn_events,
                         &run_id,
                         &mut last_flush_at,
                     )
@@ -312,7 +416,7 @@ where
                 mut chunk => {
                     // 非文�?chunk ── �?flush 文本 buffer, 保证
                     // text -> tool_call -> text -> tool_result 的呈现顺�? �?emit�?
-                    flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+                    flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
                     last_flush_at = Instant::now();
                     // ToolCall 发出前�?�?id -> name
                     if let AgentChunk::ToolCall {
@@ -336,16 +440,14 @@ where
                             }
                         }
                     }
-                    persist_and_emit_external_chunk_with_metadata(
+                    turn_events.observe(&chunk, &metadata, &run_id);
+                    emit_chunk_with_run_id_and_metadata(
                         &app_handle,
-                        &thread_manager,
-                        AGENT_TYPE,
                         &chunk,
+                        AGENT_TYPE,
                         &run_id,
-                        None,
                         &metadata,
-                    )
-                    .await;
+                    );
                 }
             }
         }
@@ -354,10 +456,11 @@ where
         // 寮哄埗 flush, 杩欓噷涓昏鍏滄寔缁枃鏈祦鐨勬敀鎵广€傝娴佸仠椤挎椂 read_capped_line 闃诲,
         // 缓冲里最多残留一帧文�? 由下一�?/ EOF / 工具调用触发落地�?
         if last_flush_at.elapsed() >= STREAM_FLUSH_INTERVAL {
-            flush_emit_buffer(&app_handle, &thread_manager, &mut emit_buf, &run_id).await;
+            flush_emit_buffer(&app_handle, &mut emit_buf, &mut turn_events, &run_id).await;
             last_flush_at = Instant::now();
         }
     }
+    persist_turn_events(&thread_manager, &thread_id, &mut turn_events, &run_id).await;
     runtime_log::record_agent_event(
         "info",
         "claude_stdout",
@@ -425,6 +528,45 @@ fn non_json_stdout_text(parsed: &ParsedClaudeStdoutLine, line: &str) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_events_compact_claude_deltas_into_message_snapshots() {
+        let mut turn = ClaudeTurnEvents::default();
+        let metadata = AgentChunkMetadata {
+            message_id: Some("assistant-message-1-block-0".to_string()),
+            message_phase: Some("updated"),
+            content_mode: Some("delta"),
+            ..Default::default()
+        };
+        for text in ["hello ", "world"] {
+            turn.observe(
+                &AgentChunk::Text {
+                    thread_id: "thread-1".to_string(),
+                    text: text.to_string(),
+                },
+                &metadata,
+                "run-1",
+            );
+        }
+        turn.observe(
+            &AgentChunk::ToolCall {
+                thread_id: "thread-1".to_string(),
+                id: "call-1".to_string(),
+                name: "Read".to_string(),
+                input: serde_json::json!({"file_path": "/tmp/a"}),
+            },
+            &AgentChunkMetadata::default(),
+            "run-1",
+        );
+
+        assert_eq!(turn.events.len(), 2);
+        assert!(matches!(
+            &turn.events[0].0,
+            AgentChunk::Text { text, .. } if text == "hello world"
+        ));
+        assert_eq!(turn.events[0].1.content_mode, Some("snapshot"));
+        assert_eq!(turn.events[0].1.message_phase, Some("completed"));
+    }
 
     #[test]
     fn reasoning_metadata_is_stable_across_claude_provider_messages_in_one_run() {

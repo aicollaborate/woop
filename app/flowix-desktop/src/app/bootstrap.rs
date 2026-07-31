@@ -637,6 +637,8 @@ pub fn run() {
             commands::thread::hermes_thread_get_page,
             commands::thread::hermes_thread_session_id,
             commands::thread::opencode_thread_session_id,
+            commands::thread::opencode_thread_list,
+            commands::thread::opencode_thread_get_page,
             commands::thread::thread_delete,
             commands::thread::thread_update_title,
             // window

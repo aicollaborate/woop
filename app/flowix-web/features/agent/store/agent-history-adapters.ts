@@ -56,7 +56,7 @@ function createClaudeHistoryAdapter(): AgentHistoryAdapter {
     externalSessionBacked: true,
     listThreads: () => agentClient.listClaudeThreads(),
     async getFullHistory(threadId) {
-      return (await agentClient.getClaudeThread(threadId)).messages;
+      return (await agentClient.getClaudeThreadPage(threadId, null, 50)).messages;
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getClaudeThreadPage(threadId, null, limit),
@@ -94,16 +94,29 @@ function createLocalAgentHistoryAdapter(typeKey: AgentTypeKey): AgentHistoryAdap
   };
 }
 
+function createOpenCodeHistoryAdapter(): AgentHistoryAdapter {
+  return {
+    typeKey: "opencode",
+    externalSessionBacked: true,
+    listThreads: () => agentClient.listOpenCodeThreads(),
+    async getFullHistory(threadId) {
+      return (await agentClient.getOpenCodeThreadPage(threadId, null, 50)).messages;
+    },
+    getInitialHistory: (threadId, limit) =>
+      agentClient.getOpenCodeThreadPage(threadId, null, limit),
+    getPage: (threadId, beforeSequence, limit) =>
+      agentClient.getOpenCodeThreadPage(threadId, beforeSequence, limit),
+  };
+}
+
 const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
   flowix: createFlowixHistoryAdapter(),
   codex: createCodexHistoryAdapter(),
   claude: createClaudeHistoryAdapter(),
   hermes: createHermesHistoryAdapter(),
-  // OpenCode ACP 的历史由 `OpenCodeAcpManager` 通过 `persist_external_chunk`
-  // 写入 ThreadManager, 与本地 thread store 同一条管道 ── 复用
-  // `createLocalAgentHistoryAdapter` 走标准 thread 存储, 不需要单独 list /
-  // getThread IPC。session id 由 `getOpenCodeSessionId` IPC 在恢复时反查。
-  opencode: createLocalAgentHistoryAdapter("opencode"),
+  // OpenCode 的唯一历史源是紧凑的 agent_external_events。后端以完整用户
+  // 回合分页并将 snapshot events 物化为消息，前端不重放流式 delta。
+  opencode: createOpenCodeHistoryAdapter(),
 };
 
 export function getAgentHistoryAdapter(typeKey: AgentTypeKey): AgentHistoryAdapter {

@@ -226,7 +226,18 @@ pub async fn claude_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
     limit: i64,
+    state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
+    if let Some(page) = state
+        .thread_manager
+        .get_claude_event_messages_page(&thread_id, before_sequence, limit)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(page);
+    }
+    // Rollout is retained strictly as a fallback for sessions whose database
+    // event source is empty.
     crate::agent_external::claude::get_session_page(&thread_id, before_sequence, limit).await
 }
 
@@ -299,6 +310,39 @@ pub async fn opencode_thread_session_id(
         .get_external_session(&thread_id, "opencode")
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn opencode_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
+    state
+        .thread_manager
+        .list_opencode_event_threads()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn opencode_thread_get_page(
+    thread_id: String,
+    before_sequence: Option<i64>,
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<ThreadMessagesPage, String> {
+    if let Some(page) = state
+        .thread_manager
+        .get_opencode_event_messages_page(&thread_id, before_sequence, limit)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(page);
+    }
+    let session_id = state
+        .thread_manager
+        .get_external_session(&thread_id, "opencode")
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or(thread_id);
+    crate::agent_external::opencode::get_session_page(&session_id, before_sequence, limit).await
 }
 
 #[tauri::command]

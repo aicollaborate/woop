@@ -8,20 +8,19 @@ use serde_json::Value;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::command::build_opencode_acp_command;
 use super::protocol;
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
-    append_workspace_context, persist_and_emit_external_chunk, persist_external_chunk,
-    read_capped_line, read_to_string, resolve_and_freeze_runtime_cwd, truncate_for_log,
-    ExternalRunRegistry, MAX_STDOUT_LINE_BYTES, USER_STOPPED_REASON,
+    append_workspace_context, emit_chunk_with_run_id,
+    persist_external_chunk_for_thread_with_metadata, read_capped_line, read_to_string,
+    resolve_and_freeze_runtime_cwd, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
+    MAX_STDOUT_LINE_BYTES, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
-use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
-use crate::agent_types::AgentId;
+use crate::agent_session::ThreadManager;
 use crate::runtime_log;
 
 const APP_EXIT_REASON: &str = "app_exit";
@@ -37,6 +36,143 @@ enum AcpReadPhase {
     Initialize,
     SessionSetup,
     Prompt,
+}
+
+#[derive(Default)]
+struct OpenCodeTurnEvents {
+    events: Vec<CompactedOpenCodeEvent>,
+    assistant_index: Option<usize>,
+    reasoning_index: Option<usize>,
+    next_id: usize,
+}
+
+struct CompactedOpenCodeEvent {
+    chunk: AgentChunk,
+    metadata: AgentChunkMetadata,
+}
+
+impl OpenCodeTurnEvents {
+    fn observe(&mut self, chunk: &AgentChunk, run_id: &str) {
+        match chunk {
+            AgentChunk::Text { thread_id, text } if !text.is_empty() => {
+                self.complete_reasoning();
+                if let Some(index) = self.assistant_index {
+                    if let AgentChunk::Text { text: content, .. } = &mut self.events[index].chunk {
+                        content.push_str(text);
+                    }
+                } else {
+                    let index = self.push_text_event(run_id, thread_id, "assistant", text.clone());
+                    self.assistant_index = Some(index);
+                }
+            }
+            AgentChunk::Reasoning { thread_id, text } if !text.is_empty() => {
+                self.assistant_index = None;
+                if let Some(index) = self.reasoning_index {
+                    if let AgentChunk::Reasoning { text: content, .. } =
+                        &mut self.events[index].chunk
+                    {
+                        content.push_str(text);
+                    }
+                } else {
+                    let index = self.push_text_event(run_id, thread_id, "reasoning", text.clone());
+                    self.reasoning_index = Some(index);
+                }
+            }
+            AgentChunk::ToolCall {
+                id, name, input, ..
+            } => {
+                self.close_streaming_rows();
+                if let Some(event) = self.events.iter_mut().rev().find(|event| {
+                    matches!(
+                        &event.chunk,
+                        AgentChunk::ToolCall { id: existing_id, .. } if existing_id == id
+                    )
+                }) {
+                    if let AgentChunk::ToolCall {
+                        name: existing_name,
+                        input: existing_input,
+                        ..
+                    } = &mut event.chunk
+                    {
+                        *existing_name = name.clone();
+                        *existing_input = input.clone();
+                    }
+                    return;
+                }
+                self.events.push(CompactedOpenCodeEvent {
+                    chunk: chunk.clone(),
+                    metadata: AgentChunkMetadata::default(),
+                });
+            }
+            AgentChunk::ToolResult { id, .. } => {
+                self.close_streaming_rows();
+                if let Some(event) = self.events.iter_mut().rev().find(|event| {
+                    matches!(
+                        &event.chunk,
+                        AgentChunk::ToolResult { id: existing_id, .. } if existing_id == id
+                    )
+                }) {
+                    event.chunk = chunk.clone();
+                    return;
+                }
+                self.events.push(CompactedOpenCodeEvent {
+                    chunk: chunk.clone(),
+                    metadata: AgentChunkMetadata::default(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(mut self) -> Vec<CompactedOpenCodeEvent> {
+        self.close_streaming_rows();
+        self.events
+    }
+
+    fn push_text_event(
+        &mut self,
+        run_id: &str,
+        thread_id: &str,
+        role: &str,
+        content: String,
+    ) -> usize {
+        self.next_id += 1;
+        let index = self.events.len();
+        let chunk = if role == "reasoning" {
+            AgentChunk::Reasoning {
+                thread_id: thread_id.to_string(),
+                text: content,
+            }
+        } else {
+            AgentChunk::Text {
+                thread_id: thread_id.to_string(),
+                text: content,
+            }
+        };
+        self.events.push(CompactedOpenCodeEvent {
+            chunk,
+            metadata: AgentChunkMetadata {
+                message_id: Some(format!("opencode-{run_id}-{role}-{}", self.next_id)),
+                message_phase: Some("updated"),
+                content_mode: Some("snapshot"),
+                ..AgentChunkMetadata::default()
+            },
+        });
+        index
+    }
+
+    fn complete_reasoning(&mut self) {
+        if let Some(index) = self.reasoning_index.take() {
+            self.events[index].metadata.message_phase = Some("completed");
+        }
+    }
+
+    fn close_streaming_rows(&mut self) {
+        if let Some(index) = self.assistant_index.take() {
+            self.events[index].metadata.message_phase = Some("completed");
+        }
+        self.complete_reasoning();
+    }
 }
 
 impl AcpReadPhase {
@@ -63,19 +199,32 @@ impl ExternalLifecycleEmitter for OpenCodeAcpManager {
         chunk: &AgentChunk,
         run_id: &str,
     ) {
-        persist_and_emit_external_chunk(
-            app_handle,
+        let storage_thread_id = self.storage_thread_id(chunk.thread_id()).await;
+        persist_external_chunk_for_thread_with_metadata(
             &self.thread_manager,
             AGENT_TYPE,
+            &storage_thread_id,
             chunk,
             run_id,
             None,
+            &AgentChunkMetadata::default(),
         )
         .await;
+        emit_chunk_with_run_id(app_handle, chunk, AGENT_TYPE, run_id);
     }
 
     async fn persist_emitted_stream_end(&self, chunk: &AgentChunk, run_id: &str) {
-        persist_external_chunk(&self.thread_manager, AGENT_TYPE, chunk, run_id, None).await;
+        let storage_thread_id = self.storage_thread_id(chunk.thread_id()).await;
+        persist_external_chunk_for_thread_with_metadata(
+            &self.thread_manager,
+            AGENT_TYPE,
+            &storage_thread_id,
+            chunk,
+            run_id,
+            None,
+            &AgentChunkMetadata::default(),
+        )
+        .await;
     }
 }
 
@@ -86,6 +235,15 @@ impl OpenCodeAcpManager {
             runs: ExternalRunRegistry::new(AGENT_TYPE, "OpenCode ACP"),
             controls: Mutex::new(HashMap::new()),
         }
+    }
+
+    async fn storage_thread_id(&self, thread_id: &str) -> String {
+        self.thread_manager
+            .find_thread_by_external_session(thread_id, AGENT_TYPE)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| thread_id.to_string())
     }
 
     pub async fn chat_stream(
@@ -105,6 +263,9 @@ impl OpenCodeAcpManager {
         let stream_end_emitted = start.stream_end_emitted;
 
         tokio::spawn(async move {
+            manager
+                .emit_user_message(&app_handle, &thread_id, &message, &run_id)
+                .await;
             manager
                 .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
                 .await;
@@ -212,15 +373,18 @@ impl OpenCodeAcpManager {
             .await;
         for run in finalized {
             let run_id = run.run_id.unwrap_or_else(|| run.thread_id.clone());
-            persist_external_chunk(
+            let storage_thread_id = self.storage_thread_id(&run.thread_id).await;
+            persist_external_chunk_for_thread_with_metadata(
                 &self.thread_manager,
                 AGENT_TYPE,
+                &storage_thread_id,
                 &AgentChunk::StreamEnd {
                     thread_id: run.thread_id,
                     reason: run.reason,
                 },
                 &run_id,
                 None,
+                &AgentChunkMetadata::default(),
             )
             .await;
         }
@@ -270,7 +434,6 @@ impl OpenCodeAcpManager {
         let mapped_session =
             select_resumable_session(thread_id, stored_session, reverse_mapping.is_some());
         let product_thread_id = reverse_mapping.as_deref().unwrap_or(thread_id);
-        self.ensure_product_thread(product_thread_id).await?;
         let cwd = resolve_and_freeze_runtime_cwd(
             &self.thread_manager,
             product_thread_id,
@@ -298,9 +461,7 @@ impl OpenCodeAcpManager {
             .clone()
             .unwrap_or(message.content.clone());
         let prompt = append_workspace_context(&user_prompt, &cwd, &workspace_paths);
-        self.persist_user_message(product_thread_id, &message, &prompt)
-            .await?;
-
+        let mut turn_events = OpenCodeTurnEvents::default();
         let mut child = build_opencode_acp_command(&cwd, permission_mode.as_deref())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -363,7 +524,7 @@ impl OpenCodeAcpManager {
         let stderr_task = tokio::spawn(read_to_string(BufReader::new(stderr)));
         let mut stdout = BufReader::new(stdout);
         let mut tool_names = HashMap::new();
-        let mut assistant_text = String::new();
+        let mut tool_inputs = HashMap::new();
         let mut allowed_roots = vec![cwd.clone()];
         allowed_roots.extend(additional_directories.iter().map(PathBuf::from));
 
@@ -381,7 +542,8 @@ impl OpenCodeAcpManager {
                     AcpReadPhase::Initialize,
                     &allowed_roots,
                     &mut tool_names,
-                    &mut assistant_text,
+                    &mut tool_inputs,
+                    &mut turn_events,
                 )
                 .await?;
             let negotiated_protocol = initialize_result
@@ -420,7 +582,8 @@ impl OpenCodeAcpManager {
                     AcpReadPhase::SessionSetup,
                     &allowed_roots,
                     &mut tool_names,
-                    &mut assistant_text,
+                    &mut tool_inputs,
+                    &mut turn_events,
                 )
                 .await?;
             let session_id = protocol::session_id_from_result(&session_result)
@@ -465,14 +628,26 @@ impl OpenCodeAcpManager {
                 AcpReadPhase::Prompt,
                 &allowed_roots,
                 &mut tool_names,
-                &mut assistant_text,
+                &mut tool_inputs,
+                &mut turn_events,
             )
             .await?;
-            self.persist_assistant_message(product_thread_id, &assistant_text)
-                .await?;
             Ok(())
         }
         .await;
+
+        for event in turn_events.finish() {
+            persist_external_chunk_for_thread_with_metadata(
+                &self.thread_manager,
+                AGENT_TYPE,
+                product_thread_id,
+                &event.chunk,
+                run_id,
+                None,
+                &event.metadata,
+            )
+            .await;
+        }
 
         self.controls.lock().await.remove(thread_id);
         if let Some(mut running) = self.runs.remove_if_run_id(thread_id, Some(run_id)).await {
@@ -518,7 +693,8 @@ impl OpenCodeAcpManager {
         phase: AcpReadPhase,
         allowed_roots: &[PathBuf],
         tool_names: &mut HashMap<String, String>,
-        assistant_text: &mut String,
+        tool_inputs: &mut HashMap<String, Value>,
+        turn_events: &mut OpenCodeTurnEvents,
     ) -> Result<Value, String> {
         loop {
             let Some((line, truncated)) = read_capped_line(stdout, MAX_STDOUT_LINE_BYTES).await?
@@ -554,99 +730,15 @@ impl OpenCodeAcpManager {
                 }
                 continue;
             }
-            for mut chunk in protocol::chunks_from_message(thread_id, &value) {
-                if let AgentChunk::Text { text, .. } = &chunk {
-                    assistant_text.push_str(text);
-                }
+            for mut chunk in protocol::chunks_from_message(thread_id, &value, tool_inputs) {
                 remember_tool_name(&mut chunk, tool_names);
-                persist_and_emit_external_chunk(
-                    app_handle,
-                    &self.thread_manager,
-                    AGENT_TYPE,
-                    &chunk,
-                    run_id,
-                    Some(line),
-                )
-                .await;
+                turn_events.observe(&chunk, run_id);
+                emit_chunk_with_run_id(app_handle, &chunk, AGENT_TYPE, run_id);
             }
             if let Some(result) = protocol::response_result(&value, response_id) {
                 return result.cloned();
             }
         }
-    }
-
-    async fn persist_user_message(
-        &self,
-        thread_id: &str,
-        message: &AgentUserMessage,
-        llm_content: &str,
-    ) -> Result<(), String> {
-        self.ensure_product_thread(thread_id).await?;
-        self.thread_manager
-            .add_message(
-                thread_id,
-                ThreadChatMessage {
-                    id: format!("user_{}", Uuid::new_v4()),
-                    role: "user".to_string(),
-                    content: message.content.clone(),
-                    llm_content: Some(llm_content.to_string()),
-                    system_reminder_directory: message.system_reminder_directory.clone(),
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    is_loading: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_data: None,
-                    tool_input: None,
-                    tool_calls: None,
-                    reasoning: None,
-                    is_completed: Some(true),
-                    is_collapsed: None,
-                },
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    async fn ensure_product_thread(&self, thread_id: &str) -> Result<(), String> {
-        self.thread_manager
-            .ensure_thread(
-                thread_id,
-                AgentId(AGENT_TYPE.to_string()),
-                "OpenCode session".to_string(),
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    async fn persist_assistant_message(&self, thread_id: &str, text: &str) -> Result<(), String> {
-        if text.trim().is_empty() {
-            return Ok(());
-        }
-        self.thread_manager
-            .add_message(
-                thread_id,
-                ThreadChatMessage {
-                    id: format!("assistant_{}", Uuid::new_v4()),
-                    role: "assistant".to_string(),
-                    content: text.to_string(),
-                    llm_content: None,
-                    system_reminder_directory: None,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    is_loading: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_data: None,
-                    tool_input: None,
-                    tool_calls: None,
-                    reasoning: None,
-                    is_completed: Some(true),
-                    is_collapsed: None,
-                },
-            )
-            .await
-            .map_err(|error| error.to_string())
     }
 }
 
@@ -781,5 +873,69 @@ mod tests {
                 if name == "read"
                     && input["filePath"] == "C:\\workspace\\example.txt"
         ));
+    }
+
+    #[test]
+    fn turn_events_compact_stream_chunks_into_snapshot_rows() {
+        let mut turn = OpenCodeTurnEvents::default();
+        let chunks = [
+            AgentChunk::Reasoning {
+                thread_id: "thread".into(),
+                text: "inspect ".into(),
+            },
+            AgentChunk::Reasoning {
+                thread_id: "thread".into(),
+                text: "files".into(),
+            },
+            AgentChunk::ToolCall {
+                thread_id: "thread".into(),
+                id: "call-1".into(),
+                name: "read".into(),
+                input: serde_json::json!({ "filePath": "/workspace/README.md" }),
+            },
+            AgentChunk::ToolResult {
+                thread_id: "thread".into(),
+                id: "call-1".into(),
+                name: "read".into(),
+                result: serde_json::json!({ "content": "hello" }),
+            },
+            AgentChunk::Text {
+                thread_id: "thread".into(),
+                text: "The project ".into(),
+            },
+            AgentChunk::Text {
+                thread_id: "thread".into(),
+                text: "is ready.".into(),
+            },
+        ];
+        for chunk in &chunks {
+            turn.observe(chunk, "run-1");
+        }
+
+        let events = turn.finish();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.chunk.kind())
+                .collect::<Vec<_>>(),
+            vec!["reasoning", "tool_call", "tool_result", "text"]
+        );
+        assert!(matches!(
+            &events[0].chunk,
+            AgentChunk::Reasoning { text, .. } if text == "inspect files"
+        ));
+        assert_eq!(events[0].metadata.content_mode, Some("snapshot"));
+        assert_eq!(events[0].metadata.message_phase, Some("completed"));
+        assert!(matches!(
+            &events[1].chunk,
+            AgentChunk::ToolCall { id, input, .. }
+                if id == "call-1" && input["filePath"] == "/workspace/README.md"
+        ));
+        assert!(matches!(
+            &events[3].chunk,
+            AgentChunk::Text { text, .. } if text == "The project is ready."
+        ));
+        assert_eq!(events[3].metadata.content_mode, Some("snapshot"));
+        assert_eq!(events[3].metadata.message_phase, Some("completed"));
     }
 }

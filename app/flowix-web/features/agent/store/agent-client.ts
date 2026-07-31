@@ -27,6 +27,8 @@ export const agentClient = {
   listHermesThreads: agent.listHermesThreads,
   getHermesThread: agent.getHermesThread,
   getHermesThreadPage: agent.getHermesThreadPage,
+  listOpenCodeThreads: agent.listOpenCodeThreads,
+  getOpenCodeThreadPage: agent.getOpenCodeThreadPage,
   deleteThread: agent.deleteThread,
   updateThreadTitle: agent.updateThreadTitle,
 };

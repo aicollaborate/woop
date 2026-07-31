@@ -2,13 +2,16 @@
 
 use super::{external_default_title, ThreadManager};
 use crate::agent_session::error::ThreadError;
-use crate::agent_session::types::{AgentExternalEvent, NewAgentExternalEvent};
+use crate::agent_session::types::{
+    AgentExternalEvent, ChatMessage, NewAgentExternalEvent, ThreadInfo, ThreadMessagesPage,
+};
+use crate::agent_types::AgentId;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_EXTERNAL_EVENTS_PER_THREAD: i64 = 10_000;
-const EXTERNAL_HISTORY_TRUNCATED_JSON: &str =
-    r#"{"kind":"history_truncated","version":1}"#;
+const EXTERNAL_HISTORY_TRUNCATED_JSON: &str = r#"{"kind":"history_truncated","version":1}"#;
 
 fn session_metadata_cwd(metadata: Option<&serde_json::Value>) -> Option<String> {
     let value = metadata?;
@@ -33,6 +36,39 @@ fn session_metadata_cwd(metadata: Option<&serde_json::Value>) -> Option<String> 
 }
 
 impl ThreadManager {
+    /// List only product-owned OpenCode threads. Session ids can temporarily
+    /// appear in `threads` when an event arrives through a canonical UI id;
+    /// those aliases must not become duplicate cards.
+    pub async fn list_opencode_event_threads(
+        self: &Arc<Self>,
+    ) -> Result<Vec<ThreadInfo>, ThreadError> {
+        self.run_blocking(move |tm| {
+            let conn = tm.lock_conn();
+            let mut stmt = conn.prepare(
+                "SELECT t.thread_id, t.agent_id, t.title, t.created_at, t.updated_at
+                 FROM threads t
+                 WHERE t.agent_id = 'opencode'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM thread_external_sessions s
+                       WHERE s.runtime = 'opencode'
+                         AND s.external_session_id = t.thread_id
+                   )
+                 ORDER BY t.updated_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ThreadInfo {
+                    thread_id: row.get(0)?,
+                    agent_id: AgentId(row.get(1)?),
+                    title: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+    }
+
     pub async fn get_external_session(
         self: &Arc<Self>,
         thread_id: &str,
@@ -331,5 +367,375 @@ impl ThreadManager {
             raw_json: row.get(4)?,
             created_at: row.get(5)?,
         })
+    }
+
+    /// Read OpenCode history in complete user-turn pages and materialize the
+    /// compact snapshot events as display messages. `before_event_id` is the
+    /// first user event id returned by the previous page.
+    pub async fn get_opencode_event_messages_page(
+        self: &Arc<Self>,
+        thread_id: &str,
+        before_event_id: Option<i64>,
+        turn_limit: i64,
+    ) -> Result<Option<ThreadMessagesPage>, ThreadError> {
+        let thread_id = thread_id.to_string();
+        self.run_blocking(move |tm| {
+            if !tm.external_event_history_exists_inner("opencode", &thread_id)? {
+                return Ok(None);
+            }
+            tm.get_external_event_messages_page_inner(
+                "opencode",
+                &thread_id,
+                before_event_id,
+                turn_limit,
+            )
+            .map(Some)
+        })
+        .await
+    }
+
+    pub async fn get_claude_event_messages_page(
+        self: &Arc<Self>,
+        thread_id: &str,
+        before_event_id: Option<i64>,
+        turn_limit: i64,
+    ) -> Result<Option<ThreadMessagesPage>, ThreadError> {
+        let thread_id = thread_id.to_string();
+        self.run_blocking(move |tm| {
+            if !tm.external_event_history_exists_inner("claude", &thread_id)? {
+                return Ok(None);
+            }
+            tm.get_external_event_messages_page_inner(
+                "claude",
+                &thread_id,
+                before_event_id,
+                turn_limit,
+            )
+            .map(Some)
+        })
+        .await
+    }
+
+    fn external_event_history_exists_inner(
+        &self,
+        runtime: &str,
+        thread_id: &str,
+    ) -> Result<bool, ThreadError> {
+        let conn = self.lock_conn();
+        let product_thread_id = conn
+            .query_row(
+                "SELECT thread_id FROM thread_external_sessions
+                 WHERE runtime = ?2 AND external_session_id = ?1
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![thread_id, runtime],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| thread_id.to_string());
+        let external_session_id = conn
+            .query_row(
+                "SELECT external_session_id FROM thread_external_sessions
+                 WHERE thread_id = ?1 AND runtime = ?2
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![product_thread_id.as_str(), runtime],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| product_thread_id.clone());
+        Ok(conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM agent_external_events
+                WHERE thread_id IN (?1, ?2) AND runtime = ?3
+             )",
+            params![product_thread_id, external_session_id, runtime],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn get_external_event_messages_page_inner(
+        &self,
+        runtime: &str,
+        thread_id: &str,
+        before_event_id: Option<i64>,
+        turn_limit: i64,
+    ) -> Result<ThreadMessagesPage, ThreadError> {
+        let turn_limit = turn_limit.clamp(1, 50);
+        let conn = self.lock_conn();
+        let product_thread_id = conn
+            .query_row(
+                "SELECT thread_id FROM thread_external_sessions
+                 WHERE runtime = ?2 AND external_session_id = ?1
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![thread_id, runtime],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| thread_id.to_string());
+        let external_session_id = conn
+            .query_row(
+                "SELECT external_session_id FROM thread_external_sessions
+                 WHERE runtime = ?2 AND thread_id = ?1
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![product_thread_id.as_str(), runtime],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| product_thread_id.clone());
+        let upper_bound = before_event_id.unwrap_or(i64::MAX);
+
+        let mut turn_stmt = conn.prepare(
+            "SELECT e.id FROM agent_external_events e
+             WHERE e.thread_id IN (?1, ?2) AND e.runtime = ?3 AND e.id < ?4
+               AND (
+                   json_extract(e.normalized_json, '$.kind') = 'user_message'
+                   OR (
+                       json_extract(e.normalized_json, '$.kind') = 'stream_start'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM agent_external_events u
+                           WHERE u.thread_id IN (?1, ?2) AND u.runtime = ?3
+                             AND json_extract(u.normalized_json, '$.kind') = 'user_message'
+                             AND json_extract(u.normalized_json, '$.run_id')
+                                 = json_extract(e.normalized_json, '$.run_id')
+                       )
+                   )
+               )
+             ORDER BY e.id DESC LIMIT ?5",
+        )?;
+        let turn_ids = turn_stmt
+            .query_map(
+                params![
+                    product_thread_id.as_str(),
+                    external_session_id.as_str(),
+                    runtime,
+                    upper_bound,
+                    turn_limit
+                ],
+                |row| row.get::<_, i64>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(cutoff_id) = turn_ids.last().copied() else {
+            return Ok(ThreadMessagesPage {
+                messages: Vec::new(),
+                oldest_sequence: None,
+                has_more: false,
+            });
+        };
+
+        let mut event_stmt = conn.prepare(
+            "SELECT id, runtime, thread_id, normalized_json, raw_json, created_at
+             FROM agent_external_events
+             WHERE thread_id IN (?1, ?2) AND runtime = ?3
+               AND id >= ?4 AND id < ?5
+             ORDER BY id ASC",
+        )?;
+        let events = event_stmt
+            .query_map(
+                params![
+                    product_thread_id.as_str(),
+                    external_session_id.as_str(),
+                    runtime,
+                    cutoff_id,
+                    upper_bound
+                ],
+                Self::row_to_external_event,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_more = conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM agent_external_events e
+                WHERE e.thread_id IN (?1, ?2) AND e.runtime = ?3 AND e.id < ?4
+                  AND (
+                      json_extract(e.normalized_json, '$.kind') = 'user_message'
+                      OR (
+                          json_extract(e.normalized_json, '$.kind') = 'stream_start'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM agent_external_events u
+                              WHERE u.thread_id IN (?1, ?2) AND u.runtime = ?3
+                                AND json_extract(u.normalized_json, '$.kind') = 'user_message'
+                                AND json_extract(u.normalized_json, '$.run_id')
+                                    = json_extract(e.normalized_json, '$.run_id')
+                          )
+                      )
+                  )
+             )",
+            params![
+                product_thread_id.as_str(),
+                external_session_id.as_str(),
+                runtime,
+                cutoff_id
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+
+        Ok(ThreadMessagesPage {
+            messages: materialize_external_messages(events),
+            oldest_sequence: Some(cutoff_id),
+            has_more,
+        })
+    }
+}
+
+fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMessage> {
+    let mut messages = Vec::new();
+    let mut tool_indexes = HashMap::<String, usize>::new();
+    let mut message_indexes = HashMap::<String, usize>::new();
+    for event in events {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.normalized_json) else {
+            continue;
+        };
+        let kind = payload.get("kind").and_then(serde_json::Value::as_str);
+        let timestamp = chrono::DateTime::from_timestamp_millis(event.created_at)
+            .unwrap_or_default()
+            .to_rfc3339();
+        let stable_message_id = payload
+            .get("message_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let message_id = stable_message_id
+            .clone()
+            .unwrap_or_else(|| format!("external-event-{}", event.id));
+        match kind {
+            Some("user_message") => messages.push(external_history_message(
+                payload
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(&message_id)
+                    .to_string(),
+                "user",
+                payload
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                timestamp,
+            )),
+            Some("text") | Some("reasoning") => {
+                let role = if kind == Some("reasoning") {
+                    "reasoning"
+                } else {
+                    "assistant"
+                };
+                let content = payload
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let content_mode = payload
+                    .get("content_mode")
+                    .and_then(serde_json::Value::as_str);
+                let stable_key = stable_message_id
+                    .as_ref()
+                    .map(|id| format!("{role}:{id}"));
+                let existing_index = stable_key
+                    .as_ref()
+                    .and_then(|key| message_indexes.get(key).copied());
+                if let Some(index) = existing_index {
+                    if content_mode == Some("snapshot") {
+                        messages[index].content = content;
+                    } else {
+                        messages[index].content.push_str(&content);
+                    }
+                    messages[index].is_completed = Some(
+                        payload
+                            .get("message_phase")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("completed"),
+                    );
+                    continue;
+                }
+                let mut message = external_history_message(message_id, role, content, timestamp);
+                message.is_completed = Some(
+                    payload
+                        .get("message_phase")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("completed"),
+                );
+                if let Some(key) = stable_key {
+                    message_indexes.insert(key, messages.len());
+                }
+                messages.push(message);
+            }
+            Some("tool_call") => {
+                let tool_call_id = payload
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(&message_id)
+                    .to_string();
+                let mut message = external_history_message(
+                    format!("external-tool-{tool_call_id}"),
+                    "tool",
+                    String::new(),
+                    timestamp,
+                );
+                message.tool_call_id = Some(tool_call_id.clone());
+                message.tool_name = payload
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                message.tool_input = payload.get("input").cloned();
+                message.is_loading = Some(true);
+                message.is_completed = Some(false);
+                tool_indexes.insert(tool_call_id, messages.len());
+                messages.push(message);
+            }
+            Some("tool_result") => {
+                let Some(tool_call_id) = payload
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let result = payload.get("result").cloned().unwrap_or_default();
+                let content = result
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| result.to_string());
+                if let Some(index) = tool_indexes.get(&tool_call_id).copied() {
+                    let message = &mut messages[index];
+                    message.content = content.clone();
+                    message.tool_data = Some(content);
+                    message.is_loading = Some(false);
+                    message.is_completed = Some(true);
+                }
+            }
+            Some("error") => messages.push(external_history_message(
+                message_id,
+                "assistant",
+                payload
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                timestamp,
+            )),
+            _ => {}
+        }
+    }
+    messages
+}
+
+fn external_history_message(
+    id: String,
+    role: &str,
+    content: String,
+    timestamp: String,
+) -> ChatMessage {
+    ChatMessage {
+        id,
+        role: role.to_string(),
+        content,
+        llm_content: None,
+        system_reminder_directory: None,
+        timestamp,
+        is_loading: None,
+        tool_call_id: None,
+        tool_name: None,
+        tool_data: None,
+        tool_input: None,
+        tool_calls: None,
+        reasoning: None,
+        is_completed: Some(true),
+        is_collapsed: None,
     }
 }
