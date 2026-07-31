@@ -36,6 +36,12 @@ interface AgentRuntimeStatusListProps {
    * 切换。行内的开关 / 按钮在组件内部已经 stopPropagation, 不会误触。
    */
   onCardClick?: (typeKey: AgentTypeKey) => void;
+  /**
+   * 需要隐藏的 agent key 集合 ── 调用方传进来后, 这些 agent 既不渲染行
+   * 也不计入后续的 `renderAfterRow` / `onCardClick` 调用。偏好设置用来
+   * 临时下线尚未发布的 agent (openclaw / gemini) 而不影响其他入口。
+   */
+  hiddenKeys?: ReadonlySet<AgentTypeKey>;
 }
 
 export function getAgentRuntimeStatusText({
@@ -75,7 +81,11 @@ export function AgentRuntimeStatusList({
   headerAction,
   highlightedKey,
   onCardClick,
+  hiddenKeys,
 }: AgentRuntimeStatusListProps) {
+  const isVisible = (typeKey: AgentTypeKey) =>
+    !hiddenKeys?.has(typeKey);
+  const visibleAgentTypes = AGENT_TYPES.filter((type) => isVisible(type.key));
   const { t } = useI18n();
   const agentVisibility = useUserSettingsStore((s) => s.settings.agents.enabledByType);
   const updateSettings = useUserSettingsStore((s) => s.updateSettings);
@@ -101,7 +111,7 @@ export function AgentRuntimeStatusList({
   if (variant === 'preferences') {
     return (
       <div>
-        {AGENT_TYPES.map((type) => {
+        {visibleAgentTypes.map((type) => {
           const status = statusByType[type.key];
           const comingSoon = isAgentTypeComingSoon(type.key);
           const unavailable = comingSoon || status?.available === false;
@@ -238,7 +248,7 @@ export function AgentRuntimeStatusList({
 
   return (
     <div className="space-y-0.5">
-      {AGENT_TYPES.map((type) => {
+      {visibleAgentTypes.map((type) => {
         const status = statusByType[type.key];
         const comingSoon = isAgentTypeComingSoon(type.key);
         const unavailable = comingSoon || status?.available === false;

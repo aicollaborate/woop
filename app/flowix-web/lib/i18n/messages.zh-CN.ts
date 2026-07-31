@@ -292,7 +292,7 @@ const zhCN = {
     "agent.types.openclaw.name": "OpenClaw",
     "agent.types.openclaw.desc": "使用本地安装的 OpenClaw",
     "agent.types.opencode.name": "OpenCode",
-    "agent.types.opencode.desc": "通过 Agent Client Protocol 使用 OpenCode",
+    "agent.types.opencode.desc": "轻量快速、开源、模型自由",
 
     "preferences.shortcuts.title": "键盘快捷键",
     "preferences.shortcuts.conflictsDetected": "检测到 {count} 处快捷键冲突",

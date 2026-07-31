@@ -25,6 +25,13 @@ interface AgentConversationOverlayProps {
   onClose: () => void;
 }
 
+/// 状态栏 Agent 会话浮层里要隐藏的 agent ── 与偏好设置 / 状态栏弹窗对齐,
+/// 不展示尚未发布的 openclaw / gemini, 避免头部出现两个永久 disabled 的过滤项。
+const HIDDEN_OVERLAY_AGENT_KEYS: ReadonlySet<AgentTypeKey> = new Set([
+  'openclaw',
+  'gemini',
+]);
+
 type AgentConversationFilter = 'all' | AgentTypeKey;
 
 export function AgentConversationOverlay({
@@ -122,7 +129,7 @@ export function AgentConversationOverlay({
             >
               <LayoutGrid className="h-4 w-4" />
             </button>
-            {AGENT_TYPES.map((type) => {
+            {AGENT_TYPES.filter((type) => !HIDDEN_OVERLAY_AGENT_KEYS.has(type.key)).map((type) => {
               const active = type.key === activeType;
               const comingSoon = isAgentTypeComingSoon(type.key);
               return (

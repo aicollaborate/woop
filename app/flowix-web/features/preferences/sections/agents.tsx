@@ -13,6 +13,7 @@ import { ExternalPathRow } from '@features/preferences/sections/external-path-ro
 import { agent, type AgentExternalEntry } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';
 import { AGENT_TYPES } from '@/lib/agent-types';
+import type { AgentTypeKey } from '@/types/agent';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 
@@ -27,6 +28,13 @@ type CollapsibleAgentKey =
 
 /// "使用自定义模型" 文档链接, codex/claude 的"查看"按钮跳转此处。
 const CUSTOM_MODEL_DOCS_URL = 'https://flowix-memo.com/docs/ai-access/';
+
+/// 偏好设置里要隐藏的 agent ── 这些 agent (coming-soon) 在 slash 菜单
+/// 等其它入口仍可独立打开, 但偏好列表里不再展示。
+const HIDDEN_PREFERENCE_AGENT_KEYS: ReadonlySet<AgentTypeKey> = new Set([
+  'openclaw',
+  'gemini',
+]);
 
 export function AgentsSection() {
   const { t } = useI18n();
@@ -132,6 +140,7 @@ export function AgentsSection() {
         }}
         headerAction={renderHeaderAction}
         highlightedKey={expandedKey}
+        hiddenKeys={HIDDEN_PREFERENCE_AGENT_KEYS}
         // 整张卡片可点击展开/折叠 ── 不再局限于 chevron 按钮。
         // 父容器内部对 switch / Setup / headerAction 都做了 stopPropagation,
         // 互不串味。

@@ -26,6 +26,13 @@ import { openAgentSetup } from '@features/agent/agent-setup';
 import { useI18n } from '@/lib/i18n';
 import { AgentConversationOverlay } from '@features/shell/components/status-bar/agent-conversation-overlay';
 
+/// 状态栏 Agents 弹窗里要隐藏的 agent ── 与偏好设置对齐, 不展示尚未发布的
+/// openclaw / gemini, 避免弹窗里出现两个永久 disabled 的项。
+const HIDDEN_STATUSBAR_AGENT_KEYS: ReadonlySet<AgentTypeKey> = new Set([
+  'openclaw',
+  'gemini',
+]);
+
 export function AgentRuntimeStatusMenu() {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -77,7 +84,7 @@ export function AgentRuntimeStatusMenu() {
             Agents
           </DropdownMenuLabel>
           <div className="space-y-0.5">
-            {AGENT_TYPES.map((type) => {
+            {AGENT_TYPES.filter((type) => !HIDDEN_STATUSBAR_AGENT_KEYS.has(type.key)).map((type) => {
               const status = statusByType[type.key];
               const comingSoon = isAgentTypeComingSoon(type.key);
               const unavailable = comingSoon || status?.available === false;
