@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::AppHandle;
 
-use crate::watcher::filter::SELF_WRITE_TTL;
+use crate::watcher::filter::{FileRevision, SelfWriteMap, SelfWriteMark, SELF_WRITE_TTL};
 use crate::watcher::tombstone::RemoveCoalescer;
 use crate::watcher::{
     filter::PathFilter, normalize_for_compare, FsEventKind, MemoEventProcessor,
@@ -46,7 +46,7 @@ const REMOVE_TOMBSTONE_DELAY: Duration = Duration::from_millis(450);
 pub struct MemoWatcher {
     _watcher: Option<RecommendedWatcher>,
     watched_roots: Arc<std::sync::RwLock<Vec<NotebookWatchContext>>>,
-    recent_self_writes: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    recent_self_writes: Arc<Mutex<SelfWriteMap>>,
     last_emit: Arc<Mutex<HashMap<PathBuf, Instant>>>,
     remove_coalescer: Option<RemoveCoalescer>,
     memo_file: Arc<std::sync::RwLock<MemoFile>>,
@@ -208,21 +208,27 @@ impl MemoWatcher {
         self._worker = Some(worker);
     }
 
-    /// 后�?�?��写入�?���?*写盘之前**调用, �?path 塞抑制表�?    ///
-    /// �?��入表前先�?[`normalize_for_compare`] 归一, �?watcher �?��表口径一致�?    /// 表项不在命中时立即删�? 而是�?2s TTL 清理, 以吞掉同一次写盘产生的
-    /// 多条 notify 事件�?
+    /// Capture the current on-disk revision for a backend-owned write.
+    /// Duplicate notify events are suppressed only while that exact revision
+    /// remains on disk; a later writer on the same path passes immediately.
     pub fn mark_self_write(&self, path: &Path) {
         let key = normalize_for_compare(path);
         if let Ok(mut map) = self.recent_self_writes.lock() {
             // 顺手�?��过老条�? 抑制表小 (<几十�? �?�� < 1µs
-            map.retain(|_, t| t.elapsed() < SELF_WRITE_TTL);
+            map.retain(|_, mark| mark.marked_at.elapsed() < SELF_WRITE_TTL);
             tracing::debug!(
                 "[mark_self_write] path={} key={} table_size={}",
                 path.display(),
                 key.display(),
                 map.len(),
             );
-            map.insert(key, Instant::now());
+            map.insert(
+                key,
+                SelfWriteMark {
+                    marked_at: Instant::now(),
+                    expected_revision: FileRevision::read(path),
+                },
+            );
         }
     }
 }
@@ -234,9 +240,7 @@ impl MemoWatcher {
 /// 2. `last_emit` (�?��) —150ms 内同�?��事件�? 处理 FSEvents 双触�?
 fn handle_notify_event(
     memo_file: &Arc<std::sync::RwLock<MemoFile>>,
-    recent: &Arc<
-        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>>,
-    >,
+    recent: &Arc<std::sync::Mutex<crate::watcher::filter::SelfWriteMap>>,
     last_emit: &Arc<
         std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>>,
     >,

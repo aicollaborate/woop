@@ -566,7 +566,7 @@ fn dispatch_modify_event_rekeys_orphan_disk_key_as_new_document() {
 // processor �? dispatch 的输出是正��?rename_memo_file 调用�?
 #[test]
 fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
-    use crate::watcher::filter::{run_pipeline, PathFilter};
+    use crate::watcher::filter::{run_pipeline, FileRevision, PathFilter, SelfWriteMark};
     use crate::watcher::path::normalize_for_compare;
     use crate::watcher::whitelist::WhitelistConfig;
     use std::path::PathBuf;
@@ -586,12 +586,15 @@ fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
     // ====== Step 1: GUI 写盘�?mark_self_write(OLD) ======
     let recent = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         PathBuf,
-        Instant,
+        SelfWriteMark,
     >::new()));
-    recent
-        .lock()
-        .unwrap()
-        .insert(normalize_for_compare(&old_path), Instant::now());
+    recent.lock().unwrap().insert(
+        normalize_for_compare(&old_path),
+        SelfWriteMark {
+            marked_at: Instant::now(),
+            expected_revision: FileRevision::read(&old_path),
+        },
+    );
 
     // ====== Step 2: fs::rename(OLD �?NEW) ── 物理重命�?======
     let new_filename = "Renamed.md".to_string();
@@ -610,13 +613,8 @@ fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
     let from_event = RawFsEvent::new(FsEventKind::Remove, old_path.clone());
     let from_decision = run_pipeline(&from_event, &recent, &last_emit, &path_filter);
     assert!(
-        matches!(
-            from_decision,
-            crate::watcher::event::FilterDecision::Drop {
-                reason: crate::watcher::event::DropReason::SelfWriteSuppressed
-            }
-        ),
-        "From(OLD) must be suppressed by SelfWriteSuppressor (GUI marked OLD)"
+        matches!(from_decision, crate::watcher::event::FilterDecision::Pass),
+        "a marker for the old file content must not suppress its removal"
     );
 
     // ====== Step 3b: 妯℃嫙 notify To(NEW) 浜嬩欢杩涘叆 filter pipeline ======

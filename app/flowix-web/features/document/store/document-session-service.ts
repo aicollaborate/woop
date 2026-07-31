@@ -78,29 +78,14 @@ interface SaveDocumentContentOptions {
   callbacks?: FlushCallbacks;
 }
 
-const SELF_DOCUMENT_WRITE_TTL_MS = 5000;
 const selfPathUpdates = new Set<string>();
-const selfDocumentWrites = new Map<string, number>();
 
 function selfPathUpdateKey(memoId: string, path: string): string {
   return `${memoId}:${canonicalPath(path)}`;
 }
 
-function pruneExpiredSelfDocumentWrites(now = Date.now()): void {
-  for (const [key, expiresAt] of selfDocumentWrites) {
-    if (expiresAt <= now) {
-      selfDocumentWrites.delete(key);
-    }
-  }
-}
-
 export function markSelfDocumentPathUpdate(memoId: string, path: string): void {
   selfPathUpdates.add(selfPathUpdateKey(memoId, path));
-}
-
-export function markSelfDocumentWrite(memoId: string, path: string): void {
-  pruneExpiredSelfDocumentWrites();
-  selfDocumentWrites.set(selfPathUpdateKey(memoId, path), Date.now() + SELF_DOCUMENT_WRITE_TTL_MS);
 }
 
 export function consumeSelfDocumentPathUpdate(memoId: string, path: string): boolean {
@@ -110,11 +95,6 @@ export function consumeSelfDocumentPathUpdate(memoId: string, path: string): boo
     selfPathUpdates.delete(key);
   }
   return exists;
-}
-
-export function isRecentSelfDocumentWrite(memoId: string, path: string): boolean {
-  pruneExpiredSelfDocumentWrites();
-  return selfDocumentWrites.has(selfPathUpdateKey(memoId, path));
 }
 
 export function getActiveDocumentDraft(): DocumentDraftSnapshot | null {

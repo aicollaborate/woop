@@ -3,7 +3,6 @@ import { getCurrentWindow } from '@platform/tauri/window';
 
 import {
   hasDocumentUnsavedChanges,
-  isRecentSelfDocumentWrite,
   type DocumentIdentity,
 } from '@features/document';
 import { translate } from '@/lib/i18n';
@@ -25,6 +24,7 @@ interface Options {
 }
 
 const CONFLICT_WARNING_COOLDOWN_MS = 5000;
+const DEFERRED_EXTERNAL_RELOAD_RETRY_MS = 100;
 
 /**
  * `tags_renamed` 事件的 reload 判定 ── 抽成纯函数以便单测。
@@ -59,6 +59,21 @@ export function shouldReloadDocumentForTagsDeleted(
   return true;
 }
 
+export type UpdatedMemoDocumentAction = 'ignore' | 'defer' | 'reload';
+
+export function classifyUpdatedMemoDocumentAction(
+  event: MemoEvent,
+  identity: DocumentIdentity,
+  filePath: string,
+  isDirty: boolean,
+): UpdatedMemoDocumentAction {
+  if (identity.kind !== 'memo') return 'ignore';
+  if (event.kind !== 'updated' || event.source === 'user_edit' || !event.path) return 'ignore';
+  if (event.id !== identity.id) return 'ignore';
+  if (canonicalPath(event.path) !== canonicalPath(filePath)) return 'ignore';
+  return isDirty ? 'defer' : 'reload';
+}
+
 export function useMemoDocumentChangeWatch({
   filePath,
   identity,
@@ -66,9 +81,48 @@ export function useMemoDocumentChangeWatch({
   reloadDocument,
 }: Options) {
   const lastConflictWarningAtRef = useRef(0);
+  const pendingExternalReloadRef = useRef(false);
 
   useEffect(() => {
     if (!filePath || identity.kind !== 'memo') return;
+    let disposed = false;
+    let deferredReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearDeferredReloadTimer = () => {
+      if (deferredReloadTimer !== null) {
+        clearTimeout(deferredReloadTimer);
+        deferredReloadTimer = null;
+      }
+    };
+
+    const reloadLatestExternalContent = async () => {
+      pendingExternalReloadRef.current = false;
+      clearSaveTimer();
+      await reloadDocument(filePath, { preservePending: false, showLoading: false });
+    };
+
+    const retryPendingExternalReload = () => {
+      deferredReloadTimer = null;
+      if (disposed || !pendingExternalReloadRef.current) return;
+      if (hasDocumentUnsavedChanges(identity)) {
+        deferredReloadTimer = setTimeout(
+          retryPendingExternalReload,
+          DEFERRED_EXTERNAL_RELOAD_RETRY_MS,
+        );
+        return;
+      }
+      void reloadLatestExternalContent();
+    };
+
+    const deferExternalReloadUntilClean = () => {
+      pendingExternalReloadRef.current = true;
+      if (deferredReloadTimer === null) {
+        deferredReloadTimer = setTimeout(
+          retryPendingExternalReload,
+          DEFERRED_EXTERNAL_RELOAD_RETRY_MS,
+        );
+      }
+    };
     const warnAboutConflict = () => {
       if (!hasDocumentUnsavedChanges(identity)) return;
       if (Date.now() - lastConflictWarningAtRef.current < CONFLICT_WARNING_COOLDOWN_MS) return;
@@ -105,16 +159,20 @@ export function useMemoDocumentChangeWatch({
           await reloadDocument(filePath, { preservePending: false, showLoading: false });
           return;
         }
-        if (event.kind !== 'updated' || event.source === 'user_edit' || !event.path) return;
-        const updatedPath = canonicalPath(event.path);
-        if (updatedPath !== canonicalPath(filePath)) return;
-        if (isRecentSelfDocumentWrite(event.id, updatedPath)) return;
-        if (hasDocumentUnsavedChanges(identity)) {
+        const action = classifyUpdatedMemoDocumentAction(
+          event,
+          identity,
+          filePath,
+          hasDocumentUnsavedChanges(identity),
+        );
+        if (action === 'ignore') return;
+        if (action === 'defer') {
           warnAboutConflict();
+          deferExternalReloadUntilClean();
           return;
         }
-        clearSaveTimer();
-        await reloadDocument(filePath, { preservePending: false, showLoading: false });
+        clearDeferredReloadTimer();
+        await reloadLatestExternalContent();
       },
       (event) =>
         // tags_renamed / tags_deleted: 接收 ── 但内部按 affectedMemoIds 收窄。
@@ -124,7 +182,6 @@ export function useMemoDocumentChangeWatch({
         || (event.kind === 'updated' && event.source !== 'user_edit'),
     );
 
-    let disposed = false;
     let unsubscribeContentUpdates: (() => void) | null = null;
     void getCurrentWindow().listen<MemoContentUpdatedEvent>(
       'memo-content-updated',
@@ -148,6 +205,8 @@ export function useMemoDocumentChangeWatch({
 
     return () => {
       disposed = true;
+      pendingExternalReloadRef.current = false;
+      clearDeferredReloadTimer();
       unsubscribeMemoEvents();
       unsubscribeContentUpdates?.();
     };

@@ -6,7 +6,6 @@ import {
   applyLoadedDocumentContent,
   getDocumentBuffer,
   markSelfDocumentPathUpdate,
-  markSelfDocumentWrite,
   hasDocumentUnsavedChanges,
   recordDocumentEdit,
   saveDocumentContent,
@@ -126,9 +125,6 @@ export function useDocumentAutosave({
           // 会物理 rename, writtenPath 跟 closure 持有的 path 可能不同 ──
           // 此时切 buf 到新 path (applyLoadedContent 内部用 setCurrentPath
           // + 重用或新建 buffer, 保留 buf 内容)。
-          if (!isExternalDocument && memoId) {
-            markSelfDocumentWrite(memoId, writtenPath);
-          }
           if (writtenPath !== path) {
             applyLoadedDocumentContent(identity, writtenPath, writtenContent, { preservePending: true });
             if (!isExternalDocument && memoId) {

@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { DocumentIdentity } from '@features/document';
 import type { MemoEvent } from '@/types/memo';
 
-import { shouldReloadDocumentForTagsRenamed } from './use-memo-document-change-watch';
+import {
+  classifyUpdatedMemoDocumentAction,
+  shouldReloadDocumentForTagsRenamed,
+} from './use-memo-document-change-watch';
 
 function tagsRenamed(affectedMemoIds: string[]): Extract<MemoEvent, { kind: 'tags_renamed' }> {
   return {
@@ -47,5 +50,53 @@ describe('shouldReloadDocumentForTagsRenamed', () => {
   it('returns false for an external document identity', () => {
     // tags_renamed 只跟 memo body 改写相关, 外部 .md 不在范围内。
     expect(shouldReloadDocumentForTagsRenamed(tagsRenamed(['memo-1']), externalIdentity, false)).toBe(false);
+  });
+});
+
+describe('classifyUpdatedMemoDocumentAction', () => {
+  const updatedEvent: Extract<MemoEvent, { kind: 'updated' }> = {
+    kind: 'updated',
+    id: 'memo-1',
+    path: '/notes/current.md',
+    notebookId: 'nb',
+    memo: {} as Extract<MemoEvent, { kind: 'updated' }>['memo'],
+    derivedChanged: { tags: false, todos: false, agents: false },
+    source: 'external_tool',
+  };
+
+  it('reloads a clean current memo for an external tool update', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      updatedEvent,
+      memoIdentity,
+      '/notes/current.md',
+      false,
+    )).toBe('reload');
+  });
+
+  it('retains an external update while the current memo is dirty', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      updatedEvent,
+      memoIdentity,
+      '/notes/current.md',
+      true,
+    )).toBe('defer');
+  });
+
+  it('ignores an update for a different memo even if its path matches', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      { ...updatedEvent, id: 'memo-2' },
+      memoIdentity,
+      '/notes/current.md',
+      false,
+    )).toBe('ignore');
+  });
+
+  it('ignores the originating UI user_edit event', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      { ...updatedEvent, source: 'user_edit' },
+      memoIdentity,
+      '/notes/current.md',
+      false,
+    )).toBe('ignore');
   });
 });

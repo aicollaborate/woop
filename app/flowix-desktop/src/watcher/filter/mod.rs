@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 use super::event::{FilterDecision, RawFsEvent};
 use debouncer::Debouncer;
 use self_write::SelfWriteSuppressor;
@@ -26,12 +28,31 @@ pub use path_filter::PathFilter;
 pub const SELF_WRITE_TTL: Duration = Duration::from_secs(2);
 /// �?��防抖窗口 —150ms。�?�?macOS FSEvents �?save 时偶发的双触发�?
 pub const DEBOUNCE: Duration = Duration::from_millis(150);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRevision([u8; 32]);
+
+impl FileRevision {
+    pub fn read(path: &std::path::Path) -> Option<Self> {
+        let bytes = std::fs::read(path).ok()?;
+        Some(Self(Sha256::digest(bytes).into()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SelfWriteMark {
+    pub marked_at: Instant,
+    pub expected_revision: Option<FileRevision>,
+}
+
+pub type SelfWriteMap = HashMap<PathBuf, SelfWriteMark>;
 /// Filter 共享�?运�?时上下文" —�?`MemoWatcher` 创建, �?��捕获引用�?///
 /// �?Filter �?��读写�?��关心的字�? 互不干扰。`watcher` 句柄保留
 /// `mark_self_write` 入口�?
 pub struct FilterCtx {
-    /// �?��抑制�? `normalized path -> 标�?时间`。命�?���? TTL 清理�?
-    pub recent_self_writes: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    /// Self-write candidates keyed by normalized path. Path equality alone
+    /// never suppresses a later writer's different content revision.
+    pub recent_self_writes: Arc<Mutex<SelfWriteMap>>,
     /// �?��防抖�? `normalized path -> 上�? emit 时间`�?50ms 内吞�?
     pub last_emit: Arc<Mutex<HashMap<PathBuf, Instant>>>,
 }
@@ -58,7 +79,7 @@ pub trait Filter: Send + Sync {
 /// 顺序: PathFilter �?SelfWriteSuppressor �?Debouncer。任一 Drop �?���?
 pub fn run_pipeline(
     event: &RawFsEvent,
-    recent: &Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    recent: &Arc<Mutex<SelfWriteMap>>,
     last_emit: &Arc<Mutex<HashMap<PathBuf, Instant>>>,
     path_filter: &PathFilter,
 ) -> FilterDecision {

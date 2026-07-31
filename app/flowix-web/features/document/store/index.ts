@@ -10,9 +10,7 @@ export {
 export {
   getActiveDocumentDraft,
   consumeSelfDocumentPathUpdate,
-  isRecentSelfDocumentWrite,
   markSelfDocumentPathUpdate,
-  markSelfDocumentWrite,
   recordDocumentEdit,
   saveDocumentContent,
   flushDocumentPath,

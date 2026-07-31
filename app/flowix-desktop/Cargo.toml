@@ -49,6 +49,7 @@ dunce = { workspace = true }
 uuid = { workspace = true }
 hostname = "0.4"
 machine-uid = "0.5"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
