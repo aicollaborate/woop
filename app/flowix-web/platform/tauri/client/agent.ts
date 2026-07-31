@@ -140,6 +140,7 @@ export interface AgentRuntimeStatus {
   gemini: AgentRuntimeAvailability;
   hermes: AgentRuntimeAvailability;
   openclaw: AgentRuntimeAvailability;
+  opencode: AgentRuntimeAvailability;
 }
 
 export type AgentExternalSource = 'auto' | 'user';
@@ -279,6 +280,8 @@ export const agent = {
     }>('hermes_thread_get_page', { threadId, beforeSequence, limit }),
   getHermesSessionId: (threadId: string) =>
     invoke<string | null>('hermes_thread_session_id', { threadId }),
+  getOpenCodeSessionId: (threadId: string) =>
+    invoke<string | null>('opencode_thread_session_id', { threadId }),
   deleteThread: (threadId: string) =>
     invoke<void>('thread_delete', { threadId }),
   // 閲嶅懡鍚?thread 鈹€鈹€ 棣栨潯鐢ㄦ埛娑堟伅钀藉湴鍚庤皟涓€娆? 瑕嗙洊 ensureThread 璧?early return

@@ -34,6 +34,7 @@ pub struct AgentRuntimeConfig {
     pub gemini: Option<RuntimePathConfig>,
     pub hermes: Option<RuntimePathConfig>,
     pub openclaw: Option<RuntimePathConfig>,
+    pub opencode: Option<RuntimePathConfig>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -71,6 +72,7 @@ impl AgentUserMessage {
             "gemini" => config.gemini.as_ref(),
             "hermes" => config.hermes.as_ref(),
             "openclaw" => config.openclaw.as_ref(),
+            "opencode" => config.opencode.as_ref(),
             _ => None,
         }
     }

@@ -56,6 +56,7 @@ const AGENT_THREAD_TYPE_BY_SLASH_ID: Record<AgentThreadSlashMenuItemId, AgentTyp
   'agent-thread-gemini': 'gemini',
   'agent-thread-hermes': 'hermes',
   'agent-thread-openclaw': 'openclaw',
+  'agent-thread-opencode': 'opencode',
 };
 
 function isAgentThreadSlashMenuItemId(id: SlashMenuItem['id']): id is AgentThreadSlashMenuItemId {

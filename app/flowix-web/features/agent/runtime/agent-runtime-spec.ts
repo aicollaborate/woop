@@ -131,6 +131,14 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
       openclaw: { cwd, workspacePaths },
     }),
   },
+  opencode: {
+    typeKey: "opencode",
+    emptySettings: ["permission"],
+    accessOptions: CODEX_ACCESS_OPTIONS,
+    buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
+      opencode: { cwd, workspacePaths, permissionMode },
+    }),
+  },
 };
 
 export function getAgentRuntimeSpec(typeKey: AgentTypeKey): AgentRuntimeSpec {

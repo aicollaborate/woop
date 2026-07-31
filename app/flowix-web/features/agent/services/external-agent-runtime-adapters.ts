@@ -1,7 +1,10 @@
 import { agent } from '@platform/tauri/client';
 import type { AgentTypeKey } from '@/types/agent';
 
-export type ExternalAgentTypeKey = Extract<AgentTypeKey, 'codex' | 'claude' | 'hermes'>;
+export type ExternalAgentTypeKey = Extract<
+  AgentTypeKey,
+  'codex' | 'claude' | 'hermes' | 'opencode'
+>;
 
 export interface ExternalAgentRuntimeAdapter {
   readonly typeKey: ExternalAgentTypeKey;
@@ -32,12 +35,18 @@ const externalAgentRuntimeAdapters: Record<ExternalAgentTypeKey, ExternalAgentRu
   codex: createPrefixRuntimeAdapter('codex', (threadId) => agent.getCodexSessionId(threadId)),
   claude: createPrefixRuntimeAdapter('claude', (threadId) => agent.getClaudeSessionId(threadId)),
   hermes: createPrefixRuntimeAdapter('hermes', (threadId) => agent.getHermesSessionId(threadId)),
+  opencode: createPrefixRuntimeAdapter('opencode', (threadId) => agent.getOpenCodeSessionId(threadId)),
 };
 
 export function getExternalAgentRuntimeAdapter(
   typeKey: AgentTypeKey
 ): ExternalAgentRuntimeAdapter | null {
-  if (typeKey === 'codex' || typeKey === 'claude' || typeKey === 'hermes') {
+  if (
+    typeKey === 'codex' ||
+    typeKey === 'claude' ||
+    typeKey === 'hermes' ||
+    typeKey === 'opencode'
+  ) {
     return externalAgentRuntimeAdapters[typeKey];
   }
   return null;

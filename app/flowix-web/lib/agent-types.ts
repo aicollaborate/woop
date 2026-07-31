@@ -14,6 +14,7 @@ import iconClaudeCode from '@/assets/icon-claude-code.svg';
 import iconGeminiCli from '@/assets/icon-gemini-cli.svg';
 import iconHermesAgent from '@/assets/icon-hermes-agent.svg';
 import iconOpenClaw from '@/assets/icon-openclaw.svg';
+import iconOpenCode from '@/assets/icon-opencode.svg';
 
 export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'flowix';
 
@@ -47,15 +48,6 @@ const SIMPLE_CLI_CAPABILITIES: AgentRuntimeCapabilities = {
 
 export const AGENT_TYPES: AgentType[] = [
   {
-    key: 'flowix',
-    icon: flowixAgent,
-    name: 'Flowix Agent',
-    desc: 'Use Flowix workspace agent',
-    nameKey: 'agent.types.flowix.name',
-    descKey: 'agent.types.flowix.desc',
-    capabilities: STREAMING_PROVIDER_CAPABILITIES,
-  },
-  {
     key: 'codex',
     icon: iconCodex,
     name: 'Codex',
@@ -72,6 +64,24 @@ export const AGENT_TYPES: AgentType[] = [
     nameKey: 'agent.types.claude.name',
     descKey: 'agent.types.claude.desc',
     capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
+  },
+  {
+    key: 'opencode',
+    icon: iconOpenCode,
+    name: 'OpenCode',
+    desc: 'Use OpenCode through Agent Client Protocol',
+    nameKey: 'agent.types.opencode.name',
+    descKey: 'agent.types.opencode.desc',
+    capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
+  },
+  {
+    key: 'flowix',
+    icon: flowixAgent,
+    name: 'Flowix Agent',
+    desc: 'Use Flowix workspace agent',
+    nameKey: 'agent.types.flowix.name',
+    descKey: 'agent.types.flowix.desc',
+    capabilities: STREAMING_PROVIDER_CAPABILITIES,
   },
   {
     key: 'hermes',
@@ -105,7 +115,11 @@ export const AGENT_TYPES: AgentType[] = [
 ];
 
 export function getAgentType(typeKey: string | null | undefined): AgentType {
-  return AGENT_TYPES.find((t) => t.key === typeKey) ?? AGENT_TYPES[0];
+  return (
+    AGENT_TYPES.find((t) => t.key === typeKey) ??
+    AGENT_TYPES.find((t) => t.key === DEFAULT_AGENT_TYPE_KEY) ??
+    AGENT_TYPES[0]
+  );
 }
 
 export function normalizeAgentTypeKey(typeKey: string | null | undefined): AgentTypeKey {

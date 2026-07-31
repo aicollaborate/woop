@@ -14,6 +14,7 @@ pub(super) enum AgentRuntime {
     Gemini,
     Hermes,
     OpenClaw,
+    OpenCode,
 }
 
 impl AgentRuntime {
@@ -29,6 +30,7 @@ impl AgentRuntime {
             "gemini" => Self::Gemini,
             "hermes" => Self::Hermes,
             "openclaw" => Self::OpenClaw,
+            "opencode" => Self::OpenCode,
             _ => Self::Flowix,
         }
     }
@@ -45,6 +47,7 @@ impl AgentRuntime {
             Self::Gemini => "gemini",
             Self::Hermes => "hermes",
             Self::OpenClaw => "openclaw",
+            Self::OpenCode => "opencode",
         }
     }
 }
@@ -169,6 +172,7 @@ mod tests {
             ("gemini", AgentRuntime::Gemini),
             ("HERMES", AgentRuntime::Hermes),
             ("openclaw", AgentRuntime::OpenClaw),
+            ("opencode", AgentRuntime::OpenCode),
         ];
 
         for (agent_type, expected) in cases {

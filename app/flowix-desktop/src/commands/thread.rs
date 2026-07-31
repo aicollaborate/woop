@@ -287,6 +287,21 @@ pub async fn hermes_thread_session_id(
 }
 
 #[tauri::command]
+pub async fn opencode_thread_session_id(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    // OpenCode ACP 的 session id 由 `OpenCodeAcpManager.controls` 持有 ── 与
+    // codex / claude / hermes 不同, 没有"扫描 vendor 文件"这一步。
+    // 这里只走 ThreadManager 的映射, 没有命中就走通用 fallback。
+    let manager = &state.thread_manager;
+    manager
+        .get_external_session(&thread_id, "opencode")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn thread_delete(
     thread_id: String,
     state: State<'_, AppState>,

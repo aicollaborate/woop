@@ -42,6 +42,7 @@ export type SlashMenuItemId =
   | 'agent-thread-gemini'
   | 'agent-thread-hermes'
   | 'agent-thread-openclaw'
+  | 'agent-thread-opencode'
   | 'create-child-note'
   | 'reference-note';
 
@@ -97,14 +98,6 @@ export function getSlashMenuItemSection(item: SlashMenuItem, language: AppLangua
 
 export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   {
-    id: 'agent-thread-flowix',
-    label: getAgentType('flowix').name,
-    description: 'AI Agent',
-    keywords: ['ai', 'agent', 'thread', 'chat', 'duihua', 'flowix', '任务', 'renwu', 'task'],
-    icon: getAgentType('flowix').icon,
-    sectionKey: 'editor.slash.section.agent',
-  },
-  {
     id: 'agent-thread-codex',
     label: getAgentType('codex').name,
     description: 'AI Agent',
@@ -118,6 +111,22 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     description: 'AI Agent',
     keywords: ['claude', 'anthropic', 'code', 'bianma', '任务', 'renwu', 'task'],
     icon: getAgentType('claude').icon,
+    sectionKey: 'editor.slash.section.agent',
+  },
+  {
+    id: 'agent-thread-opencode',
+    label: getAgentType('opencode').name,
+    description: 'AI Agent',
+    keywords: ['opencode', 'open code', 'acp', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
+    icon: getAgentType('opencode').icon,
+    sectionKey: 'editor.slash.section.agent',
+  },
+  {
+    id: 'agent-thread-flowix',
+    label: getAgentType('flowix').name,
+    description: 'AI Agent',
+    keywords: ['ai', 'agent', 'thread', 'chat', 'duihua', 'flowix', '任务', 'renwu', 'task'],
+    icon: getAgentType('flowix').icon,
     sectionKey: 'editor.slash.section.agent',
   },
   {

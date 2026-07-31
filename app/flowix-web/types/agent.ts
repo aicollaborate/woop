@@ -12,7 +12,13 @@ export interface ThreadListItem {
 
 // Core message type used throughout the app
 export type AgentTypeKey =
-  "flowix" | "codex" | "claude" | "gemini" | "hermes" | "openclaw";
+  | "flowix"
+  | "codex"
+  | "claude"
+  | "gemini"
+  | "hermes"
+  | "openclaw"
+  | "opencode";
 
 export interface AgentType {
   key: AgentTypeKey;
@@ -77,6 +83,7 @@ export interface AgentRuntimeConfig {
   gemini?: SimpleCliRuntimeConfig;
   hermes?: HermesRuntimeConfig;
   openclaw?: SimpleCliRuntimeConfig;
+  opencode?: CodexRuntimeConfig;
   flowix?: FlowixRuntimeConfig;
 }
 

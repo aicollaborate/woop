@@ -330,6 +330,24 @@ describe("parseAgentCommandInput", () => {
   });
 });
 
+describe("OpenCode ACP tool summaries", () => {
+  it("renders camel-case read parameters like Claude Code file reads", () => {
+    expect(
+      createAgentToolDisplay({
+        agentType: "opencode",
+        toolName: "read",
+        input: {
+          filePath: "D:/Notes/presentation/Agent 评测框架.md",
+        },
+      }),
+    ).toEqual({
+      summary: "Agent 评测框架.md",
+      title: "D:/Notes/presentation/Agent 评测框架.md",
+      kind: "file",
+    });
+  });
+});
+
 describe("parseAgentPlan", () => {
   it("returns null on empty / non-array input", () => {
     expect(parseAgentPlan(undefined)).toBeNull();

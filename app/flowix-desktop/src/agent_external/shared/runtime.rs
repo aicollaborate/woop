@@ -306,6 +306,44 @@ impl ExternalRunRegistry {
         count
     }
 
+    /// Drain every child during application shutdown while atomically claiming
+    /// the terminal-event slot for runs whose streaming tail has not already
+    /// finished. The caller persists the returned terminal records after the
+    /// children are gone; tails that wake on EOF cannot emit a duplicate end.
+    ///
+    /// 与 `kill_all` 的区别: 此函数同时返回 `ExternalWatchdogFinalizedRun` 列表,
+    /// 供调用方 (e.g. OpenCode ACP manager) 在进程退出前持久化一条 `StreamEnd`,
+    /// 让前端能把「被杀掉的活流」正确标记为终止, 而不是孤立成「最后一条 chunk
+    /// 之后再无消息」。
+    pub async fn kill_all_finalized(
+        &self,
+        process_label: &str,
+        reason: &str,
+    ) -> (usize, Vec<ExternalWatchdogFinalizedRun>) {
+        let running = {
+            let mut children = self.children.lock().await;
+            children.drain().collect::<Vec<_>>()
+        };
+        let count = running.len();
+        let mut finalized = Vec::with_capacity(count);
+        for (thread_id, mut running) in running {
+            let event_thread_id = running
+                .session_id
+                .clone()
+                .unwrap_or_else(|| thread_id.clone());
+            let claimed = claim_stream_end_once(&running.stream_end_emitted);
+            kill_child_tree(&mut running.child, process_label, &event_thread_id).await;
+            if claimed {
+                finalized.push(ExternalWatchdogFinalizedRun {
+                    thread_id: event_thread_id,
+                    run_id: running.run_id,
+                    reason: Some(reason.to_string()),
+                });
+            }
+        }
+        (count, finalized)
+    }
+
     pub async fn reap_inactive(
         &self,
         idle_timeout_ms: i64,

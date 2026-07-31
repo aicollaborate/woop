@@ -14,6 +14,7 @@ use futures::future::join_all;
 use super::claude::{ClaudeCliManager, AGENT_TYPE as CLAUDE_AGENT_TYPE};
 use super::codex::{CodexCliManager, AGENT_TYPE as CODEX_AGENT_TYPE};
 use super::hermes::HermesCliManager;
+use super::opencode::{OpenCodeAcpManager, AGENT_TYPE as OPENCODE_AGENT_TYPE};
 use super::simple_cli::SimpleCliManager;
 use crate::agent_flowix::{AgentUserMessage, RunInfo};
 
@@ -95,6 +96,7 @@ macro_rules! impl_external_runtime {
 impl_external_runtime!(CodexCliManager, CODEX_AGENT_TYPE);
 impl_external_runtime!(ClaudeCliManager, CLAUDE_AGENT_TYPE);
 impl_external_runtime!(HermesCliManager, HERMES_AGENT_TYPE);
+impl_external_runtime!(OpenCodeAcpManager, OPENCODE_AGENT_TYPE);
 
 #[async_trait]
 impl ExternalCliRuntime for Arc<SimpleCliManager> {
@@ -148,6 +150,7 @@ impl ExternalRuntimeRegistry {
         gemini: Arc<SimpleCliManager>,
         hermes: Arc<HermesCliManager>,
         openclaw: Arc<SimpleCliManager>,
+        opencode: Arc<OpenCodeAcpManager>,
     ) -> Self {
         let runtimes: Vec<Box<dyn ExternalCliRuntime>> = vec![
             Box::new(codex),
@@ -155,6 +158,7 @@ impl ExternalRuntimeRegistry {
             Box::new(gemini),
             Box::new(hermes),
             Box::new(openclaw),
+            Box::new(opencode),
         ];
         debug_assert_eq!(
             runtimes
@@ -240,7 +244,8 @@ mod tests {
                 threads.clone(),
             )),
             Arc::new(HermesCliManager::new(threads.clone())),
-            Arc::new(SimpleCliManager::new(SimpleCliKind::OpenClaw, threads)),
+            Arc::new(SimpleCliManager::new(SimpleCliKind::OpenClaw, threads.clone())),
+            Arc::new(OpenCodeAcpManager::new(threads)),
         );
 
         let keys = registry

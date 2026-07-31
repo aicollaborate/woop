@@ -99,6 +99,11 @@ const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
   codex: createCodexHistoryAdapter(),
   claude: createClaudeHistoryAdapter(),
   hermes: createHermesHistoryAdapter(),
+  // OpenCode ACP 的历史由 `OpenCodeAcpManager` 通过 `persist_external_chunk`
+  // 写入 ThreadManager, 与本地 thread store 同一条管道 ── 复用
+  // `createLocalAgentHistoryAdapter` 走标准 thread 存储, 不需要单独 list /
+  // getThread IPC。session id 由 `getOpenCodeSessionId` IPC 在恢复时反查。
+  opencode: createLocalAgentHistoryAdapter("opencode"),
 };
 
 export function getAgentHistoryAdapter(typeKey: AgentTypeKey): AgentHistoryAdapter {

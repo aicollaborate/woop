@@ -14,6 +14,7 @@ pub mod codex;
 pub mod hermes;
 pub mod lifecycle;
 pub mod node;
+pub mod opencode;
 pub mod runtime_registry;
 pub mod shared;
 pub mod simple_cli;

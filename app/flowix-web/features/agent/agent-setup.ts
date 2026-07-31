@@ -9,6 +9,7 @@ const AGENT_SETUP_URLS: Partial<Record<AgentTypeKey, string>> = {
   gemini: 'https://google-gemini.github.io/gemini-cli/docs/cli/headless.html',
   hermes: 'https://hermes-agent.nousresearch.com/docs/user-guide/cli',
   openclaw: 'https://docs.openclaw.ai/cli',
+  opencode: 'https://opencode.ai/docs/cli/',
 };
 
 export async function openAgentSetup(typeKey: AgentTypeKey): Promise<void> {

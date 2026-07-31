@@ -308,6 +308,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "agent.types.gemini.desc": "Use a locally installed Gemini CLI",
     "agent.types.openclaw.name": "OpenClaw",
     "agent.types.openclaw.desc": "Use a locally installed OpenClaw",
+    "agent.types.opencode.name": "OpenCode",
+    "agent.types.opencode.desc": "Use OpenCode through Agent Client Protocol",
 
     "preferences.shortcuts.title": "Keyboard shortcuts",
     "preferences.shortcuts.conflictsDetected":

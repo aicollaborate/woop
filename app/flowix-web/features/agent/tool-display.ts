@@ -222,7 +222,9 @@ function fieldKind(key: string): AgentToolDisplayKind {
 function fileDisplay(
   input: Record<string, unknown>,
 ): AgentToolDisplay | undefined {
-  const path = stringField(input, ["path", "file_path", "filepath"]);
+  // OpenCode ACP 用 camelCase `filePath`, Claude Code 用 `file_path`, 其余
+  // CLI 多用 `path` ── 全部尝试, 命中第一个非空字符串。
+  const path = stringField(input, ["path", "filePath", "file_path", "filepath"]);
   return display(path ? extractFileName(path) : undefined, "file", path);
 }
 

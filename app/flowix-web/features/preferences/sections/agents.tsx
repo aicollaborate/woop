@@ -16,7 +16,14 @@ import { AGENT_TYPES } from '@/lib/agent-types';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 
-type CollapsibleAgentKey = 'flowix' | 'codex' | 'claude' | 'gemini' | 'hermes' | 'openclaw';
+type CollapsibleAgentKey =
+  | 'flowix'
+  | 'codex'
+  | 'claude'
+  | 'gemini'
+  | 'hermes'
+  | 'openclaw'
+  | 'opencode';
 
 /// "使用自定义模型" 文档链接, codex/claude 的"查看"按钮跳转此处。
 const CUSTOM_MODEL_DOCS_URL = 'https://flowix-memo.com/docs/ai-access/';
@@ -71,7 +78,8 @@ export function AgentsSection() {
       typeKey === 'claude' ||
       typeKey === 'gemini' ||
       typeKey === 'hermes' ||
-      typeKey === 'openclaw';
+      typeKey === 'openclaw' ||
+      typeKey === 'opencode';
     if (!isCollapsible) {
       return null;
     }
@@ -197,8 +205,13 @@ export function AgentsSection() {
               </>,
             );
           }
-          // gemini / hermes / openclaw: 只展示状态 + 执行路径。
-          if (typeKey === 'gemini' || typeKey === 'hermes' || typeKey === 'openclaw') {
+          // gemini / hermes / openclaw / opencode: 只展示状态 + 执行路径。
+          if (
+            typeKey === 'gemini' ||
+            typeKey === 'hermes' ||
+            typeKey === 'openclaw' ||
+            typeKey === 'opencode'
+          ) {
             return renderCollapsible(typeKey as CollapsibleAgentKey, renderExternalPath());
           }
           return null;

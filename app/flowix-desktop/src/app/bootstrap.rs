@@ -1,6 +1,7 @@
 use crate::agent_external::claude::ClaudeCliManager;
 use crate::agent_external::codex::CodexCliManager;
 use crate::agent_external::hermes::HermesCliManager;
+use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
 use crate::agent_external::simple_cli;
 use crate::agent_external_config::AgentExternalConfig;
@@ -225,12 +226,14 @@ pub fn run() {
         simple_cli::SimpleCliKind::OpenClaw,
         thread_manager_arc.clone(),
     ));
+    let opencode_acp_manager = Arc::new(OpenCodeAcpManager::new(thread_manager_arc.clone()));
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
         codex_cli_manager,
         claude_cli_manager,
         gemini_cli_manager,
         hermes_cli_manager,
         openclaw_cli_manager,
+        opencode_acp_manager,
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
@@ -633,6 +636,7 @@ pub fn run() {
             commands::thread::hermes_thread_get,
             commands::thread::hermes_thread_get_page,
             commands::thread::hermes_thread_session_id,
+            commands::thread::opencode_thread_session_id,
             commands::thread::thread_delete,
             commands::thread::thread_update_title,
             // window
