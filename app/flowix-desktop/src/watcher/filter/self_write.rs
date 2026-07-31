@@ -19,14 +19,14 @@ pub fn is_exact_self_write(
     let Ok(mut map) = recent_self_writes.lock() else {
         return false;
     };
-        // 顺手�?��过老条�?��SELF_WRITE_TTL (2s) 覆盖 IPC 命令结束 �?notify
-        // 回调到达的间�? FSEvents 双触�?(macOS 把一�?fs::write 拆成
-        // Keep both Metadata and Data events suppressed during the TTL, then
-        // prune expired entries so the table stays bounded.
+    // 顺手�?��过老条�?��SELF_WRITE_TTL (2s) 覆盖 IPC 命令结束 �?notify
+    // 回调到达的间�? FSEvents 双触�?(macOS 把一�?fs::write 拆成
+    // Keep both Metadata and Data events suppressed during the TTL, then
+    // prune expired entries so the table stays bounded.
     map.retain(|_, mark| mark.marked_at.elapsed() < SELF_WRITE_TTL);
 
-        // Keep the entry after an exact hit so duplicate FSEvents for the same
-        // write are suppressed. A different revision invalidates it below.
+    // Keep the entry after an exact hit so duplicate FSEvents for the same
+    // write are suppressed. A different revision invalidates it below.
     let suppress = map
         .get(&key)
         .is_some_and(|mark| mark.expected_revision.as_ref() == Some(current_revision));
@@ -38,9 +38,6 @@ pub fn is_exact_self_write(
             map.len(),
         );
     } else {
-            // A later writer changed the same path during the TTL. The path
-            // marker is stale, so it must not suppress this real update.
-        map.remove(&key);
         tracing::debug!(
             "[SelfWriteSuppressor] MISS path={} key={} table_size={}",
             path.display(),
@@ -48,6 +45,9 @@ pub fn is_exact_self_write(
             map.len(),
         );
     }
+    // A stable revision resolves the expectation either way. Duplicate
+    // notify events are handled by the worker's processed-revision map.
+    map.remove(&key);
     suppress
 }
 
@@ -78,6 +78,7 @@ mod tests {
         let revision = FileRevision::read(&path).unwrap();
 
         assert!(is_exact_self_write(&path, &revision, &writes));
+        assert!(writes.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -90,5 +91,6 @@ mod tests {
         let revision = FileRevision::read(&path).unwrap();
 
         assert!(!is_exact_self_write(&path, &revision, &writes));
+        assert!(writes.lock().unwrap().is_empty());
     }
 }

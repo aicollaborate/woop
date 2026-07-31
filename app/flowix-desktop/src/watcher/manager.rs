@@ -50,9 +50,9 @@ pub struct MemoWatcher {
     remove_coalescer: Option<RemoveCoalescer>,
     memo_file: Arc<std::sync::RwLock<MemoFile>>,
     whitelist: Arc<std::sync::RwLock<WhitelistConfig>>,
-    /// notify 共享事件线程 -> 单 worker 线程的派发通道。notify 回调只做廉价的
-    /// filter / debounce / 自写抑制 + 入队, 重 `process` (含 `wait_for_markdown_copy_to_settle`
-    /// 最长 400ms + 磁盘读写) 交给 worker 串行 drain ── 避免阻塞 notify 共享线程 (此前
+    /// notify shared thread -> one worker thread. The callback performs only
+    /// cheap path filtering and enqueueing. File settling, revision reconciliation,
+    /// deduplication and memo processing run serially on the worker, avoiding stalls in
     /// 所有 notebook 的事件投递会被单次 settle 卡住)。单 worker 保 FIFO, 不破坏同路径
     /// 事件顺序。Drop 时 `worker_tx` 先落, 通道关闭, worker `recv` 返回 Err 后自然退出。
     worker_tx: Option<std::sync::mpsc::Sender<(RawFsEvent, NotebookWatchContext)>>,
@@ -119,7 +119,6 @@ impl MemoWatcher {
             RemoveCoalescer::new(app.clone(), self.memo_file.clone(), REMOVE_TOMBSTONE_DELAY);
         let remove_coalescer_for_callback = remove_coalescer.clone();
         let app = app.clone();
-        let recent = self.recent_self_writes.clone();
         let recent_for_worker = self.recent_self_writes.clone();
         let memo_file = self.memo_file.clone();
         let whitelist = self.whitelist.clone();
@@ -322,6 +321,10 @@ fn should_process_stable_event(
                 &revision,
                 recent_self_writes,
             ) {
+                // Advance the observed baseline even though the originating
+                // window already owns this content. A later external revert
+                // to an older hash must then be treated as a new revision.
+                processed_revisions.insert(key, revision);
                 return false;
             }
             if processed_revisions.get(&key) == Some(&revision) {
@@ -422,11 +425,35 @@ mod tests {
         let event = RawFsEvent::new(FsEventKind::Modify, path.clone());
         let mut processed = HashMap::new();
 
-        assert!(!should_process_stable_event(&event, &writes, &mut processed));
+        assert!(!should_process_stable_event(
+            &event,
+            &writes,
+            &mut processed
+        ));
 
         let unmarked = Arc::new(Mutex::new(SelfWriteMap::new()));
-        assert!(should_process_stable_event(&event, &unmarked, &mut processed));
-        assert!(!should_process_stable_event(&event, &unmarked, &mut processed));
+        assert!(!should_process_stable_event(
+            &event,
+            &unmarked,
+            &mut processed
+        ));
+        std::fs::write(&path, "external revision").unwrap();
+        assert!(should_process_stable_event(
+            &event,
+            &unmarked,
+            &mut processed
+        ));
+        assert!(!should_process_stable_event(
+            &event,
+            &unmarked,
+            &mut processed
+        ));
+        std::fs::write(&path, "one revision").unwrap();
+        assert!(should_process_stable_event(
+            &event,
+            &unmarked,
+            &mut processed
+        ));
     }
 
     #[cfg(target_os = "macos")]

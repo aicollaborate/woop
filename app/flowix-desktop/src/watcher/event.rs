@@ -81,10 +81,6 @@ pub enum DropReason {
     PathNotWhitelisted,
     /// `.metadata/` 等内部目�?
     MetadataDirectory,
-    /// 鍚庣鑷啓鎶戝埗
-    SelfWriteSuppressed,
-    /// 150ms 同路径防�?
-    Debounced,
     /// 鏂囦欢瓒呰繃 `max_file_size`
     FileTooLarge,
 }
@@ -97,8 +93,6 @@ impl DropReason {
             Self::PathBlacklisted => "path-blacklisted",
             Self::PathNotWhitelisted => "path-not-whitelisted",
             Self::MetadataDirectory => "metadata-dir",
-            Self::SelfWriteSuppressed => "self-write",
-            Self::Debounced => "debounced",
             Self::FileTooLarge => "file-too-large",
         }
     }
