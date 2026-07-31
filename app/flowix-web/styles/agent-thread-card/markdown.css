@@ -465,6 +465,21 @@
   line-height: 1.6;
 }
 
+/* cwd 长路径省略号落在视觉左侧 ── `direction: rtl` + `text-align: left` 把
+ * text-overflow: ellipsis 的"末端"挪到 LTR 行的左侧,字符本身仍按 LTR 排,
+ * 所以 `D:\projects\flowix` 会渲染成 `…\flowix`,保留文件名尾部可识别。 */
+.markdown-editor .agent-thread-card__cwd-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--foreground);
+}
+
 .markdown-editor .agent-thread-card__empty-control-chevron {
   width: 12px;
   height: 12px;

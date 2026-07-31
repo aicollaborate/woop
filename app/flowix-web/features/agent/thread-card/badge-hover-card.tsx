@@ -199,7 +199,7 @@ export function BadgeHoverCard({
                 {t("editor.threadCard.cwd")}
               </span>
               <span
-                className="min-w-0 truncate font-mono text-[var(--foreground)]"
+                className="agent-thread-card__cwd-value"
                 title={cwd}
               >
                 {cwd}
