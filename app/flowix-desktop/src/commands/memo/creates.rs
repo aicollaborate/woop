@@ -317,6 +317,7 @@ pub fn update_memo_db(
     defer_rename: Option<bool>,
     state: State<AppState>,
     app: AppHandle,
+    window: tauri::WebviewWindow,
 ) -> bool {
     let defer_rename = defer_rename.unwrap_or(true);
 
@@ -357,6 +358,7 @@ pub fn update_memo_db(
                 notebook_id,
                 derived_changed,
                 MemoChangeSource::UserEdit,
+                Some(window.label()),
             );
         }
         return ok;
@@ -376,7 +378,13 @@ pub fn update_memo_db(
                 }
                 drop(service);
                 drop(memo_file);
-                let _ = emit_updated_after_write(state.inner(), &app, &id, Some(current));
+                let _ = emit_updated_after_write(
+                    state.inner(),
+                    &app,
+                    &id,
+                    Some(current),
+                    Some(window.label()),
+                );
                 return true;
             }
             Err(e) => {
@@ -391,7 +399,13 @@ pub fn update_memo_db(
             .save_memo_preserving_filename(&id, &body)
         {
             Ok(_) => {
-                let _ = emit_updated_after_write(state.inner(), &app, &id, Some(current));
+                let _ = emit_updated_after_write(
+                    state.inner(),
+                    &app,
+                    &id,
+                    Some(current),
+                    Some(window.label()),
+                );
                 return true;
             }
             Err(e) => {
@@ -435,7 +449,7 @@ pub fn favorite_memo(id: String, state: State<AppState>, app: AppHandle) -> bool
     {
         return false;
     }
-    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before));
+    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before), None);
     true
 }
 
@@ -453,7 +467,7 @@ pub fn unfavorite_memo(id: String, state: State<AppState>, app: AppHandle) -> bo
     {
         return false;
     }
-    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before));
+    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before), None);
     true
 }
 
@@ -476,6 +490,6 @@ pub fn set_memo_colors(
     {
         return false;
     }
-    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before));
+    let _ = emit_updated_after_write(state.inner(), &app, &id, Some(before), None);
     true
 }

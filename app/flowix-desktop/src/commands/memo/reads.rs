@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 
 use crate::lock_utils::read_lock;
-use crate::memo_events::{self, MemoChangeSource, MemoDerivedChanged};
+use crate::memo_events::{MemoChangeSource, MemoDerivedChanged};
 use crate::watcher::path::normalize_for_compare;
 use flowix_core::memo_file::{Memo, MemoFile, MemoTodoEntry};
 use flowix_core::MemoService;
@@ -446,16 +446,8 @@ fn write_document_internal(
                 notebook_id,
                 derived_changed,
                 MemoChangeSource::UserEdit,
+                Some(origin_window_label),
             );
-            if let Some(commit) = commit.as_ref() {
-                memo_events::emit_content_updated_to_sibling_windows(
-                    app,
-                    origin_window_label,
-                    key,
-                    &event_path,
-                    commit.clone(),
-                );
-            }
             Some(WriteDocumentResult {
                 path: event_path,
                 content: final_content,

@@ -1,19 +1,16 @@
-//! 统一笔�?事件总线 —所�?写�? (用户 UI / Agent / 外部工具) 在改完�?盘后
-//! �?emit 这一�?���? 前�?一�?`listen()` 派发�?store + 编辑器�?//!
-//! 璁捐瑕佺偣:
-//! - 单一事件�?`MEMO_EVENT`, `#[serde(tag = "kind")]` 内部区分 `created` /
-//!   `updated` / `deleted`。�?�?[`crate::agent_flowix::AgentChunk`] 的判�?�� enum 模式�?//! - `MemoChangeSource` 区分外部工具与应用内写入。编辑器正文跨窗口同步走
-//!   �?���?`MEMO_CONTENT_UPDATED_EVENT`, 避免通用元数�?��件承担窗口来源判定�?//! - 旧事�?`agent-document-updated` �?[`crate::agent_flowix`] �?`edit` 工具触发,
-//!   �??重构废弃, 改由�?��块的 `Updated` 变体承载�?
+//! Unified memo event bus for UI, Agent, cloud, and external-editor writes.
+//!
+//! Created, updated, and deleted mutations share `MEMO_EVENT`. Content
+//! commits carry revision/changeId metadata, while in-app editor writes also
+//! carry originWindowLabel so only sibling windows reload the committed bytes.
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, EventTarget, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::document_mutation::{DocumentCommit, DocumentMutationCoordinator};
 use crate::lock_utils::read_lock;
 use flowix_core::memo_file::Memo;
 
 pub const MEMO_EVENT: &str = "memo-event";
-pub const MEMO_CONTENT_UPDATED_EVENT: &str = "memo-content-updated";
 
 /// 写者标�?—�?informational, 前�?不用于分�?��由�?///
 /// Plan B �?Agent 不再手动 emit, watcher �?Agent / 外部工具的�?�?/// 变更统一归到 `ExternalTool`。`AgentEdit` / `AgentWrite` 这两�?���?/// 已删�?(历史 comment 提到「前�?��用它分支�? 合并后�?义一�?�?
@@ -164,42 +161,6 @@ pub enum MemoEvent {
     },
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct MemoContentUpdated {
-    pub id: String,
-    pub path: String,
-    #[serde(flatten)]
-    pub commit: DocumentCommit,
-}
-
-fn is_sibling_window_target(target: &EventTarget, origin_window_label: &str) -> bool {
-    match target {
-        EventTarget::Window { label }
-        | EventTarget::Webview { label }
-        | EventTarget::WebviewWindow { label } => label != origin_window_label,
-        _ => false,
-    }
-}
-
-/// Notify every sibling Webview that an editor save has committed to disk.
-/// The originating window already owns the saved buffer and must not reload it.
-pub fn emit_content_updated_to_sibling_windows<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-    origin_window_label: &str,
-    id: &str,
-    path: &str,
-    commit: DocumentCommit,
-) {
-    let payload = MemoContentUpdated {
-        id: id.to_string(),
-        path: path.to_string(),
-        commit,
-    };
-    let _ = app.emit_filter(MEMO_CONTENT_UPDATED_EVENT, payload, |target| {
-        is_sibling_window_target(target, origin_window_label)
-    });
-}
-
 impl MemoEvent {
     /// 事件关联�?memo id。Deleted 总是�?id; Created �?memo 里拿; Updated
     /// 直接读字段。没�?id (例�? unregister_memo_by_path 后的 Deleted) 返回
@@ -226,6 +187,14 @@ pub fn emit(app: &AppHandle, event: MemoEvent) {
 }
 
 pub fn emit_with_commit(app: &AppHandle, event: MemoEvent) -> Option<DocumentCommit> {
+    emit_with_commit_from_window(app, event, None)
+}
+
+pub fn emit_with_commit_from_window(
+    app: &AppHandle,
+    event: MemoEvent,
+    origin_window_label: Option<&str>,
+) -> Option<DocumentCommit> {
     let sync_change = match &event {
         MemoEvent::Created {
             memo,
@@ -263,13 +232,19 @@ pub fn emit_with_commit(app: &AppHandle, event: MemoEvent) -> Option<DocumentCom
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
     // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
-        emit_committed_via_dispatcher(&dispatcher, &event, commit.as_ref());
+        emit_committed_via_dispatcher(
+            &dispatcher,
+            &event,
+            commit.as_ref(),
+            origin_window_label,
+        );
     } else {
         let _ = app.emit(
             MEMO_EVENT,
             MemoEventPayload {
                 event: &event,
                 commit: commit.as_ref(),
+                origin_window_label,
             },
         );
     }
@@ -296,6 +271,8 @@ struct MemoEventPayload<'a> {
     event: &'a MemoEvent,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     commit: Option<&'a DocumentCommit>,
+    #[serde(rename = "originWindowLabel", skip_serializing_if = "Option::is_none")]
+    origin_window_label: Option<&'a str>,
 }
 
 fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Option<DocumentCommit> {
@@ -335,17 +312,22 @@ fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Option<DocumentCommit
 /// tag-event) �?dispatcher 里�?�? 业务调用点仍�?`emit()`�?///
 
 pub fn emit_via_dispatcher(dispatcher: &crate::events::SharedDispatcher, event: MemoEvent) {
-    emit_committed_via_dispatcher(dispatcher, &event, None);
+    emit_committed_via_dispatcher(dispatcher, &event, None, None);
 }
 
 fn emit_committed_via_dispatcher(
     dispatcher: &crate::events::SharedDispatcher,
     event: &MemoEvent,
     commit: Option<&DocumentCommit>,
+    origin_window_label: Option<&str>,
 ) {
     let _ = event.memo_id();
-    let payload = serde_json::to_value(MemoEventPayload { event, commit })
-        .expect("MemoEvent serialization must not fail");
+    let payload = serde_json::to_value(MemoEventPayload {
+        event,
+        commit,
+        origin_window_label,
+    })
+    .expect("MemoEvent serialization must not fail");
     dispatcher.publish(MEMO_EVENT, payload);
 }
 
@@ -433,90 +415,14 @@ mod tests {
         let value = serde_json::to_value(MemoEventPayload {
             event: &event,
             commit: Some(&commit),
+            origin_window_label: Some("tab-host-abc"),
         })
         .unwrap();
 
         assert_eq!(value["contentHash"], "abc123");
         assert_eq!(value["revision"], 7);
         assert_eq!(value["changeId"], "change-7");
-    }
-
-    #[test]
-    fn content_update_targets_only_sibling_windows() {
-        assert!(!is_sibling_window_target(
-            &EventTarget::window("tab-host-abc"),
-            "tab-host-abc",
-        ));
-        assert!(is_sibling_window_target(
-            &EventTarget::window("main"),
-            "tab-host-abc",
-        ));
-        assert!(!is_sibling_window_target(
-            &EventTarget::any(),
-            "tab-host-abc",
-        ));
-    }
-
-    #[test]
-    fn content_update_reaches_the_other_webview_window_only() {
-        use std::sync::mpsc::channel;
-        use std::time::Duration;
-        use tauri::{Listener, WebviewWindowBuilder};
-
-        let app = tauri::test::mock_app();
-        let main = WebviewWindowBuilder::new(&app, "main", Default::default())
-            .build()
-            .unwrap();
-        let tab_host = WebviewWindowBuilder::new(&app, "tab-host-abc", Default::default())
-            .build()
-            .unwrap();
-        let (tx, rx) = channel();
-
-        for (label, window) in [("main", &main), ("tab-host-abc", &tab_host)] {
-            let tx = tx.clone();
-            window.listen(MEMO_CONTENT_UPDATED_EVENT, move |event| {
-                let payload: serde_json::Value = serde_json::from_str(event.payload()).unwrap();
-                tx.send((label, payload)).unwrap();
-            });
-        }
-
-        emit_content_updated_to_sibling_windows(
-            app.handle(),
-            tab_host.label(),
-            "memo-1",
-            "/notes/memo-1.md",
-            DocumentCommit {
-                content_hash: "hash-1".to_string(),
-                revision: 1,
-                change_id: "change-1".to_string(),
-            },
-        );
-
-        let (recipient, payload) = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(recipient, "main");
-        assert_eq!(payload["id"], "memo-1");
-        assert_eq!(payload["path"], "/notes/memo-1.md");
-        assert_eq!(payload["revision"], 1);
-        assert_eq!(payload["changeId"], "change-1");
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
-
-        emit_content_updated_to_sibling_windows(
-            app.handle(),
-            main.label(),
-            "memo-1",
-            "/notes/memo-1-renamed.md",
-            DocumentCommit {
-                content_hash: "hash-2".to_string(),
-                revision: 2,
-                change_id: "change-2".to_string(),
-            },
-        );
-
-        let (recipient, payload) = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(recipient, "tab-host-abc");
-        assert_eq!(payload["id"], "memo-1");
-        assert_eq!(payload["path"], "/notes/memo-1-renamed.md");
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        assert_eq!(value["originWindowLabel"], "tab-host-abc");
     }
 
     #[test]

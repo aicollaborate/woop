@@ -68,7 +68,6 @@ describe('classifyUpdatedMemoDocumentAction', () => {
     expect(classifyUpdatedMemoDocumentAction(
       updatedEvent,
       memoIdentity,
-      '/notes/current.md',
       false,
     )).toBe('reload');
   });
@@ -77,7 +76,6 @@ describe('classifyUpdatedMemoDocumentAction', () => {
     expect(classifyUpdatedMemoDocumentAction(
       updatedEvent,
       memoIdentity,
-      '/notes/current.md',
       true,
     )).toBe('defer');
   });
@@ -86,17 +84,38 @@ describe('classifyUpdatedMemoDocumentAction', () => {
     expect(classifyUpdatedMemoDocumentAction(
       { ...updatedEvent, id: 'memo-2' },
       memoIdentity,
-      '/notes/current.md',
       false,
     )).toBe('ignore');
   });
 
-  it('ignores the originating UI user_edit event', () => {
+  it('ignores a legacy user_edit event without origin metadata', () => {
     expect(classifyUpdatedMemoDocumentAction(
       { ...updatedEvent, source: 'user_edit' },
       memoIdentity,
-      '/notes/current.md',
       false,
     )).toBe('ignore');
+  });
+
+  it('ignores a user_edit from the current window', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      { ...updatedEvent, source: 'user_edit', originWindowLabel: 'main' },
+      memoIdentity,
+      false,
+      'main',
+    )).toBe('ignore');
+  });
+
+  it('reloads a user_edit from another window using the committed path', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      {
+        ...updatedEvent,
+        source: 'user_edit',
+        path: '/notes/renamed.md',
+        originWindowLabel: 'tab-host-1',
+      },
+      memoIdentity,
+      false,
+      'main',
+    )).toBe('reload');
   });
 });

@@ -60,9 +60,10 @@ pub(super) fn emit_updated_memo_event(
     notebook_id: String,
     derived_changed: MemoDerivedChanged,
     source: MemoChangeSource,
+    origin_window_label: Option<&str>,
 ) -> Option<DocumentCommit> {
     try_index_upsert(state, id);
-    memo_events::emit_with_commit(
+    memo_events::emit_with_commit_from_window(
         app,
         MemoEvent::Updated {
             id: id.to_string(),
@@ -72,6 +73,7 @@ pub(super) fn emit_updated_memo_event(
             derived_changed,
             source,
         },
+        origin_window_label,
     )
 }
 
@@ -81,6 +83,7 @@ pub(crate) fn emit_updated_after_write(
     app: &AppHandle,
     id: &str,
     before: Option<Memo>,
+    origin_window_label: Option<&str>,
 ) -> Option<DocumentCommit> {
     let path = abs_path_for(state, id);
     if !path.is_empty() {
@@ -98,6 +101,7 @@ pub(crate) fn emit_updated_after_write(
         notebook_id,
         derived_changed,
         MemoChangeSource::UserEdit,
+        origin_window_label,
     )
 }
 

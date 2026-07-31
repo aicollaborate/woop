@@ -25,6 +25,8 @@ export type MemoContentCommit = {
   revision?: number;
   /** Stable identity for duplicate observations of the same commit. */
   changeId?: string;
+  /** Webview that originated an in-app save; absent for non-window writes. */
+  originWindowLabel?: string;
 };
 
 export type MemoDerivedChanged = {

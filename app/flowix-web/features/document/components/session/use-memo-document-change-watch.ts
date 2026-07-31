@@ -10,14 +10,9 @@ import {
 import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
-import { canonicalPath } from '@/lib/path';
 import { registerMemoEventHandler } from '@/lib/memo-dispatcher';
 import type { MemoEvent } from '@/types/memo';
 import type { MemoContentCommit } from '@/types/memo';
-import {
-  handleSiblingWindowContentUpdate,
-  type MemoContentUpdatedEvent,
-} from './sibling-window-document-sync';
 import {
   markMemoCommitApplied,
   newerPendingMemoCommit,
@@ -71,13 +66,14 @@ export type UpdatedMemoDocumentAction = 'ignore' | 'defer' | 'reload';
 export function classifyUpdatedMemoDocumentAction(
   event: MemoEvent,
   identity: DocumentIdentity,
-  filePath: string,
   isDirty: boolean,
+  currentWindowLabel?: string,
 ): UpdatedMemoDocumentAction {
   if (identity.kind !== 'memo') return 'ignore';
-  if (event.kind !== 'updated' || event.source === 'user_edit' || !event.path) return 'ignore';
+  if (event.kind !== 'updated' || !event.path) return 'ignore';
+  if (event.source === 'user_edit' && !event.originWindowLabel) return 'ignore';
+  if (event.originWindowLabel && event.originWindowLabel === currentWindowLabel) return 'ignore';
   if (event.id !== identity.id) return 'ignore';
-  if (canonicalPath(event.path) !== canonicalPath(filePath)) return 'ignore';
   if (!shouldApplyMemoCommit(event.id, event)) return 'ignore';
   return isDirty ? 'defer' : 'reload';
 }
@@ -95,13 +91,14 @@ export function useMemoDocumentChangeWatch({
   useEffect(() => {
     if (!filePath || identity.kind !== 'memo') return;
     let disposed = false;
+    const currentWindowLabel = getCurrentWindow().label;
 
     const reloadLatestExternalContent = async (
       event: PendingMemoReload,
     ) => {
       pendingExternalReloadRef.current = null;
       clearSaveTimer();
-      await reloadDocument(filePath, { preservePending: false, showLoading: false });
+      await reloadDocument(event.path, { preservePending: false, showLoading: false });
       markMemoCommitApplied(event.id, event);
     };
 
@@ -165,8 +162,8 @@ export function useMemoDocumentChangeWatch({
         const action = classifyUpdatedMemoDocumentAction(
           event,
           identity,
-          filePath,
           hasDocumentUnsavedChanges(identity),
+          currentWindowLabel,
         );
         if (action === 'ignore') return;
         if (action === 'defer') {
@@ -178,40 +175,18 @@ export function useMemoDocumentChangeWatch({
       },
       (event) =>
         // tags_renamed / tags_deleted: 接收 ── 但内部按 affectedMemoIds 收窄。
-        // updated: 走 user_edit 排除分支 (与原行为一致)。
+        // All updated events share one channel. The handler excludes only the
+        // originating window by originWindowLabel.
         event.kind === 'tags_renamed'
         || event.kind === 'tags_deleted'
-        || (event.kind === 'updated' && event.source !== 'user_edit'),
+        || event.kind === 'updated',
     );
-
-    let unsubscribeContentUpdates: (() => void) | null = null;
-    void getCurrentWindow().listen<MemoContentUpdatedEvent>(
-      'memo-content-updated',
-      async ({ payload: event }) => {
-        if (disposed) return;
-        await handleSiblingWindowContentUpdate({
-          event,
-          identity,
-          isDirty: hasDocumentUnsavedChanges(identity),
-          onConflict: warnAboutConflict,
-          onDeferred: deferExternalReloadUntilClean,
-          clearSaveTimer,
-          reloadDocument,
-        });
-      },
-    ).then((unlisten) => {
-      if (disposed) unlisten();
-      else unsubscribeContentUpdates = unlisten;
-    }).catch((error) => {
-      console.warn('[memo-content-updated] listen failed:', error);
-    });
 
     return () => {
       disposed = true;
       pendingExternalReloadRef.current = null;
       unsubscribeBufferChanges();
       unsubscribeMemoEvents();
-      unsubscribeContentUpdates?.();
     };
   }, [filePath, identity, clearSaveTimer, reloadDocument]);
 }
