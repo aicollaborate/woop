@@ -1006,6 +1006,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "editor.threadCard.model": "Model",
     "editor.threadCard.lastRun": "Last run",
     "editor.threadCard.totalTokens": "Total tokens",
+    "editor.threadCard.cwd": "CWD",
     "editor.threadCard.title": "",
     "editor.threadCard.inputPlaceholder": "Ask AI to work on this note",
     "editor.threadCard.accessButton": "Instructions",

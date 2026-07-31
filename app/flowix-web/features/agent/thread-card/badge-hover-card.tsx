@@ -17,6 +17,8 @@ interface BadgeHoverCardProps {
   /** 本次运行的持续毫秒数,undefined 表示未运行 / 不可用 */
   /** 当前 run 累计 token 用量(undefined 表示未上报) */
   totalTokens?: number;
+  cwd?: string;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function formatTokens(n: number): string {
@@ -63,17 +65,20 @@ function formatRelativeTime(timestamp: number, language: string): string {
  * 通用 metadata 协议字段均通过 props 传入,组件本身不读取 store ──
  * 由父级 (agent-thread-card.tsx) 负责从 useChatStore 抽取并定时刷新。
  *
- * 展示 4 行:
+ * 展示 4 行 + 可选 cwd 行:
  *   1. Session ID + 复制按钮
  *   2. Model(可选, 由 run.model 填充, 未上报时显示 "—")
  *   3. 运行持续时间(可选, run 未跑时显示 "—")
  *   4. Token 总量(可选, 网关未上报时显示 "—")
+ *   5. CWD (可选, instance.runtimeConfig 解出, 文本溢出走原生 title tooltip)
  */
 export function BadgeHoverCard({
   sessionId,
   model,
   lastRunAt,
   totalTokens,
+  cwd,
+  onOpenChange,
 }: BadgeHoverCardProps) {
   const { language, t } = useI18n();
   const [copied, setCopied] = React.useState(false);
@@ -90,7 +95,11 @@ export function BadgeHoverCard({
   }, [sessionId]);
 
   return (
-    <HoverCard openDelay={120} closeDelay={150}>
+    <HoverCard
+      openDelay={120}
+      closeDelay={150}
+      onOpenChange={onOpenChange}
+    >
       <HoverCardTrigger asChild>
         <span
           aria-hidden="true"
@@ -183,6 +192,20 @@ export function BadgeHoverCard({
               {typeof totalTokens === "number" ? formatTokens(totalTokens) : "—"}
             </span>
           </div>
+
+          {cwd ? (
+            <div className="flex items-start justify-between gap-3 text-[11px]">
+              <span className="shrink-0 text-[var(--muted-foreground)]">
+                {t("editor.threadCard.cwd")}
+              </span>
+              <span
+                className="min-w-0 truncate font-mono text-[var(--foreground)]"
+                title={cwd}
+              >
+                {cwd}
+              </span>
+            </div>
+          ) : null}
         </div>
       </HoverCardContent>
     </HoverCard>

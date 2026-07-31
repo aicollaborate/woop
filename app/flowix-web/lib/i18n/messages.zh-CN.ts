@@ -976,6 +976,7 @@ const zhCN = {
     "editor.threadCard.model": "模型",
     "editor.threadCard.lastRun": "上次运行",
     "editor.threadCard.totalTokens": "Tokens",
+    "editor.threadCard.cwd": "工作目录",
     "editor.threadCard.title": "",
     "editor.threadCard.inputPlaceholder": "问 AI 处理任务",
     "editor.threadCard.accessButton": "指令",

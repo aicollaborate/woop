@@ -26,6 +26,7 @@ export interface AgentThreadCardChromeControllerOptions {
   getThreadId: () => string | null;
   getInstanceId: () => string | null;
   getTypeKey: () => AgentTypeKey;
+  getCwd: () => string | null;
   getThreadState: () => ThreadState | undefined;
   updateAttrs: (attrs: Record<string, unknown>) => void;
   t: (key: I18nKey) => string;
@@ -65,7 +66,7 @@ export class AgentThreadCardChromeController {
       getThreadId: options.getThreadId,
       getThreadState: options.getThreadState,
       getTypeKey: options.getTypeKey,
-      isFullscreen: options.isFullscreen,
+      getCwd: options.getCwd,
     });
   }
 
@@ -80,6 +81,13 @@ export class AgentThreadCardChromeController {
   attach(): void {
     this.header.attach();
     this.badge.renderHoverCard();
+    // mount 节点默认 `display: none` (role-picker.css),需要把它绝对定位到 badge
+    // 上才能让 absolute inset:0 的 trigger 覆盖住 badge ── 下一帧跑确保
+    // getBoundingClientRect 拿到真实尺寸,非全屏状态下也需要这一步(旧版依赖
+    // 全屏切换调用,会让非全屏卡片的 trigger 永远不可见)。
+    window.requestAnimationFrame(() =>
+      this.badge.syncHoverCardPosition(),
+    );
   }
 
   startTitleEdit(): void {

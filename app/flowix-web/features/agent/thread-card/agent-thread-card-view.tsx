@@ -304,6 +304,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getThreadId: () => this.threadId,
       getInstanceId: () => this.instanceId,
       getTypeKey: () => this.typeKey,
+      getCwd: () => this.cwd,
       updateAttrs: (attrs) => this.updateAttrs(attrs),
       t: (key) => this.t(key),
       getThreadState: () => this.currentThreadState(),
@@ -497,7 +498,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private get renderThreadId(): string | null {
-    return this.runtime.renderThreadId;
+    // `runtime` 在构造函数里晚于 `chrome.attach()` 初始化,BadgeChromeController
+    // 在 attach 时会立刻调用 renderHoverCardContent -> getThreadState ->
+    // currentThreadState -> renderThreadId ── 那条路径下 `this.runtime` 还是
+    // undefined,安全地回退到 `node.attrs.threadId`,后续 runtime 初始化完会再
+    // 被 1s 定时器 / hover 触发时用真实 id 刷一次。
+    return this.runtime?.renderThreadId ?? this.node.attrs.threadId ?? null;
   }
 
   private get title(): string {
@@ -515,6 +521,28 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private get instance() {
     return useAgentConversationStore.getState().getInstance(this.instanceId);
+  }
+
+  /**
+   * 取本卡片的运行 cwd, 供 hover card 展示:
+   *   1. 优先 `runtimeConfig.workspaceSnapshot.cwd` (新版冻结后的字段,带 workspace)
+   *   2. 回退到 `runtimeConfig.cwd` (旧版裸 cwd)
+   *   3. 都没有或都是空白字符串 → null (UI 隐藏整行)
+   *
+   * 解析时机: 每次 hover card 刷新时调用, 反映用户中途改 cwd 的最新值。
+   */
+  private get cwd(): string | null {
+    const runtimeConfig = this.instance?.runtimeConfig;
+    const snapshotCwd = runtimeConfig?.workspaceSnapshot?.cwd;
+    const legacyCwd = runtimeConfig?.cwd;
+    const value = (
+      typeof snapshotCwd === "string"
+        ? snapshotCwd
+        : typeof legacyCwd === "string"
+          ? legacyCwd
+          : ""
+    ).trim();
+    return value || null;
   }
 
   private ensureInstanceBinding(): void {

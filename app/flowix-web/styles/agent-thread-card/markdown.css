@@ -599,6 +599,7 @@
 }
 
 .markdown-editor .agent-thread-card__loading-text {
+  line-height: 1.5;
   color: transparent;
   /* 单层扫光: 3 stop (暗→亮→暗) — 只一个亮度峰, 没有 white 核叠在 foreground 晕上 */
   background: linear-gradient(

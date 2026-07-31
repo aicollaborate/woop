@@ -15,7 +15,7 @@ export interface AgentThreadCardBadgeChromeControllerOptions {
   getThreadId: () => string | null;
   getThreadState: () => ThreadState | undefined;
   getTypeKey: () => AgentTypeKey;
-  isFullscreen: () => boolean;
+  getCwd: () => string | null;
 }
 
 export class AgentThreadCardBadgeChromeController {
@@ -27,7 +27,7 @@ export class AgentThreadCardBadgeChromeController {
   private readonly getThreadId: () => string | null;
   private readonly getThreadState: () => ThreadState | undefined;
   private readonly getTypeKey: () => AgentTypeKey;
-  private readonly isFullscreen: () => boolean;
+  private readonly getCwd: () => string | null;
   private hoverCardTimer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
 
@@ -40,7 +40,7 @@ export class AgentThreadCardBadgeChromeController {
     this.getThreadId = options.getThreadId;
     this.getThreadState = options.getThreadState;
     this.getTypeKey = options.getTypeKey;
-    this.isFullscreen = options.isFullscreen;
+    this.getCwd = options.getCwd;
   }
 
   refreshBadge(): void {
@@ -65,22 +65,28 @@ export class AgentThreadCardBadgeChromeController {
       : type.desc;
   }
 
+  /**
+   * 把 hover-card 内容挂到 mount 节点 ── 挂一次就够,组件本身用 HoverCard 自己的
+   * openDelay / closeDelay 控制显隐。每次 `syncHoverCardPosition` 跑完会保证
+   * trigger 覆盖在 badge 上,用户 hover 触发即可。
+   *
+   * 旧版这里 gate 在 `isFullscreen()` 后面,非全屏时返回 null 清空 React 树 ──
+   * 那个限制是为了避免 mount 节点在 collapsed 卡片里的 0 尺寸触发 HoverCard 报
+   * 错;现在 trigger 是 `position: absolute; inset: 0` 永远跟 badge 同尺寸,
+   * 全屏 / 非全屏都可以挂,故直接 mount 不再 bailed out。
+   */
   renderHoverCard(): void {
     if (this.disposed) return;
-    if (!this.isFullscreen()) {
-      this.stopHoverCardTimer();
-      this.hoverCardRoot.render(null);
-      return;
-    }
     this.renderHoverCardContent();
-    this.startHoverCardTimer();
   }
 
+  /**
+   * 把 mount 节点绝对定位到 badge 上 ── trigger 是 absolute inset:0,
+   * 跟着 mount 的位置覆盖整个 badge。
+   *
+   * 全屏切换 / 浏览器 resize / editor scroll 都会触发外部重新调用这个方法。
+   */
   syncHoverCardPosition(): void {
-    if (!this.isFullscreen()) {
-      this.hoverCardMount.style.display = "none";
-      return;
-    }
     const badgeRect = this.badgeEl.getBoundingClientRect();
     const wrapRect = this.badgeEl.offsetParent?.getBoundingClientRect();
     if (!wrapRect) return;
@@ -110,9 +116,17 @@ export class AgentThreadCardBadgeChromeController {
   private startHoverCardTimer(): void {
     if (this.hoverCardTimer !== null) return;
     this.hoverCardTimer = setInterval(() => {
-      if (!this.isFullscreen()) return;
       this.renderHoverCardContent();
     }, 1000);
+  }
+
+  private handleHoverCardOpenChange(open: boolean): void {
+    if (!open) {
+      this.stopHoverCardTimer();
+      return;
+    }
+    this.renderHoverCardContent();
+    this.startHoverCardTimer();
   }
 
   private stopHoverCardTimer(): void {
@@ -135,6 +149,9 @@ export class AgentThreadCardBadgeChromeController {
         model,
         lastRunAt,
         totalTokens,
+        cwd: this.getCwd() ?? undefined,
+        onOpenChange: (open: boolean) =>
+          this.handleHoverCardOpenChange(open),
       }),
     );
   }
