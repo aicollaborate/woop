@@ -89,6 +89,7 @@ describe("agent thread card cache helper", () => {
       "codex",
       "codex-real-session",
     );
+    expect(replayExternalEventsMock).not.toHaveBeenCalled();
   });
 
   it("loads Codex history for a resolved session id", async () => {
@@ -104,6 +105,7 @@ describe("agent thread card cache helper", () => {
       "codex",
       "codex-real-session",
     );
+    expect(replayExternalEventsMock).not.toHaveBeenCalled();
     expect(result.loadedThreadId).toBe("codex-real-session");
   });
 

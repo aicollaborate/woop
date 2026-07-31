@@ -294,6 +294,91 @@ fn paginates_codex_messages_with_virtual_sequence() {
 }
 
 #[test]
+fn preserves_identical_user_prompts_from_different_turns() {
+    let session = [
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "task_started", "turn_id": "turn-1" }
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "same question" }],
+                "internal_chat_message_metadata_passthrough": { "turn_id": "turn-1" }
+            }
+        }),
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "user_message", "message": "same question" }
+        }),
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "task_started", "turn_id": "turn-2" }
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "same question" }],
+                "internal_chat_message_metadata_passthrough": { "turn_id": "turn-2" }
+            }
+        }),
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "user_message", "message": "same question" }
+        }),
+    ]
+    .into_iter()
+    .map(|value| value.to_string())
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    let messages = parse_codex_session_messages("session-1", &session);
+    assert_eq!(messages.len(), 2);
+    assert!(messages
+        .iter()
+        .all(|message| message.role == "user" && message.content == "same question"));
+}
+
+#[test]
+fn paginates_codex_history_by_complete_user_turns() {
+    let messages = vec![
+        base_message("u1".into(), "user", "question 1".into(), "1"),
+        base_message("a1".into(), "assistant", "answer 1".into(), "2"),
+        base_message("u2".into(), "user", "question 2".into(), "3"),
+        base_message("r2".into(), "reasoning", "thought 2".into(), "4"),
+        base_message("a2".into(), "assistant", "answer 2".into(), "5"),
+        base_message("u3".into(), "user", "question 3".into(), "6"),
+        base_message("a3".into(), "assistant", "answer 3".into(), "7"),
+    ];
+
+    let latest = paginate_codex_messages(messages.clone(), None, 1);
+    assert_eq!(
+        latest
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["u3", "a3"]
+    );
+    assert!(latest.has_more);
+
+    let older = paginate_codex_messages(messages, latest.oldest_sequence, 1);
+    assert_eq!(
+        older
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["u2", "r2", "a2"]
+    );
+    assert!(older.has_more);
+}
+
+#[test]
 fn close_orphan_codex_tool_calls_closes_only_unmatched_calls() {
     let mut messages = vec![
         // function_call(call_id=X) 鈥?has a matching output below.

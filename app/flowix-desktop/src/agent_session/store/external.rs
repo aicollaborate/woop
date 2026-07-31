@@ -69,6 +69,39 @@ impl ThreadManager {
         .await
     }
 
+    /// List product-owned Codex threads only. A resolved Codex session id may
+    /// also exist in `threads` because older turns persisted chunks using the
+    /// frontend's canonical id; those alias rows must not render as cards.
+    pub async fn list_codex_event_threads(
+        self: &Arc<Self>,
+    ) -> Result<Vec<ThreadInfo>, ThreadError> {
+        self.run_blocking(move |tm| {
+            let conn = tm.lock_conn();
+            let mut stmt = conn.prepare(
+                "SELECT t.thread_id, t.agent_id, t.title, t.created_at, t.updated_at
+                 FROM threads t
+                 WHERE t.agent_id = 'codex'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM thread_external_sessions s
+                       WHERE s.runtime = 'codex'
+                         AND s.external_session_id = t.thread_id
+                   )
+                 ORDER BY t.updated_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ThreadInfo {
+                    thread_id: row.get(0)?,
+                    agent_id: AgentId(row.get(1)?),
+                    title: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+    }
+
     pub async fn get_external_session(
         self: &Arc<Self>,
         thread_id: &str,
@@ -394,6 +427,28 @@ impl ThreadManager {
         .await
     }
 
+    pub async fn get_codex_event_messages_page(
+        self: &Arc<Self>,
+        thread_id: &str,
+        before_event_id: Option<i64>,
+        turn_limit: i64,
+    ) -> Result<Option<ThreadMessagesPage>, ThreadError> {
+        let thread_id = thread_id.to_string();
+        self.run_blocking(move |tm| {
+            if !tm.external_event_history_exists_inner("codex", &thread_id)? {
+                return Ok(None);
+            }
+            tm.get_external_event_messages_page_inner(
+                "codex",
+                &thread_id,
+                before_event_id,
+                turn_limit,
+            )
+            .map(Some)
+        })
+        .await
+    }
+
     pub async fn get_claude_event_messages_page(
         self: &Arc<Self>,
         thread_id: &str,
@@ -623,9 +678,7 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 let content_mode = payload
                     .get("content_mode")
                     .and_then(serde_json::Value::as_str);
-                let stable_key = stable_message_id
-                    .as_ref()
-                    .map(|id| format!("{role}:{id}"));
+                let stable_key = stable_message_id.as_ref().map(|id| format!("{role}:{id}"));
                 let existing_index = stable_key
                     .as_ref()
                     .and_then(|key| message_indexes.get(key).copied());

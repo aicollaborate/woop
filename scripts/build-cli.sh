@@ -62,7 +62,26 @@ copy_to_binaries() {
   fi
   local dst="$BINARIES_DIR/flowix-cli-$host$ext"
   mkdir -p "$BINARIES_DIR"
-  cp "$src" "$dst"
+  if [[ "$host" == *windows* ]]; then
+    cp "$src" "$dst"
+  else
+    # Do not inherit a stale/non-executable mode from an incremental Cargo
+    # output. Tauri preserves the sidecar mode when it creates the app bundle,
+    # so a missing execute bit here produces a permanently broken CLI in the
+    # final DMG.
+    install -m 0755 "$src" "$dst"
+    if [[ "$host" == *apple* ]]; then
+      # Locally built files can inherit quarantine from a checkout downloaded
+      # as an archive. This staging binary is freshly compiled from the trusted
+      # checkout; leaving the inherited attribute in place makes Gatekeeper
+      # assess the un-notarized staging file instead of the final notarized DMG.
+      xattr -d com.apple.quarantine "$dst" 2>/dev/null || true
+    fi
+    if [ ! -x "$dst" ]; then
+      echo "error: CLI sidecar is not executable after install: $dst" >&2
+      exit 1
+    fi
+  fi
   echo "  -> $dst"
 }
 
@@ -125,8 +144,9 @@ if [ ${#TRIPLES[@]} -gt 0 ]; then
     [[ "$triple" == *windows* ]] && bin_path="${bin_path}.exe"
     copy_to_binaries "$triple" "$bin_path"
     # 签名 ── macOS / Windows 走 codesign / signtool, Linux 跳过。
-    # `|| true` 让 dev 本地无证书时 build 不挂。
-    bash "$SCRIPT_DIR/sign-cli.sh" --host="$triple" || true
+    # sign-cli.sh 自己负责无证书开发环境的显式 skip；真正的签名错误
+    # 必须终止构建，不能把坏 sidecar 带进正式安装包。
+    bash "$SCRIPT_DIR/sign-cli.sh" --host="$triple"
   done
 else
   host="$(host_triple)"
@@ -142,7 +162,7 @@ else
     bin_path="$CARGO_TARGET_DIR/$host/$PROFILE/flowix-cli"
   fi
   copy_to_binaries "$host" "$bin_path"
-  bash "$SCRIPT_DIR/sign-cli.sh" --host="$host" || true
+  bash "$SCRIPT_DIR/sign-cli.sh" --host="$host"
 fi
 
 # Dev-mode symlink: 让 `cargo tauri dev` 能找到 `binaries/flowix-cli`。

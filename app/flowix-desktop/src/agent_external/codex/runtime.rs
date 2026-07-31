@@ -3,7 +3,7 @@
 //! `crate::agent_external` and is reused by the Codex persistence adapter.
 
 use crate::agent_external::{
-    emit_chunk_with_run_id, persist_and_emit_external_chunk_with_metadata, AgentChunkMetadata,
+    emit_chunk_with_run_id, persist_external_chunk_for_thread_with_metadata, AgentChunkMetadata,
 };
 
 use std::sync::Arc;
@@ -26,12 +26,37 @@ pub async fn persist_codex_chunk(
     run_id: &str,
     raw_json: Option<&str>,
 ) {
-    crate::agent_external::persist_external_chunk(
+    persist_codex_chunk_with_metadata(
         thread_manager,
-        super::AGENT_TYPE,
         chunk,
         run_id,
         raw_json,
+        &AgentChunkMetadata::default(),
+    )
+    .await;
+}
+
+pub async fn persist_codex_chunk_with_metadata(
+    thread_manager: &Arc<ThreadManager>,
+    chunk: &AgentChunk,
+    run_id: &str,
+    raw_json: Option<&str>,
+    metadata: &AgentChunkMetadata,
+) {
+    let storage_thread_id = thread_manager
+        .find_thread_by_external_session(chunk.thread_id(), super::AGENT_TYPE)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| chunk.thread_id().to_string());
+    persist_external_chunk_for_thread_with_metadata(
+        thread_manager,
+        super::AGENT_TYPE,
+        &storage_thread_id,
+        chunk,
+        run_id,
+        raw_json,
+        metadata,
     )
     .await;
 }
@@ -45,24 +70,4 @@ pub async fn persist_and_emit_codex_chunk(
 ) {
     persist_codex_chunk(thread_manager, chunk, run_id, raw_json).await;
     emit_chunk_with_run_id(app_handle, chunk, super::AGENT_TYPE, run_id);
-}
-
-pub async fn persist_and_emit_codex_chunk_with_metadata(
-    app_handle: &tauri::AppHandle,
-    thread_manager: &Arc<ThreadManager>,
-    chunk: &AgentChunk,
-    run_id: &str,
-    raw_json: Option<&str>,
-    metadata: &AgentChunkMetadata,
-) {
-    persist_and_emit_external_chunk_with_metadata(
-        app_handle,
-        thread_manager,
-        super::AGENT_TYPE,
-        chunk,
-        run_id,
-        raw_json,
-        metadata,
-    )
-    .await;
 }

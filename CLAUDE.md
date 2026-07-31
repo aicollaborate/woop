@@ -67,7 +67,7 @@ production 发版走 Apple Developer ID 直分发（不走 Mac App Store），�
 scripts/apple-signing/
 ├── gen-csr.sh            # 生成 CSR + private key → ~/.flowix-signing/
 ├── make-p12.sh           # .cer + .key → 可导入 Keychain 的 .p12（legacy 路径）
-├── sign-and-notarize.sh  # 完整发版：tauri build → resign → notary → staple
+├── sign-and-notarize.sh  # 完整发版：tauri build → verify final DMG → notary → staple → Gatekeeper verify
 └── README.md             # 流程图 + 5 步走 + 隐私边界
 ```
 
@@ -160,11 +160,13 @@ bash scripts/apple-signing/sign-and-notarize.sh
 
 `sign-and-notarize.sh` 内部步骤：
 
-1. `npm run tauri:build:production`（生成 `~/.build/cargo-target/release/bundle/{macos,dmg}/`）
-2. 用 Developer ID 重新签内嵌 `flowix-cli` sidecar
-3. `xcrun notarytool submit --keychain-profile flowix-notarize --wait`
-4. `xcrun stapler staple` 钉 ticket
+1. `npm run tauri:build:production`（生成 `.build/cargo-target/<target>/release/bundle/{macos,dmg}/`）
+2. 挂载最终 DMG，校验内嵌 `flowix-cli` 的可执行位、架构、Developer ID 与 nested signature
+3. 对这个未经后续修改的 DMG 执行 `xcrun notarytool submit --keychain-profile flowix-notarize --wait`
+4. `xcrun stapler staple` 钉 ticket，并再次验证 stapler + Gatekeeper
 5. 打印 SHA-256 + 最终 DMG 路径
+
+CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和外层 `.app`，再生成 DMG。DMG 生成后禁止重新签或修改 `.app`，否则公证的将不是最终实际分发内容。
 
 > ⚠️ **不要** 用 `npm run tauri:build`（默认无签名）、`npm run tauri:build:mac`/`win`（platform 特定全路径）。
 
@@ -422,7 +424,8 @@ flowix-main/
 │   ├── gen-icon.mjs                      # 生成图标
 │   ├── prepare-tauri-production-config.mjs  # env var → tauri.macos.production.local.json
 │   ├── build-tauri-production.mjs       # cli:build + prepare + tauri build 的编排
-│   ├── sign-cli.sh                       # ad-hoc 重新签 flowix-cli sidecar（参考用，production 用 sign-and-notarize.sh）
+│   ├── sign-cli.sh                       # 打包前签 flowix-cli staging sidecar；裸 Mach-O 不单独公证
+│   ├── verify-macos-release.sh            # 从最终 DMG 验证权限、架构、签名、公证与 Gatekeeper
 │   ├── release.sh / upload-release.sh / rename-dmg.sh  # CI / 发版辅助
 │   └── apple-signing/                    # Developer ID + notarization 流水线
 │       ├── gen-csr.sh

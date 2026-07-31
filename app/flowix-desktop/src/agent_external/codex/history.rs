@@ -201,6 +201,8 @@ fn read_codex_session_messages(session_id: &str) -> Result<Vec<ChatMessage>, Str
 fn parse_codex_session_messages(session_id: &str, text: &str) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     let mut seen_user_messages = HashSet::new();
+    let mut current_turn_id: Option<String> = None;
+    let mut last_unkeyed_user: Option<(String, usize)> = None;
 
     for (idx, line) in text.lines().enumerate() {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
@@ -217,13 +219,29 @@ fn parse_codex_session_messages(session_id: &str, text: &str) -> Vec<ChatMessage
             .unwrap_or_default();
         let payload = value.get("payload").unwrap_or(&value);
 
+        if top_type == "event_msg"
+            && payload.get("type").and_then(Value::as_str) == Some("task_started")
+        {
+            current_turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+
         if top_type == "event_msg" {
             if let Some(message) = event_msg_to_chat_message(session_id, idx, &timestamp, payload) {
                 if message.role == "user" {
                     if is_hidden_codex_user_message(&message.content) {
                         continue;
                     }
-                    if !seen_user_messages.insert(message.content.clone()) {
+                    if !keep_codex_user_message(
+                        payload,
+                        current_turn_id.as_deref(),
+                        &message.content,
+                        idx,
+                        &mut seen_user_messages,
+                        &mut last_unkeyed_user,
+                    ) {
                         continue;
                     }
                 }
@@ -241,7 +259,14 @@ fn parse_codex_session_messages(session_id: &str, text: &str) -> Vec<ChatMessage
                 if is_hidden_codex_user_message(&message.content) {
                     continue;
                 }
-                if !seen_user_messages.insert(message.content.clone()) {
+                if !keep_codex_user_message(
+                    payload,
+                    current_turn_id.as_deref(),
+                    &message.content,
+                    idx,
+                    &mut seen_user_messages,
+                    &mut last_unkeyed_user,
+                ) {
                     continue;
                 }
             }
@@ -276,6 +301,35 @@ fn parse_codex_session_messages(session_id: &str, text: &str) -> Vec<ChatMessage
     messages
 }
 
+fn keep_codex_user_message(
+    payload: &Value,
+    current_turn_id: Option<&str>,
+    content: &str,
+    source_index: usize,
+    seen: &mut HashSet<String>,
+    last_unkeyed: &mut Option<(String, usize)>,
+) -> bool {
+    let turn_id = payload
+        .pointer("/internal_chat_message_metadata_passthrough/turn_id")
+        .and_then(Value::as_str)
+        .or(current_turn_id)
+        .filter(|turn_id| !turn_id.trim().is_empty());
+    if let Some(turn_id) = turn_id {
+        return seen.insert(format!("{turn_id}\u{0}{content}"));
+    }
+
+    if last_unkeyed
+        .as_ref()
+        .is_some_and(|(last_content, last_index)| {
+            last_content == content && source_index.saturating_sub(*last_index) <= 2
+        })
+    {
+        return false;
+    }
+    *last_unkeyed = Some((content.to_string(), source_index));
+    true
+}
+
 fn close_orphan_codex_tool_calls(messages: &mut [ChatMessage]) {
     use std::collections::HashSet;
     let matched: HashSet<String> = messages
@@ -304,6 +358,37 @@ fn paginate_codex_messages(
 ) -> ThreadMessagesPage {
     let total = messages.len();
     let limit = limit.clamp(1, 1000) as usize;
+    let user_anchors = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .collect::<Vec<_>>();
+    if !user_anchors.is_empty() {
+        let upper_bound = before_sequence
+            .map(|sequence| (sequence - 1).clamp(0, total as i64) as usize)
+            .unwrap_or(total);
+        let eligible_count = user_anchors.partition_point(|anchor| *anchor < upper_bound);
+        if eligible_count == 0 {
+            return ThreadMessagesPage {
+                messages: Vec::new(),
+                oldest_sequence: None,
+                has_more: false,
+            };
+        }
+        let first_anchor_position = eligible_count.saturating_sub(limit);
+        let first_anchor = user_anchors[first_anchor_position];
+        let start = if first_anchor_position == 0 {
+            0
+        } else {
+            first_anchor
+        };
+        return ThreadMessagesPage {
+            messages: messages[start..upper_bound].to_vec(),
+            oldest_sequence: Some((first_anchor + 1) as i64),
+            has_more: first_anchor_position > 0,
+        };
+    }
+
     let end = before_sequence
         .map(|sequence| (sequence - 1).clamp(0, total as i64) as usize)
         .unwrap_or(total);

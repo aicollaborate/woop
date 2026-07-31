@@ -111,6 +111,8 @@ function createOpenCodeHistoryAdapter(): AgentHistoryAdapter {
 
 const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
   flowix: createFlowixHistoryAdapter(),
+  // Codex history is materialized by the backend from compact DB snapshots.
+  // The rollout transcript is a display-only fallback when DB events are empty.
   codex: createCodexHistoryAdapter(),
   claude: createClaudeHistoryAdapter(),
   hermes: createHermesHistoryAdapter(),

@@ -579,7 +579,82 @@ mod tests {
             .get_opencode_event_messages_page("missing-opencode-session", None, 10)
             .await
             .unwrap();
-        assert!(empty.is_none(), "empty events must select external fallback");
+        assert!(
+            empty.is_none(),
+            "empty events must select external fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_compact_events_use_product_owner_and_read_legacy_aliases() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "codex-local-card-page";
+        let session_id = "019f0000-0000-7000-8000-000000000123";
+        manager
+            .upsert_external_session(thread_id, "codex", session_id, None)
+            .await
+            .unwrap();
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-1","text":"question 1","run_id":"run-1"}"#,
+            r#"{"kind":"text","message_id":"assistant-1","message_phase":"completed","content_mode":"snapshot","text":"answer 1","run_id":"run-1"}"#,
+            r#"{"kind":"stream_end","run_id":"run-1"}"#,
+            r#"{"kind":"user_message","id":"user-2","text":"question 2","run_id":"run-2"}"#,
+            r#"{"kind":"text","message_id":"assistant-2","message_phase":"completed","content_mode":"snapshot","text":"answer 2","run_id":"run-2"}"#,
+            r#"{"kind":"stream_end","run_id":"run-2"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "codex".to_string(),
+                    // Reproduce data written before storage ownership was fixed.
+                    thread_id: if index < 3 { thread_id } else { session_id }.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(400 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let latest = manager
+            .get_codex_event_messages_page(thread_id, None, 1)
+            .await
+            .unwrap()
+            .expect("non-empty database events must win");
+        assert_eq!(
+            latest
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["question 2", "answer 2"]
+        );
+        assert!(latest.has_more);
+
+        let older = manager
+            .get_codex_event_messages_page(session_id, latest.oldest_sequence, 1)
+            .await
+            .unwrap()
+            .expect("alias lookup must share the same database history");
+        assert_eq!(
+            older
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["question 1", "answer 1"]
+        );
+        assert!(!older.has_more);
+
+        let listed = manager.list_codex_event_threads().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].thread_id, thread_id);
+
+        let empty = ThreadManager::for_tests()
+            .get_codex_event_messages_page("missing-codex-session", None, 10)
+            .await
+            .unwrap();
+        assert!(empty.is_none(), "empty events must select rollout fallback");
     }
 
     #[tokio::test]
@@ -624,7 +699,10 @@ mod tests {
             .get_claude_event_messages_page("missing-session", None, 10)
             .await
             .unwrap();
-        assert!(empty.is_none(), "empty database history must use rollout fallback");
+        assert!(
+            empty.is_none(),
+            "empty database history must use rollout fallback"
+        );
 
         let legacy = ThreadManager::for_tests();
         for (index, payload) in [

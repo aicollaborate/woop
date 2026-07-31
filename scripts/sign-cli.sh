@@ -6,14 +6,12 @@
 #   例: bash scripts/sign-cli.sh --host=x86_64-pc-windows-msvc
 #
 # 平台分流 (按 host 三元组):
-#   - *apple*  → codesign --options runtime --timestamp + xcrun notarytool + stapler staple
+#   - *apple*  → codesign --options runtime --timestamp
 #   - *windows* → signtool sign /fd sha256 /tr <timestamp> /td sha256 /f <pfx>
 #   - 其它 (linux) → noop, Linux 发行版不强制签名
 #
 # env vars (CI secret 注入, dev 本地可不设):
 #   APPLE_SIGNING_IDENTITY    keychain 里的 identity 名称 (e.g. "Developer ID Application: ...")
-#   APPLE_TEAM_ID             Apple Team ID (e.g. "ABCDE12345")
-#   APPLE_KEYCHAIN_PROFILE    xcrun notarytool 的 keychain profile
 #   WINDOWS_CERTIFICATE       base64 编码的 .pfx 内容
 #   WINDOWS_CERTIFICATE_PASSWORD  .pfx 导出密码
 #   WINDOWS_TIMESTAMP_URL      RFC 3161 timestamp URL (默认 http://timestamp.sectigo.com)
@@ -81,19 +79,9 @@ sign_macos() {
   echo "[sign] codesign --options runtime --timestamp --entitlements $ENTITLEMENTS --sign $identity $bin"
   codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$identity" "$bin"
 
-  # notarize ── 跳过 if 没配 keychain profile (dev 跳过)
-  if [[ -z "${APPLE_KEYCHAIN_PROFILE:-}" ]]; then
-    echo "[sign] APPLE_KEYCHAIN_PROFILE not set, skip notarization (本地 / 仅 codesign)"
-    return 0
-  fi
-
-  echo "[sign] notarytool submit (keychain profile: $APPLE_KEYCHAIN_PROFILE) ..."
-  xcrun notarytool submit "$bin" \
-    --keychain-profile "$APPLE_KEYCHAIN_PROFILE" \
-    --wait
-
-  echo "[sign] stapler staple $bin"
-  xcrun stapler staple "$bin"
+  # A raw Mach-O executable is not a distributable container that stapler can
+  # attach a ticket to. The containing DMG is submitted and stapled by
+  # scripts/apple-signing/sign-and-notarize.sh after Tauri finishes bundling.
 }
 
 # =================== Windows ===================

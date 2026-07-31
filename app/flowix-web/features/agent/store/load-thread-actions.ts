@@ -60,6 +60,7 @@ export async function loadThreadForType(
     });
     if (
       type.key !== "flowix" &&
+      type.key !== "codex" &&
       type.key !== "opencode" &&
       type.key !== "claude"
     ) {

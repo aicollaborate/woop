@@ -13,13 +13,93 @@ use super::history::{
     get_rollout_tool_response_items_since, is_codex_session_id, CodexRolloutEvent,
 };
 use super::io::read_capped_line;
-use super::runtime::{persist_and_emit_codex_chunk, persist_and_emit_codex_chunk_with_metadata};
+use super::runtime::{persist_and_emit_codex_chunk, persist_codex_chunk_with_metadata};
 use super::tool_events::nested_exec_tool_names;
 use super::{AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
-use crate::agent_external::{truncate_for_log, AgentChunkMetadata, ExternalRunRegistry};
+use crate::agent_external::{
+    emit_chunk_with_run_id_and_metadata, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
+};
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
+
+#[derive(Default)]
+struct CodexTurnEvents {
+    events: Vec<(AgentChunk, AgentChunkMetadata)>,
+    message_indexes: HashMap<String, usize>,
+    tool_call_indexes: HashMap<String, usize>,
+    tool_result_indexes: HashMap<String, usize>,
+    usage_index: Option<usize>,
+}
+
+impl CodexTurnEvents {
+    fn observe(&mut self, chunk: &AgentChunk, metadata: &AgentChunkMetadata) {
+        match chunk {
+            AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
+                if text.is_empty() {
+                    return;
+                }
+                let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
+                    "reasoning"
+                } else {
+                    "assistant"
+                };
+                let message_id = metadata
+                    .message_id
+                    .clone()
+                    .unwrap_or_else(|| format!("{role}-{}", self.events.len() + 1));
+                let key = format!("{role}:{message_id}");
+                let mut stored_metadata = metadata.clone();
+                stored_metadata.message_id = Some(message_id);
+                stored_metadata.content_mode = Some("snapshot");
+                stored_metadata.message_phase = Some("completed");
+                if let Some(index) = self.message_indexes.get(&key).copied() {
+                    self.events[index] = (chunk.clone(), stored_metadata);
+                } else {
+                    self.message_indexes.insert(key, self.events.len());
+                    self.events.push((chunk.clone(), stored_metadata));
+                }
+            }
+            AgentChunk::ToolCall { id, .. } => {
+                if let Some(index) = self.tool_call_indexes.get(id).copied() {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.tool_call_indexes.insert(id.clone(), self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::ToolResult { id, .. } => {
+                if let Some(index) = self.tool_result_indexes.get(id).copied() {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.tool_result_indexes
+                        .insert(id.clone(), self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::Usage { .. } => {
+                if let Some(index) = self.usage_index {
+                    self.events[index] = (chunk.clone(), metadata.clone());
+                } else {
+                    self.usage_index = Some(self.events.len());
+                    self.events.push((chunk.clone(), metadata.clone()));
+                }
+            }
+            AgentChunk::Error { .. } => self.events.push((chunk.clone(), metadata.clone())),
+            _ => {}
+        }
+    }
+}
+
+async fn persist_turn_events(
+    thread_manager: &Arc<ThreadManager>,
+    turn_events: &mut CodexTurnEvents,
+    run_id: &str,
+) {
+    for (chunk, metadata) in std::mem::take(turn_events).events {
+        persist_codex_chunk_with_metadata(thread_manager, &chunk, run_id, None, &metadata).await;
+    }
+}
 
 pub(crate) async fn read_codex_stdout<R>(
     thread_id: String,
@@ -43,9 +123,18 @@ where
     let mut emitted_tool_signatures = HashMap::new();
     let mut blocked_post_completion_chunks = 0usize;
     let mut source_sequence = 0u64;
-    while let Some((line, line_truncated_by_reader)) =
-        read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await?
-    {
+    let mut turn_events = CodexTurnEvents::default();
+    loop {
+        let line_result = read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await;
+        let Some((line, line_truncated_by_reader)) = (match line_result {
+            Ok(line) => line,
+            Err(err) => {
+                persist_turn_events(&thread_manager, &mut turn_events, &run_id).await;
+                return Err(err);
+            }
+        }) else {
+            break;
+        };
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -97,17 +186,30 @@ where
             } else {
                 format!("{line}\n")
             };
-            persist_and_emit_codex_chunk(
-                &app_handle,
-                &thread_manager,
-                &AgentChunk::Text {
-                    thread_id: emit_thread_id.clone(),
-                    text,
+            let chunk = AgentChunk::Text {
+                thread_id: emit_thread_id.clone(),
+                text,
+            };
+            let metadata = complete_chunk_metadata(
+                AgentChunkMetadata {
+                    message_phase: Some("completed"),
+                    content_mode: Some("snapshot"),
+                    ..Default::default()
                 },
+                &chunk,
                 &run_id,
-                Some(line),
-            )
-            .await;
+                chrono::Utc::now().timestamp_millis(),
+                source_sequence,
+                0,
+            );
+            turn_events.observe(&chunk, &metadata);
+            emit_chunk_with_run_id_and_metadata(
+                &app_handle,
+                &chunk,
+                AGENT_TYPE,
+                &run_id,
+                &metadata,
+            );
             continue;
         };
 
@@ -187,15 +289,14 @@ where
                 source_sequence,
                 source_subsequence as u32,
             );
-            persist_and_emit_codex_chunk_with_metadata(
+            turn_events.observe(&chunk, &metadata);
+            emit_chunk_with_run_id_and_metadata(
                 &app_handle,
-                &thread_manager,
                 &chunk,
+                AGENT_TYPE,
                 &run_id,
-                Some(line),
                 &metadata,
-            )
-            .await;
+            );
         }
 
         match codex_run_signal(&value) {
@@ -228,15 +329,14 @@ where
                         if stream_end_emitted.load(Ordering::Acquire) {
                             break;
                         }
-                        persist_and_emit_codex_chunk_with_metadata(
+                        turn_events.observe(&chunk, &metadata);
+                        emit_chunk_with_run_id_and_metadata(
                             &app_handle,
-                            &thread_manager,
                             &chunk,
+                            AGENT_TYPE,
                             &run_id,
-                            None,
                             &metadata,
-                        )
-                        .await;
+                        );
                         reconciled_tool_chunks += 1;
                     }
                 }
@@ -256,6 +356,8 @@ where
             }
         }
     }
+
+    persist_turn_events(&thread_manager, &mut turn_events, &run_id).await;
 
     runtime_log::record_agent_event(
         "info",
@@ -611,6 +713,133 @@ fn find_nested_session_id(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compacts_codex_turn_events_into_message_snapshots() {
+        let mut turn = CodexTurnEvents::default();
+        let text_metadata = AgentChunkMetadata {
+            message_id: Some("assistant-item-1".to_string()),
+            message_phase: Some("updated"),
+            content_mode: Some("snapshot"),
+            ..Default::default()
+        };
+        turn.observe(
+            &AgentChunk::Text {
+                thread_id: "session-1".to_string(),
+                text: "partial".to_string(),
+            },
+            &text_metadata,
+        );
+        turn.observe(
+            &AgentChunk::Text {
+                thread_id: "session-1".to_string(),
+                text: "complete answer".to_string(),
+            },
+            &AgentChunkMetadata {
+                message_phase: Some("completed"),
+                ..text_metadata.clone()
+            },
+        );
+        for command in ["pwd", "pwd -P"] {
+            turn.observe(
+                &AgentChunk::ToolCall {
+                    thread_id: "session-1".to_string(),
+                    id: "tool-1".to_string(),
+                    name: "command_execution".to_string(),
+                    input: serde_json::json!({ "command": command }),
+                },
+                &AgentChunkMetadata::default(),
+            );
+        }
+        turn.observe(
+            &AgentChunk::ToolResult {
+                thread_id: "session-1".to_string(),
+                id: "tool-1".to_string(),
+                name: "command_execution".to_string(),
+                result: serde_json::json!({ "output": "/tmp" }),
+            },
+            &AgentChunkMetadata::default(),
+        );
+        for total_tokens in [10, 20] {
+            turn.observe(
+                &AgentChunk::Usage {
+                    thread_id: "session-1".to_string(),
+                    model_id: None,
+                    last_run_at: None,
+                    usage: Some(crate::agent_flowix::UsageInfo {
+                        total_tokens: Some(total_tokens),
+                        ..Default::default()
+                    }),
+                    status_info: None,
+                },
+                &AgentChunkMetadata::default(),
+            );
+        }
+
+        assert_eq!(turn.events.len(), 4);
+        assert!(matches!(
+            &turn.events[0],
+            (
+                AgentChunk::Text { text, .. },
+                AgentChunkMetadata {
+                    message_phase: Some("completed"),
+                    content_mode: Some("snapshot"),
+                    ..
+                }
+            ) if text == "complete answer"
+        ));
+        assert!(matches!(
+            &turn.events[1].0,
+            AgentChunk::ToolCall { input, .. }
+                if input.get("command").and_then(Value::as_str) == Some("pwd -P")
+        ));
+        assert!(matches!(
+            &turn.events[3].0,
+            AgentChunk::Usage { usage: Some(usage), .. }
+                if usage.total_tokens == Some(20)
+        ));
+    }
+
+    #[tokio::test]
+    async fn persists_session_chunks_under_the_product_thread() {
+        let manager = ThreadManager::for_tests();
+        let product_thread_id = "codex-local-card-storage";
+        let session_id = "019f0000-0000-7000-8000-000000000456";
+        manager
+            .upsert_external_session(product_thread_id, AGENT_TYPE, session_id, None)
+            .await
+            .unwrap();
+        persist_codex_chunk_with_metadata(
+            &manager,
+            &AgentChunk::Text {
+                thread_id: session_id.to_string(),
+                text: "stored once".to_string(),
+            },
+            "run-storage",
+            None,
+            &AgentChunkMetadata {
+                message_id: Some("assistant-storage".to_string()),
+                message_phase: Some("completed"),
+                content_mode: Some("snapshot"),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        assert_eq!(
+            manager
+                .list_agent_external_events_by_thread(product_thread_id, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(manager
+            .list_agent_external_events_by_thread(session_id, None, 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn rollout_reconciliation_skips_streamed_nested_tools_and_backfills_pure_exec() {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "_comment": "Tauri v2 production bundle 签名覆盖层 ── 不修改主 tauri.conf.json。dev build 仍走主 conf (无 signing 字段), release build 用 `tauri build --config tauri.conf.production.json` 触发签名管线。脚本 `scripts/sign-cli.sh` 在 build 前先把占位值换成真值, 或 jq patch 写出 .local.json。",
+  "_comment": "Tauri v2 production bundle 签名覆盖层 ── 不修改主 tauri.conf.json。dev build 仍走主 conf (无 signing 字段), release build 由 scripts/prepare-tauri-production-config.mjs 合并配置并把环境变量写入 .local.json。",
 
   "bundle": {
     "macOS": {

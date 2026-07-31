@@ -33,6 +33,7 @@ function loadThreadMessages(
   const load = (async () => {
     const replayedDatabase =
       typeKey !== 'flowix' &&
+      typeKey !== 'codex' &&
       typeKey !== 'opencode' &&
       typeKey !== 'claude' &&
       (await replayExternalEventsForThread(
