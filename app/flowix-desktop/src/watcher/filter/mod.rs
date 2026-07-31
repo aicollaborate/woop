@@ -15,8 +15,6 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 
 use super::event::{FilterDecision, RawFsEvent};
-use debouncer::Debouncer;
-use self_write::SelfWriteSuppressor;
 
 pub mod debouncer;
 pub mod path_filter;
@@ -79,20 +77,8 @@ pub trait Filter: Send + Sync {
 /// 顺序: PathFilter �?SelfWriteSuppressor �?Debouncer。任一 Drop �?���?
 pub fn run_pipeline(
     event: &RawFsEvent,
-    recent: &Arc<Mutex<SelfWriteMap>>,
-    last_emit: &Arc<Mutex<HashMap<PathBuf, Instant>>>,
     path_filter: &PathFilter,
 ) -> FilterDecision {
-    let mut ctx = FilterCtx {
-        recent_self_writes: recent.clone(),
-        last_emit: last_emit.clone(),
-    };
-    let stages: [&dyn Filter; 3] = [path_filter, &SelfWriteSuppressor, &Debouncer];
-    for stage in stages {
-        match stage.decide(event, &mut ctx) {
-            FilterDecision::Pass => continue,
-            other => return other,
-        }
-    }
-    FilterDecision::Pass
+    let mut ctx = FilterCtx::new();
+    path_filter.decide(event, &mut ctx)
 }

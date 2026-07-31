@@ -198,11 +198,21 @@ function applyEventToChatSlice(
     }
     case "stream_end": {
       const ended = applyRunEnded(st, event);
+      const terminalMessages =
+        !ended.isLoading && st.pendingReasoningId
+          ? ended.messages.map((message) =>
+              message.id === st.pendingReasoningId &&
+              message.role === "reasoning"
+                ? { ...message, isCompleted: true }
+                : message,
+            )
+          : ended.messages;
       // run 结束时把仍 loading 的 tool 行(被中断 / result 未到达)收尾,避免
-      // 永久转圈。仅 thread 不再 loading 时收尾,避免误关并发 run 的工具行。
+      // 永久转圈,并关闭没有后续 assistant text 的 reasoning 行。仅 thread
+      // 不再 loading 时收尾,避免误关并发 run 的消息。
       const nextThreadState = ended.isLoading
         ? ended
-        : { ...ended, messages: closeLoadingToolRows(ended.messages) };
+        : { ...ended, messages: closeLoadingToolRows(terminalMessages) };
       syncLiveMessageState(event.agentType, tid, nextThreadState);
       const runtimeThreadState = nextThreadState.isLoading
         ? nextThreadState
@@ -463,7 +473,14 @@ export function createStreamEventDispatcher(
             threadStates: threadRunUpdate(slice.threadStates, tid, ensured),
           });
         }
-        if (event.messageId || event.contentMode === "snapshot") {
+        if (
+          event.messageId ||
+          event.contentMode === "snapshot" ||
+          // Legacy Claude envelope ids are intentionally removed by the
+          // mapper. Apply their ordered deltas synchronously so source order
+          // metadata survives database replay and tool boundaries.
+          event.sourceSequence !== undefined
+        ) {
           streamingBuffer.flushSync();
           break;
         }

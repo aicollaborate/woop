@@ -45,14 +45,29 @@ pub(crate) fn claude_chunk_metadata(
         .and_then(|event| event.get("index"))
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    let source_message_id = value
+    let embedded_message_id = value
         .pointer("/event/message/id")
         .or_else(|| value.pointer("/message/id"))
-        .or_else(|| value.get("uuid"))
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| state.current_message_id.clone());
+        .map(str::to_string);
+    // `stream_event` envelopes carry a different top-level UUID on every
+    // delta. The stable provider id for those deltas comes from the prior
+    // `message_start`, stored in `current_message_id`. Snapshot-style
+    // assistant events may still use their top-level UUID as a fallback.
+    let source_message_id = if event_type == "stream_event" {
+        embedded_message_id.or_else(|| state.current_message_id.clone())
+    } else {
+        embedded_message_id
+            .or_else(|| {
+                value
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.trim().is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| state.current_message_id.clone())
+    };
 
     match chunk {
         AgentChunk::Text { .. } => AgentChunkMetadata {
@@ -789,6 +804,7 @@ mod tests {
 
         let text_delta = serde_json::json!({
             "type": "stream_event",
+            "uuid": "d9193ae4-86b5-47a6-9e85-1bb4ef0acc1c",
             "event": {
                 "type": "content_block_delta",
                 "index": 2,
@@ -802,6 +818,20 @@ mod tests {
             Some("assistant-msg_claude_1-block-2")
         );
         assert_eq!(text_metadata.content_mode, Some("delta"));
+
+        let next_text_delta = serde_json::json!({
+            "type": "stream_event",
+            "uuid": "63038373-bb9a-446d-a640-6ea503e68857",
+            "event": {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": { "type": "text_delta", "text": " world" }
+            }
+        });
+        let next_chunks =
+            claude_event_to_chunks_with_state("thread_1", &next_text_delta, true, &mut state);
+        let next_metadata = claude_chunk_metadata(&next_text_delta, &next_chunks[0], &state);
+        assert_eq!(next_metadata.message_id, text_metadata.message_id);
 
         let call = AgentChunk::ToolCall {
             thread_id: "thread_1".to_string(),

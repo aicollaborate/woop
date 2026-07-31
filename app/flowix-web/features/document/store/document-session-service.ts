@@ -6,6 +6,7 @@ import {
   getCurrentPath,
   getOrCreateBuffer,
   hasUnsavedLocalChanges,
+  notifyDocumentBufferChanged,
   setCurrentDocument,
   type FlushCallbacks,
 } from '@features/document/store/buffer-registry';
@@ -124,10 +125,12 @@ export function recordDocumentEdit(identity: DocumentIdentity, content: string):
   if (isContentSemanticallyEqual(content, buffer.lastSavedContent)) {
     buffer.content = content;
     buffer.pendingContent = null;
+    notifyDocumentBufferChanged(identity, 'edited');
     return { changed: false, buffer };
   }
   buffer.content = content;
   buffer.pendingContent = content;
+  notifyDocumentBufferChanged(identity, 'edited');
   return { changed: true, buffer };
 }
 

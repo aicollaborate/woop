@@ -13,6 +13,13 @@ export interface MessageChunkMetadata {
   sourceSubsequence?: number;
 }
 
+let generatedAssistantMessageSequence = 0;
+
+function generatedAssistantMessageId(): string {
+  generatedAssistantMessageSequence += 1;
+  return `assistant-${Date.now()}-${generatedAssistantMessageSequence}`;
+}
+
 export function applyUserMessageChunk(
   st: LiveMessageState,
   text: string,
@@ -113,17 +120,18 @@ export function applyTextChunk(
     };
   }
   if (!targetId) {
-    const id = `assistant-${Date.now()}`;
+    const id = generatedAssistantMessageId();
+    const message = {
+      id,
+      role: "assistant" as const,
+      content: text,
+      timestamp: messageTimestamp(metadata.sourceTimestamp),
+      sourceTimestamp: metadata.sourceTimestamp,
+      sourceSequence: metadata.sourceSequence,
+      sourceSubsequence: metadata.sourceSubsequence,
+    };
     return {
-      messages: [
-        ...closedMessages,
-        {
-          id,
-          role: "assistant",
-          content: text,
-          timestamp: new Date().toISOString(),
-        },
-      ],
+      messages: insertAgentMessageBySourceOrder(closedMessages, message),
       pendingAssistantId: id,
       pendingReasoningId: null,
     };

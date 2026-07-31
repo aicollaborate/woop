@@ -462,6 +462,47 @@ mod tests {
     }
 
     #[test]
+    fn parsed_claude_tool_cycles_share_one_run_scoped_reasoning_id() {
+        let mut state = ClaudeStreamState::default();
+        let first_start = r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"provider-message-1"}}}"#;
+        let first_delta = r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first thought"}}}"#;
+        let second_start = r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"provider-message-2"}}}"#;
+        let second_delta = r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"second thought"}}}"#;
+
+        let parsed = parse_claude_stdout_line_with_state("thread-1", first_start, &mut state);
+        assert!(parsed.chunks.is_empty());
+        let first = parse_claude_stdout_line_with_state("thread-1", first_delta, &mut state);
+        let first_value = first.value.as_ref().expect("first delta value");
+        let first_chunk = first.chunks.first().expect("first reasoning chunk");
+        let first_raw = claude_chunk_metadata(first_value, first_chunk, &state);
+        assert_eq!(
+            first_raw.message_id.as_deref(),
+            Some("reasoning-provider-message-1-block-0")
+        );
+        let first_metadata =
+            complete_claude_chunk_metadata(first_raw, first_chunk, "run-1", 100, 1, 0);
+
+        let parsed = parse_claude_stdout_line_with_state("thread-1", second_start, &mut state);
+        assert!(parsed.chunks.is_empty());
+        let second = parse_claude_stdout_line_with_state("thread-1", second_delta, &mut state);
+        let second_value = second.value.as_ref().expect("second delta value");
+        let second_chunk = second.chunks.first().expect("second reasoning chunk");
+        let second_raw = claude_chunk_metadata(second_value, second_chunk, &state);
+        assert_eq!(
+            second_raw.message_id.as_deref(),
+            Some("reasoning-provider-message-2-block-0")
+        );
+        let second_metadata =
+            complete_claude_chunk_metadata(second_raw, second_chunk, "run-1", 200, 2, 0);
+
+        assert_eq!(
+            first_metadata.message_id.as_deref(),
+            Some("reasoning-run-1")
+        );
+        assert_eq!(second_metadata.message_id, first_metadata.message_id);
+    }
+
+    #[test]
     fn truncate_for_log_marks_long_output() {
         let text = "x".repeat(2050);
         let truncated = truncate_for_log(&text);

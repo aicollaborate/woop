@@ -27,4 +27,5 @@ export {
   type DocumentIdentity,
 } from '@features/document/store/document-identity';
 export type { DocumentBuffer } from '@features/document/store/document-buffer';
+export { subscribeDocumentBufferChanges } from '@features/document/store/buffer-registry';
 export { useDocumentMetricsStore } from '@features/document/store/document-metrics-store';

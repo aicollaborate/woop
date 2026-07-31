@@ -31,6 +31,28 @@ function resolveChunkRunId(
   return chunk.run_id ?? st?.activeRunId ?? createRunId(threadId);
 }
 
+const CLAUDE_ENVELOPE_TEXT_MESSAGE_ID =
+  /^assistant-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-block-\d+$/i;
+
+function resolveTextMessageId(
+  agentType: AgentTypeKey,
+  messageId: string | undefined,
+  contentMode: "delta" | "snapshot" | undefined,
+): string | undefined {
+  // Older Claude stream adapters used the stream envelope UUID, which changes
+  // on every delta. Dropping only that known-bad delta id lets pendingAssistantId
+  // join contiguous text while tool calls still form an explicit boundary.
+  if (
+    agentType === "claude" &&
+    contentMode === "delta" &&
+    messageId &&
+    CLAUDE_ENVELOPE_TEXT_MESSAGE_ID.test(messageId)
+  ) {
+    return undefined;
+  }
+  return messageId;
+}
+
 export function mapAgentChunkToEvent(
   chunk: AgentChunk,
   state: AgentEventMapperState,
@@ -82,10 +104,16 @@ export function mapAgentChunkToEvent(
         sourceSequence: 0,
         sourceSubsequence: 0,
       };
-    case "text":
+    case "text": {
+      const messageId = resolveTextMessageId(
+        base.agentType,
+        base.messageId,
+        base.contentMode,
+      );
       return supportsTextStreaming(base.agentType)
-        ? { ...base, kind: "text_delta", text: chunk.text }
-        : { ...base, kind: "final_message", text: chunk.text };
+        ? { ...base, kind: "text_delta", text: chunk.text, messageId }
+        : { ...base, kind: "final_message", text: chunk.text, messageId };
+    }
     case "reasoning":
       return {
         ...base,

@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react';
 import { getCurrentWindow } from '@platform/tauri/window';
 
 import {
+  documentIdentityKey,
   hasDocumentUnsavedChanges,
+  subscribeDocumentBufferChanges,
   type DocumentIdentity,
 } from '@features/document';
 import { translate } from '@/lib/i18n';
@@ -24,7 +26,6 @@ interface Options {
 }
 
 const CONFLICT_WARNING_COOLDOWN_MS = 5000;
-const DEFERRED_EXTERNAL_RELOAD_RETRY_MS = 100;
 
 /**
  * `tags_renamed` 事件的 reload 判定 ── 抽成纯函数以便单测。
@@ -86,14 +87,6 @@ export function useMemoDocumentChangeWatch({
   useEffect(() => {
     if (!filePath || identity.kind !== 'memo') return;
     let disposed = false;
-    let deferredReloadTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const clearDeferredReloadTimer = () => {
-      if (deferredReloadTimer !== null) {
-        clearTimeout(deferredReloadTimer);
-        deferredReloadTimer = null;
-      }
-    };
 
     const reloadLatestExternalContent = async () => {
       pendingExternalReloadRef.current = false;
@@ -101,28 +94,16 @@ export function useMemoDocumentChangeWatch({
       await reloadDocument(filePath, { preservePending: false, showLoading: false });
     };
 
-    const retryPendingExternalReload = () => {
-      deferredReloadTimer = null;
-      if (disposed || !pendingExternalReloadRef.current) return;
-      if (hasDocumentUnsavedChanges(identity)) {
-        deferredReloadTimer = setTimeout(
-          retryPendingExternalReload,
-          DEFERRED_EXTERNAL_RELOAD_RETRY_MS,
-        );
-        return;
-      }
-      void reloadLatestExternalContent();
-    };
-
     const deferExternalReloadUntilClean = () => {
       pendingExternalReloadRef.current = true;
-      if (deferredReloadTimer === null) {
-        deferredReloadTimer = setTimeout(
-          retryPendingExternalReload,
-          DEFERRED_EXTERNAL_RELOAD_RETRY_MS,
-        );
-      }
     };
+
+    const unsubscribeBufferChanges = subscribeDocumentBufferChanges((changedIdentity) => {
+      if (disposed || !pendingExternalReloadRef.current) return;
+      if (documentIdentityKey(changedIdentity) !== documentIdentityKey(identity)) return;
+      if (hasDocumentUnsavedChanges(identity)) return;
+      void reloadLatestExternalContent();
+    });
     const warnAboutConflict = () => {
       if (!hasDocumentUnsavedChanges(identity)) return;
       if (Date.now() - lastConflictWarningAtRef.current < CONFLICT_WARNING_COOLDOWN_MS) return;
@@ -171,7 +152,6 @@ export function useMemoDocumentChangeWatch({
           deferExternalReloadUntilClean();
           return;
         }
-        clearDeferredReloadTimer();
         await reloadLatestExternalContent();
       },
       (event) =>
@@ -206,7 +186,7 @@ export function useMemoDocumentChangeWatch({
     return () => {
       disposed = true;
       pendingExternalReloadRef.current = false;
-      clearDeferredReloadTimer();
+      unsubscribeBufferChanges();
       unsubscribeMemoEvents();
       unsubscribeContentUpdates?.();
     };

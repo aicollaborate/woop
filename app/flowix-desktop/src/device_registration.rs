@@ -1,16 +1,19 @@
-//! �?��设�?登�? ── �?这台机器"的轻量指纹上报到 Supabase�?//!
-//! 璁捐瑕佺偣:
-//! - 仅基于本地可读、不需任何权限的字�?(`std::env::consts` / `gethostname` /
-//!   `machine-uid` / `LANG` / `TZ`), �?`collect_payload`�?//! - 不阻塞主�?��: `bootstrap::run().setup()` �?`Arc::clone().spawn_startup_registration()`
-//!   后立刻返�? 网络调用�?fire-and-forget�?//! - �?��后等 `REGISTRATION_DELAY_SECS` �? 避开�?��早期的资源竞�?//!   (产品更新检查在 7s 时打, 我们排在 10s �?�?//! - �?��状态写�?`~/.flowix/boot/boot.json`, �?`system.json` (tag 布局) 平级�?//!   文件�?��, 职责更清晰�?//! - 每�?�?��都上报一欰��远�?�� `device_id` upsert: 首�?�?��插入登�?�?
-//!   后续�?��刷新同一行的 `last_seen_at` / app_version / locale / timezone�?//! - `registered=true` �?��示本机至少成功登记过一�? 不再作为跳过网络�?//!   fast-path�?
+//! 设备登记：使用应用首次安装时生成的随机 `device_id` 向 Supabase
+//! 登记安装和刷新 `last_seen_at`。
+//!
+//! 这里只上报版本和平台所需的最小字段，不读取 hostname、系统 machine ID、
+//! locale 或 timezone，也不构造稳定机器指纹。
+//! - 启动登记使用 fire-and-forget 异步任务，不阻塞主线程。
+//! - 启动后等待 `REGISTRATION_DELAY_SECS`，避开启动早期资源竞争。
+//! - 本地状态写入 `~/.flowix/boot/boot.json`。
+//! - 每次启动按 `device_id` 登记：首次写入，后续只刷新
+//!   `last_seen_at`、`app_version`、`os` 和 `arch`。
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use machine_uid::get as get_machine_uid;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -45,7 +48,7 @@ pub struct BootFile {
     pub user_info: UserInfo,
 }
 
-/// 设�?登�?子�?�?── �?��异�?上报的本机指纹�?�?+ 尝试状态�?
+/// 设备登记子对象：保存随机设备 ID 和登记尝试状态。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfo {
@@ -276,18 +279,8 @@ struct DevicePayload {
     device_id: Uuid,
     os: String,
     arch: String,
-    /// FNV-1a 64-bit hash of hostname, 16 hex chars。仅指纹用�? 不落原�? hostname�?
-    hostname_hash: Option<String>,
-    /// `machine_uid::get()` 的稳�?per-machine ID (macOS IOPlatformUUID /
-    /// Windows MachineGuid / Linux /etc/machine-id)。失败时 None�?
-    machine_id: Option<String>,
-    /// FNV-1a 64-bit hash of `os:arch:hostname`, 16 hex chars, 用于服务�?��字�?去重�?
-    machine_fingerprint: String,
     app_version: String,
-    locale: Option<String>,
-    timezone: Option<String>,
     installed_at: DateTime<Utc>,
-    app_user_agent: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,36 +294,13 @@ struct RegistrationResponse {
 fn collect_payload(boot: &BootFile, app_version: &str) -> DevicePayload {
     let os = std::env::consts::OS.to_string();
     let arch = std::env::consts::ARCH.to_string();
-    let hostname = get_hostname().unwrap_or_default();
-    let hostname_hash = if hostname.is_empty() {
-        None
-    } else {
-        Some(fnv1a_hex(&hostname))
-    };
-    let machine_id = get_machine_id_safe();
-    let machine_fingerprint = fnv1a_hex(&format!("{os}:{arch}:{hostname}"));
     let app_version = app_version.to_string();
-    let locale = std::env::var("LANG")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let timezone = std::env::var("TZ")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let app_user_agent = format!("Flowix/{app_version} ({os}/{arch})");
     DevicePayload {
         device_id: boot.user_info.device_id,
         os,
         arch,
-        hostname_hash,
-        machine_id,
-        machine_fingerprint,
         app_version,
-        locale,
-        timezone,
         installed_at: boot.user_info.installed_at,
-        app_user_agent,
     }
 }
 
@@ -394,49 +364,6 @@ async fn post_registration(
         .await
         .map_err(|e| format!("parse: {e}"))
 }
-
-/// `gethostname(2)` / `GetComputerNameEx` 包�?。失败返回空�? 上报字�?
-/// 退化为 None�?
-fn get_hostname() -> Option<String> {
-    let raw = match hostname::get() {
-        Ok(name) => name,
-        Err(_) => return None,
-    };
-    let s = raw.into_string().ok()?.trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
-}
-
-/// `machine-uid` crate 在所有平台都返回稳定 per-machine ID; 但少数硬化镜�?/// 上可�?IO 失败, 这里�?`catch_unwind` 兜一�? 避免�?��任务 panic�?
-fn get_machine_id_safe() -> Option<String> {
-    let result = std::panic::catch_unwind(|| get_machine_uid().ok().map(|s| s.trim().to_string()));
-    match result {
-        Ok(Some(s)) if !s.is_empty() => Some(s),
-        Ok(_) => None,
-        Err(_) => {
-            tracing::warn!("[device-reg] machine-uid panicked; falling back to None");
-            None
-        }
-    }
-}
-
-/// FNV-1a 64-bit, 输出 16 hex 字�?。零依赖、跨 Rust 版本稳定 ── 不需�?/// 密码学强�? 仅做服务�?��重指纹�?
-fn fnv1a_hex(input: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in input.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
-/// (占位) ── 当前实际�?FNV-1a, 这里�?��想用 `DefaultHasher` 但跨 Rust
-/// 版本不稳定�?保留空�?避免后续�?���?
-#[allow(dead_code)]
-fn _placeholder() {}
 
 #[cfg(unix)]
 fn set_file_owner_only_perms(path: &Path) {
@@ -537,17 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn fnv1a_is_stable() {
-        let a = fnv1a_hex("macbook");
-        let b = fnv1a_hex("macbook");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 16);
-        let c = fnv1a_hex("macbooK");
-        assert_ne!(a, c, "FNV-1a should distinguish case");
-    }
-
-    #[test]
-    fn collect_payload_uses_local_env() {
+    fn collect_payload_contains_only_random_id_and_platform_fields() {
         let boot = fresh_boot();
         let payload = collect_payload(&boot, "9.8.7");
         assert_eq!(payload.os, std::env::consts::OS);
@@ -555,7 +472,18 @@ mod tests {
         assert_eq!(payload.device_id, boot.user_info.device_id);
         assert_eq!(payload.installed_at, boot.user_info.installed_at);
         assert_eq!(payload.app_version, "9.8.7");
-        assert!(payload.app_user_agent.starts_with("Flowix/9.8.7"));
+
+        let json = serde_json::to_value(payload).unwrap();
+        let keys = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec!["appVersion", "arch", "deviceId", "installedAt", "os"]
+        );
     }
 
     #[test]

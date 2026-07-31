@@ -566,11 +566,8 @@ fn dispatch_modify_event_rekeys_orphan_disk_key_as_new_document() {
 // processor �? dispatch 的输出是正��?rename_memo_file 调用�?
 #[test]
 fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
-    use crate::watcher::filter::{run_pipeline, FileRevision, PathFilter, SelfWriteMark};
-    use crate::watcher::path::normalize_for_compare;
+    use crate::watcher::filter::{run_pipeline, PathFilter};
     use crate::watcher::whitelist::WhitelistConfig;
-    use std::path::PathBuf;
-    use std::time::Instant;
 
     let (mf, base) = fresh_memo_file();
     let (filename, old_path) = seed_registered_md(&mf, &base, "Original");
@@ -583,49 +580,32 @@ fn gui_title_edit_full_pipeline_preserves_id_and_timestamps() {
     let original_created = original.created_at;
     let original_updated = original.updated_at;
 
-    // ====== Step 1: GUI 写盘�?mark_self_write(OLD) ======
-    let recent = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
-        PathBuf,
-        SelfWriteMark,
-    >::new()));
-    recent.lock().unwrap().insert(
-        normalize_for_compare(&old_path),
-        SelfWriteMark {
-            marked_at: Instant::now(),
-            expected_revision: FileRevision::read(&old_path),
-        },
-    );
-
-    // ====== Step 2: fs::rename(OLD �?NEW) ── 物理重命�?======
+    // ====== Step 1: fs::rename(OLD �?NEW) ── 物理重命�?======
     let new_filename = "Renamed.md".to_string();
     let new_path = base.join(&new_filename);
     std::fs::rename(&old_path, &new_path).expect("physical rename must succeed");
 
-    // ====== Step 3a: 妯℃嫙 notify From(OLD) 浜嬩欢杩涘叆 filter pipeline ======
+    // ====== Step 2a: 妯℃嫙 notify From(OLD) 浜嬩欢杩涘叆 filter pipeline ======
     let whitelist = std::sync::Arc::new(std::sync::RwLock::new(WhitelistConfig::load_or_default()));
     let path_filter = PathFilter {
         whitelist: whitelist.clone(),
     };
-    let last_emit = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
-        PathBuf,
-        Instant,
-    >::new()));
     let from_event = RawFsEvent::new(FsEventKind::Remove, old_path.clone());
-    let from_decision = run_pipeline(&from_event, &recent, &last_emit, &path_filter);
+    let from_decision = run_pipeline(&from_event, &path_filter);
     assert!(
         matches!(from_decision, crate::watcher::event::FilterDecision::Pass),
         "a marker for the old file content must not suppress its removal"
     );
 
-    // ====== Step 3b: 妯℃嫙 notify To(NEW) 浜嬩欢杩涘叆 filter pipeline ======
+    // ====== Step 2b: 妯℃嫙 notify To(NEW) 浜嬩欢杩涘叆 filter pipeline ======
     let to_event = RawFsEvent::new(FsEventKind::Create, new_path.clone());
-    let to_decision = run_pipeline(&to_event, &recent, &last_emit, &path_filter);
+    let to_decision = run_pipeline(&to_event, &path_filter);
     assert!(
         matches!(to_decision, crate::watcher::event::FilterDecision::Pass),
         "To(NEW) must pass through filter pipeline (NEW was not marked)"
     );
 
-    // ====== Step 4: processor dispatch_modify_event(NEW) ── �?(a) 分支 ======
+    // ====== Step 3: processor dispatch_modify_event(NEW) ── �?(a) 分支 ======
     let outcome = dispatch_modify_event(&mf, &watch_ctx(&base), &new_path, FsEventKind::Create)
         .expect("dispatch ok");
     let event = match outcome {

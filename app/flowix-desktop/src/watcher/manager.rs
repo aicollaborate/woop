@@ -47,7 +47,6 @@ pub struct MemoWatcher {
     _watcher: Option<RecommendedWatcher>,
     watched_roots: Arc<std::sync::RwLock<Vec<NotebookWatchContext>>>,
     recent_self_writes: Arc<Mutex<SelfWriteMap>>,
-    last_emit: Arc<Mutex<HashMap<PathBuf, Instant>>>,
     remove_coalescer: Option<RemoveCoalescer>,
     memo_file: Arc<std::sync::RwLock<MemoFile>>,
     whitelist: Arc<std::sync::RwLock<WhitelistConfig>>,
@@ -66,7 +65,6 @@ impl MemoWatcher {
             _watcher: None,
             watched_roots: Arc::new(std::sync::RwLock::new(Vec::new())),
             recent_self_writes: Arc::new(Mutex::new(HashMap::new())),
-            last_emit: Arc::new(Mutex::new(HashMap::new())),
             remove_coalescer: None,
             memo_file,
             whitelist: Arc::new(std::sync::RwLock::new(WhitelistConfig::load_or_default())),
@@ -122,7 +120,7 @@ impl MemoWatcher {
         let remove_coalescer_for_callback = remove_coalescer.clone();
         let app = app.clone();
         let recent = self.recent_self_writes.clone();
-        let last_emit = self.last_emit.clone();
+        let recent_for_worker = self.recent_self_writes.clone();
         let memo_file = self.memo_file.clone();
         let whitelist = self.whitelist.clone();
         let watched_roots = self.watched_roots.clone();
@@ -141,8 +139,6 @@ impl MemoWatcher {
                 };
                 handle_notify_event(
                     &memo_file,
-                    &recent,
-                    &last_emit,
                     &remove_coalescer_for_callback,
                     &whitelist,
                     &watched_roots,
@@ -183,7 +179,15 @@ impl MemoWatcher {
         let worker = std::thread::Builder::new()
             .name("memo-watcher-processor".into())
             .spawn(move || {
+                let mut processed_revisions = HashMap::<PathBuf, FileRevision>::new();
                 while let Ok((raw, ctx)) = worker_rx.recv() {
+                    if !should_process_stable_event(
+                        &raw,
+                        &recent_for_worker,
+                        &mut processed_revisions,
+                    ) {
+                        continue;
+                    }
                     // catch_unwind: 单个事件处理 panic 不能永久杀死 worker (否则后续事件
                     // 静默不处理)。panic 本身是 bug (见技术债务「unwrap panic」节), 这里只做
                     // 隔离 + 记录, 让 worker 继续处理后续事件。
@@ -240,10 +244,6 @@ impl MemoWatcher {
 /// 2. `last_emit` (�?��) —150ms 内同�?��事件�? 处理 FSEvents 双触�?
 fn handle_notify_event(
     memo_file: &Arc<std::sync::RwLock<MemoFile>>,
-    recent: &Arc<std::sync::Mutex<crate::watcher::filter::SelfWriteMap>>,
-    last_emit: &Arc<
-        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>>,
-    >,
     remove_coalescer: &RemoveCoalescer,
     whitelist: &Arc<std::sync::RwLock<WhitelistConfig>>,
     watched_roots: &Arc<std::sync::RwLock<Vec<NotebookWatchContext>>>,
@@ -258,7 +258,9 @@ fn handle_notify_event(
             tracing::debug!("[MemoWatcher] no notebook root for {}", path.display());
             continue;
         };
-        // 跑三�?filter pipeline: whitelist / self-write / debounce�?
+        // notify callback only performs cheap path filtering. Revision-aware
+        // self-write suppression and dedup happen after the worker observes a
+        // stable file snapshot.
         let fs_kind = FsEventKind::from_notify(&event.kind);
         if matches!(fs_kind, FsEventKind::Create | FsEventKind::Modify) {
             // A rename can arrive as Remove(old) followed by Create/Modify(new).
@@ -268,7 +270,7 @@ fn handle_notify_event(
             remove_coalescer.cancel_by_disk_key(&path);
         }
         let raw = RawFsEvent::new(fs_kind, path.clone());
-        match crate::watcher::filter::run_pipeline(&raw, recent, last_emit, &path_filter) {
+        match crate::watcher::filter::run_pipeline(&raw, &path_filter) {
             crate::watcher::event::FilterDecision::Pass => {}
             crate::watcher::event::FilterDecision::PassMutated(_) => {}
             crate::watcher::event::FilterDecision::Drop { reason } => {
@@ -296,6 +298,47 @@ fn handle_notify_event(
         // 重 `process` (含 `wait_for_markdown_copy_to_settle` ≤400ms + 磁盘读写) 移到
         // worker 线程串行 drain, 不阻塞 notify 共享线程。`send` 非阻塞 (unbounded channel)。
         let _ = worker_tx.send((raw, ctx));
+    }
+}
+
+fn should_process_stable_event(
+    event: &RawFsEvent,
+    recent_self_writes: &Arc<Mutex<SelfWriteMap>>,
+    processed_revisions: &mut HashMap<PathBuf, FileRevision>,
+) -> bool {
+    let key = normalize_for_compare(&event.path);
+    match event.kind {
+        FsEventKind::Create | FsEventKind::Modify => {
+            if !event.path.exists() {
+                processed_revisions.remove(&key);
+                return true;
+            }
+            crate::watcher::processor::wait_for_markdown_copy_to_settle(&event.path);
+            let Some(revision) = FileRevision::read(&event.path) else {
+                return true;
+            };
+            if crate::watcher::filter::self_write::is_exact_self_write(
+                &event.path,
+                &revision,
+                recent_self_writes,
+            ) {
+                return false;
+            }
+            if processed_revisions.get(&key) == Some(&revision) {
+                tracing::debug!(
+                    "[MemoWatcher] duplicate stable revision dropped: {}",
+                    event.path.display()
+                );
+                return false;
+            }
+            processed_revisions.insert(key, revision);
+            true
+        }
+        FsEventKind::Remove => {
+            processed_revisions.remove(&key);
+            true
+        }
+        FsEventKind::Other => false,
     }
 }
 
@@ -344,6 +387,47 @@ fn schedule_pending_remove(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn marked_revision(path: &Path) -> Arc<Mutex<SelfWriteMap>> {
+        let writes = Arc::new(Mutex::new(SelfWriteMap::new()));
+        writes.lock().unwrap().insert(
+            normalize_for_compare(path),
+            SelfWriteMark {
+                marked_at: Instant::now(),
+                expected_revision: FileRevision::read(path),
+            },
+        );
+        writes
+    }
+
+    #[test]
+    fn worker_passes_a_later_revision_on_the_same_self_written_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memo.md");
+        std::fs::write(&path, "ui revision").unwrap();
+        let writes = marked_revision(&path);
+        std::fs::write(&path, "agent revision").unwrap();
+        let event = RawFsEvent::new(FsEventKind::Modify, path);
+        let mut processed = HashMap::new();
+
+        assert!(should_process_stable_event(&event, &writes, &mut processed));
+    }
+
+    #[test]
+    fn worker_drops_exact_self_write_and_duplicate_stable_revisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memo.md");
+        std::fs::write(&path, "one revision").unwrap();
+        let writes = marked_revision(&path);
+        let event = RawFsEvent::new(FsEventKind::Modify, path.clone());
+        let mut processed = HashMap::new();
+
+        assert!(!should_process_stable_event(&event, &writes, &mut processed));
+
+        let unmarked = Arc::new(Mutex::new(SelfWriteMap::new()));
+        assert!(should_process_stable_event(&event, &unmarked, &mut processed));
+        assert!(!should_process_stable_event(&event, &unmarked, &mut processed));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

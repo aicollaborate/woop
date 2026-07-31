@@ -32,6 +32,30 @@ let currentPath: string | null = null;
 let currentIdentity: DocumentIdentity | null = null;
 let currentBuffer: DocumentBuffer = emptyDocumentBuffer();
 
+export type DocumentBufferChangeReason = 'edited' | 'loaded' | 'save_settled';
+type DocumentBufferChangeListener = (
+  identity: DocumentIdentity,
+  reason: DocumentBufferChangeReason,
+) => void;
+const documentBufferChangeListeners = new Set<DocumentBufferChangeListener>();
+
+export function subscribeDocumentBufferChanges(
+  listener: DocumentBufferChangeListener,
+): () => void {
+  documentBufferChangeListeners.add(listener);
+  return () => documentBufferChangeListeners.delete(listener);
+}
+
+export function notifyDocumentBufferChanged(
+  identity: DocumentIdentity,
+  reason: DocumentBufferChangeReason,
+): void {
+  const normalized = normalizeDocumentIdentity(identity);
+  for (const listener of [...documentBufferChangeListeners]) {
+    listener(normalized, reason);
+  }
+}
+
 export function getCurrentPath(): string | null {
   return currentPath;
 }
@@ -102,6 +126,7 @@ export function applyLoadedContent(
   if (!options?.preservePending) {
     buf.pendingContent = null;
   }
+  notifyDocumentBufferChanged(identity, 'loaded');
   return buf;
 }
 
@@ -146,12 +171,15 @@ export async function flushDocument(
         buf.pendingContent = null;
       }
       callbacks?.onSaved?.(writtenPath, writtenContent);
+      notifyDocumentBufferChanged(normalized, 'save_settled');
     },
     onCasRefused: (written) => {
       callbacks?.onCasRefused?.(written);
+      notifyDocumentBufferChanged(normalized, 'save_settled');
     },
     onError: (written, err) => {
       callbacks?.onError?.(written, err);
+      notifyDocumentBufferChanged(normalized, 'save_settled');
     },
   }, buf.content);
 }

@@ -234,7 +234,7 @@ export function applyRunEnded<T extends RunLifecycleThreadState>(
     activeRunId: isActiveRunEnd ? null : st.activeRunId,
     runs: keepRunningRuns(st.runs, effectiveRunId),
     lastRun: snapshotFromRun(finalRun, status, event.reason),
-    pendingAssistantId: null,
-    pendingReasoningId: null,
+    pendingAssistantId: isActiveRunEnd ? null : st.pendingAssistantId,
+    pendingReasoningId: isActiveRunEnd ? null : st.pendingReasoningId,
   };
 }

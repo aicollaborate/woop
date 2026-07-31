@@ -320,7 +320,7 @@ fn emit_updated_at(
     })
 }
 
-fn wait_for_markdown_copy_to_settle(path: &Path) {
+pub(crate) fn wait_for_markdown_copy_to_settle(path: &Path) {
     let mut last_len = None;
     let mut stable_samples = 0;
 
@@ -402,8 +402,6 @@ impl MemoEventProcessor {
                     Self::unregister_and_emit(app, memo_file, ctx, path);
                     return;
                 }
-                wait_for_markdown_copy_to_settle(path);
-
                 // Frontmatter-key-first 分流 ── 详情�?[`dispatch_modify_event`]�?
                 let outcome = match memo_file.read() {
                     Ok(mf) => dispatch_modify_event_with_mark(&mf, ctx, path, event.kind, |p| {

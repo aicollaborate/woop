@@ -169,7 +169,14 @@ describe("run lifecycle reducer", () => {
 
   it("keeps concurrent running runs when a stale background run ends", () => {
     const first = applyRunStarted(emptyState(), startEvent("run-1"));
-    const second = applyRunStarted(first, startEvent("run-2"));
+    const second = applyRunStarted(
+      {
+        ...first,
+        pendingAssistantId: "assistant-run-2",
+        pendingReasoningId: "reasoning-run-2",
+      },
+      startEvent("run-2"),
+    );
     const afterStaleEnd = applyRunEnded(
       second,
       endEvent("run-1", "late failure"),
@@ -177,6 +184,8 @@ describe("run lifecycle reducer", () => {
 
     expect(afterStaleEnd.isLoading).toBe(true);
     expect(afterStaleEnd.activeRunId).toBe("run-2");
+    expect(afterStaleEnd.pendingAssistantId).toBe("assistant-run-2");
+    expect(afterStaleEnd.pendingReasoningId).toBe("reasoning-run-2");
     expect(Object.keys(afterStaleEnd.runs)).toEqual(["run-2"]);
     expect(afterStaleEnd.runs["run-2"]?.status).toBe("running");
     expect(afterStaleEnd.lastRun).toMatchObject({

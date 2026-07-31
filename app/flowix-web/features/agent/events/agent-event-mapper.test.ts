@@ -192,6 +192,50 @@ describe("agent event mapper", () => {
     expect(second.messageId).toBe(first.messageId);
   });
 
+  it("drops legacy per-delta Claude envelope UUIDs for contiguous text folding", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "text",
+        thread_id: "claude-thread",
+        text: "fragment",
+        agent_type: "claude",
+        run_id: "run-1",
+        message_id:
+          "assistant-d9193ae4-86b5-47a6-9e85-1bb4ef0acc1c-block-1",
+        message_phase: "updated",
+        content_mode: "delta",
+      },
+      state(),
+    );
+
+    expect(event).toMatchObject({
+      kind: "text_delta",
+      agentType: "claude",
+      text: "fragment",
+    });
+    expect(event.messageId).toBeUndefined();
+  });
+
+  it("preserves stable Claude provider message ids", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "text",
+        thread_id: "claude-thread",
+        text: "fragment",
+        agent_type: "claude",
+        run_id: "run-1",
+        message_id: "assistant-06bbbb1512785f3d1da3e1f495c31702-block-1",
+        message_phase: "updated",
+        content_mode: "delta",
+      },
+      state(),
+    );
+
+    expect(event.messageId).toBe(
+      "assistant-06bbbb1512785f3d1da3e1f495c31702-block-1",
+    );
+  });
+
   it("adds a stable tool display summary without requiring UI schema knowledge", () => {
     const event = mapAgentChunkToEvent(
       {

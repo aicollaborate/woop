@@ -396,6 +396,288 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
   });
 
+  it("keeps Claude reasoning in one run-scoped row across a tool cycle", async () => {
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const threadId = "claude-live-reasoning-tool-cycle";
+    const runId = "claude-live-reasoning-run";
+    const store = useChatStore.getState();
+
+    store.bindThreadType(threadId, "claude");
+    const chunks: AgentChunk[] = [
+      {
+        kind: "stream_start",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+      },
+      {
+        kind: "reasoning",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        text: "first thought\n\n",
+        message_id: "reasoning-provider-message-1-block-0",
+        message_phase: "updated",
+        content_mode: "delta",
+        source_timestamp: 1_000,
+        source_sequence: 1,
+        source_subsequence: 0,
+      },
+      {
+        kind: "tool_call",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        id: "tool-cycle-1",
+        name: "Bash",
+        input: { command: "pwd" },
+        message_id: "tool-tool-cycle-1",
+        message_phase: "started",
+        source_timestamp: 1_100,
+        source_sequence: 2,
+        source_subsequence: 0,
+      },
+      {
+        kind: "tool_result",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        id: "tool-cycle-1",
+        name: "Bash",
+        result: { content: "/workspace" },
+        message_id: "tool-tool-cycle-1",
+        message_phase: "completed",
+        source_timestamp: 1_200,
+        source_sequence: 3,
+        source_subsequence: 0,
+      },
+      {
+        kind: "reasoning",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        text: "second thought",
+        message_id: "reasoning-provider-message-2-block-0",
+        message_phase: "updated",
+        content_mode: "delta",
+        source_timestamp: 1_300,
+        source_sequence: 4,
+        source_subsequence: 0,
+      },
+      {
+        kind: "text",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        text: "final answer",
+        message_id: "assistant-provider-message-2-block-1",
+        message_phase: "updated",
+        content_mode: "delta",
+        source_timestamp: 1_400,
+        source_sequence: 5,
+        source_subsequence: 0,
+      },
+      {
+        kind: "stream_end",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        reason: null,
+      },
+    ];
+
+    chunks.forEach((chunk) => store.dispatchAgentChunk(chunk));
+    store.flushAgentEventBuffer();
+
+    const messages =
+      useAgentConversationStore.getState().messageStates[threadId].messages;
+    const reasoning = messages.filter((message) => message.role === "reasoning");
+    const tools = messages.filter((message) => message.role === "tool");
+
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0]).toMatchObject({
+      id: `reasoning-${runId}`,
+      content: "first thought\n\nsecond thought",
+      isCompleted: true,
+    });
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      toolCallId: "tool-cycle-1",
+      isLoading: false,
+    });
+    expect(messages.map((message) => message.role)).toEqual([
+      "reasoning",
+      "tool",
+      "assistant",
+    ]);
+    expect(messages[2]).toMatchObject({ content: "final answer" });
+    expect(useChatStore.getState().threadStates[threadId]).toMatchObject({
+      isLoading: false,
+      activeRunId: null,
+      lastRun: { runId, status: "completed" },
+    });
+  });
+
+  it("completes a Claude reasoning-only row when the stream ends", async () => {
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const threadId = "claude-reasoning-only-end";
+    const runId = "claude-reasoning-only-run";
+    const store = useChatStore.getState();
+
+    store.bindThreadType(threadId, "claude");
+    store.dispatchAgentChunk({
+      kind: "stream_start",
+      thread_id: threadId,
+      run_id: runId,
+      agent_type: "claude",
+    });
+    store.dispatchAgentChunk({
+      kind: "reasoning",
+      thread_id: threadId,
+      run_id: runId,
+      agent_type: "claude",
+      text: "reasoning without final text",
+      message_id: "reasoning-provider-message-only-block-0",
+      message_phase: "updated",
+      content_mode: "delta",
+    });
+    store.dispatchAgentChunk({
+      kind: "stream_end",
+      thread_id: threadId,
+      run_id: runId,
+      agent_type: "claude",
+      reason: null,
+    });
+
+    const messageState =
+      useAgentConversationStore.getState().messageStates[threadId];
+    expect(messageState.messages).toMatchObject([
+      {
+        id: `reasoning-${runId}`,
+        role: "reasoning",
+        content: "reasoning without final text",
+        isCompleted: true,
+      },
+    ]);
+    expect(messageState.pendingReasoningId).toBeNull();
+  });
+
+  it("folds legacy Claude envelope text ids without crossing a tool boundary", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const threadId = "claude-live-envelope-text";
+    const runId = "claude-live-envelope-run";
+    const store = useChatStore.getState();
+
+    store.bindThreadType(threadId, "claude");
+    const chunks: AgentChunk[] = [
+      {
+        kind: "stream_start",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+      },
+      ...[
+        ["d9193ae4-86b5-47a6-9e85-1bb4ef0acc1c", "first "],
+        ["63038373-bb9a-446d-a640-6ea503e68857", "answer"],
+      ].map(
+        ([envelopeId, text], index): AgentChunk => ({
+          kind: "text",
+          thread_id: threadId,
+          run_id: runId,
+          agent_type: "claude",
+          text,
+          message_id: `assistant-${envelopeId}-block-1`,
+          message_phase: "updated",
+          content_mode: "delta",
+          source_timestamp: 1_000 + index,
+          source_sequence: 10 + index,
+          source_subsequence: 0,
+        }),
+      ),
+      {
+        kind: "tool_call",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        id: "legacy-text-tool",
+        name: "Bash",
+        input: { command: "pwd" },
+        message_id: "tool-legacy-text-tool",
+        message_phase: "started",
+        source_timestamp: 1_500,
+        source_sequence: 15,
+        source_subsequence: 0,
+      },
+      {
+        kind: "tool_result",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        id: "legacy-text-tool",
+        name: "Bash",
+        result: { content: "/workspace" },
+        message_id: "tool-legacy-text-tool",
+        message_phase: "completed",
+        source_timestamp: 1_600,
+        source_sequence: 16,
+        source_subsequence: 0,
+      },
+      ...[
+        ["b144b154-8e2a-4362-9dfc-c40c3ccfcda0", "second "],
+        ["3392bebc-236e-40e0-81b1-6b2da4e64653", "answer"],
+      ].map(
+        ([envelopeId, text], index): AgentChunk => ({
+          kind: "text",
+          thread_id: threadId,
+          run_id: runId,
+          agent_type: "claude",
+          text,
+          message_id: `assistant-${envelopeId}-block-1`,
+          message_phase: "updated",
+          content_mode: "delta",
+          source_timestamp: 2_000 + index,
+          source_sequence: 20 + index,
+          source_subsequence: 0,
+        }),
+      ),
+      {
+        kind: "stream_end",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "claude",
+        reason: null,
+      },
+    ];
+
+    chunks.forEach((chunk) => store.dispatchAgentChunk(chunk));
+    store.flushAgentEventBuffer();
+    now.mockRestore();
+
+    const messages =
+      useAgentConversationStore.getState().messageStates[threadId].messages;
+    expect(messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(messages[0].content).toBe("first answer");
+    expect(messages[2].content).toBe("second answer");
+    expect(messages[0].id).not.toBe(messages[2].id);
+    expect(messages[0].sourceSequence).toBe(10);
+    expect(messages[1].sourceSequence).toBe(15);
+    expect(messages[2].sourceSequence).toBe(20);
+  });
+
   it("applies buffered text chunks against conversation live messages", async () => {
     const { useChatStore } = await import("@features/agent/store/chat-store");
     const { useAgentConversationStore } = await import(
