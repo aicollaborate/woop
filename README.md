@@ -1,8 +1,8 @@
-<p align="center">
-  <img src="./docs/images/app-icon.png" width="120" alt="Flowix" />
-</p>
+<img src="./docs/images/app-icon.png" width="120" alt="Flowix" style="display: block; margin: 0 auto;" />
 
-<h2 align="center">Flowix</h2>
+<h2 align="center">Flowix Memo</h2>
+
+<p align="center">Notes for you. Memory for your agents.</p>
 
 <p align="center">
   <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="Supported platforms" /></a>
