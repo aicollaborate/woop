@@ -9,7 +9,7 @@
   <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/github/v/release/text2future/flowix" alt="Latest release" /></a>
 </p>
 
-![Flowix](./docs/images/readme-introduce.gif)
+<img src="./docs/images/readme-introduce.gif" width="100%" alt="Flowix" />
 
 **Flowix is a local document workspace built for AI Agents.** It is also displayed as Flowix Memo.
 
