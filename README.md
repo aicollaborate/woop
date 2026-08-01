@@ -1,4 +1,6 @@
-<img src="./docs/images/app-icon.png" width="120" alt="Flowix" style="display: block; margin: 0 auto;" />
+<p align="center">
+  <img src="./docs/images/app-icon.png" width="120" alt="Flowix" />
+</p>
 
 <h2 align="center">Flowix Memo</h2>
 
