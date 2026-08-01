@@ -2,11 +2,13 @@
   <img src="./docs/images/app-icon.png" width="120" alt="Flowix" />
 </p>
 
-<h2 align="center">Flowix Memo</h2>
+<h3 align="center">Flowix</h3>
 
 <p align="center">Notes for you, Memory for your agents.</p>
 
 <p align="center">Desktop · Local Markdown · Multi-Agent · MCP &amp; CLI · Lightweight</p>
+
+---
 
 <img src="./docs/images/readme-introduce.gif" width="100%" alt="Flowix" />
 
