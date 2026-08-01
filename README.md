@@ -6,10 +6,7 @@
 
 <p align="center">Notes for you, Memory for your agents.</p>
 
-<p align="center">
-  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="Supported platforms" /></a>
-  <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/github/v/release/text2future/flowix" alt="Latest release" /></a>
-</p>
+<p align="center">Desktop · Local Markdown · Multi-Agent · MCP &amp; CLI · Lightweight</p>
 
 <img src="./docs/images/readme-introduce.gif" width="100%" alt="Flowix" />
 
