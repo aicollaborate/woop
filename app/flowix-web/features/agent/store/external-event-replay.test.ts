@@ -202,6 +202,118 @@ describe("external event replay", () => {
     });
   });
 
+  it("keeps repeated Codex item ids isolated across runs", async () => {
+    const { replayExternalEventsForThread } = await import(
+      "@features/agent/store/external-event-replay"
+    );
+    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-conversation-store"
+    );
+    const threadId = "codex-reused-item-ids";
+    const firstRunId = "run-first";
+    const secondRunId = "run-second";
+    const runEvents = (
+      firstEventId: number,
+      runId: string,
+      question: string,
+      answer: string,
+      toolResult: string,
+      sourceTimestamp: number,
+    ) => [
+      event(firstEventId, threadId, {
+        kind: "user_message",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+        id: `user-${runId}`,
+        text: question,
+        timestamp: sourceTimestamp,
+      }),
+      event(firstEventId + 1, threadId, {
+        kind: "stream_start",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+      }),
+      event(firstEventId + 2, threadId, {
+        kind: "text",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+        message_id: "assistant-item_0",
+        message_phase: "completed",
+        content_mode: "snapshot",
+        source_timestamp: sourceTimestamp + 1,
+        source_sequence: 1,
+        source_subsequence: 0,
+        text: answer,
+      }),
+      event(firstEventId + 3, threadId, {
+        kind: "tool_call",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+        id: "tool-item_1",
+        name: "command_execution",
+        input: { command: "pwd" },
+        message_id: "tool-tool-item_1",
+        source_timestamp: sourceTimestamp + 2,
+        source_sequence: 2,
+        source_subsequence: 0,
+      }),
+      event(firstEventId + 4, threadId, {
+        kind: "tool_result",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+        id: "tool-item_1",
+        name: "command_execution",
+        result: toolResult,
+        message_id: "tool-tool-item_1",
+        source_timestamp: sourceTimestamp + 3,
+        source_sequence: 3,
+        source_subsequence: 0,
+      }),
+      event(firstEventId + 5, threadId, {
+        kind: "stream_end",
+        thread_id: threadId,
+        run_id: runId,
+        agent_type: "codex",
+        reason: null,
+      }),
+    ];
+
+    externalEventsMock.mockResolvedValueOnce([
+      ...runEvents(1, firstRunId, "question 1", "answer 1", "result 1", 1_000),
+      ...runEvents(7, secondRunId, "question 2", "answer 2", "result 2", 2_000),
+    ]);
+
+    expect(
+      await replayExternalEventsForThread(
+        useChatStore.setState,
+        useChatStore.getState,
+        "codex",
+        threadId,
+      ),
+    ).toBe(true);
+
+    const messages =
+      useAgentConversationStore.getState().messageStates[threadId].messages;
+    expect(messages.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "user", content: "question 1" },
+      { role: "assistant", content: "answer 1" },
+      { role: "tool", content: '"result 1"' },
+      { role: "user", content: "question 2" },
+      { role: "assistant", content: "answer 2" },
+      { role: "tool", content: '"result 2"' },
+    ]);
+    expect(messages[1].id).toBe("run-first::assistant::assistant-item_0");
+    expect(messages[4].id).toBe("run-second::assistant::assistant-item_0");
+    expect(messages[2].toolCallId).toBe("run-first::tool-call::tool-item_1");
+    expect(messages[5].toolCallId).toBe("run-second::tool-call::tool-item_1");
+  });
+
   it("folds legacy Claude reasoning ids into one row during database replay", async () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"

@@ -670,6 +670,8 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 } else {
                     "assistant"
                 };
+                let message_id =
+                    external_run_scoped_id(&event.runtime, &payload, role, &message_id);
                 let content = payload
                     .get("text")
                     .and_then(serde_json::Value::as_str)
@@ -678,7 +680,7 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 let content_mode = payload
                     .get("content_mode")
                     .and_then(serde_json::Value::as_str);
-                let stable_key = stable_message_id.as_ref().map(|id| format!("{role}:{id}"));
+                let stable_key = stable_message_id.as_ref().map(|_| message_id.clone());
                 let existing_index = stable_key
                     .as_ref()
                     .and_then(|key| message_indexes.get(key).copied());
@@ -709,17 +711,26 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 messages.push(message);
             }
             Some("tool_call") => {
-                let tool_call_id = payload
+                let raw_tool_call_id = payload
                     .get("id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(&message_id)
                     .to_string();
-                let mut message = external_history_message(
-                    format!("external-tool-{tool_call_id}"),
-                    "tool",
-                    String::new(),
-                    timestamp,
+                let tool_call_id = external_run_scoped_id(
+                    &event.runtime,
+                    &payload,
+                    "tool-call",
+                    &raw_tool_call_id,
                 );
+                let tool_message_id = if event.runtime == "codex" {
+                    message_id.clone()
+                } else {
+                    format!("external-tool-{raw_tool_call_id}")
+                };
+                let message_id =
+                    external_run_scoped_id(&event.runtime, &payload, "tool", &tool_message_id);
+                let mut message =
+                    external_history_message(message_id, "tool", String::new(), timestamp);
                 message.tool_call_id = Some(tool_call_id.clone());
                 message.tool_name = payload
                     .get("name")
@@ -732,13 +743,19 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 messages.push(message);
             }
             Some("tool_result") => {
-                let Some(tool_call_id) = payload
+                let Some(raw_tool_call_id) = payload
                     .get("id")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string)
                 else {
                     continue;
                 };
+                let tool_call_id = external_run_scoped_id(
+                    &event.runtime,
+                    &payload,
+                    "tool-call",
+                    &raw_tool_call_id,
+                );
                 let result = payload.get("result").cloned().unwrap_or_default();
                 let content = result
                     .as_str()
@@ -766,6 +783,24 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
         }
     }
     messages
+}
+
+fn external_run_scoped_id(
+    runtime: &str,
+    payload: &serde_json::Value,
+    role: &str,
+    item_id: &str,
+) -> String {
+    let run_id = payload
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    if runtime == "codex" {
+        if let Some(run_id) = run_id {
+            return format!("{run_id}::{role}::{item_id}");
+        }
+    }
+    item_id.to_string()
 }
 
 fn external_history_message(

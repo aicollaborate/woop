@@ -658,6 +658,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_event_history_scopes_reused_item_ids_by_run() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "codex-reused-item-ids";
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-run-1","text":"question 1","run_id":"run-1"}"#,
+            r#"{"kind":"text","message_id":"assistant-item_0","message_phase":"completed","content_mode":"snapshot","text":"answer 1","run_id":"run-1"}"#,
+            r#"{"kind":"tool_call","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","input":{"command":"pwd"},"run_id":"run-1"}"#,
+            r#"{"kind":"tool_result","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","result":"result 1","run_id":"run-1"}"#,
+            r#"{"kind":"stream_end","run_id":"run-1"}"#,
+            r#"{"kind":"user_message","id":"user-run-2","text":"question 2","run_id":"run-2"}"#,
+            r#"{"kind":"text","message_id":"assistant-item_0","message_phase":"completed","content_mode":"snapshot","text":"answer 2","run_id":"run-2"}"#,
+            r#"{"kind":"tool_call","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","input":{"command":"pwd"},"run_id":"run-2"}"#,
+            r#"{"kind":"tool_result","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","result":"result 2","run_id":"run-2"}"#,
+            r#"{"kind":"stream_end","run_id":"run-2"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "codex".to_string(),
+                    thread_id: thread_id.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(500 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let page = manager
+            .get_codex_event_messages_page(thread_id, None, 2)
+            .await
+            .unwrap()
+            .expect("database events should materialize");
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.content.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "question 1"),
+                ("assistant", "answer 1"),
+                ("tool", "result 1"),
+                ("user", "question 2"),
+                ("assistant", "answer 2"),
+                ("tool", "result 2"),
+            ]
+        );
+        assert_eq!(page.messages[1].id, "run-1::assistant::assistant-item_0");
+        assert_eq!(page.messages[4].id, "run-2::assistant::assistant-item_0");
+        assert_eq!(
+            page.messages[2].tool_call_id.as_deref(),
+            Some("run-1::tool-call::tool-item_1")
+        );
+        assert_eq!(
+            page.messages[5].tool_call_id.as_deref(),
+            Some("run-2::tool-call::tool-item_1")
+        );
+    }
+
+    #[tokio::test]
     async fn claude_event_page_materializes_snapshots_and_merges_deltas() {
         let manager = ThreadManager::for_tests();
         let thread_id = "claude-local-card-page";

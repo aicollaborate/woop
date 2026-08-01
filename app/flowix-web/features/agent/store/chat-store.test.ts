@@ -1863,7 +1863,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(threadState.activeRunId).toBe("run-codex-1");
     expect(message).toMatchObject({
       role: "tool",
-      toolCallId: "cmd-1",
+      toolCallId: "run-codex-1::tool-call::cmd-1",
       toolName: "command_execution",
       isLoading: false,
     });

@@ -85,7 +85,7 @@ describe("agent event mapper", () => {
       threadId: "codex-thread",
       agentType: "codex",
       text: "complete answer",
-      messageId: "assistant-item-1",
+      messageId: "run-1::assistant::assistant-item-1",
       messagePhase: "completed",
       contentMode: "snapshot",
       sourceTimestamp: 456,

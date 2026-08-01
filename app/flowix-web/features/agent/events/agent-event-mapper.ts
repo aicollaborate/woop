@@ -31,6 +31,16 @@ function resolveChunkRunId(
   return chunk.run_id ?? st?.activeRunId ?? createRunId(threadId);
 }
 
+function scopeCodexItemId(
+  agentType: AgentTypeKey,
+  runId: string,
+  role: "assistant" | "reasoning" | "tool" | "tool-call",
+  itemId: string | undefined,
+): string | undefined {
+  if (agentType !== "codex" || !itemId) return itemId;
+  return `${runId}::${role}::${itemId}`;
+}
+
 const CLAUDE_ENVELOPE_TEXT_MESSAGE_ID =
   /^assistant-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-block-\d+$/i;
 
@@ -105,10 +115,11 @@ export function mapAgentChunkToEvent(
         sourceSubsequence: 0,
       };
     case "text": {
-      const messageId = resolveTextMessageId(
+      const messageId = scopeCodexItemId(
         base.agentType,
-        base.messageId,
-        base.contentMode,
+        base.runId,
+        "assistant",
+        resolveTextMessageId(base.agentType, base.messageId, base.contentMode),
       );
       return supportsTextStreaming(base.agentType)
         ? { ...base, kind: "text_delta", text: chunk.text, messageId }
@@ -125,13 +136,26 @@ export function mapAgentChunkToEvent(
         messageId:
           base.agentType === "claude"
             ? `reasoning-${base.runId}`
-            : base.messageId,
+            : scopeCodexItemId(
+                base.agentType,
+                base.runId,
+                "reasoning",
+                base.messageId,
+              ),
       };
     case "tool_call":
       return {
         ...base,
         kind: "tool_call",
-        toolCallId: chunk.id,
+        messageId: scopeCodexItemId(
+          base.agentType,
+          base.runId,
+          "tool",
+          base.messageId,
+        ),
+        toolCallId:
+          scopeCodexItemId(base.agentType, base.runId, "tool-call", chunk.id) ??
+          chunk.id,
         name: chunk.name,
         input: chunk.input,
         display: createAgentToolDisplay({
@@ -144,7 +168,15 @@ export function mapAgentChunkToEvent(
       return {
         ...base,
         kind: "tool_result",
-        toolCallId: chunk.id,
+        messageId: scopeCodexItemId(
+          base.agentType,
+          base.runId,
+          "tool",
+          base.messageId,
+        ),
+        toolCallId:
+          scopeCodexItemId(base.agentType, base.runId, "tool-call", chunk.id) ??
+          chunk.id,
         name: chunk.name,
         result: chunk.result,
       };
