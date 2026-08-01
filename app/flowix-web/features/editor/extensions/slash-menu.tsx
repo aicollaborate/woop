@@ -349,6 +349,7 @@ function renderMenu(view: EditorView) {
 
   root.render(
     <SlashMenuDropdown
+      language={useUserSettingsStore.getState().settings.language}
       items={instance.items}
       selectedIndex={instance.selectedIndex}
       scrollSelectedItem={instance.scrollSelectedItem}
@@ -411,7 +412,12 @@ function openMenu(view: EditorView, editor: Editor, triggerFrom: number, deleteF
     refreshMenuFromEditor(view);
   });
   unsubscribeUserSettings = useUserSettingsStore.subscribe((state, previous) => {
-    if (state.settings.agents === previous.settings.agents) return;
+    if (
+      state.settings.agents === previous.settings.agents &&
+      state.settings.language === previous.settings.language
+    ) {
+      return;
+    }
     if (!isCurrentMenuView(view, openId) || activeEditor !== editor) return;
     refreshMenuFromEditor(view);
   });

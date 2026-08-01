@@ -902,6 +902,7 @@ const zhCN = {
     "editor.search.replace": "替换",
     "editor.search.replaceAll": "全部替换",
     "editor.bubble.askAI": "使用 AI 询问",
+    "editor.slash.ariaLabel": "斜杠命令",
     "editor.slash.label.quote": "引文",
     "editor.slash.label.codeBlock": "代码块",
     "editor.slash.label.table": "表格",

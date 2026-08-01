@@ -21,7 +21,7 @@ import {
   OverlayScrollbar,
   type OverlayScrollbarHandle,
 } from '@shared/ui/overlay-scrollbar';
-import { translate, useI18n, type AppLanguage, type I18nKey } from '@/lib/i18n';
+import { translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
 
 export type SlashMenuItemId =
   | 'blockquote'
@@ -79,6 +79,9 @@ export interface SlashMenuProps {
   onHover: (index: number) => void;
   /** 空态 CTA: 触发后跳到偏好设置的 AI Agents 配置列表。 */
   onAddAgent?: () => void;
+  /** 当前界面语言 ── 弹窗经命令式 createRoot 渲染在 I18nProvider 外,
+   *  useI18n() 拿不到上下文, 由宿主按 user-settings 的 language 传入。 */
+  language: AppLanguage;
 }
 
 const SLASH_MENU_SCROLL_PADDING_TOP = 20;
@@ -263,8 +266,8 @@ export const SlashMenuDropdown = ({
   onSelect,
   onHover,
   onAddAgent,
+  language,
 }: SlashMenuProps) => {
-  const { t } = useI18n();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const overlayScrollbarRef = useRef<OverlayScrollbarHandle | null>(null);
@@ -314,7 +317,7 @@ export const SlashMenuDropdown = ({
     <div
       className="slash-menu-dropdown"
       role="listbox"
-      aria-label="Slash commands"
+      aria-label={translate(language, 'editor.slash.ariaLabel')}
     >
       <OverlayScrollbar
         ref={overlayScrollbarRef}
@@ -338,12 +341,12 @@ export const SlashMenuDropdown = ({
               const selected = index === selectedIndex;
               const isAgentThreadItem = item.id.startsWith('agent-thread-');
               const prevItem = index > 0 ? items[index - 1] : null;
-              const sectionLabel = item.sectionKey ? t(item.sectionKey) : (item.section ?? '');
+              const sectionLabel = getSlashMenuItemSection(item, language);
               const prevSectionLabel = prevItem
-                ? (prevItem.sectionKey ? t(prevItem.sectionKey) : (prevItem.section ?? ''))
+                ? getSlashMenuItemSection(prevItem, language)
                 : null;
               const showSectionHeader = !prevItem || prevSectionLabel !== sectionLabel;
-              const displayLabel = item.labelKey ? t(item.labelKey) : (item.label ?? '');
+              const displayLabel = getSlashMenuItemLabel(item, language);
               const renderIcon = typeof Icon === 'string'
                 ? isAgentThreadItem ? (
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5">
@@ -406,7 +409,7 @@ export const SlashMenuDropdown = ({
             });
 
           if (items.length === 0 && !showAddAgentCta) {
-            return <div className="slash-menu-empty">{t('editor.slash.empty')}</div>;
+            return <div className="slash-menu-empty">{translate(language, 'editor.slash.empty')}</div>;
           }
 
           return (
@@ -414,7 +417,7 @@ export const SlashMenuDropdown = ({
               {showAddAgentCta && (
                 <Fragment>
                   <div className="slash-menu-header" role="presentation">
-                    <span>{t('editor.slash.section.agent')}</span>
+                    <span>{translate(language, 'editor.slash.section.agent')}</span>
                   </div>
                   <button
                     type="button"
@@ -425,7 +428,7 @@ export const SlashMenuDropdown = ({
                     }}
                   >
                     <span className="slash-menu-empty--cta-label">
-                      {t('editor.slash.empty.addAgent')}
+                      {translate(language, 'editor.slash.empty.addAgent')}
                     </span>
                   </button>
                 </Fragment>
