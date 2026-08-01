@@ -4,7 +4,7 @@
 
 <h2 align="center">Flowix Memo</h2>
 
-<p align="center">Notes for you. Memory for your agents.</p>
+<p align="center">Notes for you, Memory for your agents.</p>
 
 <p align="center">
   <a href="https://github.com/text2future/flowix/releases"><img src="https://img.shields.io/badge/Platform-macOS%20|%20Windows-0078D4" alt="Supported platforms" /></a>
