@@ -2,85 +2,65 @@
   <img src="./docs/images/app-icon.png" width="120" alt="Flowix" />
 </p>
 
-<h3 align="center">Flowix</h3>
+<h1 align="center">Notes for you,<br />Memory for your agents.</h1>
 
-<p align="center">Notes for you, Memory for your agents.</p>
+<p align="center"><strong>The Markdown notebook where your words seamlessly become durable context for AI agents.</strong></p>
 
-<p align="center">Desktop · Local Markdown · Multi-Agent · MCP &amp; CLI · Lightweight</p>
+<p align="center">
+  Markdown · Open Source · Multi Agent · MCP &amp; CLI
+</p>
+
+<p align="center">
+  <a href="https://github.com/text2future/flowix/releases"><b>Download</b></a> ·
+  <a href="https://flowix-memo.com/"><b>Website</b></a> ·
+  <a href="https://flowix-memo.com/docs/"><b>Docs</b></a>
+</p>
 
 ---
 
 <img src="./docs/images/readme-introduce.gif" width="100%" alt="Flowix" />
 
-**Flowix is a local document workspace built for AI Agents.** It is also displayed as Flowix Memo.
+## Flowix turns notes into working memory
 
-It brings everyday notes, task requirements, reference materials, agent conversations and outputs together into a single Markdown workflow, so context can accumulate over time and be continuously edited and reused.
+Write in Markdown, point an agent to the context it needs, and save the result back to the same note — ready to review, edit, and reuse next time.
 
-Flowix mainly helps solve these common problems:
+<img src="./docs/images/home-write.png" width="100%" alt="Flowix notes shown across light and dark themes" />
 
-- Prompts and task instructions scattered everywhere, hard to manage
-- Agents lacking stable context, repeatedly making the same mistakes
-- Workflows and valuable outputs from conversations that are hard to capture and reuse
+---
 
-In Flowix, a document can serve as a note, but also as an agent's task instructions, long-term memory and work results. AI collaboration no longer ends at a one-off chat; it gradually accumulates into knowledge you can review, edit and call upon again.
+## Keep work moving
 
-## What you can do with it
+Keep product work, development, research, and personal knowledge together, so agents can continue without starting over.
 
-### Use documents as context for agent work
+| Use case | What it does |
+| --- | --- |
+| **Product work** | Keep requirements, feedback, decisions, and PRDs up to date. |
+| **Software development** | Give coding agents the context to continue your project. |
+| **Research** | Keep sources, analysis, and conclusions together and reusable. |
+| **Personal knowledge** | Turn notes, plans, and preferences into useful agent context. |
 
-A document holds your notes, requirements and reference materials, and also provides the context an agent needs to summarize, rewrite, answer questions, break down tasks or write code. The agent's output can be written back into the same document, so each round of work feeds the next.
+<img src="./docs/images/home-nav.png" width="100%" alt="Flowix navigation for notes, conversations, tasks, and tags" />
 
-### Organize project context with notebooks
+---
 
-A notebook is simply a local folder. Keep different projects in separate notebooks.
+## Connect every agent to the same memory
 
-Switching notebooks also switches your default working context. This reduces information noise between projects and makes it easier to give an agent only the materials it needs to finish the task.
+Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **Hermes**, and other MCP or CLI tools — all working from the same notes and context.
 
-### Keep your content local for the long term
+<img src="./docs/images/home-agent.png" width="100%" alt="Flowix connecting Codex, Claude Code, OpenCode, Hermes, and Flowix Agent to the same note" />
 
-Notes are saved as plain Markdown files on your disk. You can open them directly in other editors, or hand them to your own sync drive, backup tool or version control system.
+---
 
-Your content is never locked into a proprietary cloud service. Even if you switch tools later, your documents stay readable, portable and usable.
+## Your notes stay local and under your control
 
-### Call different agents from within a document
+Flowix keeps your work as plain Markdown files on your device. You choose what agents can access, when context is sent, and how your files are synced, backed up, or versioned.
 
-Flowix supports a built-in AI Agent and can also connect to local CLI agents such as Claude Code, Codex and Hermes. For each task you control what an agent can see - for example the current note, a specific folder, an entire notebook or a project directory.
+- **Files you can open anywhere** — Your notes are saved as plain Markdown on your device, so you can read and edit them with other apps.
+- **Agents see only what you choose** — Share a single note, a folder, or a whole notebook — only when you want an agent to use it.
+- **Use the agents you already trust** — Connect Codex, Claude Code, OpenCode, or another external agent. Flowix shares only the context you choose, when you start a task.
+- **Sync and back up your way** — Use the sync, backup, or version-control tools you already trust. There's nothing to export.
 
-The clearer the context, the more stable an agent's output. Once the process is recorded, it's also easier to review, revise and keep iterating.
-
-The built-in agent uses a BYOK (Bring Your Own Key) model. Only when you actively send a model request is the selected context sent to the model provider you configured.
-
-### Connect to external agent workflows
-
-The Flowix CLI lets local agents perform non-interactive note operations;
-MCP lets external agent clients that support MCP read, search and update Flowix documents.
-
-For external agent clients, MCP is the recommended option. See the [help docs](https://flowix-memo.com/docs/) for configuration and tool details.
-
-## Use cases
-
-### Continuously iterating software products
-Requirements, prompts and workflows are consolidated in one place, so AI can pick up development from the latest document.
-
-### Social media content management
-Manage everything from topics to final drafts in Markdown; AI helps expand drafts and adapt them for multiple platforms.
-
-### Strategic research and analysis
-Archive materials, competitors and research frameworks together; AI summarizes and compares within context, with traceable conclusions.
-
-### Long-term personal learning plans
-Accumulate notes, excerpts, plans and reviews over the long term; AI answers questions and makes connections based on your knowledge base.
-
-## Core capabilities
-
-**Markdown and local folders**: data is directly accessible, and easy to back up, migrate, or track with version control<br>
-**Tags and properties**: structure information with inline tags and YAML frontmatter<br>
-**BYOK and multiple providers**: supports model services such as OpenAI, Anthropic and DeepSeek<br>
-**Built-in and local agents**: use the built-in agent, Claude Code, Codex or Hermes within a document<br>
-**CLI and MCP**: connect documents to local or external agent workflows<br>
-**Multi-window and multi-tab**: split notes into child windows and move tabs between windows
-
-![AI Agent](./docs/images/readme-agent.png)
+---
 
 ## Quick start
 
@@ -106,11 +86,3 @@ The development environment requires Node.js 20+, Rust 1.75+ and Tauri v2; the d
 ## License
 
 Flowix is open source under the MIT License.
-
-## More information
-
-Issues and Pull Requests are welcome.
-
-- Website: [https://flowix-memo.com/](https://flowix-memo.com/)
-- Help docs: [https://flowix-memo.com/docs/](https://flowix-memo.com/docs/)
-- GitHub: [https://github.com/text2future/flowix](https://github.com/text2future/flowix)
