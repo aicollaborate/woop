@@ -98,13 +98,8 @@ pub fn restore_memo_version(
         .save_memo(&id, &target_content)
     {
         Ok(_) => {
-            let commit = emit_updated_after_write(
-                state.inner(),
-                &app,
-                &id,
-                before,
-                Some(window.label()),
-            );
+            let commit =
+                emit_updated_after_write(state.inner(), &app, &id, before, Some(window.label()));
             let final_path = MemoService::new(&read_lock(&state.memo_file, "memo_file"))
                 .resolve_memo(&id)
                 .ok()?

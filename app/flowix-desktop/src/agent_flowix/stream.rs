@@ -44,12 +44,10 @@ enum ProviderStreamStart {
 }
 
 mod recovery;
-use recovery::{build_recovery_instruction, is_auto_resumable_mid_stream};
-pub(super) use recovery::{
-    classify_llm_failure, format_llm_unavailable_message, LlmFailureKind,
-};
 #[cfg(test)]
 pub(super) use recovery::extract_llm_error_message;
+use recovery::{build_recovery_instruction, is_auto_resumable_mid_stream};
+pub(super) use recovery::{classify_llm_failure, format_llm_unavailable_message, LlmFailureKind};
 
 impl AgentManager {
     /// Common end-of-cycle exit. Emits the message as a `Text` chunk

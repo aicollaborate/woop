@@ -11,6 +11,7 @@ import { HashIcon, PlusIcon } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
+import { isValidTagPath } from '@/lib/tag-path';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@shared/ui/dialog';
 import { Button } from '@shared/ui/button';
@@ -215,7 +216,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       setCreateTagError(t('memo.tag.createWithoutHash'));
       return;
     }
-    if (/[\s\p{P}]/u.test(name)) {
+    if (!isValidTagPath(name)) {
       setCreateTagError(t('memo.tag.createInvalid'));
       return;
     }
@@ -260,7 +261,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   }, []);
 
   // 行内重命名提交: 复用 moveTag (重命名 = 同父级 move 末段)。segment 字符
-  // 类与 TAG_REGEX [^/\s\p{P}]+ 一致; 冲突依赖后端 AlreadyExists 报错 toast,
+  // 与共享 tag path 校验一致; 冲突依赖后端 AlreadyExists 报错 toast,
   // 保持编辑态。成功后失效 mention 缓存 + 清 metadata, 并把 selectedTagId
   // 跟到新 fullPath (否则 metadata refresh 会用 validTagSelectionSet 校验掉
   // 旧路径, 丢失选中态)。
@@ -271,7 +272,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         setEditingTagId(null);
         return;
       }
-      if (/[/\s\p{P}]/u.test(trimmed)) {
+      if (!isValidTagPath(trimmed) || trimmed.includes('/')) {
         toast.error(t('memo.tag.renameInvalidChar'));
         return;
       }

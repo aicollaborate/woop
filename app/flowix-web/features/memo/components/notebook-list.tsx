@@ -15,6 +15,7 @@ import {
   type CloudSyncStatus,
 } from '@platform/tauri/client';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
+import { cloudSyncErrorMessage } from '@platform/tauri/errors';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
 import {
   computeNotebookDropPosition,
@@ -94,7 +95,7 @@ export function NotebookList({
     void cloud.listNotebookStates()
       .then((links) => {
         setCloudSyncedNotebookIds(
-          new Set(links.filter((link) => link.enabled).map((link) => link.localNotebookId)),
+          new Set(links.filter((link) => link.enabled).map((link) => link.notebookId)),
         );
       })
       .catch(() => {
@@ -353,12 +354,13 @@ export function NotebookList({
                         <span
                           className="flex h-6 w-6 items-center justify-center"
                           title={
-                            cloudSyncStatus?.lastError ??
-                            (cloudSyncInProgress
-                              ? t('notebook.cloudSync.syncing')
-                              : cloudSyncStatus?.state === 'success'
-                                ? t('notebook.cloudSync.complete')
-                                : t('notebook.cloudSync.title'))
+                            cloudSyncStatus?.lastError
+                              ? cloudSyncErrorMessage(cloudSyncStatus.lastError, t)
+                              : cloudSyncInProgress
+                                ? t('notebook.cloudSync.syncing')
+                                : cloudSyncStatus?.state === 'success'
+                                  ? t('notebook.cloudSync.complete')
+                                  : t('notebook.cloudSync.title')
                           }
                         >
                           {cloudSyncInProgress ? (

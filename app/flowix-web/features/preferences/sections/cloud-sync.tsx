@@ -8,6 +8,7 @@ import { errorMessage } from '@/lib/error-message';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { openUrl } from '@platform/tauri/opener';
+import { cloudSyncErrorMessage } from '@platform/tauri/errors';
 import {
   cloud,
   listenToCloudStateChanges,
@@ -109,7 +110,7 @@ export function CloudSyncSection() {
       setState(next);
       setPassword('');
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(cloudSyncErrorMessage(error, t));
     } finally {
       setBusy(false);
     }
@@ -303,7 +304,7 @@ export function CloudSyncSection() {
                       `${t('preferences.cloud.syncComplete')}: ↑${result.uploaded} ↓${result.downloaded}`,
                     );
                   })
-                  .catch((error) => toast.error(errorMessage(error)))
+                  .catch((error) => toast.error(cloudSyncErrorMessage(error, t)))
                   .finally(() => setBusy(false));
               }}
             >

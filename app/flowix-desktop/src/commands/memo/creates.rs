@@ -54,8 +54,7 @@ pub fn add_document(
             &title,
             &body,
             tag.as_deref().filter(|value| !value.trim().is_empty()),
-        )
-    {
+        ) {
         Ok(created) => created.memo,
         Err(e) => {
             eprintln!("[add_document] create_memo failed: {e}");

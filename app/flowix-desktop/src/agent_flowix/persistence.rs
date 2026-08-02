@@ -198,9 +198,7 @@ impl AgentManager {
         thread_id: &str,
         message: ThreadChatMessage,
     ) -> Result<(), AgentError> {
-        self.thread_manager
-            .add_message(thread_id, message)
-            .await?;
+        self.thread_manager.add_message(thread_id, message).await?;
         Ok(())
     }
 

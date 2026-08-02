@@ -566,6 +566,7 @@ pub fn run() {
             // notebook
             commands::notebook::get_notebooks,
             commands::notebook::create_notebook,
+            commands::notebook::create_notebook_from_cloud,
             commands::notebook::update_notebook,
             commands::notebook::delete_notebook,
             commands::notebook::clear_notebooks,

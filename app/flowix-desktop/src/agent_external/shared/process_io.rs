@@ -122,11 +122,7 @@ impl StreamingEmitBuffer {
         self.text.push_str(text);
     }
 
-    pub fn append_reasoning_with_metadata(
-        &mut self,
-        text: &str,
-        metadata: AgentChunkMetadata,
-    ) {
+    pub fn append_reasoning_with_metadata(&mut self, text: &str, metadata: AgentChunkMetadata) {
         if self.reasoning_metadata.is_none() {
             self.reasoning_metadata = Some(metadata);
         }

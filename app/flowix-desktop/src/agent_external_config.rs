@@ -20,12 +20,7 @@ use crate::agent_external::{claude, codex, hermes, opencode, simple_cli};
 
 /// 5 �?external agent �?binary_name (= AgentTypeKey = registry key)�?/// 顺序影响偏好设置列表呈现, 不影响逻辑�?
 pub const EXTERNAL_AGENT_KEYS: &[&str] = &[
-    "codex",
-    "claude",
-    "gemini",
-    "hermes",
-    "openclaw",
-    "opencode",
+    "codex", "claude", "gemini", "hermes", "openclaw", "opencode",
 ];
 
 pub struct AgentExternalConfig {

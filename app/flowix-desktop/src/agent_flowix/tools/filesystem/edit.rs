@@ -377,10 +377,20 @@ impl EditArgs {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn edit(
     arguments: &str,
     read_snapshot: Option<&str>,
     scope: &ToolScope,
+) -> ToolResult {
+    edit_with_memo(arguments, read_snapshot, scope, None).await
+}
+
+pub(super) async fn edit_with_memo(
+    arguments: &str,
+    read_snapshot: Option<&str>,
+    scope: &ToolScope,
+    memo_file: Option<&std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
 ) -> ToolResult {
     let args = match serde_json::from_str::<EditArgs>(arguments) {
         Ok(args) => args,
@@ -556,6 +566,25 @@ pub(super) async fn edit(
             matched_text.as_deref(),
             distance,
         ));
+    }
+
+    if let Some(memo_file) = memo_file {
+        match super::save_registered_memo(&path, &updated, memo_file) {
+            Ok(Some(saved)) => {
+                return ToolResult::success(edit_match_result(
+                    &saved.path,
+                    &updated,
+                    &args,
+                    match_type,
+                    line,
+                    byte_offset,
+                    matched_text.as_deref(),
+                    distance,
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => return ToolResult::error(error),
+        }
     }
 
     match tokio::fs::write(&path, updated.as_bytes()).await {

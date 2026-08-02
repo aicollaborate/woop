@@ -232,12 +232,7 @@ pub fn emit_with_commit_from_window(
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
     // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
-        emit_committed_via_dispatcher(
-            &dispatcher,
-            &event,
-            commit.as_ref(),
-            origin_window_label,
-        );
+        emit_committed_via_dispatcher(&dispatcher, &event, commit.as_ref(), origin_window_label);
     } else {
         let _ = app.emit(
             MEMO_EVENT,
@@ -250,13 +245,21 @@ pub fn emit_with_commit_from_window(
     }
     if let Some((notebook_id, note_id, operation)) = sync_change {
         if let Some(state) = app.try_state::<crate::app::state::AppState>() {
-            if let Err(error) =
-                state
-                    .cloud_sync
-                    .record_local_change(&notebook_id, &note_id, operation)
-            {
+            let fingerprint = commit
+                .as_ref()
+                .map(|commit| commit.content_hash.as_str())
+                .unwrap_or_else(|| match operation {
+                    flowix_sync::LocalChangeKind::Delete => "deleted",
+                    flowix_sync::LocalChangeKind::Put => "unobserved",
+                });
+            if let Err(error) = state.cloud_sync.record_v2_local_change(
+                &notebook_id,
+                &note_id,
+                operation,
+                fingerprint,
+            ) {
                 tracing::warn!(
-                    "failed to persist cloud sync outbox entry for {notebook_id}/{note_id}: {error}"
+                    "failed to persist cloud v2 dirty entity for {notebook_id}/{note_id}: {error}"
                 );
             }
         }

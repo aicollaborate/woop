@@ -27,10 +27,7 @@ pub async fn get_session_page(
         .map_err(|error| format!("failed to export OpenCode session: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "OpenCode session export failed: {}",
-            stderr.trim()
-        ));
+        return Err(format!("OpenCode session export failed: {}", stderr.trim()));
     }
     let value: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("invalid OpenCode session export: {error}"))?;
@@ -137,19 +134,19 @@ fn tool_message(id: String, part: &Value, timestamp: i64) -> ChatMessage {
         .or_else(|| state.get("error"))
         .cloned()
         .unwrap_or(Value::Null);
-    let content = result
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| if result.is_null() { String::new() } else { result.to_string() });
+    let content = result.as_str().map(str::to_string).unwrap_or_else(|| {
+        if result.is_null() {
+            String::new()
+        } else {
+            result.to_string()
+        }
+    });
     let mut message = history_message(id, "tool", content.clone(), timestamp);
     message.tool_call_id = part
         .get("callID")
         .and_then(Value::as_str)
         .map(str::to_string);
-    message.tool_name = part
-        .get("tool")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    message.tool_name = part.get("tool").and_then(Value::as_str).map(str::to_string);
     message.tool_input = state.get("input").cloned();
     message.tool_data = (!content.is_empty()).then_some(content);
     let completed = matches!(status, "completed" | "error" | "failed");
@@ -234,14 +231,24 @@ mod tests {
         assert_eq!(turns[0][0].content, "hello");
         assert_eq!(turns[0][1].role, "reasoning");
         assert_eq!(turns[0][2].tool_call_id.as_deref(), Some("call-1"));
-        assert_eq!(turns[0][2].tool_input.as_ref().unwrap()["filePath"], "/tmp/a");
+        assert_eq!(
+            turns[0][2].tool_input.as_ref().unwrap()["filePath"],
+            "/tmp/a"
+        );
         assert_eq!(turns[0][3].content, "done");
     }
 
     #[test]
     fn paginates_complete_user_turns() {
         let turns = (0..3)
-            .map(|index| vec![history_message(format!("u-{index}"), "user", index.to_string(), 0)])
+            .map(|index| {
+                vec![history_message(
+                    format!("u-{index}"),
+                    "user",
+                    index.to_string(),
+                    0,
+                )]
+            })
             .collect();
         let latest = paginate_turns(turns, None, 2);
         assert_eq!(latest.messages[0].content, "1");

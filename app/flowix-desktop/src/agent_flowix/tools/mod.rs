@@ -266,7 +266,7 @@ pub async fn execute_tool(
                 .await
         }
         ToolDispatchTarget::Filesystem => {
-            filesystem::execute_tool(tool_name, arguments, read_snapshot, &scope).await
+            filesystem::execute_tool(tool_name, arguments, read_snapshot, &scope, memo_file).await
         }
         ToolDispatchTarget::WebSearch => web_search::execute_tool(arguments).await,
         ToolDispatchTarget::Shell => shell::execute_tool(arguments, &scope).await,

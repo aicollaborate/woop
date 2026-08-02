@@ -90,7 +90,16 @@ pub(super) async fn read(arguments: &str, scope: &ToolScope) -> ToolResult {
     }))
 }
 
+#[cfg(test)]
 pub(super) async fn write(arguments: &str, scope: &ToolScope) -> ToolResult {
+    write_with_memo(arguments, scope, None).await
+}
+
+pub(super) async fn write_with_memo(
+    arguments: &str,
+    scope: &ToolScope,
+    memo_file: Option<&std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
+) -> ToolResult {
     #[derive(Deserialize)]
     struct Args {
         path: String,
@@ -126,6 +135,23 @@ pub(super) async fn write(arguments: &str, scope: &ToolScope) -> ToolResult {
 
     let append = args.append.unwrap_or(false);
     let content_to_write = content_for_write(&path, &args.content, append).await;
+
+    if !append {
+        if let Some(memo_file) = memo_file {
+            match super::save_registered_memo(&path, &content_to_write, memo_file) {
+                Ok(Some(saved)) => {
+                    return ToolResult::success(serde_json::json!({
+                        "path": saved.path.display().to_string(),
+                        "key": saved.key,
+                        "bytes_written": content_to_write.len(),
+                        "append": false,
+                    }));
+                }
+                Ok(None) => {}
+                Err(error) => return ToolResult::error(error),
+            }
+        }
+    }
 
     let result: std::io::Result<()> = if append {
         use tokio::io::AsyncWriteExt;

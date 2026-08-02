@@ -1,6 +1,7 @@
 import YAML, { isMap, isScalar, type YAMLMap } from 'yaml';
 import type { PropertyKind } from '@features/document/properties/presets';
 import { canonicalizePropertyKey } from '@features/document/properties/property-key';
+import { isValidTagPath } from '@/lib/tag-path';
 
 export const FRONTMATTER_RE = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 export const SYSTEM_FRONTMATTER_KEYS = new Set(['key']);
@@ -175,14 +176,10 @@ function normalizeDocumentTags(value: unknown): string[] {
       throw new FrontmatterPropertyError('invalid-tag', 'Every tag must be text');
     }
     const tag = item.trim();
-    const segments = tag.split('/');
-    if (
-      !tag
-      || segments.some((segment) => !segment || /[\s\p{P}]/u.test(segment))
-    ) {
+    if (!isValidTagPath(tag)) {
       throw new FrontmatterPropertyError(
         'invalid-tag',
-        'Tags cannot contain whitespace or punctuation; use / only for hierarchy',
+        'Tags cannot contain whitespace or punctuation other than - and _; use / only for hierarchy',
       );
     }
     if (!seen.has(tag)) {

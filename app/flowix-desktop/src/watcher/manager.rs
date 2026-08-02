@@ -190,9 +190,11 @@ impl MemoWatcher {
                     // catch_unwind: 单个事件处理 panic 不能永久杀死 worker (否则后续事件
                     // 静默不处理)。panic 本身是 bug (见技术债务「unwrap panic」节), 这里只做
                     // 隔离 + 记录, 让 worker 继续处理后续事件。
-                    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                        || MemoEventProcessor::process(&raw, &worker_app, &worker_memo_file, &ctx),
-                    )) {
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            MemoEventProcessor::process(&raw, &worker_app, &worker_memo_file, &ctx)
+                        }))
+                    {
                         tracing::error!(
                             thread = "memo-watcher-processor",
                             path = %raw.path.display(),

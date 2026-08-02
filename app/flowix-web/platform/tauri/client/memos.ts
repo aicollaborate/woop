@@ -229,6 +229,8 @@ export const notebooks = {
   getAll: () => invoke<NotebookRecord[]>('get_notebooks'),
   create: (name: string, path: string, icon?: string | null) =>
     invoke<NotebookRecord>('create_notebook', { name, path, icon }),
+  createFromCloud: (id: string, name: string, path: string, icon?: string | null) =>
+    invoke<NotebookRecord>('create_notebook_from_cloud', { id, name, path, icon }),
   update: (id: string, name?: string, icon?: string | null) =>
     invoke<NotebookRecord | null>('update_notebook', { id, name, icon }),
   delete: (id: string) => invoke<boolean>('delete_notebook', { id }),

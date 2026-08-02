@@ -475,9 +475,10 @@ impl MemoFile {
                 std::path::PathBuf::from(&location.notebook.path).join(&location.memo.filename);
             let before_memo = MemoFile::index_entry_to_memo(&location.memo);
             let content = std::fs::read_to_string(&path)?;
-            let metadata = extract_document_metadata(&content).map_err(|error| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-            })?;
+            let metadata = extract_document_metadata_preserving_invalid_tag_paths(&content)
+                .map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+                })?;
             let next_tags: Vec<String> = metadata
                 .tags
                 .iter()
@@ -500,9 +501,10 @@ impl MemoFile {
                 continue;
             }
             let content_with_tags = if yaml_changed {
-                replace_frontmatter_tags(&content_with_body, &next_tags).map_err(|error| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-                })?
+                replace_frontmatter_tags_preserving_invalid_paths(&content_with_body, &next_tags)
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+                    })?
             } else {
                 content_with_body
             };

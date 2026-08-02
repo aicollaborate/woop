@@ -1,8 +1,9 @@
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { Decoration, DecorationSet } from 'prosemirror-view'
+import { isValidTagPath } from '@/lib/tag-path'
 
-const TAG_REGEX = /(?<=^|\n|\s)#((?:[^/\s\p{P}]+\/)*[^/\s\p{P}]+)/gu
+const TAG_REGEX = /(?<=^|\n|\s)#((?:(?:[-_]|[^/\s\p{P}])+\/)*(?:[-_]|[^/\s\p{P}])+)/gu
 
 export const Tag = Mark.create({
   name: 'tag',
@@ -53,6 +54,7 @@ export const Tag = Mark.create({
 
             const decorations: Decoration[] = []
             for (const match of plainText.matchAll(TAG_REGEX)) {
+              if (!isValidTagPath(match[1])) continue
               const fromChar = match.index!
               const toChar = fromChar + match[0].length
               const fromPM = charToPM[fromChar]

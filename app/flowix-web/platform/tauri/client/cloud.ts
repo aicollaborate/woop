@@ -9,14 +9,6 @@ export interface CloudUser {
   systemRole: string;
 }
 
-export interface CloudWorkspace {
-  id: string;
-  name?: string | null;
-  slug: string;
-  role: string;
-  kind?: string | null;
-}
-
 export interface CloudMembership {
   active: boolean;
   startsAt?: number | null;
@@ -33,19 +25,17 @@ export interface CloudState {
   authenticated: boolean;
   account?: {
     user: CloudUser;
-    workspace: CloudWorkspace;
+    protocolEpoch: 2;
   } | null;
   membership?: CloudMembership | null;
   lastError?: string | null;
 }
 
-export interface CloudNotebookLink {
-  localNotebookId: string;
-  workspaceId: string;
-  cloudNotebookId: string;
+export interface CloudNotebookSyncState {
+  notebookId: string;
   enabled: boolean;
-  lastCursor: number;
-  lastSyncAt?: number | null;
+  bootstrapRequired: boolean;
+  updatedAt: number;
 }
 
 export interface CloudNotebook {
@@ -120,14 +110,14 @@ export const cloud = {
   setEnabled: (enabled: boolean) =>
     invoke<CloudState>('cloud_set_enabled', { enabled }),
   getNotebookState: (notebookId: string) =>
-    invoke<CloudNotebookLink | null>('cloud_get_notebook_state', { notebookId }),
+    invoke<CloudNotebookSyncState | null>('cloud_get_notebook_state', { notebookId }),
   listNotebookStates: () =>
-    invoke<CloudNotebookLink[]>('cloud_list_notebook_states'),
+    invoke<CloudNotebookSyncState[]>('cloud_list_notebook_states'),
   listNotebooks: () => invoke<CloudNotebook[]>('cloud_list_notebooks'),
   linkNotebook: (notebookId: string, cloudNotebookId: string) =>
-    invoke<CloudNotebookLink>('cloud_link_notebook', { notebookId, cloudNotebookId }),
+    invoke<CloudNotebookSyncState>('cloud_link_notebook', { notebookId, cloudNotebookId }),
   setNotebookEnabled: (notebookId: string, enabled: boolean) =>
-    invoke<CloudNotebookLink>('cloud_set_notebook_enabled', { notebookId, enabled }),
+    invoke<CloudNotebookSyncState>('cloud_set_notebook_enabled', { notebookId, enabled }),
   refreshMembership: () =>
     invoke<CloudMembership>('cloud_refresh_membership'),
   listProducts: () => invoke<CloudProduct[]>('cloud_list_products'),
@@ -150,4 +140,3 @@ export function listenToCloudSyncStatusChanges(
 }
 
 // Files
-

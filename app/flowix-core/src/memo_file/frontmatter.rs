@@ -143,6 +143,32 @@ pub fn extract_frontmatter_properties(content: &str) -> Value {
 pub fn extract_document_metadata(
     content: &str,
 ) -> Result<DocumentMetadata, FrontmatterMetadataError> {
+    let mut metadata = extract_document_metadata_preserving_invalid_tag_paths(content)?;
+    metadata.tags = normalize_document_tag_values(
+        &metadata
+            .tags
+            .iter()
+            .cloned()
+            .map(Value::String)
+            .collect::<Vec<_>>(),
+    )?;
+    if let Value::Object(properties) = &mut metadata.properties {
+        if properties.contains_key("tags") {
+            properties.insert(
+                "tags".to_string(),
+                Value::Array(metadata.tags.iter().cloned().map(Value::String).collect()),
+            );
+        }
+    }
+    Ok(metadata)
+}
+
+/// Parse YAML structure and tag value types while preserving legacy tag paths
+/// that no longer satisfy the current path grammar. Mutation paths use this to
+/// avoid an unrelated legacy value blocking deletion of a different tag.
+pub(crate) fn extract_document_metadata_preserving_invalid_tag_paths(
+    content: &str,
+) -> Result<DocumentMetadata, FrontmatterMetadataError> {
     let Some(caps) = FRONTMATTER_RE.captures(content) else {
         return Ok(DocumentMetadata {
             properties: Value::Object(Map::new()),
@@ -163,12 +189,17 @@ pub fn extract_document_metadata(
         return Err(FrontmatterMetadataError::NonMapping);
     };
 
-    let tag_value = properties
-        .get("tags")
-        .or_else(|| properties.get("tag"));
+    let tag_value = properties.get("tags").or_else(|| properties.get("tag"));
     let tags = match tag_value {
         None => Vec::new(),
-        Some(Value::Array(values)) => normalize_document_tag_values(values)?,
+        Some(Value::Array(values)) => values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| match value {
+                Value::String(raw) => Ok(raw.clone()),
+                _ => Err(FrontmatterMetadataError::InvalidTagValue { index }),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
         Some(_) => return Err(FrontmatterMetadataError::InvalidTagsType),
     };
     if properties.contains_key("tags") || properties.contains_key("tag") {
@@ -207,9 +238,7 @@ fn normalize_document_tag_values(
     Ok(tags)
 }
 
-pub fn normalize_document_tags(
-    values: &[String],
-) -> Result<Vec<String>, FrontmatterMetadataError> {
+pub fn normalize_document_tags(values: &[String]) -> Result<Vec<String>, FrontmatterMetadataError> {
     normalize_document_tag_values(
         &values
             .iter()
@@ -239,14 +268,20 @@ pub fn replace_frontmatter_tags(
     tags: &[String],
 ) -> Result<String, FrontmatterMetadataError> {
     let tags = normalize_document_tags(tags)?;
+    replace_frontmatter_tags_preserving_invalid_paths(content, &tags)
+}
+
+/// Replace the YAML tag array without rejecting unrelated legacy paths.
+/// Callers must only use this after parsing an existing string array and
+/// applying a narrow mutation such as deleting one target tag.
+pub(crate) fn replace_frontmatter_tags_preserving_invalid_paths(
+    content: &str,
+    tags: &[String],
+) -> Result<String, FrontmatterMetadataError> {
     let replacement = serialized_tags_lines(&tags);
 
     let Some(caps) = FRONTMATTER_RE.captures(content) else {
-        return Ok(format!(
-            "---\n{}\n---\n{}",
-            replacement.join("\n"),
-            content
-        ));
+        return Ok(format!("---\n{}\n---\n{}", replacement.join("\n"), content));
     };
     let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("");
     let body = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -703,6 +738,31 @@ mod tests {
         assert_eq!(metadata.tags, vec!["product", "product/design"]);
         assert_eq!(metadata.properties["tags"][0], "product");
         assert_eq!(metadata.properties["status"], "draft");
+    }
+
+    #[test]
+    fn document_metadata_accepts_hyphen_and_underscore_tag_paths() {
+        let metadata = extract_document_metadata(
+            "---\ntags: [Long-Term-Task, General-Features/Nav_Bar]\n---\nbody\n",
+        )
+        .unwrap();
+        assert_eq!(
+            metadata.tags,
+            vec!["Long-Term-Task", "General-Features/Nav_Bar"]
+        );
+    }
+
+    #[test]
+    fn lenient_tag_replacement_preserves_unrelated_invalid_paths() {
+        let input = "---\nkey: abc12345\ntags: [\"legacy tag\", remove]\n---\nbody\n";
+        let metadata = extract_document_metadata_preserving_invalid_tag_paths(input).unwrap();
+        assert_eq!(metadata.tags, vec!["legacy tag", "remove"]);
+
+        let output =
+            replace_frontmatter_tags_preserving_invalid_paths(input, &["legacy tag".to_string()])
+                .unwrap();
+        assert!(output.contains("\"legacy tag\""));
+        assert!(!output.contains("\"remove\""));
     }
 
     #[test]

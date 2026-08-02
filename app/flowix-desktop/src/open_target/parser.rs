@@ -307,14 +307,10 @@ mod tests {
     #[test]
     fn memo_id_with_unicode_path() {
         // 物理�?��里含�?��, 必须�?PhysicalPath �?�� (非深�?�?        // v3 �?filename 不再�?`#<id>`, parser 阶�? memo_id = None�?
-        let t =
-            parse_open_target("/Users/rop/Documents/flowix/开发待办事�?笔�?.md").unwrap();
+        let t = parse_open_target("/Users/rop/Documents/flowix/开发待办事�?笔�?.md").unwrap();
         match t {
             OpenTarget::PhysicalPath { path, memo_id } => {
-                assert_eq!(
-                    path,
-                    "/Users/rop/Documents/flowix/开发待办事�?笔�?.md"
-                );
+                assert_eq!(path, "/Users/rop/Documents/flowix/开发待办事�?笔�?.md");
                 assert_eq!(memo_id, None);
             }
             _ => panic!("expected PhysicalPath"),

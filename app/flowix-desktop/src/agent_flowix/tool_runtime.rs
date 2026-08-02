@@ -115,8 +115,10 @@ impl AgentManager {
         // Sub-agent may only call tools it was given in its schema. Derive the
         // allowed-name set from `get_sub_agent_tools()` so this whitelist can
         // never drift from the schema the LLM actually sees.
-        let sub_agent_tool_names: Vec<String> =
-            tools.iter().map(|tool| tool.function.name.clone()).collect();
+        let sub_agent_tool_names: Vec<String> = tools
+            .iter()
+            .map(|tool| tool.function.name.clone())
+            .collect();
         let provider = match build_chat_provider(&config, system_prompt.clone(), &tools) {
             Ok(provider) => provider,
             Err(err) => {

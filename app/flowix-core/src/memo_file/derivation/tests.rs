@@ -434,6 +434,18 @@ fn punctuation_terminates_path() {
     assert_eq!(v, vec!["a/b".to_string()]);
 }
 
+#[test]
+fn hyphen_and_underscore_are_valid_inside_tag_segments() {
+    let v = extract_tags_from_body("#Long-Term-Task #General-Features/Nav_Bar");
+    assert_eq!(
+        v,
+        vec![
+            "Long-Term-Task".to_string(),
+            "General-Features/Nav_Bar".to_string(),
+        ]
+    );
+}
+
 /// 跨多段路径 + 行首 + 行内, 验证多种 anchor 形式都能匹配。
 #[test]
 fn path_tags_anchor_at_line_start_and_inline() {
@@ -474,6 +486,14 @@ fn normalize_tag_path_unit() {
     assert_eq!(normalize_tag_path("a/b"), Some("a/b".to_string()));
     assert_eq!(normalize_tag_path("a/b/c"), Some("a/b/c".to_string()));
     assert_eq!(
+        normalize_tag_path("Long-Term-Task"),
+        Some("Long-Term-Task".to_string())
+    );
+    assert_eq!(
+        normalize_tag_path("General-Features/Nav_Bar"),
+        Some("General-Features/Nav_Bar".to_string())
+    );
+    assert_eq!(
         normalize_tag_path("旅行/泰国/曼谷"),
         Some("旅行/泰国/曼谷".to_string())
     );
@@ -484,6 +504,8 @@ fn normalize_tag_path_unit() {
     assert_eq!(normalize_tag_path("/a"), None);
     assert_eq!(normalize_tag_path("a/"), None);
     assert_eq!(normalize_tag_path("/"), None);
+    assert_eq!(normalize_tag_path("---"), None);
+    assert_eq!(normalize_tag_path("___"), None);
 }
 
 /// 路径式 tag 仍走 strip_code_regions, NUL 占位不影响。

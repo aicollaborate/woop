@@ -21,6 +21,8 @@ export const notebookRepository = {
   list: (): Promise<Notebook[]> => notebooks.getAll(),
   create: (name: string, path: string, icon?: string | null) =>
     notebooks.create(name, path, icon),
+  createFromCloud: (id: string, name: string, path: string, icon?: string | null) =>
+    notebooks.createFromCloud(id, name, path, icon),
   update: (id: string, name?: string, icon?: string | null) =>
     notebooks.update(id, name, icon),
   /**

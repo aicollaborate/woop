@@ -10,17 +10,72 @@ pub use schema::{delete_tool, edit_tool, glob_tool, grep_tool, ls_tool, read_too
 
 use crate::agent_flowix::tools::{ToolResult, ToolScope};
 
+pub(super) struct RegisteredMemoWrite {
+    pub path: std::path::PathBuf,
+    pub key: String,
+}
+
+/// Route writes to an existing indexed memo through the domain service so the
+/// first Markdown title line, physical filename and memo index stay coherent.
+/// Non-memo files and copied files whose key resolves to another path fall back
+/// to the ordinary filesystem implementation.
+pub(super) fn save_registered_memo(
+    path: &std::path::Path,
+    content: &str,
+    memo_file: &std::sync::RwLock<flowix_core::memo_file::MemoFile>,
+) -> Result<Option<RegisteredMemoWrite>, String> {
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        return Ok(None);
+    }
+    let existing = match std::fs::read_to_string(path) {
+        Ok(existing) => existing,
+        Err(_) => return Ok(None),
+    };
+    let Some(key) = flowix_core::memo_file::extract_frontmatter_key(&existing) else {
+        return Ok(None);
+    };
+
+    let guard = memo_file
+        .read()
+        .map_err(|error| format!("memo_file read lock poisoned: {error}"))?;
+    let mut service = flowix_core::MemoService::new(&guard);
+    let resolved = match service.resolve_memo(&key) {
+        Ok(resolved) => resolved,
+        Err(flowix_core::FlowixError::NotFound(_)) => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let requested_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved_path =
+        dunce::canonicalize(&resolved.path).unwrap_or_else(|_| resolved.path.clone());
+    if requested_path != resolved_path {
+        return Ok(None);
+    }
+
+    let edited = service
+        .save_memo(&key, content)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(RegisteredMemoWrite {
+        path: edited.path,
+        key: edited.id,
+    }))
+}
+
 pub async fn execute_tool(
     tool_name: &str,
     arguments: &str,
     read_snapshot: Option<&str>,
     scope: &ToolScope,
+    memo_file: &std::sync::RwLock<flowix_core::memo_file::MemoFile>,
 ) -> ToolResult {
     match tool_name {
         "read" => operations::read(arguments, scope).await,
-        "write" => operations::write(arguments, scope).await,
+        "write" => operations::write_with_memo(arguments, scope, Some(memo_file)).await,
         "delete" => operations::delete(arguments, scope).await,
-        "edit" => edit::edit(arguments, read_snapshot, scope).await,
+        "edit" => edit::edit_with_memo(arguments, read_snapshot, scope, Some(memo_file)).await,
         "ls" => operations::ls(arguments, scope).await,
         "glob" => search::glob_paths(arguments, scope).await,
         "grep" => search::grep(arguments, scope).await,
@@ -35,8 +90,8 @@ mod tests {
 
     use flowix_core::memo_file::extract_frontmatter_key;
 
-    use super::edit::{edit, exact_match_boundary_error};
-    use super::operations::{delete, ls, read, write};
+    use super::edit::{edit, edit_with_memo, exact_match_boundary_error};
+    use super::operations::{delete, ls, read, write, write_with_memo};
     use super::path::glob_pattern_string;
     use super::search::glob_paths;
     use super::*;
@@ -63,6 +118,30 @@ mod tests {
             .expect("system time")
             .as_nanos();
         std::env::temp_dir().join(format!("flowix-{}-{}", name, suffix))
+    }
+
+    fn test_memo_file(
+        root: &std::path::Path,
+    ) -> (std::sync::RwLock<flowix_core::memo_file::MemoFile>, PathBuf) {
+        let notes = root.join("notes");
+        let config = root.join("config");
+        std::fs::create_dir_all(&notes).expect("create notes dir");
+        std::fs::create_dir_all(&config).expect("create config dir");
+        let mut memo_file = flowix_core::memo_file::MemoFile::new(config);
+        memo_file
+            .write_notebook_configs(&[flowix_core::memo_file::NotebookConfig {
+                id: "nb_test".to_string(),
+                name: "Test".to_string(),
+                icon: None,
+                path: notes.display().to_string(),
+                is_default: true,
+                sort: 0,
+                created_at: 0,
+                updated_at: 0,
+            }])
+            .expect("write notebook config");
+        memo_file.set_current_notebook(Some("nb_test".to_string()));
+        (std::sync::RwLock::new(memo_file), notes)
     }
 
     #[tokio::test]
@@ -464,6 +543,67 @@ mod tests {
             content,
             "---\nkey: abcdefgh\ntags: [old]\n---\n# Replacement\n"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agent_write_renames_registered_memo_when_title_changes() {
+        let root = unique_temp_dir("write-registered-memo-title");
+        let (memo_file, notes) = test_memo_file(&root);
+        let memo = memo_file
+            .read()
+            .unwrap()
+            .create_memo("Old Title", "# Old Title\nbody\n", None)
+            .unwrap();
+        let old_path = notes.join(&memo.filename);
+        let args = serde_json::json!({
+            "path": old_path.display().to_string(),
+            "content": "# Translated Title\nbody\n"
+        })
+        .to_string();
+
+        let result = write_with_memo(&args, &test_scope(notes.clone()), Some(&memo_file)).await;
+
+        assert!(result.success, "memo-aware write failed: {result:?}");
+        let new_path = notes.join("Translated Title.md");
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
+        assert_eq!(
+            result.data.unwrap()["path"].as_str(),
+            Some(new_path.to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agent_edit_renames_registered_memo_when_title_changes() {
+        let root = unique_temp_dir("edit-registered-memo-title");
+        let (memo_file, notes) = test_memo_file(&root);
+        let memo = memo_file
+            .read()
+            .unwrap()
+            .create_memo("Old Title", "# Old Title\nbody\n", None)
+            .unwrap();
+        let old_path = notes.join(&memo.filename);
+        let snapshot = std::fs::read_to_string(&old_path).unwrap();
+        let args = serde_json::json!({
+            "path": old_path.display().to_string(),
+            "old_string": "# Old Title",
+            "new_string": "# Edited Title"
+        })
+        .to_string();
+
+        let result = edit_with_memo(
+            &args,
+            Some(&snapshot),
+            &test_scope(notes.clone()),
+            Some(&memo_file),
+        )
+        .await;
+
+        assert!(result.success, "memo-aware edit failed: {result:?}");
+        assert!(!old_path.exists());
+        assert!(notes.join("Edited Title.md").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 

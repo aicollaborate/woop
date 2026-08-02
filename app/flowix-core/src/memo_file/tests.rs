@@ -2406,6 +2406,28 @@ fn delete_tag_removes_body_only_membership_but_not_code() {
 }
 
 #[test]
+fn delete_tag_ignores_unrelated_invalid_legacy_frontmatter_path() {
+    let (mf, base) = fresh_memo_file();
+    let memo = mf.create_memo("Legacy", "Body #1", None).unwrap();
+    let path = base.join(&memo.filename);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let content = content.replacen(
+        &format!("key: {}\n", memo.id),
+        &format!("key: {}\ntags:\n  - \"legacy tag\"\n", memo.id),
+        1,
+    );
+    std::fs::write(&path, content).unwrap();
+
+    let report = mf.delete_memo_tag_locked(Some("nb_test"), "1").unwrap();
+    assert_eq!(report.affected_memos, 1);
+
+    let content = std::fs::read_to_string(path).unwrap();
+    assert!(content.contains("legacy tag"));
+    assert!(!content.contains("#1"));
+    assert!(read_memo_tags(&mf, &memo.id).is_empty());
+}
+
+#[test]
 fn move_tag_rejects_invalid_paths() {
     let (mf, _base) = fresh_memo_file();
     let _ = mf.create_memo("Any", "#x", None).unwrap();

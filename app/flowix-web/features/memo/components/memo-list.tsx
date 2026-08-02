@@ -67,6 +67,7 @@ import { memoRepository, notebookRepository } from '@features/memo/services/memo
 import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
+import { cloudSyncErrorMessage } from '@platform/tauri/errors';
 
 import {
   COLOR_LABEL_KEYS,
@@ -165,6 +166,7 @@ export function MemoList() {
   // store 里 setNotebooks 之类也会触发 memos selector 重跑。Zustand v5 默认
   // 用 Object.is 比对, 同一个 memos 引用相等就跳过, 不需要 useMemo。
   const memos = useMemoStore((s) => s.memos);
+  const notebooks = useMemoStore((s) => s.notebooks);
   const selectedMemo = useMemoStore((s) => s.selectedMemo);
   const memoCardVariant = useUserSettingsStore((s) => s.settings.memoCardVariant);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
@@ -701,7 +703,7 @@ export function MemoList() {
       const notebooks = await cloud.listNotebooks();
       setRemoteNotebooks(notebooks);
     } catch (error) {
-      toast.error(`${t('notebook.cloudImport.failed')}: ${String(error)}`);
+      toast.error(cloudSyncErrorMessage(error, t));
     } finally {
       setRemoteNotebooksLoading(false);
     }
@@ -710,22 +712,29 @@ export function MemoList() {
   const handleSelectRemoteNotebook = async (remoteNotebook: CloudNotebook) => {
     if (remoteNotebook.synced || remoteNotebookSyncingId) return;
     try {
-      const path = await request<string | null>('select_directory');
-      if (!path) return;
       setRemoteNotebookSyncingId(remoteNotebook.id);
-      setCreateNotebookOpen(false);
-      const created = await createNotebook({
-        name: remoteNotebook.name,
-        path,
-        icon: normalizeNotebookIconId(remoteNotebook.icon),
-      });
-      if (!created) return;
-      await cloud.linkNotebook(created.id, remoteNotebook.id);
-      await cloud.syncNow(created.id);
+      const existing = notebooks.find((notebook) => notebook.id === remoteNotebook.id);
+      let localNotebook = existing;
+      if (!localNotebook) {
+        const path = await request<string | null>('select_directory');
+        if (!path) return;
+        setCreateNotebookOpen(false);
+        localNotebook = await createNotebook({
+          cloudNotebookId: remoteNotebook.id,
+          name: remoteNotebook.name,
+          path,
+          icon: normalizeNotebookIconId(remoteNotebook.icon),
+        }) ?? undefined;
+      } else {
+        setCreateNotebookOpen(false);
+      }
+      if (!localNotebook) return;
+      await cloud.linkNotebook(localNotebook.id, remoteNotebook.id);
+      await cloud.syncNow(localNotebook.id);
       triggerRefresh();
       toast.success(t('notebook.cloudImport.complete'));
     } catch (error) {
-      toast.error(`${t('notebook.cloudImport.failed')}: ${String(error)}`);
+      toast.error(cloudSyncErrorMessage(error, t));
     } finally {
       setRemoteNotebookSyncingId(null);
       setCreateNotebookMode('create');
@@ -797,7 +806,7 @@ export function MemoList() {
       }
     } catch (error) {
       logger.warn('update notebook failed', { error });
-      toast.error(`${t('memo.list.updateFailed')}: ${String(error)}`);
+      toast.error(cloudSyncErrorMessage(error, t));
     }
   };
 

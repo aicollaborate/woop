@@ -25,8 +25,9 @@ use rusqlite::OptionalExtension;
 
 use super::derivation::{apply_derived_memo_fields, extract_title_and_preview};
 use super::frontmatter::{
-    build_md_content, extract_document_metadata, merge_frontmatter, replace_frontmatter_tags,
-    MergeOverrides,
+    build_md_content, extract_document_metadata,
+    extract_document_metadata_preserving_invalid_tag_paths, merge_frontmatter,
+    replace_frontmatter_tags, replace_frontmatter_tags_preserving_invalid_paths, MergeOverrides,
 };
 use super::notebook::sqlite_to_io;
 use super::types::{DeleteTagReport, Memo, MoveTagReport, ReconcileReport};

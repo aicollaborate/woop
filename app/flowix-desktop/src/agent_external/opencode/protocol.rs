@@ -731,7 +731,10 @@ mod tests {
                 ("toolCallId", json!("call_bash")),
                 ("title", json!("ls -la")),
                 ("status", json!("completed")),
-                ("rawOutput", json!({ "stdout": "-rw-r--r--", "exit_code": 0 })),
+                (
+                    "rawOutput",
+                    json!({ "stdout": "-rw-r--r--", "exit_code": 0 }),
+                ),
             ],
         );
         assert!(matches!(

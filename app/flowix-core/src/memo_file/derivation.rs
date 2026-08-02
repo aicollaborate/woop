@@ -23,7 +23,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
 
-use super::frontmatter::{extract_body_content, extract_document_metadata};
+use super::frontmatter::{
+    extract_body_content, extract_document_metadata_preserving_invalid_tag_paths,
+};
 use super::types::{AgentThreadItem, Memo, TodoItem};
 
 /// 解码常见 HTML 实体为对应 Unicode 字符。title/preview 派生的最小集:
@@ -373,8 +375,9 @@ pub(crate) fn extract_tags_from_body(content: &str) -> Vec<String> {
     //   - 段间用 `/` 分隔
     // 末段不能以 `/` 收尾 — 尾部多余的 `/` 触发回溯, 留在 body 变孤儿文本
     // (参见 [normalize_tag_path] 进一步校验)。
-    static TAG_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?m)(^|[\s])#((?:[^/\s\p{P}]+/)*[^/\s\p{P}]+)").unwrap());
+    static TAG_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?m)(^|[\s])#((?:(?:[-_]|[^/\s\p{P}])+/)*(?:[-_]|[^/\s\p{P}])+)").unwrap()
+    });
 
     let mut seen = HashSet::new();
     let mut tags = Vec::new();
@@ -408,8 +411,9 @@ pub(crate) fn rewrite_body_tag_path(
     old_path: &str,
     new_path: Option<&str>,
 ) -> String {
-    static TAG_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?m)(^|[\s])#((?:[^/\s\p{P}]+/)*[^/\s\p{P}]+)").unwrap());
+    static TAG_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?m)(^|[\s])#((?:(?:[-_]|[^/\s\p{P}])+/)*(?:[-_]|[^/\s\p{P}])+)").unwrap()
+    });
 
     let body = extract_body_content(content);
     let body_offset = body.as_ptr() as usize - content.as_ptr() as usize;
@@ -505,7 +509,8 @@ fn inline_code_ranges(line: &str) -> Vec<(usize, usize)> {
 /// 防线, 保证入库的 tag 永远是可以被 step 3 的 prefix 替换正确处理
 /// 的合法路径。
 pub fn normalize_tag_path(raw: &str) -> Option<String> {
-    static INVALID_SEGMENT_CHAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s\p{P}]").unwrap());
+    static VALID_SEGMENT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(?:[-_]|[^/\s\p{P}])+$").unwrap());
 
     let s = raw.trim();
     if s.is_empty() || s.contains("//") {
@@ -515,7 +520,10 @@ pub fn normalize_tag_path(raw: &str) -> Option<String> {
         return None;
     }
     for seg in s.split('/') {
-        if seg.is_empty() || INVALID_SEGMENT_CHAR.is_match(seg) {
+        if seg.is_empty()
+            || seg.chars().all(|ch| matches!(ch, '-' | '_'))
+            || !VALID_SEGMENT_RE.is_match(seg)
+        {
             return None;
         }
     }
@@ -722,8 +730,25 @@ pub fn apply_derived_memo_fields(memo: &mut Memo, full_content: &str) {
     memo.thumbnail = extract_thumbnail(full_content);
     memo.todos = extract_todos_from_body(full_content);
     memo.agents = extract_agent_threads_from_body(full_content);
-    if let Ok(metadata) = extract_document_metadata(full_content) {
-        memo.tags = merge_document_tag_sources(metadata.tags, full_content);
+    if let Ok(metadata) = extract_document_metadata_preserving_invalid_tag_paths(full_content) {
+        let mut seen = HashSet::new();
+        let yaml_tags = metadata
+            .tags
+            .into_iter()
+            .filter_map(|raw| match normalize_tag_path(&raw) {
+                Some(tag) if seen.insert(tag.clone()) => Some(tag),
+                Some(_) => None,
+                None => {
+                    tracing::warn!(
+                        memo_id = %memo.id,
+                        tag = %raw,
+                        "ignoring invalid legacy frontmatter tag path while deriving memo metadata"
+                    );
+                    None
+                }
+            })
+            .collect();
+        memo.tags = merge_document_tag_sources(yaml_tags, full_content);
         memo.properties = metadata.properties;
     }
 }

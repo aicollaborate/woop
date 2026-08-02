@@ -244,7 +244,10 @@ mod tests {
                 threads.clone(),
             )),
             Arc::new(HermesCliManager::new(threads.clone())),
-            Arc::new(SimpleCliManager::new(SimpleCliKind::OpenClaw, threads.clone())),
+            Arc::new(SimpleCliManager::new(
+                SimpleCliKind::OpenClaw,
+                threads.clone(),
+            )),
             Arc::new(OpenCodeAcpManager::new(threads)),
         );
 

@@ -2,6 +2,7 @@ import type { EditorView } from '@tiptap/pm/view';
 import { createSuggestionExtension } from '@features/editor/extensions/shared/suggestion-menu';
 import { TagMentionDropdown } from '@features/editor/extensions/tag-mention/tag-mention-dropdown';
 import { queryMentionTags, type MentionTagItem } from '@features/editor/extensions/tag-mention/tag-mention-data';
+import { isValidTagPathQuery } from '@/lib/tag-path';
 
 const TRIGGER = '#';
 const WIDTH = 172;
@@ -28,8 +29,7 @@ export const TagMention = createSuggestionExtension<MentionTagItem>({
     const text = view.state.doc.textBetween(triggerFrom, selection.from, '\n', '\n');
     if (!text.startsWith(trigger)) return null;
     const query = text.slice(1);
-    const stripped = query.replace(/\//g, '');
-    if (/[\s\p{P}]/u.test(stripped)) return null;
+    if (!isValidTagPathQuery(query)) return null;
     return query;
   },
 

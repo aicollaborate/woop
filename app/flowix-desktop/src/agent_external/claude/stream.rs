@@ -83,7 +83,8 @@ impl ClaudeTurnEvents {
                 if let Some(index) = self.tool_result_indexes.get(id).copied() {
                     self.events[index] = (chunk.clone(), metadata.clone());
                 } else {
-                    self.tool_result_indexes.insert(id.clone(), self.events.len());
+                    self.tool_result_indexes
+                        .insert(id.clone(), self.events.len());
                     self.events.push((chunk.clone(), metadata.clone()));
                 }
             }

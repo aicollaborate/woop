@@ -18,6 +18,7 @@ interface CreateNotebookInput {
   name: string;
   path: string;
   icon?: string | null;
+  cloudNotebookId?: string;
 }
 
 interface UseCreateNotebookFlowOptions {
@@ -70,7 +71,7 @@ export function useCreateNotebookFlow({
   }, [onMemoListLoadingChange, onMemoListReloadNeeded, t]);
 
   const createNotebook = useCallback(
-    async ({ name, path, icon }: CreateNotebookInput): Promise<Notebook | null> => {
+    async ({ name, path, icon, cloudNotebookId }: CreateNotebookInput): Promise<Notebook | null> => {
       const notebookName = name.trim();
       const notebookPath = path.trim();
       if (!notebookName || !notebookPath) return null;
@@ -88,11 +89,9 @@ export function useCreateNotebookFlow({
       });
 
       try {
-        const created = await notebookRepository.create(
-          notebookName,
-          notebookPath,
-          icon,
-        ) as Notebook | null;
+        const created = await (cloudNotebookId
+          ? notebookRepository.createFromCloud(cloudNotebookId, notebookName, notebookPath, icon)
+          : notebookRepository.create(notebookName, notebookPath, icon)) as Notebook | null;
 
         if (!created) {
           toast.error(t('memo.list.createFailed'));
@@ -113,7 +112,9 @@ export function useCreateNotebookFlow({
         useTagStore.getState().setSelectedTagId(null);
         onMemoListQueryReset();
         onMemoListLoadingChange(true);
-        setCreationState({ status: 'importing', notebookId: created.id });
+        setCreationState(cloudNotebookId
+          ? { status: 'idle' }
+          : { status: 'importing', notebookId: created.id });
         onMemoListReloadNeeded();
         return created;
       } catch (error) {
