@@ -9,7 +9,7 @@ members = [
 
 # 锁定共用依赖到同一版本 ── 避免 backend / cli 走不一致版本。
 [workspace.package]
-version = "1.1.9"
+version = "1.1.10"
 edition = "2021"
 
 # 锁定共用依赖到同一版本 ── 避免 backend / cli 走不一致版本。
@@ -28,7 +28,7 @@ regex = "1.10"
 once_cell = "1.19"
 thiserror = "1"
 tracing = "0.1"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v7"] }
 nanoid = "0.4"
 dunce = "1.0"
 tempfile = "3"
