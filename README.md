@@ -39,7 +39,7 @@ Keep product work, development, research, and personal knowledge together, so ag
 | **Research** | Keep sources, analysis, and conclusions together and reusable. |
 | **Personal knowledge** | Turn notes, plans, and preferences into useful agent context. |
 
-<p align="center"><img src="./docs/images/home-nav.png" width="70%" alt="Flowix navigation for notes, conversations, tasks, and tags" /></p>
+<p align="center"><img src="./docs/images/home-nav.png" width="60%" alt="Flowix navigation for notes, conversations, tasks, and tags" /></p>
 
 ---
 
@@ -47,7 +47,7 @@ Keep product work, development, research, and personal knowledge together, so ag
 
 Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **Hermes**, and other MCP or CLI tools — all working from the same notes and context.
 
-<p align="center"><img src="./docs/images/home-agent.png" width="70%" alt="Flowix connecting Codex, Claude Code, OpenCode, Hermes, and Flowix Agent to the same note" /></p>
+<p align="center"><img src="./docs/images/home-agent.png" width="60%" alt="Flowix connecting Codex, Claude Code, OpenCode, Hermes, and Flowix Agent to the same note" /></p>
 
 ---
 
