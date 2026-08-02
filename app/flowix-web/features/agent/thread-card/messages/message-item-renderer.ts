@@ -53,6 +53,108 @@ function directChildDisplayToggle(parent: HTMLElement): HTMLButtonElement | null
   return null;
 }
 
+/**
+ * 块级增量渲染状态 ── 按 content 元素缓存已定型块的 HTML, 避免流式期间每帧
+ * marked.parse 整条消息全文。流式输出时只有最后一个块在变化, 前面的块已定型,
+ * 把它们的 HTML 缓存下来, 每帧只 parse 未完成的 tail, 把 marked.parse 的输入
+ * 从 O(全文) 降到 O(最后一个块)。
+ *
+ * 状态生命周期跟 content 元素绑定(WeakMap): content 被 replaceChildren 重建或
+ * 消息切换时自然失效。前缀校验(text.startsWith(finalizedText))兜底文本回退
+ * (编辑 / compact 重建 / 展开切换改裁剪)导致的前缀变化, 回退时重置走全量。
+ */
+interface BlockIncrementalState {
+  finalizedText: string;
+  finalizedHtml: string;
+}
+
+const blockIncrementalState = new WeakMap<HTMLElement, BlockIncrementalState>();
+
+/**
+ * 找出 text 中"最后一个完整块结尾"的位置, 之后的是正在写入的未完成块(tail)。
+ * 块边界 = 代码围栏之外的空行; 围栏(``` / ~~~)内的空行不算边界, 保证未闭合
+ * 代码块整体留在 tail 直到闭合。数学块($$ / \[)由 marked 扩展在 parse 时处理,
+ * 未闭合数学块留在 tail, 闭合后随其后空行 finalize, 视觉可接受。
+ *
+ * 返回值是 finalized 部分的长度(含结尾空行), text.slice(return) 即 tail。
+ */
+function findFinalizableBlockBoundary(text: string): number {
+  let inCodeFence = false;
+  let fenceChar: string | null = null;
+  let lastBoundary = 0;
+  let pos = 0;
+  const lines = text.split("\n");
+  for (const line of lines) {
+    if (inCodeFence) {
+      if (fenceChar !== null && line.trim().startsWith(fenceChar.repeat(3))) {
+        inCodeFence = false;
+        fenceChar = null;
+      }
+    } else {
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        inCodeFence = true;
+        fenceChar = fenceMatch[1][0];
+      }
+    }
+    pos += line.length + 1;
+    if (!inCodeFence && line.trim() === "") {
+      lastBoundary = pos;
+    }
+  }
+  return lastBoundary;
+}
+
+/**
+ * 增量计算消息 HTML。流式中(isCompleted=false)只 marked.parse 最后一个未完成块,
+ * 已定型块 HTML 从缓存复用; 完成时(isCompleted=true)把剩余 tail 全部 finalize
+ * 进缓存, 之后整条消息走缓存不再 parse。文本前缀变化时(回退/编辑/展开切换)自动
+ * 重置缓存走全量, 保证正确性。
+ */
+function renderIncrementalMarkdownHtml(
+  content: HTMLElement,
+  text: string,
+  isCompleted: boolean,
+): string {
+  let state = blockIncrementalState.get(content);
+  if (!state) {
+    state = { finalizedText: "", finalizedHtml: "" };
+    blockIncrementalState.set(content, state);
+  }
+
+  // 文本回退/前缀变化(编辑、compact 重建、展开切换改裁剪): 重置走全量
+  if (
+    text.length < state.finalizedText.length ||
+    !text.startsWith(state.finalizedText)
+  ) {
+    state.finalizedText = "";
+    state.finalizedHtml = "";
+  }
+
+  if (isCompleted) {
+    // 完成: 把剩余文本全部 finalize 进缓存, 之后整条消息走缓存不再 parse
+    if (state.finalizedText.length < text.length) {
+      const remaining = text.slice(state.finalizedText.length);
+      state.finalizedHtml += renderAgentThreadCardMarkdownToHtml(remaining);
+      state.finalizedText = text;
+    }
+    return state.finalizedHtml;
+  }
+
+  // 流式中: 把新定型的块(最后一个块边界之前)finalize 进缓存
+  const remaining = text.slice(state.finalizedText.length);
+  const boundary = findFinalizableBlockBoundary(remaining);
+  if (boundary > 0) {
+    const newlyFinalized = remaining.slice(0, boundary);
+    state.finalizedHtml += renderAgentThreadCardMarkdownToHtml(newlyFinalized);
+    state.finalizedText += newlyFinalized;
+  }
+
+  // tail = 未完成块, 每帧重新 parse(小, 只有最后一个块)
+  const tail = text.slice(state.finalizedText.length);
+  return state.finalizedHtml + (tail ? renderAgentThreadCardMarkdownToHtml(tail) : "");
+}
+
 export function renderAgentThreadCardBudgetedMarkdown(options: {
   message: AgentMessage;
   role: MessageDisplayBudgetRole;
@@ -68,7 +170,11 @@ export function renderAgentThreadCardBudgetedMarkdown(options: {
 
   fillWithAgentThreadCardMarkdownHtml(
     content,
-    renderAgentThreadCardMarkdownToHtml(display.text),
+    renderIncrementalMarkdownHtml(
+      content,
+      display.text,
+      !!message.isCompleted,
+    ),
     translate(context.language, "editor.threadCard.copyLatex"),
   );
 

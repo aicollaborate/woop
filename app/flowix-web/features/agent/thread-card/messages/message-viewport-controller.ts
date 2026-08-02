@@ -62,11 +62,16 @@ export class MessageViewportController {
   }
 
   captureRenderScrollState(): MessageRenderScrollState {
-    const previousScrollTop = this.body.scrollTop;
-    const wasNearBottom = this.isNearBottom();
+    // 流式跟随态(shouldFollowBottom=true)下 previousScrollTop 与
+    // wasNearBottom 都不会被消费 ── applyAfterRender 走 scrollToBottom 而非
+    // preserveScrollTop。跳过这两次 layout 读取, 避免流式期间每帧触发同步
+    // reflow(body.scrollTop / scrollHeight 读取会强制全 body layout)。
+    if (this.shouldFollowBottom) {
+      return { previousScrollTop: 0, shouldFollowStreaming: true };
+    }
     return {
-      previousScrollTop,
-      shouldFollowStreaming: this.shouldFollowBottom || wasNearBottom,
+      previousScrollTop: this.body.scrollTop,
+      shouldFollowStreaming: this.isNearBottom(),
     };
   }
 
@@ -103,6 +108,13 @@ export class MessageViewportController {
   }
 
   scrollToBottom(forceFollow = true): void {
+    // 写 scrollHeight(浏览器 clamp 到 scrollHeight - clientHeight = 底部)。
+    // 注意: 不能用 Number.MAX_SAFE_INTEGER 依赖浏览器 clamp ── WebKit 的
+    // 滚动内部精度(LayoutUnit)无法表示 2^53 那么大的值, 大概率被截断成 0,
+    // 反而把列表留在顶部(每次 DOM 重建后 scrollTop 被重置为 0, scrollToBottom
+    // 又没真正生效)。读 scrollHeight 确实触发一次 layout, 但这一帧本来就要
+    // 因 innerHTML 写入而 layout, 不额外增加 thrashing; 真正的 reflow 收益在
+    // captureRenderScrollState 跟随态跳过两次 layout 读取。
     this.body.scrollTop = this.body.scrollHeight;
     if (forceFollow) {
       this.shouldFollowBottom = true;

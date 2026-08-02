@@ -176,6 +176,15 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
+// ThreadMessageRenderController 在流式态把 render 合并到 trailing rAF (D),
+// 叠加 streaming-buffer 自身的 rAF flush ── 一次 flushAnimationFrame 不够让
+// 最新内容落地。flush 两帧覆盖 buffer flush + 合并渲染, 保证断言前 DOM 已
+// 反映最新 input。
+async function flushStreamingRender(): Promise<void> {
+  await flushAnimationFrame();
+  await flushAnimationFrame();
+}
+
 async function waitForEnabledSendButton(
   root: ParentNode,
 ): Promise<HTMLButtonElement> {
@@ -326,7 +335,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       text: "lo from card",
     });
 
-    await flushAnimationFrame();
+    await flushStreamingRender();
 
     expect(
       card?.querySelector(".agent-thread-card__run-status--running"),
@@ -833,6 +842,7 @@ describe("AgentThreadCard NodeView streaming", () => {
         }),
       }),
     );
+    await flushStreamingRender();
     expect(
       card?.querySelector(".agent-thread-card__message--user")?.textContent,
     ).toContain("write a short answer");
@@ -844,7 +854,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       thread_id: threadId,
       text: "Streamed answer",
     });
-    await flushAnimationFrame();
+    await flushStreamingRender();
 
     expect(
       card?.querySelector(".agent-thread-card__message--assistant")

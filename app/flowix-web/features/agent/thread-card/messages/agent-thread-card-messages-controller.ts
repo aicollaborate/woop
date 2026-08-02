@@ -122,6 +122,7 @@ export class AgentThreadCardMessagesController {
   }
 
   dispose(): void {
+    this.renderer.dispose();
     this.cache.dispose();
   }
 }

@@ -50,6 +50,8 @@ export class ThreadMessageRenderController {
   private renderedMessageRefs: ThreadState["messages"] = [];
   private reasoningCollapsedOverrides = new Map<string, boolean>();
   private displayExpandedOverrides = new Map<string, boolean>();
+  private renderRafId: number | null = null;
+  private pendingRenderInput: ThreadMessageRenderInput | null = null;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
     this.body = options.body;
@@ -64,6 +66,46 @@ export class ThreadMessageRenderController {
   }
 
   render(input: ThreadMessageRenderInput): void {
+    // 非流式态(空态/隐藏/完成)立即渲染, 不节流 ── 保证最终状态及时生效
+    if (!input.isLoading || !input.shouldRenderMessages) {
+      this.cancelPendingRender();
+      this.renderNow(input);
+      return;
+    }
+    // 流式中: rAF 合并(trailing edge)。claude text_delta 带 messageId 走
+    // flushSync 绕过 streaming-buffer, 每个 Tauri 事件(已按字节 batch 的
+    // token 组)都 applyPatch chat-store + syncLiveMessageState conversation-store
+    // -> 2 次 sync render; 高 token 率下一帧多事件 -> 多次 patch-last DOM
+    // 重建。rAF 合并把同帧内所有 render 调用收拢为帧末一次(渲染最新 input),
+    // 降到每帧最多 1 次。
+    // 延迟代价: 内容渲染推迟到下一帧(~16ms, 流式下不可察)。非流式态已走上面
+    // 立即路径, 不受影响。不用时间阈值 ── jsdom 的 performance.now 不随 rAF
+    // 前进, 时间阈值会让测试永远等不到渲染。
+    this.pendingRenderInput = input;
+    if (this.renderRafId != null) return;
+    this.renderRafId = requestAnimationFrame(this.flushPendingRender);
+  }
+
+  private readonly flushPendingRender = (): void => {
+    this.renderRafId = null;
+    const next = this.pendingRenderInput;
+    this.pendingRenderInput = null;
+    if (next) this.renderNow(next);
+  };
+
+  private cancelPendingRender(): void {
+    if (this.renderRafId != null) {
+      cancelAnimationFrame(this.renderRafId);
+      this.renderRafId = null;
+    }
+    this.pendingRenderInput = null;
+  }
+
+  dispose(): void {
+    this.cancelPendingRender();
+  }
+
+  private renderNow(input: ThreadMessageRenderInput): void {
     const scrollState = this.messageViewport.captureRenderScrollState();
     this.renderLoadingIndicator(input.isLoading);
 
