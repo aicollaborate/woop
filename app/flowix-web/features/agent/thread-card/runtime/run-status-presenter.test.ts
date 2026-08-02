@@ -41,28 +41,4 @@ describe("run-status-presenter", () => {
       totalTokens: 123,
     });
   });
-
-  it("falls back to chat-store thread snapshots while conversation run is absent", () => {
-    const badge = computeAgentThreadCardBadgeData({
-      threadState: threadState({
-        lastRun: {
-          runId: "thread-run",
-          agentType: "codex",
-          status: "completed",
-          startedAt: 100,
-          endedAt: 200,
-          model: "thread-model",
-          usage: { total_tokens: 123 },
-        },
-      }),
-      codexModel: "inherit",
-      typeKey: "codex",
-    });
-
-    expect(badge).toMatchObject({
-      model: "thread-model",
-      lastRunAt: 200,
-      totalTokens: 123,
-    });
-  });
 });

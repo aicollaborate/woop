@@ -140,18 +140,15 @@ function mergeHistoricalToolMessage(
   historical: ChatMessage,
 ): ChatMessage {
   if (existing.role !== "tool" || historical.role !== "tool") return existing;
+  // 历史优先(持久权威): id/content/timestamp/toolName/isLoading 取历史,
+  // live 仅补充历史缺失的运行期字段。原先 `...existing` 在前导致合并消息
+  // 用 live 的 id/content, 丢失历史持久数据。
   return {
-    ...existing,
-    content: existing.content || historical.content,
-    toolData: existing.toolData || historical.toolData,
-    toolName: existing.toolName || historical.toolName,
-    toolInput: existing.toolInput ?? historical.toolInput,
-    toolDisplay: existing.toolDisplay ?? historical.toolDisplay,
-    toolAgentType: existing.toolAgentType ?? historical.toolAgentType,
-    isLoading:
-      existing.isLoading === true && historical.isLoading === false
-        ? false
-        : existing.isLoading,
+    ...historical,
+    toolData: historical.toolData || existing.toolData,
+    toolInput: historical.toolInput ?? existing.toolInput,
+    toolDisplay: historical.toolDisplay ?? existing.toolDisplay,
+    toolAgentType: historical.toolAgentType ?? existing.toolAgentType,
   };
 }
 
@@ -197,6 +194,9 @@ export function mergeHistoricalMessages(
   }
 
   const missing: ChatMessage[] = [];
+  // 被 historical tool 合并替代的 existing tool 下标 ── 这些 live tool 不再
+  // 占 existing 位置, 合并消息(代表历史 tool)放 missing 的历史顺序位置。
+  const mergedExistingIndices = new Set<number>();
   for (const message of hydratedHistorical) {
     if (seenIds.has(message.id)) continue;
 
@@ -204,9 +204,12 @@ export function mergeHistoricalMessages(
       const existingIndex = existingToolIndexByCallId.get(message.toolCallId);
       if (existingIndex !== undefined) {
         if (mergedExisting === existing) mergedExisting = [...existing];
-        mergedExisting[existingIndex] = mergeHistoricalToolMessage(
-          mergedExisting[existingIndex],
-          message,
+        // 合并消息代表历史 tool, 放历史顺序位置(missing); existing 的 live
+        // tool 标记移除。原先替换 mergedExisting[existingIndex] 把合并消息留
+        // 在 live 区(existing 位置, 通常最前), 破坏历史时间序。
+        mergedExistingIndices.add(existingIndex);
+        missing.push(
+          mergeHistoricalToolMessage(mergedExisting[existingIndex], message),
         );
         continue;
       }
@@ -261,7 +264,25 @@ export function mergeHistoricalMessages(
     missing.push(message);
   }
 
-  return [...mergedExisting, ...missing];
+  // 按时间排序(同时戳时历史 order 小在前, 对齐 mergeMessagesForThreadRender)。
+  // 原先 [...mergedExisting, ...missing] 不排序, live 区整体在历史前导致顺序
+  // 错乱(合并消息卡在 live 区最前)。
+  const survivingExisting = mergedExisting.filter(
+    (_, index) => !mergedExistingIndices.has(index),
+  );
+  const ordered = [
+    ...missing.map((message, order) => ({ message, order })),
+    ...survivingExisting.map((message, order) => ({
+      message,
+      order: missing.length + order,
+    })),
+  ];
+  return ordered
+    .sort(
+      (a, b) =>
+        messageTime(a.message) - messageTime(b.message) || a.order - b.order,
+    )
+    .map(({ message }) => message);
 }
 
 function messageTime(message: ChatMessage): number {
@@ -353,6 +374,55 @@ export function mergeLiveMessagesIntoRenderableMessages(
   ) {
     return existingMessages;
   }
+  return merged;
+}
+
+/**
+ * 流式 fast path: 若 `renderable` 与 `current` 仅最后一条消息的内容不同
+ * (同 id 同 role, 前 N-1 条引用全等), 直接返回替换末条后的新数组, 跳过
+ * [`mergeLiveMessagesIntoRenderableMessages`] 的全量 fingerprint + sort
+ * (O(N·L) -> O(N) 引用比较)。流式 text_delta / reasoning_delta 每次只追加
+ * 末条内容, 前 N-1 条引用不变, 命中率极高。
+ *
+ * - 返回 `current` 本身: 无任何变化, 让上层相等短路。
+ * - 返回新数组: 末条已 swap。
+ * - 返回 `null`: 未命中 (长度不同 / 中间有变化 / 末条非 assistant·reasoning·end),
+ *   调用方走原 merge。
+ *
+ * 仅对末条 assistant / reasoning / end 启用: 这些角色的 [`hydrateToolDisplay`]
+ * 是 no-op, 直接复用 live 引用不会丢失 toolDisplay; tool / user 末条仍需走原
+ * merge 做 hydrate 与去重。顺序不变是流式追加的前提 ── applyTextChunk 只追加
+ * 内容不重排, 故跳过 sort 安全。
+ */
+export function trySwapLastLiveMessage(
+  current: ChatMessage[],
+  renderable: ChatMessage[],
+): ChatMessage[] | null {
+  const len = renderable.length;
+  if (len === 0 || len !== current.length) return null;
+
+  // 找第一个引用不同的位置; 全等则返回 current 让上层短路
+  let firstDiff = -1;
+  for (let i = 0; i < len; i += 1) {
+    if (renderable[i] !== current[i]) {
+      firstDiff = i;
+      break;
+    }
+  }
+  if (firstDiff === -1) return current;
+  // 唯一差异必须在末条; 中间有变化 (新增 / 重排 / 历史回放) 走原 merge
+  if (firstDiff !== len - 1) return null;
+
+  const currentLast = current[len - 1];
+  const renderableLast = renderable[len - 1];
+  const role = renderableLast.role;
+  if (role !== "assistant" && role !== "reasoning" && role !== "end") return null;
+  if (renderableLast.id !== currentLast.id || currentLast.role !== role) {
+    return null;
+  }
+
+  const merged = current.slice();
+  merged[len - 1] = renderableLast;
   return merged;
 }
 

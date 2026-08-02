@@ -52,6 +52,7 @@ export class ThreadMessageRenderController {
   private displayExpandedOverrides = new Map<string, boolean>();
   private renderRafId: number | null = null;
   private pendingRenderInput: ThreadMessageRenderInput | null = null;
+  private wasLoading = false;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
     this.body = options.body;
@@ -107,6 +108,11 @@ export class ThreadMessageRenderController {
 
   private renderNow(input: ThreadMessageRenderInput): void {
     const scrollState = this.messageViewport.captureRenderScrollState();
+    // run 结束下降沿: 流式末条仍是增量缓存的块切分态, 需在引用稳定(canReuse)
+    // 时强制 patch-last 走 forceFinalize 全量 re-parse, 修正 loose list / 多段
+    // blockquote。assistant 无 isCompleted, 这是它唯一的终态修正入口。
+    const loadingJustEnded = this.wasLoading && !input.isLoading;
+    this.wasLoading = input.isLoading;
     this.renderLoadingIndicator(input.isLoading);
 
     if (!input.shouldRenderMessages) {
@@ -121,6 +127,17 @@ export class ThreadMessageRenderController {
     this.pruneDisplayExpandedOverrides(input.messages);
 
     if (this.canReuseRenderedMessages(input.messages)) {
+      if (
+        loadingJustEnded &&
+        this.tryPatchLastRenderedMessage(
+          input.messages,
+          { isLoading: input.isLoading, ...scrollState },
+          true,
+        )
+      ) {
+        recordMessageRenderPlan("patch-last", input.messages.length);
+        return;
+      }
       recordMessageRenderPlan("noop", input.messages.length);
       return;
     }
@@ -155,7 +172,7 @@ export class ThreadMessageRenderController {
     recordMessageRenderPlan("replace-all", input.messages.length);
     const { list, rememberedMessages } = createRenderedAgentMessageList(
       input.messages,
-      this.createMessageRenderContext(),
+      this.createMessageRenderContext(input.messages, input.isLoading),
     );
 
     this.body.append(list, this.loadingIndicator);
@@ -263,7 +280,14 @@ export class ThreadMessageRenderController {
     return this.displayExpandedOverrides.get(message.id) ?? false;
   }
 
-  private createMessageRenderContext(): AgentThreadCardMessageRenderContext {
+  private createMessageRenderContext(
+    messages: ThreadState["messages"],
+    isLoading: boolean,
+  ): AgentThreadCardMessageRenderContext {
+    // 流式态下只有末条消息在增长; 末条且未完成(isCompleted)的才走块级增量,
+    // 其余(历史 / 已完成 / run 结束)走全量 re-parse 修正块切分。引用比较
+    // message === lastMessage 依赖 store 侧保持非末条消息引用稳定。
+    const lastMessage = messages[messages.length - 1];
     return {
       language: this.getLanguage(),
       getReasoningCollapsed: (message) => this.getReasoningCollapsed(message),
@@ -275,6 +299,8 @@ export class ThreadMessageRenderController {
         if (expanded) this.displayExpandedOverrides.set(messageId, true);
         else this.displayExpandedOverrides.delete(messageId);
       },
+      isStreaming: (message) =>
+        isLoading && message === lastMessage && !message.isCompleted,
     };
   }
 
@@ -297,6 +323,7 @@ export class ThreadMessageRenderController {
   private tryPatchLastRenderedMessage(
     messages: ThreadState["messages"],
     options: MessageRenderScrollOptions,
+    force = false,
   ): boolean {
     const nextRefs = patchLastRenderedAgentMessage(messages, {
       body: this.body,
@@ -304,8 +331,9 @@ export class ThreadMessageRenderController {
         list: this.renderedMessagesList,
         refs: this.renderedMessageRefs,
       },
-      context: this.createMessageRenderContext(),
+      context: this.createMessageRenderContext(messages, options.isLoading),
       afterRender: () => this.applyBodyScrollAfterRender(options),
+      force,
     });
     if (!nextRefs) return false;
     this.renderedMessageRefs = nextRefs;
@@ -322,7 +350,7 @@ export class ThreadMessageRenderController {
         list: this.renderedMessagesList,
         refs: this.renderedMessageRefs,
       },
-      context: this.createMessageRenderContext(),
+      context: this.createMessageRenderContext(messages, options.isLoading),
       afterRender: () => this.applyBodyScrollAfterRender(options),
     });
     if (!nextRefs) return false;

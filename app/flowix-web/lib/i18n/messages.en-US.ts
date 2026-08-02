@@ -999,6 +999,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "editor.tagMention.create": "New",
     "editor.tagMention.loadMore": "Load more",
     "editor.threadCard.running": "Running",
+    "editor.threadCard.failed": "Failed",
+    "editor.threadCard.cancelled": "Cancelled",
     "editor.threadCard.thinking": "Thinking",
     "editor.threadCard.aiRunning": "AI is working",
     "editor.threadCard.fullscreen": "Fullscreen",

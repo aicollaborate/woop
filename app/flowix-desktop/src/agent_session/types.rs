@@ -34,6 +34,43 @@ pub struct ChatMessage {
     pub is_collapsed: Option<bool>,
 }
 
+/// `ChatMessage.role` 的合法取值。存储层仍是 `String` (SQLite TEXT), 这个
+/// 枚举仅用于写入/读取处消除 magic string, 编译期防拼错。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageRole {
+    User,
+    Assistant,
+    Tool,
+    Reasoning,
+    System,
+    End,
+}
+
+impl MessageRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::Tool => "tool",
+            MessageRole::Reasoning => "reasoning",
+            MessageRole::System => "system",
+            MessageRole::End => "end",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "user" => Some(MessageRole::User),
+            "assistant" => Some(MessageRole::Assistant),
+            "tool" => Some(MessageRole::Tool),
+            "reasoning" => Some(MessageRole::Reasoning),
+            "system" => Some(MessageRole::System),
+            "end" => Some(MessageRole::End),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {

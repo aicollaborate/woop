@@ -31,9 +31,7 @@ pub struct AgentRuntimeConfig {
     pub flowix: Option<RuntimePathConfig>,
     pub codex: Option<RuntimePathConfig>,
     pub claude: Option<RuntimePathConfig>,
-    pub gemini: Option<RuntimePathConfig>,
     pub hermes: Option<RuntimePathConfig>,
-    pub openclaw: Option<RuntimePathConfig>,
     pub opencode: Option<RuntimePathConfig>,
 }
 
@@ -69,9 +67,7 @@ impl AgentUserMessage {
             "flowix" => config.flowix.as_ref(),
             "codex" => config.codex.as_ref(),
             "claude" => config.claude.as_ref(),
-            "gemini" => config.gemini.as_ref(),
             "hermes" => config.hermes.as_ref(),
-            "openclaw" => config.openclaw.as_ref(),
             "opencode" => config.opencode.as_ref(),
             _ => None,
         }

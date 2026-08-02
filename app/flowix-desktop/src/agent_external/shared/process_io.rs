@@ -50,10 +50,14 @@ where
     }
 }
 
-/// 流式文本合并的定�?flush 间隔 ── 与前�?`streaming-buffer.ts` �?rAF 帧率
-/// (~16ms) 对齐。partial 模式�?`claude --include-partial-messages` �?token
-/// 一�?stream_event, 后�?做�?称合并后, `agent-chunk` IPC emit 频率�?/// "�?token 一�?降到"每帧一�?�?
-pub const STREAM_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+/// 流式文本合并的定时 flush 间隔。partial 模式 (`claude --include-partial-messages`)
+/// 一 token 一 stream_event, 后端做帧级合并后, `agent-chunk` IPC emit 频率从
+/// "每 token 一次" 降到 "每 flush 一次"。120ms (~8fps): 配合前端
+/// syncLiveMessageState 的 fast path (每事件 O(1) swap), 大幅减少 IPC 与前端
+/// store set 次数, 视觉顿挫可接受 (burst 间隙无感)。stop 时末尾 120ms 文本可能
+/// 成 late data 被 UI 丢弃 (DB 仍持久化, 重载可见)。
+/// EOF / 工具边界 / 64KB burst 仍强制 flush, 保证数据不丢。
+pub const STREAM_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
 
 /// 合并 buffer 的硬上限 ── burst 期间持续高速文�?���? 超过此值立�?flush,
 /// 既防 buffer 无限增长, 也避免单条合�?chunk 过大�?4 KiB 远大于一帧的文本�?

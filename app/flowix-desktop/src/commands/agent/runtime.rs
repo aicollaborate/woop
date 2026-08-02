@@ -11,9 +11,7 @@ pub(super) enum AgentRuntime {
     Flowix,
     Codex,
     Claude,
-    Gemini,
     Hermes,
-    OpenClaw,
     OpenCode,
 }
 
@@ -27,9 +25,7 @@ impl AgentRuntime {
         {
             "codex" => Self::Codex,
             "claude" => Self::Claude,
-            "gemini" => Self::Gemini,
             "hermes" => Self::Hermes,
-            "openclaw" => Self::OpenClaw,
             "opencode" => Self::OpenCode,
             _ => Self::Flowix,
         }
@@ -44,9 +40,7 @@ impl AgentRuntime {
             Self::Flowix => "flowix",
             Self::Codex => "codex",
             Self::Claude => "claude",
-            Self::Gemini => "gemini",
             Self::Hermes => "hermes",
-            Self::OpenClaw => "openclaw",
             Self::OpenCode => "opencode",
         }
     }
@@ -169,9 +163,7 @@ mod tests {
             ("flowix", AgentRuntime::Flowix),
             (" CODEX ", AgentRuntime::Codex),
             ("Claude", AgentRuntime::Claude),
-            ("gemini", AgentRuntime::Gemini),
             ("HERMES", AgentRuntime::Hermes),
-            ("openclaw", AgentRuntime::OpenClaw),
             ("opencode", AgentRuntime::OpenCode),
         ];
 

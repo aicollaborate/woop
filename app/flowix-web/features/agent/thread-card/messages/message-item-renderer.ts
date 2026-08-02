@@ -6,7 +6,8 @@ import {
 } from "@features/agent/message";
 import { parseAgentCommandInput } from "@features/agent/tool-display";
 import {
-  fillWithAgentThreadCardMarkdownHtml,
+  attachAgentThreadCardMathCopyHandlers,
+  prepareAgentThreadCardMath,
   renderAgentThreadCardMarkdownToHtml,
 } from "@features/agent/thread-card/agent-thread-card-markdown";
 import {
@@ -54,18 +55,23 @@ function directChildDisplayToggle(parent: HTMLElement): HTMLButtonElement | null
 }
 
 /**
- * 块级增量渲染状态 ── 按 content 元素缓存已定型块的 HTML, 避免流式期间每帧
- * marked.parse 整条消息全文。流式输出时只有最后一个块在变化, 前面的块已定型,
- * 把它们的 HTML 缓存下来, 每帧只 parse 未完成的 tail, 把 marked.parse 的输入
- * 从 O(全文) 降到 O(最后一个块)。
+ * 块级增量 DOM 注入状态 ── 已定型块维护成持久 DOM 节点(只 append), 未完成
+ * tail 每帧只重建它自己, 用不可见 Comment 锚点(`tailMarker`)分隔。把每帧
+ * innerHTML 解析+克隆从 O(全文 HTML) 降到 O(tail HTML); finalized 区的 KaTeX
+ * 节点持久, `data-katex-rendered` 守卫生效, 每条公式只渲染一次。
  *
- * 状态生命周期跟 content 元素绑定(WeakMap): content 被 replaceChildren 重建或
- * 消息切换时自然失效。前缀校验(text.startsWith(finalizedText))兜底文本回退
- * (编辑 / compact 重建 / 展开切换改裁剪)导致的前缀变化, 回退时重置走全量。
+ * Comment 锚点不占元素子位置, content 的元素结构(finalized + tail 元素都是
+ * 直接子)与全量渲染完全一致, :first-child / :last-child 与任何后代/直接子
+ * 选择器都不受影响。
+ *
+ * 状态生命周期跟 content 元素绑定(WeakMap): patch-last 复用 content 时缓存
+ * 延续; content 被 replaceChildren 重建或消息切换时自然失效。前缀校验
+ * (text.startsWith(finalizedText))兜底文本回退(编辑 / compact 重建 / 展开
+ * 切换改裁剪)导致的前缀变化, 回退时清空重建。
  */
 interface BlockIncrementalState {
   finalizedText: string;
-  finalizedHtml: string;
+  tailMarker: Comment;
 }
 
 const blockIncrementalState = new WeakMap<HTMLElement, BlockIncrementalState>();
@@ -105,54 +111,103 @@ function findFinalizableBlockBoundary(text: string): number {
   return lastBoundary;
 }
 
+function parseHtmlFragment(html: string): DocumentFragment {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  return template.content;
+}
+
 /**
- * 增量计算消息 HTML。流式中(isCompleted=false)只 marked.parse 最后一个未完成块,
- * 已定型块 HTML 从缓存复用; 完成时(isCompleted=true)把剩余 tail 全部 finalize
- * 进缓存, 之后整条消息走缓存不再 parse。文本前缀变化时(回退/编辑/展开切换)自动
- * 重置缓存走全量, 保证正确性。
+ * 把一段 markdown 文本 parse 成节点并注入 content 的指定位置, 同时对新节点
+ * 做 math 处理(aria 标签 + KaTeX)。`insertBefore === null` 时 append 到末尾
+ * (tail 区, marker 之后); 否则插到该节点之前(finalized 区, marker 之前)。
  */
-function renderIncrementalMarkdownHtml(
+function injectMarkdownBlock(
+  content: HTMLElement,
+  insertBefore: Node | null,
+  text: string,
+  mathCopyLabel: string,
+): void {
+  const html = renderAgentThreadCardMarkdownToHtml(text);
+  if (!html) return;
+  const fragment = parseHtmlFragment(html);
+  prepareAgentThreadCardMath(fragment, mathCopyLabel);
+  content.insertBefore(fragment, insertBefore);
+}
+
+function clearTailAfterMarker(marker: Comment): void {
+  const parent = marker.parentNode;
+  if (!parent) return;
+  let node = marker.nextSibling;
+  while (node) {
+    const next = node.nextSibling;
+    parent.removeChild(node);
+    node = next;
+  }
+}
+
+/**
+ * 增量注入消息 DOM。流式中(`forceFinalize=false`)只 marked.parse 最后一个
+ * 未完成块, 已定型块作为持久 DOM 节点 append, 每帧只重建 tail。完成态
+ * (`forceFinalize=true`, 由 message.isCompleted 或上层完成信号触发)做一次
+ * 全量 re-parse, 修正流式期间 `findFinalizableBlockBoundary` 在 loose list /
+ * 多段 blockquote 内部空行处错误切分导致的结构偏差 ── 完成是一次性的, 全量
+ * 重建可接受。已 finalize 过同一 text 时只清 tail, 不重复重建。
+ */
+function renderIncrementalMarkdownDom(
   content: HTMLElement,
   text: string,
-  isCompleted: boolean,
-): string {
+  forceFinalize: boolean,
+  mathCopyLabel: string,
+): void {
   let state = blockIncrementalState.get(content);
   if (!state) {
-    state = { finalizedText: "", finalizedHtml: "" };
+    const marker = document.createComment("tail");
+    content.replaceChildren(marker);
+    attachAgentThreadCardMathCopyHandlers(content);
+    state = { finalizedText: "", tailMarker: marker };
     blockIncrementalState.set(content, state);
   }
 
-  // 文本回退/前缀变化(编辑、compact 重建、展开切换改裁剪): 重置走全量
+  // 文本回退/前缀变化(编辑、compact 重建、展开切换改裁剪): 清空重建
   if (
     text.length < state.finalizedText.length ||
     !text.startsWith(state.finalizedText)
   ) {
     state.finalizedText = "";
-    state.finalizedHtml = "";
+    content.replaceChildren(state.tailMarker);
   }
 
-  if (isCompleted) {
-    // 完成: 把剩余文本全部 finalize 进缓存, 之后整条消息走缓存不再 parse
-    if (state.finalizedText.length < text.length) {
-      const remaining = text.slice(state.finalizedText.length);
-      state.finalizedHtml += renderAgentThreadCardMarkdownToHtml(remaining);
-      state.finalizedText = text;
+  if (forceFinalize) {
+    // 完成态: 全量 re-parse 修正块切分错误。同一 text 已 finalize 过则跳过重建。
+    if (state.finalizedText !== text) {
+      state.finalizedText = "";
+      content.replaceChildren(state.tailMarker);
+      if (text) {
+        injectMarkdownBlock(content, state.tailMarker, text, mathCopyLabel);
+        state.finalizedText = text;
+      }
     }
-    return state.finalizedHtml;
+    clearTailAfterMarker(state.tailMarker);
+    return;
   }
 
-  // 流式中: 把新定型的块(最后一个块边界之前)finalize 进缓存
   const remaining = text.slice(state.finalizedText.length);
+
+  // 新定型块(最后一个块边界之前) -> 持久 append 到 marker 之前
   const boundary = findFinalizableBlockBoundary(remaining);
   if (boundary > 0) {
     const newlyFinalized = remaining.slice(0, boundary);
-    state.finalizedHtml += renderAgentThreadCardMarkdownToHtml(newlyFinalized);
+    injectMarkdownBlock(content, state.tailMarker, newlyFinalized, mathCopyLabel);
     state.finalizedText += newlyFinalized;
   }
 
-  // tail = 未完成块, 每帧重新 parse(小, 只有最后一个块)
+  // tail = 未完成块, 每帧重建 marker 之后的部分(小, 只有最后一个块)
+  clearTailAfterMarker(state.tailMarker);
   const tail = text.slice(state.finalizedText.length);
-  return state.finalizedHtml + (tail ? renderAgentThreadCardMarkdownToHtml(tail) : "");
+  if (tail) {
+    injectMarkdownBlock(content, null, tail, mathCopyLabel);
+  }
 }
 
 export function renderAgentThreadCardBudgetedMarkdown(options: {
@@ -162,19 +217,25 @@ export function renderAgentThreadCardBudgetedMarkdown(options: {
   content: HTMLElement;
   toggleParent: HTMLElement;
   context: AgentThreadCardMessageDisplayContext;
+  /**
+   * 消息是否仍在流式增长。true 时走块级增量(只 parse tail); false(默认)或消息
+   * isCompleted 时做全量 re-parse, 修正流式期间 findFinalizableBlockBoundary
+   * 在 loose list / 多段 blockquote 内部空行处错误切分导致的结构偏差。assistant
+   * 无 isCompleted 字段, 由上层 controller 在 run 结束(isLoading 下降沿)传
+   * isStreaming=false 触发终态修正。
+   */
+  isStreaming?: boolean;
 }): void {
   const { message, role, visibleContent, content, toggleParent, context } =
     options;
   const expanded = context.getDisplayExpanded(message);
   const display = applyMessageDisplayBudget(role, visibleContent, expanded);
 
-  fillWithAgentThreadCardMarkdownHtml(
+  const forceFinalize = !options.isStreaming || !!message.isCompleted;
+  renderIncrementalMarkdownDom(
     content,
-    renderIncrementalMarkdownHtml(
-      content,
-      display.text,
-      !!message.isCompleted,
-    ),
+    display.text,
+    forceFinalize,
     translate(context.language, "editor.threadCard.copyLatex"),
   );
 
@@ -208,6 +269,8 @@ export function createAgentThreadCardMessageElement(options: {
   setReasoningCollapsed: (messageId: string, collapsed: boolean) => void;
   getDisplayExpanded: (message: AgentMessage) => boolean;
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
+  /** 消息是否仍在流式增长; 见 [renderAgentThreadCardBudgetedMarkdown]。 */
+  isStreaming?: boolean;
 }): AgentThreadCardMessageElementResult | null {
   const {
     message,
@@ -305,6 +368,7 @@ export function createAgentThreadCardMessageElement(options: {
         content,
         toggleParent: item,
         context: displayContext,
+        isStreaming: options.isStreaming,
       });
     } else if (message.role === "reasoning") {
       const header = document.createElement("button");
@@ -327,6 +391,7 @@ export function createAgentThreadCardMessageElement(options: {
         content,
         toggleParent: body,
         context: displayContext,
+        isStreaming: options.isStreaming,
       });
 
       const apply = (collapsed: boolean): void => {
@@ -360,6 +425,7 @@ export function createAgentThreadCardMessageElement(options: {
         content,
         toggleParent: item,
         context: displayContext,
+        isStreaming: options.isStreaming,
       });
     }
 

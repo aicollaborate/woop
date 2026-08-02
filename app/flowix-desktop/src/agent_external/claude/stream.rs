@@ -18,89 +18,66 @@ use crate::agent_external::{
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
+use crate::agent_external::shared::TurnEvents;
 
-#[derive(Default)]
-struct ClaudeTurnEvents {
-    events: Vec<(AgentChunk, AgentChunkMetadata)>,
-    message_indexes: HashMap<String, usize>,
-    tool_call_indexes: HashMap<String, usize>,
-    tool_result_indexes: HashMap<String, usize>,
-    usage_index: Option<usize>,
-    next_message_id: usize,
-}
+type ClaudeTurnEvents = TurnEvents;
 
-impl ClaudeTurnEvents {
-    fn observe(&mut self, chunk: &AgentChunk, metadata: &AgentChunkMetadata, run_id: &str) {
-        match chunk {
-            AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
-                if text.is_empty() {
-                    return;
-                }
-                let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
-                    "reasoning"
-                } else {
-                    "assistant"
-                };
-                let message_id = metadata.message_id.clone().unwrap_or_else(|| {
-                    self.next_message_id += 1;
-                    format!("claude-{run_id}-{role}-{}", self.next_message_id)
-                });
-                let key = format!("{role}:{message_id}");
-                if let Some(index) = self.message_indexes.get(&key).copied() {
-                    let replace = metadata.content_mode == Some("snapshot");
-                    match (&mut self.events[index].0, chunk) {
-                        (AgentChunk::Text { text: stored, .. }, AgentChunk::Text { text, .. })
-                        | (
-                            AgentChunk::Reasoning { text: stored, .. },
-                            AgentChunk::Reasoning { text, .. },
-                        ) => {
-                            if replace {
-                                *stored = text.clone();
-                            } else {
-                                stored.push_str(text);
-                            }
+/// Claude text merge: append streaming deltas, but a `snapshot` content_mode
+/// replaces the whole row (Claude sends full snapshots mid-stream).
+fn observe_claude_turn(
+    te: &mut TurnEvents,
+    chunk: &AgentChunk,
+    metadata: &AgentChunkMetadata,
+    run_id: &str,
+) {
+    match chunk {
+        AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
+            if text.is_empty() {
+                return;
+            }
+            let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
+                "reasoning"
+            } else {
+                "assistant"
+            };
+            let message_id = metadata.message_id.clone().unwrap_or_else(|| {
+                te.next_message_id += 1;
+                format!("claude-{run_id}-{role}-{}", te.next_message_id)
+            });
+            let key = format!("{role}:{message_id}");
+            if let Some(index) = te.message_indexes.get(&key).copied() {
+                let replace = metadata.content_mode == Some("snapshot");
+                match (&mut te.events[index].0, chunk) {
+                    (AgentChunk::Text { text: stored, .. }, AgentChunk::Text { text, .. })
+                    | (
+                        AgentChunk::Reasoning { text: stored, .. },
+                        AgentChunk::Reasoning { text, .. },
+                    ) => {
+                        if replace {
+                            *stored = text.clone();
+                        } else {
+                            stored.push_str(text);
                         }
-                        _ => {}
                     }
-                    return;
+                    _ => {}
                 }
-                let mut stored_metadata = metadata.clone();
-                stored_metadata.message_id = Some(message_id);
-                stored_metadata.content_mode = Some("snapshot");
-                stored_metadata.message_phase = Some("completed");
-                self.message_indexes.insert(key, self.events.len());
-                self.events.push((chunk.clone(), stored_metadata));
+                return;
             }
-            AgentChunk::ToolCall { id, .. } => {
-                if let Some(index) = self.tool_call_indexes.get(id).copied() {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.tool_call_indexes.insert(id.clone(), self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
-            }
-            AgentChunk::ToolResult { id, .. } => {
-                if let Some(index) = self.tool_result_indexes.get(id).copied() {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.tool_result_indexes
-                        .insert(id.clone(), self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
-            }
-            AgentChunk::Usage { .. } => {
-                if let Some(index) = self.usage_index {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.usage_index = Some(self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
-            }
-            AgentChunk::Error { .. } => self.events.push((chunk.clone(), metadata.clone())),
-            _ => {}
+            let mut stored_metadata = metadata.clone();
+            stored_metadata.message_id = Some(message_id);
+            stored_metadata.content_mode = Some("snapshot");
+            stored_metadata.message_phase = Some("completed");
+            te.message_indexes.insert(key, te.events.len());
+            te.events.push((chunk.clone(), stored_metadata));
         }
+        AgentChunk::ToolCall { .. } => te.observe_tool_call(chunk, metadata),
+        AgentChunk::ToolResult { .. } => te.observe_tool_result(chunk, metadata),
+        AgentChunk::Usage { .. } => te.observe_usage(chunk, metadata),
+        AgentChunk::Error { .. } => te.observe_error(chunk, metadata),
+        _ => {}
     }
 }
+
 
 /// Flush the frame buffer to the live UI and fold it into the turn snapshot.
 /// Database persistence happens once at the end of the turn.
@@ -114,7 +91,7 @@ async fn flush_emit_buffer(
         return;
     }
     for (chunk, metadata) in emit_buf.flush_with_metadata() {
-        turn_events.observe(&chunk, &metadata, run_id);
+        observe_claude_turn(&mut *turn_events, &chunk, &metadata, run_id);
         emit_chunk_with_run_id_and_metadata(app_handle, &chunk, AGENT_TYPE, run_id, &metadata);
     }
 }
@@ -273,7 +250,7 @@ where
                     thread_id: thread_id.clone(),
                     text: text.clone(),
                 };
-                let metadata = complete_claude_chunk_metadata(
+                let metadata = crate::agent_external::shared::complete_chunk_metadata(true, 
                     AgentChunkMetadata {
                         message_phase: Some("updated"),
                         content_mode: Some("delta"),
@@ -369,7 +346,7 @@ where
         let source_timestamp = claude_event_timestamp_millis(&value)
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         for (source_subsequence, chunk) in parsed.chunks.into_iter().enumerate() {
-            let metadata = complete_claude_chunk_metadata(
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(true, 
                 claude_chunk_metadata(&value, &chunk, &stream_state),
                 &chunk,
                 &run_id,
@@ -441,7 +418,7 @@ where
                             }
                         }
                     }
-                    turn_events.observe(&chunk, &metadata, &run_id);
+                    observe_claude_turn(&mut turn_events, &chunk, &metadata, &run_id);
                     emit_chunk_with_run_id_and_metadata(
                         &app_handle,
                         &chunk,
@@ -472,37 +449,6 @@ where
         None,
     );
     Ok(())
-}
-
-fn complete_claude_chunk_metadata(
-    mut metadata: AgentChunkMetadata,
-    chunk: &AgentChunk,
-    run_id: &str,
-    source_timestamp: i64,
-    source_sequence: u64,
-    source_subsequence: u32,
-) -> AgentChunkMetadata {
-    // Claude opens a new provider message around every tool cycle, but the UI
-    // models the reasoning produced by one product run as a single expandable
-    // row. Keep provider message ids for assistant text while folding every
-    // thinking block in this run into one stable reasoning id.
-    if matches!(chunk, AgentChunk::Reasoning { .. }) {
-        metadata.message_id = Some(format!("reasoning-{run_id}"));
-    } else if metadata.message_id.is_none() {
-        let kind = match chunk {
-            AgentChunk::Text { .. } => Some("assistant"),
-            _ => None,
-        };
-        if let Some(kind) = kind {
-            metadata.message_id = Some(format!(
-                "{kind}-{run_id}-{source_sequence}-{source_subsequence}"
-            ));
-        }
-    }
-    metadata.source_timestamp = Some(source_timestamp);
-    metadata.source_sequence = Some(source_sequence);
-    metadata.source_subsequence = Some(source_subsequence);
-    metadata
 }
 
 fn non_json_stdout_text(parsed: &ParsedClaudeStdoutLine, line: &str) -> Option<String> {
@@ -540,7 +486,7 @@ mod tests {
             ..Default::default()
         };
         for text in ["hello ", "world"] {
-            turn.observe(
+            observe_claude_turn(&mut turn, 
                 &AgentChunk::Text {
                     thread_id: "thread-1".to_string(),
                     text: text.to_string(),
@@ -549,7 +495,7 @@ mod tests {
                 "run-1",
             );
         }
-        turn.observe(
+        observe_claude_turn(&mut turn, 
             &AgentChunk::ToolCall {
                 thread_id: "thread-1".to_string(),
                 id: "call-1".to_string(),
@@ -575,7 +521,7 @@ mod tests {
             thread_id: "thread-1".to_string(),
             text: "thinking".to_string(),
         };
-        let first = complete_claude_chunk_metadata(
+        let first = crate::agent_external::shared::complete_chunk_metadata(true, 
             AgentChunkMetadata {
                 message_id: Some("reasoning-provider-message-1-block-0".to_string()),
                 ..Default::default()
@@ -586,7 +532,7 @@ mod tests {
             1,
             0,
         );
-        let second = complete_claude_chunk_metadata(
+        let second = crate::agent_external::shared::complete_chunk_metadata(true, 
             AgentChunkMetadata {
                 message_id: Some("reasoning-provider-message-2-block-0".to_string()),
                 ..Default::default()
@@ -623,7 +569,7 @@ mod tests {
             Some("reasoning-provider-message-1-block-0")
         );
         let first_metadata =
-            complete_claude_chunk_metadata(first_raw, first_chunk, "run-1", 100, 1, 0);
+            crate::agent_external::shared::complete_chunk_metadata(true, first_raw, first_chunk, "run-1", 100, 1, 0);
 
         let parsed = parse_claude_stdout_line_with_state("thread-1", second_start, &mut state);
         assert!(parsed.chunks.is_empty());
@@ -636,7 +582,7 @@ mod tests {
             Some("reasoning-provider-message-2-block-0")
         );
         let second_metadata =
-            complete_claude_chunk_metadata(second_raw, second_chunk, "run-1", 200, 2, 0);
+            crate::agent_external::shared::complete_chunk_metadata(true, second_raw, second_chunk, "run-1", 200, 2, 0);
 
         assert_eq!(
             first_metadata.message_id.as_deref(),

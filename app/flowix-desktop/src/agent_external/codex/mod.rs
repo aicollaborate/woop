@@ -3,7 +3,6 @@ pub mod cli;
 mod command;
 pub mod events;
 pub mod history;
-pub mod io;
 pub mod runtime;
 mod stream;
 mod tool_events;

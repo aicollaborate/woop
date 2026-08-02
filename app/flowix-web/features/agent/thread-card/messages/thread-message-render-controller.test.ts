@@ -103,3 +103,49 @@ describe("ThreadMessageRenderController empty settings", () => {
     expect(body.textContent).toContain("editor.threadCard.loadingThreadCache");
   });
 });
+
+describe("ThreadMessageRenderController run-end re-parse", () => {
+  it("re-parses the last assistant message on run end to canonicalize loose lists", () => {
+    // rAF 同步执行, 让流式态 renderNow 立即落地 (更新 wasLoading)
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("flowix");
+      const streaming = {
+        id: "a1",
+        role: "assistant" as const,
+        content: "- item 1\n\n- item 2",
+        timestamp: new Date().toISOString(),
+      };
+
+      // 流式中(isLoading=true): 末条 isStreaming=true -> 增量切分, 拆成两个 ul
+      controller.render({
+        messages: [streaming],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      expect(body.querySelectorAll("ul")).toHaveLength(2);
+
+      // run 结束(isLoading 下降沿): loadingJustEnded 触发 patch-last forceFinalize
+      controller.render({
+        messages: [streaming],
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      const uls = body.querySelectorAll("ul");
+      expect(uls).toHaveLength(1);
+      expect(uls[0].querySelectorAll("li")).toHaveLength(2);
+      // loose list 条目被 <p> 包裹 (tight list 不会)
+      expect(uls[0].querySelector("li p")).not.toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

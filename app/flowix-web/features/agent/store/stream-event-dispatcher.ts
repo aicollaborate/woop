@@ -181,7 +181,7 @@ function applyEventToChatSlice(
         model: event.model,
         modelId: event.model,
         lastRunAt: event.timestamp,
-        reasoningEffort: event.reasoningEffort,
+        reasoning_effort: event.reasoning_effort,
       });
       const nextThreadTypes = {
         ...slice.threadTypes,

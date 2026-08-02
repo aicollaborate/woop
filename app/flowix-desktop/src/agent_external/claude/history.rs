@@ -583,7 +583,7 @@ fn tool_result_message(
 /// �?��输出格式�?pretty JSON 存到 `tool_data` 供前�?��示�?
 fn claude_tool_result_content(part: &Value) -> Value {
     let Some(content) = part.get("content") else {
-        return claude_tool_result_envelope(part.clone(), part);
+        return super::claude_tool_result_envelope(part.clone(), part);
     };
     let content = match content {
         Value::String(text) => serde_json::json!({ "content": text }),
@@ -605,26 +605,7 @@ fn claude_tool_result_content(part: &Value) -> Value {
         }
         _ => serde_json::json!({ "content": content }),
     };
-    claude_tool_result_envelope(content, part)
-}
-
-/// [both paths] tool_result envelope �?��逻辑 ── history.rs �?/// `claude_tool_result_content`,events.rs �?`claude_tool_result_value`,
-/// 两者最终都调这里给 envelope �?`is_error` 字�?�?
-fn claude_tool_result_envelope(mut value: Value, source: &Value) -> Value {
-    if let Some(is_error) = source.get("is_error").and_then(Value::as_bool) {
-        match &mut value {
-            Value::Object(map) => {
-                map.insert("is_error".to_string(), Value::Bool(is_error));
-            }
-            _ => {
-                value = serde_json::json!({
-                    "content": value,
-                    "is_error": is_error,
-                });
-            }
-        }
-    }
-    value
+    super::claude_tool_result_envelope(content, part)
 }
 
 /// [history path] 列出 `~/.claude/projects/.../*.jsonl` 文件 ── �?/// `find_claude_session_file` 调用�?

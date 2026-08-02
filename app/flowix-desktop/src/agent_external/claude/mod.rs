@@ -13,3 +13,26 @@ pub use history::{get_session, get_session_page, is_claude_session_id, list_sess
 // 投递 AgentChunk。
 pub mod cli;
 pub use cli::ClaudeCliManager;
+
+// [both paths] tool_result envelope 共用逻辑 -- events.rs 的
+// `claude_tool_result_value` 与 history.rs 的 `claude_tool_result_content`
+// 都调这里给 envelope 补 `is_error` 字段。
+pub(crate) fn claude_tool_result_envelope(
+    mut value: serde_json::Value,
+    source: &serde_json::Value,
+) -> serde_json::Value {
+    if let Some(is_error) = source.get("is_error").and_then(serde_json::Value::as_bool) {
+        match &mut value {
+            serde_json::Value::Object(map) => {
+                map.insert("is_error".to_string(), serde_json::Value::Bool(is_error));
+            }
+            _ => {
+                value = serde_json::json!({
+                    "content": value,
+                    "is_error": is_error,
+                });
+            }
+        }
+    }
+    value
+}

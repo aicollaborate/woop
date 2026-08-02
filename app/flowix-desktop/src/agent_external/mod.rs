@@ -1,6 +1,6 @@
 //! External agent runtimes —后�?用来�?AI 对话的两杤���?
 //!
-//! - **sidecar CLI** (`claude` / `codex` / `hermes` / `simple_cli`): 鏈湴
+//! - **sidecar CLI** (`claude` / `codex` / `hermes` / `claude` / `codex` / `hermes`): 鏈湴
 //!   spawn 一�?binary 子进�? �?stdout 按�?解析�?`AgentChunk`�?//!   三个 vendor 各有�?���?session 文件 (分别�?`~/.claude/` / `~/.codex/` /
 //!   `~/.hermes/`), 由各�?�� `history` 子模块�?取�?//! - **in-process LLM provider** (`agent::factory`): �?HTTP 流式协�?�?//!
 //! �?��块只收拢 sidecar 这一杰��所�?sidecar 共享 `shared::ExternalRunRegistry`
@@ -17,7 +17,6 @@ pub mod node;
 pub mod opencode;
 pub mod runtime_registry;
 pub mod shared;
-pub mod simple_cli;
 
 /// Process-wide lock for tests that temporarily modify environment variables.
 ///

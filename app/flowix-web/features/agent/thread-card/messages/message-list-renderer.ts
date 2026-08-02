@@ -28,6 +28,12 @@ export interface AgentThreadCardMessageRenderContext {
   setReasoningCollapsed: (messageId: string, collapsed: boolean) => void;
   getDisplayExpanded: (message: AgentMessage) => boolean;
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
+  /**
+   * 消息是否仍在流式增长 ── 由 controller 按 `isLoading && 末条 && !isCompleted`
+   * 判定。流式中的末条走块级增量, 其余(历史 / 已完成 / 完成态触发)走全量 re-parse
+   * 修正块切分。见 [renderAgentThreadCardBudgetedMarkdown]。
+   */
+  isStreaming: (message: AgentMessage) => boolean;
 }
 
 export interface AgentThreadCardMessagePatchOptions {
@@ -35,6 +41,12 @@ export interface AgentThreadCardMessagePatchOptions {
   cache: RenderedAgentMessageCache;
   context: AgentThreadCardMessageRenderContext;
   afterRender: () => void;
+  /**
+   * 绕过末条引用相等短路 ── run 结束下降沿(isLoading true->false)时末条引用未变,
+   * 但仍需 forceFinalize 全量 re-parse 修正流式期间块切分。仅 controller 在
+   * loadingJustEnded + canReuse 时传 true。
+   */
+  force?: boolean;
 }
 
 export function patchLastRenderedAgentMessage(
@@ -61,9 +73,10 @@ export function patchLastRenderedAgentMessage(
   const previousLast = cache.refs[renderedMessages.length - 1];
   const nextLast = renderedMessages[renderedMessages.length - 1];
   if (
-    previousLast === nextLast ||
-    previousLast.id !== nextLast.id ||
-    previousLast.role !== nextLast.role
+    !options.force &&
+    (previousLast === nextLast ||
+      previousLast.id !== nextLast.id ||
+      previousLast.role !== nextLast.role)
   ) {
     return null;
   }
@@ -84,6 +97,7 @@ export function patchLastRenderedAgentMessage(
       content,
       toggleParent: item,
       context,
+      isStreaming: context.isStreaming(nextLast),
     });
   } else if (nextLast.role === "reasoning") {
     const label = item.querySelector<HTMLSpanElement>(
@@ -109,6 +123,7 @@ export function patchLastRenderedAgentMessage(
       content,
       toggleParent: body,
       context,
+      isStreaming: context.isStreaming(nextLast),
     });
   } else if (nextLast.role === "end") {
     const content = item.querySelector<HTMLElement>(
@@ -152,6 +167,7 @@ export function appendRenderedAgentMessagesToTail(
       setReasoningCollapsed: context.setReasoningCollapsed,
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
+      isStreaming: context.isStreaming(message),
     });
     if (!rendered) continue;
     list.append(rendered.element);
@@ -182,6 +198,7 @@ export function createRenderedAgentMessageList(
       setReasoningCollapsed: context.setReasoningCollapsed,
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
+      isStreaming: context.isStreaming(message),
     });
     if (!rendered) continue;
     if (rendered.shouldRemember) rememberedMessages.push(message);

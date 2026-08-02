@@ -32,10 +32,7 @@ function loadThreadMessages(
 
   const load = (async () => {
     const replayedDatabase =
-      typeKey !== 'flowix' &&
-      typeKey !== 'codex' &&
-      typeKey !== 'opencode' &&
-      typeKey !== 'claude' &&
+      getAgentType(typeKey).capabilities.externalSessionBacked &&
       (await replayExternalEventsForThread(
         useChatStore.setState,
         useChatStore.getState,

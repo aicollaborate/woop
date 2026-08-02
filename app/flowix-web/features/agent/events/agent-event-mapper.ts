@@ -189,7 +189,7 @@ export function mapAgentChunkToEvent(
         // 通用 metadata 协议 ── 透传 model / reasoning_effort 到 event,
         // 后续由 applyRunStarted 写入 runs[runId].model。
         model: chunk.model,
-        reasoningEffort: chunk.reasoning_effort,
+        reasoning_effort: chunk.reasoning_effort,
       };
     case "stream_end":
       return { ...base, kind: "stream_end", reason: chunk.reason };

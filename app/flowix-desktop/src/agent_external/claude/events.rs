@@ -712,7 +712,7 @@ fn reconcile_partial_assistant_tool_calls(
 
 fn claude_tool_result_value(block: &Value) -> Value {
     let Some(content) = block.get("content") else {
-        return claude_tool_result_envelope(block.clone(), block);
+        return super::claude_tool_result_envelope(block.clone(), block);
     };
     let content = match content {
         Value::String(text) => serde_json::json!({ "content": text }),
@@ -734,24 +734,7 @@ fn claude_tool_result_value(block: &Value) -> Value {
         }
         _ => serde_json::json!({ "content": content }),
     };
-    claude_tool_result_envelope(content, block)
-}
-
-fn claude_tool_result_envelope(mut value: Value, source: &Value) -> Value {
-    if let Some(is_error) = source.get("is_error").and_then(Value::as_bool) {
-        match &mut value {
-            Value::Object(map) => {
-                map.insert("is_error".to_string(), Value::Bool(is_error));
-            }
-            _ => {
-                value = serde_json::json!({
-                    "content": value,
-                    "is_error": is_error,
-                });
-            }
-        }
-    }
-    value
+    super::claude_tool_result_envelope(content, block)
 }
 
 // [stream path] 从顶�?/ 嵌�? message envelope 里递归�?session id ──

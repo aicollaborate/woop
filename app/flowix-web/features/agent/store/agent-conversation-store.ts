@@ -21,6 +21,7 @@ import {
   mergeLiveMessagesIntoRenderableMessages,
   mergeHistoricalMessages,
   prependHistoricalMessages,
+  trySwapLastLiveMessage,
 } from "@features/agent/store/thread-history";
 
 export type AgentConversationSource = {
@@ -524,14 +525,19 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
         const renderable = filterRenderableHistoryMessages(liveState.messages);
         set((state) => {
           const current = state.messageStates[threadId] ?? emptyMessageState();
+          // 流式 fast path: 末条 assistant/reasoning/end 内容变化时直接 swap,
+          // 跳过全量 merge 的 fingerprint + sort (O(N·L) -> O(N) 引用比较)。
+          // 未命中 (结构变化 / 末条非文本角色) 回退原 merge, 保证去重与 hydrate 正确。
+          const swapped = trySwapLastLiveMessage(current.messages, renderable);
           const merged =
-            renderable.length > 0
+            swapped ??
+            (renderable.length > 0
               ? mergeLiveMessagesIntoRenderableMessages(
                   current.messages,
                   renderable,
                   agentType,
                 )
-              : current.messages;
+              : current.messages);
           if (
             merged === current.messages &&
             current.pendingAssistantId === liveState.pendingAssistantId &&

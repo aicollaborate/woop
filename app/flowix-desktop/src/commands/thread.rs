@@ -28,7 +28,7 @@ pub async fn local_agent_thread_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<ThreadInfo>, String> {
     let agent_type = agent_type.trim().to_ascii_lowercase();
-    if !matches!(agent_type.as_str(), "gemini" | "hermes" | "openclaw") {
+    if !matches!(agent_type.as_str(), "hermes") {
         return Err(format!("unsupported local agent type: {agent_type}"));
     }
 

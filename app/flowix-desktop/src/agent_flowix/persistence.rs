@@ -4,7 +4,7 @@ use rllm::ToolCall as LlmToolCall;
 use uuid::Uuid;
 
 use crate::agent_flowix::providers::OpenAICompatibleChatMessage;
-use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
+use crate::agent_session::{ChatMessage as ThreadChatMessage, MessageRole, ThreadManager};
 
 use super::context::build_llm_context_window;
 use super::{AgentError, AgentManager, AgentUserMessage};
@@ -109,7 +109,7 @@ impl AgentManager {
             .messages
             .iter_mut()
             .rev()
-            .find(|m| m.role == "assistant" && m.tool_calls.is_some());
+            .find(|m| m.role == MessageRole::Assistant.as_str() && m.tool_calls.is_some());
         let Some(target) = target else {
             return Ok(false);
         };
@@ -160,7 +160,7 @@ impl AgentManager {
     ) -> Result<(), AgentError> {
         let thread_message = ThreadChatMessage {
             id: format!("user_{}", Uuid::new_v4()),
-            role: "user".to_string(),
+            role: MessageRole::User.as_str().to_string(),
             content: message
                 .llm_content
                 .clone()
@@ -214,7 +214,7 @@ impl AgentManager {
             thread_id,
             ThreadChatMessage {
                 id: format!("reasoning_{}", Uuid::new_v4()),
-                role: "reasoning".to_string(),
+                role: MessageRole::Reasoning.as_str().to_string(),
                 content: content.to_string(),
                 llm_content: None,
                 system_reminder_directory: None,
@@ -246,7 +246,7 @@ impl AgentManager {
             thread_id,
             ThreadChatMessage {
                 id: format!("assistant_{}", Uuid::new_v4()),
-                role: "assistant".to_string(),
+                role: MessageRole::Assistant.as_str().to_string(),
                 content: content.to_string(),
                 llm_content: None,
                 system_reminder_directory: None,
@@ -283,7 +283,7 @@ impl AgentManager {
             thread_id,
             ThreadChatMessage {
                 id: id.clone(),
-                role: "assistant".to_string(),
+                role: MessageRole::Assistant.as_str().to_string(),
                 content: content.to_string(),
                 llm_content: None,
                 system_reminder_directory: None,
@@ -356,7 +356,7 @@ impl AgentManager {
             thread_id,
             ThreadChatMessage {
                 id: format!("assistant_tool_{}", id_seed),
-                role: "assistant".to_string(),
+                role: MessageRole::Assistant.as_str().to_string(),
                 content: content.to_string(),
                 llm_content: None,
                 system_reminder_directory: None,
@@ -392,7 +392,7 @@ impl AgentManager {
             thread_id,
             ThreadChatMessage {
                 id: row_id,
-                role: "tool".to_string(),
+                role: MessageRole::Tool.as_str().to_string(),
                 content: String::new(),
                 llm_content: None,
                 system_reminder_directory: None,

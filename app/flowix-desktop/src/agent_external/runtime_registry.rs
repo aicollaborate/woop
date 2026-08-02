@@ -15,7 +15,6 @@ use super::claude::{ClaudeCliManager, AGENT_TYPE as CLAUDE_AGENT_TYPE};
 use super::codex::{CodexCliManager, AGENT_TYPE as CODEX_AGENT_TYPE};
 use super::hermes::HermesCliManager;
 use super::opencode::{OpenCodeAcpManager, AGENT_TYPE as OPENCODE_AGENT_TYPE};
-use super::simple_cli::SimpleCliManager;
 use crate::agent_flowix::{AgentUserMessage, RunInfo};
 
 const HERMES_AGENT_TYPE: &str = "hermes";
@@ -98,47 +97,6 @@ impl_external_runtime!(ClaudeCliManager, CLAUDE_AGENT_TYPE);
 impl_external_runtime!(HermesCliManager, HERMES_AGENT_TYPE);
 impl_external_runtime!(OpenCodeAcpManager, OPENCODE_AGENT_TYPE);
 
-#[async_trait]
-impl ExternalCliRuntime for Arc<SimpleCliManager> {
-    fn key(&self) -> &'static str {
-        self.runtime_key()
-    }
-
-    async fn chat_stream(
-        &self,
-        thread_id: &str,
-        message: AgentUserMessage,
-        app_handle: &tauri::AppHandle,
-    ) -> Result<String, String> {
-        SimpleCliManager::chat_stream(self, thread_id, message, app_handle).await
-    }
-
-    async fn stop_chat(
-        &self,
-        thread_id: &str,
-        run_id: Option<&str>,
-        app_handle: &tauri::AppHandle,
-    ) -> bool {
-        SimpleCliManager::stop_chat(self.as_ref(), thread_id, run_id, app_handle).await
-    }
-
-    async fn running_threads(&self) -> HashMap<String, RunInfo> {
-        SimpleCliManager::running_threads(self.as_ref()).await
-    }
-
-    async fn stop_all(&self) -> usize {
-        SimpleCliManager::stop_all(self.as_ref()).await
-    }
-
-    async fn reap_inactive_runs(
-        &self,
-        app_handle: &tauri::AppHandle,
-        idle_timeout_ms: i64,
-    ) -> usize {
-        SimpleCliManager::reap_inactive_runs(self.as_ref(), app_handle, idle_timeout_ms).await
-    }
-}
-
 pub struct ExternalRuntimeRegistry {
     runtimes: Vec<Box<dyn ExternalCliRuntime>>,
 }
@@ -147,17 +105,13 @@ impl ExternalRuntimeRegistry {
     pub fn new(
         codex: Arc<CodexCliManager>,
         claude: Arc<ClaudeCliManager>,
-        gemini: Arc<SimpleCliManager>,
         hermes: Arc<HermesCliManager>,
-        openclaw: Arc<SimpleCliManager>,
         opencode: Arc<OpenCodeAcpManager>,
     ) -> Self {
         let runtimes: Vec<Box<dyn ExternalCliRuntime>> = vec![
             Box::new(codex),
             Box::new(claude),
-            Box::new(gemini),
             Box::new(hermes),
-            Box::new(openclaw),
             Box::new(opencode),
         ];
         debug_assert_eq!(
@@ -229,7 +183,6 @@ impl ExternalRuntimeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_external::simple_cli::SimpleCliKind;
     use crate::agent_external_config::EXTERNAL_AGENT_KEYS;
     use crate::agent_session::ThreadManager;
 
@@ -239,15 +192,7 @@ mod tests {
         let registry = ExternalRuntimeRegistry::new(
             Arc::new(CodexCliManager::new(threads.clone())),
             Arc::new(ClaudeCliManager::new(threads.clone())),
-            Arc::new(SimpleCliManager::new(
-                SimpleCliKind::Gemini,
-                threads.clone(),
-            )),
             Arc::new(HermesCliManager::new(threads.clone())),
-            Arc::new(SimpleCliManager::new(
-                SimpleCliKind::OpenClaw,
-                threads.clone(),
-            )),
             Arc::new(OpenCodeAcpManager::new(threads)),
         );
 

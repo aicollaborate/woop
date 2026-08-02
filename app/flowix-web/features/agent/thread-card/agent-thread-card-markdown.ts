@@ -214,7 +214,7 @@ async function copyAgentMath(math: HTMLElement): Promise<void> {
   }
 }
 
-function attachAgentThreadCardMathCopyHandlers(container: HTMLElement): void {
+export function attachAgentThreadCardMathCopyHandlers(container: HTMLElement): void {
   if (mathCopyContainers.has(container)) return;
   mathCopyContainers.add(container);
 
@@ -235,10 +235,9 @@ function attachAgentThreadCardMathCopyHandlers(container: HTMLElement): void {
   });
 }
 
-async function renderAgentThreadCardMath(container: HTMLElement): Promise<void> {
-  const mathNodes = Array.from(
-    container.querySelectorAll<HTMLElement>(AGENT_MATH_SELECTOR),
-  );
+async function renderAgentThreadCardMathNodes(
+  mathNodes: HTMLElement[],
+): Promise<void> {
   if (!mathNodes.length) return;
 
   let katex: KatexModule;
@@ -268,6 +267,30 @@ async function renderAgentThreadCardMath(container: HTMLElement): Promise<void> 
   });
 }
 
+/**
+ * 对 `root`(DocumentFragment 或已挂载容器)内的 math 节点设无障碍标签并触发
+ * KaTeX 渲染。KaTeX 跳过 `data-katex-rendered === "true"` 的节点 ── 增量 DOM
+ * 注入下 finalized 区的 math 节点持久存在, 每条公式只在定型 append 那帧
+ * 渲染一次, 不再每帧重渲染。
+ *
+ * 事件委托(click / keydown 复制 LaTeX)挂在稳定的 content 容器上, 由
+ * [`attachAgentThreadCardMathCopyHandlers`] 一次性绑定; 新注入 fragment 内
+ * 的 math 点击靠冒泡到容器, 无需重复绑定。
+ */
+export function prepareAgentThreadCardMath(
+  root: ParentNode,
+  mathCopyLabel: string,
+): void {
+  const mathNodes = Array.from(
+    root.querySelectorAll<HTMLElement>(AGENT_MATH_SELECTOR),
+  );
+  mathNodes.forEach((math) => {
+    math.setAttribute("aria-label", mathCopyLabel);
+    math.title = mathCopyLabel;
+  });
+  void renderAgentThreadCardMathNodes(mathNodes);
+}
+
 export function fillWithAgentThreadCardMarkdownHtml(
   container: HTMLElement,
   html: string,
@@ -279,12 +302,8 @@ export function fillWithAgentThreadCardMarkdownHtml(
   const template = document.createElement("template");
   template.innerHTML = html;
   container.append(template.content.cloneNode(true));
-  container.querySelectorAll<HTMLElement>(AGENT_MATH_SELECTOR).forEach((math) => {
-    math.setAttribute("aria-label", mathCopyLabel);
-    math.title = mathCopyLabel;
-  });
   attachAgentThreadCardMathCopyHandlers(container);
-  void renderAgentThreadCardMath(container);
+  prepareAgentThreadCardMath(container, mathCopyLabel);
 }
 
 export function parseAgentThreadCardMarkdown(token: unknown) {

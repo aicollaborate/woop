@@ -22,9 +22,7 @@ pub struct AgentRuntimeStatus {
     flowix: AgentRuntimeAvailability,
     codex: AgentRuntimeAvailability,
     claude: AgentRuntimeAvailability,
-    gemini: AgentRuntimeAvailability,
     hermes: AgentRuntimeAvailability,
-    openclaw: AgentRuntimeAvailability,
     opencode: AgentRuntimeAvailability,
 }
 
@@ -73,9 +71,7 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
         codex.reason = crate::agent_external::codex::cli::preflight_codex().err();
     }
     let claude = external_availability(cfg.get_entry("claude"), "Claude Code CLI");
-    let gemini = external_availability(cfg.get_entry("gemini"), "Gemini CLI");
     let hermes = external_availability(cfg.get_entry("hermes"), "Hermes Agent CLI");
-    let openclaw = external_availability(cfg.get_entry("openclaw"), "OpenClaw CLI");
     let opencode = external_availability(cfg.get_entry("opencode"), "OpenCode CLI");
 
     AgentRuntimeStatus {
@@ -85,9 +81,7 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
         },
         codex,
         claude,
-        gemini,
         hermes,
-        openclaw,
         opencode,
     }
 }

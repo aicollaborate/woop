@@ -2,7 +2,7 @@ use rllm::chat::{ChatRole, MessageType};
 use rllm::{FunctionCall, ToolCall as LlmToolCall};
 
 use crate::agent_flowix::providers::OpenAICompatibleChatMessage;
-use crate::agent_session::ChatMessage as ThreadChatMessage;
+use crate::agent_session::{ChatMessage as ThreadChatMessage, MessageRole};
 
 pub(super) const LLM_CONTEXT_RECENT_MESSAGES: usize = 80;
 const LLM_CONTEXT_TOKEN_BUDGET: u32 = 48_000;
@@ -54,14 +54,14 @@ pub(super) fn truncate_for_sub_agent(content: &str, max_chars: usize) -> String 
 /// 工具结果�?`role: User` 包一层是 rllm 的约�?(它的 ChatRole �?�� User/Assistant),
 /// provider �?MessageType 而不�?role 决定发什�? �?rllm �?��参考实�?(llm crate �?/// `providers/openai_compatible.rs`) 一致�?
 fn persisted_to_llm(m: crate::agent_session::ChatMessage) -> Option<OpenAICompatibleChatMessage> {
-    match m.role.as_str() {
-        "user" => Some(OpenAICompatibleChatMessage {
+    match MessageRole::from_str(&m.role) {
+        Some(MessageRole::User) => Some(OpenAICompatibleChatMessage {
             role: ChatRole::User,
             content: m.llm_content.unwrap_or(m.content),
             message_type: MessageType::Text,
             reasoning: None,
         }),
-        "assistant" => {
+        Some(MessageRole::Assistant) => {
             let reasoning = m.reasoning.filter(|value| !value.trim().is_empty());
             let message_type = match m.tool_calls {
                 Some(serde_json::Value::Array(arr)) => {
@@ -86,7 +86,7 @@ fn persisted_to_llm(m: crate::agent_session::ChatMessage) -> Option<OpenAICompat
                 reasoning,
             })
         }
-        "tool" => {
+        Some(MessageRole::Tool) => {
             let data = m.tool_data?;
             let call_id = m.tool_call_id?;
             Some(OpenAICompatibleChatMessage {

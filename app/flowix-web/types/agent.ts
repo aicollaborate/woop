@@ -22,7 +22,7 @@ export type AgentTypeKey =
 
 export interface AgentType {
   key: AgentTypeKey;
-  /** 鍥剧墖璧勪骇璺緞(Vite 闈欐€佽祫婧?import 瑙ｆ瀽鍚庣殑 URL)銆?   *  鎵€鏈?agent 鍥炬爣缁熶竴鍦?agent-types.ts 闆嗕腑绠＄悊銆?*/
+  /** 图标资源路径 (Vite 静态资源 import 解析后的 URL)。所有 agent 图标统一在 agent-types.ts 集中管理。 */
   icon: string;
   name: string;
   desc: string;
@@ -216,12 +216,13 @@ export interface ToolCall {
   args?: string;
 }
 
-// Stream events from agent 鈹€鈹€ 涓庡悗绔?`AgentChunk` 1:1 闀滃儚, 鐢?// `client.ts:listenToAgentStream` 鐩戝惉 `agent-chunk` 閫氶亾娑堣垂銆?// 鏇挎崲涔嬪墠 `[REASONING]:` / `[TOOL_CALL]:` / `[TOOL_RESULT]:` / `[ERROR]:`
-// 瀛楃涓插墠缂€鍗忚 鈹€鈹€ 鐢ㄥ垽鍒仈鍚?(kind) 鏇夸唬 startsWith銆?//
-// **瀛楁鍛藉悕 鈹€鈹€ snake_case**: Tauri `app.emit("agent-chunk", &chunk)`
-// 涓嶅仛瀛楁閲嶅懡鍚? serde 鍘熸牱杈撳嚭銆俙thread_id` 鍦?JSON 閲屽氨鏄?`thread_id`,
-// TS 绔闂?`chunk.thread_id`銆傝繖璺?IPC command args/returns 鐨?camelCase
-// 绾﹀畾鏄袱濂楄鍒?鈹€鈹€ 鍚庤€呮湁 Tauri 鑷姩杞崲, 鍓嶈€呮病鏈? 涓嶈娣?// (涓?`memo-event` 鐨?`payload.memo` / `payload.source` 鍚屽舰)銆?
+// Stream events from agent —— 与后端 `AgentChunk` 1:1 镜像, 由
+// `client.ts:listenToAgentStream` 监听 `agent-chunk` 通道消费。替代
+// 之前的 `[REASONING]:` / `[TOOL_CALL]:` / `[TOOL_RESULT]:` / `[ERROR]:` 字符串前缀协议,
+// 用判别联合 (kind) 代替 startsWith。
+//
+// 字段命名 —— snake_case: Tauri `app.emit("agent-chunk", &chunk)` 不做字段重命名, serde 原样输出。
+// 这与 IPC command args/returns 的 camelCase 约定是两套规则 (后者有 Tauri 自动转换)。
 export type AgentChunk =
   | AgentChunkUserMessage
   | AgentChunkText
@@ -310,31 +311,33 @@ export interface AgentChunkError {
   run_id?: string;
 }
 
-// 鐢熷懡鍛ㄦ湡鍙樹綋 鈹€鈹€ 鐢卞悗绔?`chat_stream` 澶栧眰鍦?insert / remove cancel_flag
-// 鏃跺悇 emit 涓€娆°€傝鐩栨墍鏈夐€€鍑鸿矾寰?(Ok / Err / panic-via-drop)銆傚墠绔?// chat-store 鎹鏀舵暃 `threadStates[tid].isLoading`, 涓嶅啀渚濊禆 IPC finally銆?
+// 生命周期变体 —— 由后端 `chat_stream` 外层在 insert / remove cancel_flag
+// 时各 emit 一次。覆盖所有退出路径 (Ok / Err / panic-via-drop)。前端
+// chat-store 据此翻 `threadStates[tid].isLoading`, 不再依赖 IPC finally。
 export interface AgentChunkStreamStart {
   kind: "stream_start";
   thread_id: string;
   agent_type?: AgentTypeKey;
   run_id?: string;
   /**
-   * 閫氱敤 metadata 鍗忚瀛楁 鈹€鈹€ 璇?run 閿佸畾鐨?LLM model id銆?   * 鍚庣鍦?spawn 鏃剁‘瀹?浠庣敤鎴烽厤缃?CLI override 瑙ｆ瀽),瀵?OpenAI /
-   * Codex / Claude / Gemini 绛夋墍鏈?provider 涓€鑷?瀛楁涓嶈瘑鍒椂涓?undefined銆?   * 鍓嶇璇?`run.model ?? threadStates[tid].runs[activeRunId].model` 鍙栧€笺€?   */
+   * 通用 metadata 协议字段 —— 该 run 锁定的 LLM model id. 后端在 spawn 时确定 (从用户配置 / CLI override 解析), 对 OpenAI /
+   * Codex / Claude / Gemini 等所有 provider 一致, 字段不识别时为 undefined. 前端读 `run.model ?? threadStates[tid].runs[activeRunId].model` 取值.
+   */
   model?: string;
   /**
-   * 閫氱敤 metadata 鍗忚瀛楁 鈹€鈹€ reasoning effort("low"/"medium"/"high"/"xhigh")銆?   * Provider 涓嶆敮鎸佹椂涓?undefined銆?   */
+   * 通用 metadata 协议 —— reasoning effort ("low"/"medium"/"high"/"xhigh"). Provider 不支持时为 undefined.
+   */
   reasoning_effort?: string;
 }
 
 export interface AgentChunkStreamEnd {
   kind: "stream_end";
   thread_id: string;
-  /** null = 姝ｅ父瀹屾垚; string = 寮傚父閫€鍑?(e.g. "agent stuck: ...") */
+  /** null = 正常完成; string = 异常退出 (e.g. "agent stuck: ...") */
   reason: string | null;
   agent_type?: AgentTypeKey;
   run_id?: string;
 }
-
 /**
  * Token usage breakdown — nested object emitted on `usage` field of the
  * `AgentChunk::Usage` wire variant. Mirrors Rust
@@ -412,16 +415,13 @@ export interface AgentRunState {
   endedAt?: number;
   currentTool?: string | null;
   reason?: string | null;
-  // 鈹€鈹€ 閫氱敤 metadata 鍗忚瀛楁 (鐢?StreamStart chunk 濉厖) 鈹€鈹€
-  /** 璇?run 閿佸畾鐨?LLM model id,鍚姩鏃跺啓鍏ヤ笉鍐嶅彉鏇?*/
+  // ── 通用 metadata 协议字段 (由 StreamStart chunk 填充) ──
+  /** 该 run 锁定的 LLM model id,启动时写入不再变更 */
   model?: string;
   modelId?: string;
   lastRunAt?: number;
-  /** 璇?run 閿佸畾鐨?reasoning effort,鍚姩鏃跺啓鍏?*/
-  reasoningEffort?: string;
-  /**
-   * Accumulated token usage — fed by multiple Usage chunks during the run.
-   */
+      /** 通用 metadata 协议 —— reasoning effort ("low"/"medium"/"high"/"xhigh")。Provider 不支持时为 undefined。 */
+  reasoning_effort?: string;
   usage?: UsageInfo;
   /**
    * Provider-specific status snapshot — overwritten on every chunk.
@@ -461,12 +461,10 @@ interface AgentEventBase {
 export type AgentEvent =
   | (AgentEventBase & {
       kind: "stream_start";
-      /**
-       * 閫氱敤 metadata 鍗忚 鈹€鈹€ 璇?run 閿佸畾鐨?LLM model id銆?       * 浠?AgentChunkStreamStart.model 閫忎紶,涓嶈瘑鍒椂涓?undefined銆?       */
+      /** 通用 metadata 协议字段 —— 该 run 锁定的 LLM model id。后端在 spawn 时确定 (从用户配置 / CLI override 解析), 对 OpenAI / Codex / Claude / Gemini 等所有 provider 一致, 字段不识别时为 undefined。前端读 `run.model ?? threadStates[tid].runs[activeRunId].model` 取值。 */
       model?: string;
-      /**
-       * 閫氱敤 metadata 鍗忚 鈹€鈹€ reasoning effort ("low"/"medium"/"high"/"xhigh")銆?       * Provider 涓嶆敮鎸佹椂涓?undefined銆?       */
-      reasoningEffort?: string;
+      /** 通用 metadata 协议 —— reasoning effort ("low"/"medium"/"high"/"xhigh")。Provider 不支持时为 undefined。 */
+      reasoning_effort?: string;
     })
   | (AgentEventBase & { kind: "text_delta"; text: string })
   | (AgentEventBase & {
@@ -503,8 +501,8 @@ export type AgentEvent =
       statusInfo?: StatusInfo | null;
     });
 
-// `agent_running_threads` IPC 杩斿洖鍊?鈹€鈹€ camelCase, 璧?IPC command 杩斿洖
-// 璺緞, Tauri 鑷姩浠?Rust snake_case (`started_at` / `current_tool`) 杞?// camelCase (`startedAt` / `currentTool`)銆?
+// `agent_running_threads` IPC 返回值 —— camelCase, 走 IPC command 返回路径, Tauri 自动从 Rust snake_case (`started_at` / `current_tool`) 转
+// camelCase (`startedAt` / `currentTool`)。
 export interface RunInfo {
   startedAt: number;
   currentTool: string | null;
@@ -515,16 +513,17 @@ export interface RunInfo {
 }
 
 /**
- * 閫氱敤 metadata 鍗忚 鈹€鈹€ 涓€娆?run 鐨?灞曠ず蹇収"銆? * 鍐欏湪 `ThreadState.lastRun` 涓?鍦?run 缁撴潫(applyRunEnded)鍚?鍗充娇璇?run
- * 宸茶浠?`runs` map 涓竻鐞?灞曠ず鐢ㄧ殑 metadata 浠嶇劧鍙 鈹€鈹€ BadgeHoverCard
- * 鍗充緷璧栬繖涓瓧娈靛湪"浼氳瘽宸茬粨鏉?鏃朵粛鑳借鍑?sessionId/model/elapsed/totalTokens銆? * Provider-agnostic:瀵?Codex / Claude / Gemini / Flowix / Hermes / OpenClaw
- * 鍏ㄩ儴閫傜敤,瀛楁涓嶈瘑鍒椂涓?undefined銆? */
+ * 通用 metadata 协议 —— 一次 run 的"展示快照"。写在 `ThreadState.lastRun` 中, 在 run 结束 (applyRunEnded) 后, 即使该 run
+ * 已从 `runs` map 中清理, 展示用的 metadata 仍然可见 —— BadgeHoverCard 仍依赖这个字段在"会话已结束"时仍能读出
+ * sessionId/model/elapsed/totalTokens。Provider-agnostic: 对 Codex / Claude / Gemini / Flowix / Hermes / OpenClaw 全部适用, 字段不识别时为 undefined。
+ */
+
 export interface LastRunSnapshot {
   runId: string;
   agentType: AgentTypeKey;
   startedAt: number;
   endedAt?: number;
-  /** LLM model id,鍚姩鏃堕攣瀹氥€侾rovider 涓嶆敮鎸?/ 鏈€忎紶鏃朵负 undefined銆?*/
+  /** LLM model id,启动时锁定。Provider 不支持 / 未透传时为 undefined。*/
   model?: string;
   modelId?: string;
   lastRunAt?: number;
@@ -533,9 +532,9 @@ export interface LastRunSnapshot {
   usage?: UsageInfo;
   /** Provider-specific status snapshot — see [`StatusInfo`]. */
   statusInfo?: StatusInfo;
-  /** 鏈€缁堢姸鎬?鈹€鈹€ 姝ｅ父瀹屾垚 / 澶辫触 / 鍙栨秷銆?*/
+  /** 最终状态 —— 正常完成 / 失败 / 取消。*/
   status: AgentRunStatus;
-  /** 澶辫触 / 鍙栨秷鍘熷洜;姝ｅ父瀹屾垚鏃朵负 undefined銆?*/
+  /** 失败 / 取消原因;正常完成时为 undefined。*/
   reason?: string | null;
 }
 

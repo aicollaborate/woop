@@ -12,7 +12,7 @@ use super::events::{
 use super::history::{
     get_rollout_tool_response_items_since, is_codex_session_id, CodexRolloutEvent,
 };
-use super::io::read_capped_line;
+use crate::agent_external::read_capped_line;
 use super::runtime::{persist_and_emit_codex_chunk, persist_codex_chunk_with_metadata};
 use super::tool_events::nested_exec_tool_names;
 use super::{AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
@@ -22,74 +22,46 @@ use crate::agent_external::{
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
+use crate::agent_external::shared::TurnEvents;
 
-#[derive(Default)]
-struct CodexTurnEvents {
-    events: Vec<(AgentChunk, AgentChunkMetadata)>,
-    message_indexes: HashMap<String, usize>,
-    tool_call_indexes: HashMap<String, usize>,
-    tool_result_indexes: HashMap<String, usize>,
-    usage_index: Option<usize>,
-}
+type CodexTurnEvents = TurnEvents;
 
-impl CodexTurnEvents {
-    fn observe(&mut self, chunk: &AgentChunk, metadata: &AgentChunkMetadata) {
-        match chunk {
-            AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
-                if text.is_empty() {
-                    return;
-                }
-                let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
-                    "reasoning"
-                } else {
-                    "assistant"
-                };
-                let message_id = metadata
-                    .message_id
-                    .clone()
-                    .unwrap_or_else(|| format!("{role}-{}", self.events.len() + 1));
-                let key = format!("{role}:{message_id}");
-                let mut stored_metadata = metadata.clone();
-                stored_metadata.message_id = Some(message_id);
-                stored_metadata.content_mode = Some("snapshot");
-                stored_metadata.message_phase = Some("completed");
-                if let Some(index) = self.message_indexes.get(&key).copied() {
-                    self.events[index] = (chunk.clone(), stored_metadata);
-                } else {
-                    self.message_indexes.insert(key, self.events.len());
-                    self.events.push((chunk.clone(), stored_metadata));
-                }
+/// Codex text merge: each delta replaces the whole row (no append).
+fn observe_codex_turn(te: &mut TurnEvents, chunk: &AgentChunk, metadata: &AgentChunkMetadata) {
+    match chunk {
+        AgentChunk::Text { text, .. } | AgentChunk::Reasoning { text, .. } => {
+            if text.is_empty() {
+                return;
             }
-            AgentChunk::ToolCall { id, .. } => {
-                if let Some(index) = self.tool_call_indexes.get(id).copied() {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.tool_call_indexes.insert(id.clone(), self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
+            let role = if matches!(chunk, AgentChunk::Reasoning { .. }) {
+                "reasoning"
+            } else {
+                "assistant"
+            };
+            let message_id = metadata
+                .message_id
+                .clone()
+                .unwrap_or_else(|| format!("{role}-{}", te.events.len() + 1));
+            let key = format!("{role}:{message_id}");
+            let mut stored_metadata = metadata.clone();
+            stored_metadata.message_id = Some(message_id);
+            stored_metadata.content_mode = Some("snapshot");
+            stored_metadata.message_phase = Some("completed");
+            if let Some(index) = te.message_indexes.get(&key).copied() {
+                te.events[index] = (chunk.clone(), stored_metadata);
+            } else {
+                te.message_indexes.insert(key, te.events.len());
+                te.events.push((chunk.clone(), stored_metadata));
             }
-            AgentChunk::ToolResult { id, .. } => {
-                if let Some(index) = self.tool_result_indexes.get(id).copied() {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.tool_result_indexes
-                        .insert(id.clone(), self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
-            }
-            AgentChunk::Usage { .. } => {
-                if let Some(index) = self.usage_index {
-                    self.events[index] = (chunk.clone(), metadata.clone());
-                } else {
-                    self.usage_index = Some(self.events.len());
-                    self.events.push((chunk.clone(), metadata.clone()));
-                }
-            }
-            AgentChunk::Error { .. } => self.events.push((chunk.clone(), metadata.clone())),
-            _ => {}
         }
+        AgentChunk::ToolCall { .. } => te.observe_tool_call(chunk, metadata),
+        AgentChunk::ToolResult { .. } => te.observe_tool_result(chunk, metadata),
+        AgentChunk::Usage { .. } => te.observe_usage(chunk, metadata),
+        AgentChunk::Error { .. } => te.observe_error(chunk, metadata),
+        _ => {}
     }
 }
+
 
 async fn persist_turn_events(
     thread_manager: &Arc<ThreadManager>,
@@ -190,7 +162,7 @@ where
                 thread_id: emit_thread_id.clone(),
                 text,
             };
-            let metadata = complete_chunk_metadata(
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
                 AgentChunkMetadata {
                     message_phase: Some("completed"),
                     content_mode: Some("snapshot"),
@@ -202,7 +174,7 @@ where
                 source_sequence,
                 0,
             );
-            turn_events.observe(&chunk, &metadata);
+            observe_codex_turn(&mut turn_events, &chunk, &metadata);
             emit_chunk_with_run_id_and_metadata(
                 &app_handle,
                 &chunk,
@@ -281,7 +253,7 @@ where
                 continue;
             }
             record_stdout_tool_call(&chunk, &mut emitted_tool_ids, &mut emitted_tool_signatures);
-            let metadata = complete_chunk_metadata(
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
                 codex_chunk_metadata(&value, &chunk),
                 &chunk,
                 &run_id,
@@ -289,7 +261,7 @@ where
                 source_sequence,
                 source_subsequence as u32,
             );
-            turn_events.observe(&chunk, &metadata);
+            observe_codex_turn(&mut turn_events, &chunk, &metadata);
             emit_chunk_with_run_id_and_metadata(
                 &app_handle,
                 &chunk,
@@ -329,7 +301,7 @@ where
                         if stream_end_emitted.load(Ordering::Acquire) {
                             break;
                         }
-                        turn_events.observe(&chunk, &metadata);
+                        observe_codex_turn(&mut turn_events, &chunk, &metadata);
                         emit_chunk_with_run_id_and_metadata(
                             &app_handle,
                             &chunk,
@@ -432,7 +404,7 @@ fn reconcile_rollout_tool_events(
             .into_iter()
             .enumerate()
         {
-            let metadata = complete_chunk_metadata(
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
                 codex_chunk_metadata(&event.value, &chunk),
                 &chunk,
                 "rollout",
@@ -483,32 +455,6 @@ fn reconcile_rollout_tool_events(
     }
 
     chunks
-}
-
-fn complete_chunk_metadata(
-    mut metadata: AgentChunkMetadata,
-    chunk: &AgentChunk,
-    run_id: &str,
-    source_timestamp: i64,
-    source_sequence: u64,
-    source_subsequence: u32,
-) -> AgentChunkMetadata {
-    if metadata.message_id.is_none() {
-        let kind = match chunk {
-            AgentChunk::Text { .. } => Some("assistant"),
-            AgentChunk::Reasoning { .. } => Some("reasoning"),
-            _ => None,
-        };
-        if let Some(kind) = kind {
-            metadata.message_id = Some(format!(
-                "{kind}-{run_id}-{source_sequence}-{source_subsequence}"
-            ));
-        }
-    }
-    metadata.source_timestamp = Some(source_timestamp);
-    metadata.source_sequence = Some(source_sequence);
-    metadata.source_subsequence = Some(source_subsequence);
-    metadata
 }
 
 fn consume_all_tool_signatures(
@@ -723,14 +669,14 @@ mod tests {
             content_mode: Some("snapshot"),
             ..Default::default()
         };
-        turn.observe(
+        observe_codex_turn(&mut turn, 
             &AgentChunk::Text {
                 thread_id: "session-1".to_string(),
                 text: "partial".to_string(),
             },
             &text_metadata,
         );
-        turn.observe(
+        observe_codex_turn(&mut turn, 
             &AgentChunk::Text {
                 thread_id: "session-1".to_string(),
                 text: "complete answer".to_string(),
@@ -741,7 +687,7 @@ mod tests {
             },
         );
         for command in ["pwd", "pwd -P"] {
-            turn.observe(
+            observe_codex_turn(&mut turn, 
                 &AgentChunk::ToolCall {
                     thread_id: "session-1".to_string(),
                     id: "tool-1".to_string(),
@@ -751,7 +697,7 @@ mod tests {
                 &AgentChunkMetadata::default(),
             );
         }
-        turn.observe(
+        observe_codex_turn(&mut turn, 
             &AgentChunk::ToolResult {
                 thread_id: "session-1".to_string(),
                 id: "tool-1".to_string(),
@@ -761,7 +707,7 @@ mod tests {
             &AgentChunkMetadata::default(),
         );
         for total_tokens in [10, 20] {
-            turn.observe(
+            observe_codex_turn(&mut turn, 
                 &AgentChunk::Usage {
                     thread_id: "session-1".to_string(),
                     model_id: None,

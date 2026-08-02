@@ -33,7 +33,7 @@ pub fn append_workspace_context(prompt: &str, cwd: &Path, workspace_paths: &[Str
 
 /// One live external-agent child process per `thread_id`.
 ///
-/// Codex / Claude Code / `simple_cli` all fall under this shape: a long-lived
+/// Codex / Claude Code all fall under this shape: a long-lived
 /// process whose stdout is line-streamed as JSON events. Consolidating the
 /// state here makes run-id / kill / stdout-cap semantics single-sourced.
 #[derive(Clone)]

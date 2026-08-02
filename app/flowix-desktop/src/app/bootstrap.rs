@@ -3,7 +3,6 @@ use crate::agent_external::codex::CodexCliManager;
 use crate::agent_external::hermes::HermesCliManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
-use crate::agent_external::simple_cli;
 use crate::agent_external_config::AgentExternalConfig;
 use crate::agent_flowix::AgentManager;
 use crate::agent_session::ThreadManager;
@@ -217,22 +216,12 @@ pub fn run() {
     ));
     let codex_cli_manager = Arc::new(CodexCliManager::new(thread_manager_arc.clone()));
     let claude_cli_manager = Arc::new(ClaudeCliManager::new(thread_manager_arc.clone()));
-    let gemini_cli_manager = Arc::new(simple_cli::SimpleCliManager::new(
-        simple_cli::SimpleCliKind::Gemini,
-        thread_manager_arc.clone(),
-    ));
     let hermes_cli_manager = Arc::new(HermesCliManager::new(thread_manager_arc.clone()));
-    let openclaw_cli_manager = Arc::new(simple_cli::SimpleCliManager::new(
-        simple_cli::SimpleCliKind::OpenClaw,
-        thread_manager_arc.clone(),
-    ));
     let opencode_acp_manager = Arc::new(OpenCodeAcpManager::new(thread_manager_arc.clone()));
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
         codex_cli_manager,
         claude_cli_manager,
-        gemini_cli_manager,
         hermes_cli_manager,
-        openclaw_cli_manager,
         opencode_acp_manager,
     ));
 

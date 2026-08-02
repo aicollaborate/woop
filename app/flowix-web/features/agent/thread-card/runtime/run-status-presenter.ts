@@ -98,13 +98,11 @@ export function renderAgentThreadCardMetaState(options: {
   });
   const label = statusView.shouldShowStatus
     ? statusView.status === "running"
-      ? statusView.supportsStreaming
-        ? t("editor.threadCard.running")
-        : t("editor.threadCard.running")
+      ? t("editor.threadCard.running")
       : statusView.status === "failed"
-        ? "失败"
+        ? t("editor.threadCard.failed")
         : statusView.status === "cancelled"
-          ? "已取消"
+          ? t("editor.threadCard.cancelled")
           : ""
     : "";
 

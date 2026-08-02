@@ -1128,12 +1128,14 @@ mod tests {
         }
 
         let conn = manager.lock_conn();
+        // 排除 prune 追加的 history_truncated marker (非真实 event), 验证保留的最新 10000 条 real event。
         let (count, min_created_at, max_created_at): (i64, i64, i64) = conn
             .query_row(
                 "SELECT COUNT(*), MIN(created_at), MAX(created_at)
                  FROM agent_external_events
-                 WHERE thread_id = 'codex-pruned-events'",
-                [],
+                 WHERE thread_id = 'codex-pruned-events'
+                   AND normalized_json <> ?1",
+                params![r#"{"kind":"history_truncated","version":1}"#],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();

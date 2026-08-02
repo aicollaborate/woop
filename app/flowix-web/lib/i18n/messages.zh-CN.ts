@@ -969,6 +969,8 @@ const zhCN = {
     "editor.tagMention.create": "新建",
     "editor.tagMention.loadMore": "加载更多",
     "editor.threadCard.running": "运行中",
+    "editor.threadCard.failed": "失败",
+    "editor.threadCard.cancelled": "已取消",
     "editor.threadCard.thinking": "思考中",
     "editor.threadCard.aiRunning": "AI 在跑",
     "editor.threadCard.fullscreen": "全屏",
