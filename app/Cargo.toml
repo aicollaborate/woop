@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "flowix-desktop",
+    "flowix-mobile",
     "flowix-core",
     "flowix-sync",
     "flowix-cli",

@@ -13,6 +13,8 @@ npm run tauri:dev        # 推荐：独立 dev bundle ID (com.flowix.app.dev / "
 npm run tauri:dev:win    # Windows 开发启动：使用 app/flowix-desktop/tauri.windows.dev.conf.json
 npm run tauri dev        # ⚠️ 走默认 tauri.conf.json，与生产同 bundle ID (com.flowix.app)，已被生产占住时会立刻 exit 0
 npm run dev              # 仅前端 (localhost:1420)
+npm run tauri:mobile:dev # 移动端完整启动：Vite mobile 模式 + app/flowix-mobile Tauri 窗口
+npm run dev:mobile -- --port 1421 # 仅移动端前端预览 (localhost:1421)，不包含 Tauri 原生能力
 npm run tauri build      # 生产构建
 npm run cli:build        # 编 CLI sidecar 到 app/flowix-desktop/binaries/（当前 host）
 npm run cli:build:all    # CI 用：三平台（linux / macOS ×2 / windows）全编

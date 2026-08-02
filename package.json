@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mobile": "vite --mode mobile",
     "build": "tsc && vite build",
+    "build:mobile": "tsc && vite build --mode mobile",
     "clean": "rm -rf .build dist app/target app/flowix-desktop/binaries",
     "test": "vitest run",
     "check:layers": "node scripts/check-layer-boundaries.mjs",
@@ -18,6 +20,8 @@
     "cli:build:macos": "bash scripts/build-cli.sh --macos",
     "tauri:dev": "tauri dev --config app/flowix-desktop/tauri.conf.dev.json",
     "tauri:dev:win": "tauri dev --config app/flowix-desktop/tauri.windows.dev.conf.json",
+    "tauri:mobile:dev": "cd app/flowix-mobile && ../../node_modules/.bin/tauri dev",
+    "tauri:mobile:build": "cd app/flowix-mobile && ../../node_modules/.bin/tauri build",
     "tauri:build": "tauri build",
     "tauri:build:win": "node scripts/build-tauri-production.mjs --platform win32",
     "tauri:build:mac": "node scripts/build-tauri-production.mjs --platform darwin",

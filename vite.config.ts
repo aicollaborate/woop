@@ -49,7 +49,7 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `backend` (relative to repo root)
-      ignored: ["**/app/flowix-desktop/**", "**/app/flowix-core/**", "**/app/flowix-cli/**", "**/app/target/**"],
+      ignored: ["**/app/flowix-desktop/**", "**/app/flowix-mobile/**", "**/app/flowix-core/**", "**/app/flowix-cli/**", "**/app/target/**"],
     },
   },
 }));
