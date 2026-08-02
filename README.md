@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/text2future/flowix/releases"><b>Download</b></a> ·
+  <a href="https://flowix-memo.com/"><b>Download</b></a> ·
   <a href="https://flowix-memo.com/"><b>Website</b></a> ·
   <a href="https://flowix-memo.com/docs/"><b>Docs</b></a>
 </p>
@@ -68,7 +68,7 @@ Flowix keeps your work as plain Markdown files on your device. You choose what a
 
 ## Quick start
 
-1. Download and install Flowix from [Releases](https://github.com/text2future/flowix/releases).
+1. Download and install Flowix from [the website](https://flowix-memo.com/).
 2. Create a new local folder, or register an existing folder as a notebook.
 3. Create a document and write down the task background, reference materials, goals and constraints.
 4. Call an agent from within the document, or keep organizing content with tags and properties.

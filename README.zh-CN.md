@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/text2future/flowix/releases"><b>立即下载</b></a> ·
+  <a href="https://flowix-memo.com/"><b>立即下载</b></a> ·
   <a href="https://flowix-memo.com/"><b>官网</b></a> ·
   <a href="https://flowix-memo.com/docs/"><b>文档</b></a>
 </p>
@@ -67,7 +67,7 @@ Flowix 将笔记保存为本地 Markdown 文件。你决定 Agent 能看到什�
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/text2future/flowix/releases) 下载并安装 Flowix。
+1. 从 [官网](https://flowix-memo.com/) 下载并安装 Flowix。
 2. 新建一个本地文件夹，或将已有文件夹注册为笔记本。
 3. 创建一篇文档，记录任务背景、参考资料、目标与约束。
 4. 在文档内调用 Agent，或继续用标签与属性组织内容。
