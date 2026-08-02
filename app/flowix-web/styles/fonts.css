@@ -1,14 +1,21 @@
-/* Nunito Sans - variable font (300-800 weight) */
+/* Nunito Sans - variable font (300-800 weight).
+ * woff2 + Latin subset (Nunito 不含 CJK 字形, 中文走 font-stack 系统回退).
+ * 由 scripts/subset-fonts.sh 从原 TTF (assets/fonts/NunitoSans*.ttf) 转出,
+ * 字重 / 字宽 / opsz 轴保留. 原 TTF 留在仓库作为重新生成的源, 不被引用故
+ * 不进打包产物。font-display: swap 让首屏先用系统回退字体绘制, 字体就绪后
+ * 无闪烁替换。 */
 @font-face {
 	font-family: 'Nunito Sans';
-	src: url('../assets/fonts/NunitoSans.ttf') format('truetype');
+	src: url('../assets/fonts/NunitoSans.woff2') format('woff2');
 	font-weight: 300 800;
 	font-style: normal;
+	font-display: swap;
 }
 
 @font-face {
 	font-family: 'Nunito Sans';
-	src: url('../assets/fonts/NunitoSans-Italic.ttf') format('truetype');
+	src: url('../assets/fonts/NunitoSans-Italic.woff2') format('woff2');
 	font-weight: 300 800;
 	font-style: italic;
+	font-display: swap;
 }

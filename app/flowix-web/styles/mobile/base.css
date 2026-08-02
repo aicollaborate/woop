@@ -1,0 +1,174 @@
+/* 移动端基础布局: 主题无关 token、全局重置收口、shell / topbar / 图标按钮、
+ * 列表与文档共用标题、消息条。
+ *
+ * 这一层从桌面 styles/index.css 中抽出移动端真正依赖的共享基底 (非颜色
+ * token、preflight 之外的 body/选区/焦点环), 让移动端不再加载桌面
+ * editor*.css 等编辑器样式, 同时保持 Rock 视觉与桌面一致。颜色 token
+ * 仍由 styles/theme/*.css 提供, 在 mobile/index.css 中导入。 */
+
+:root {
+  color-scheme: light;
+  --mobile-hairline: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --mobile-paper-shadow: 0 1px 0 color-mix(in oklch, var(--foreground) 3%, transparent),
+    0 8px 24px color-mix(in oklch, var(--foreground) 4%, transparent);
+}
+
+@layer base {
+  /* 非颜色 token: 与桌面 styles/index.css @layer base 保持一致。
+   * 绝不在此定义 --destructive / --warning 等会被 [data-theme="..."]
+   * 覆盖的色 token (编译后 @layer 被剥, :root 会盖过主题)。色 token 一律
+   * 进各自主题文件。 */
+  :root {
+    --radius: 0.625rem;
+
+    --font-heading: var(--font-sans);
+    --font-sans: 'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont;
+    --font-nav: 'SF Mono';
+
+    --app-font-family: var(--font-sans);
+    --app-font-size: 15px;
+    --app-line-height: 1.6;
+    --app-document-width: 700px;
+
+    --agent-font: 'Anonymous Pro', 'PingFang SC', 'Microsoft YaHei', 'Inter', -apple-system, monospace;
+  }
+
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+  }
+
+  html, body {
+    overscroll-behavior: none;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    caret-color: var(--brand);
+  }
+}
+
+@layer components {
+  ::selection {
+    background: color-mix(in oklch, var(--brand) 22%, transparent) !important;
+    color: inherit !important;
+  }
+}
+
+/* 全局键盘焦点环 (原生 button 与 [role="button"]): 保持与桌面一致,
+ * Tab 到达时给同一 ring token。unlayered, 在 Tailwind utilities 之后生效。 */
+:where(button, [role="button"]):focus-visible:not(:disabled):not([aria-disabled="true"]) {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+body:has(.mobile-shell),
+body:has(.mobile-document-screen),
+body:has(.mobile-auth-screen),
+body:has(.mobile-boot-screen) {
+  overflow: hidden;
+  background: var(--background);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-shell,
+.mobile-document-screen,
+.mobile-auth-screen,
+.mobile-boot-screen {
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.mobile-topbar {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 52px;
+  align-items: center;
+  min-height: calc(58px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 6px 0;
+  border-bottom: 1px solid var(--mobile-hairline);
+  background: color-mix(in oklch, var(--background) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.mobile-icon-button {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  justify-self: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--secondary-foreground);
+}
+
+.mobile-icon-button:active { background: var(--muted); }
+.mobile-icon-button:disabled { opacity: .42; }
+
+.mobile-list-heading,
+.mobile-document-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.mobile-list-heading > div {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+}
+
+.mobile-heading-mark {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 10%, transparent);
+  background: var(--brand);
+}
+
+.mobile-list-heading strong,
+.mobile-document-heading strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-list-heading > span,
+.mobile-document-heading > span {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: .02em;
+}
+
+.mobile-message {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 8px 12px 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in oklch, var(--destructive) 24%, transparent);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--destructive) 7%, var(--card));
+  color: var(--destructive);
+  font-size: 11px;
+}

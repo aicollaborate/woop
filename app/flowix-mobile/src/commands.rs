@@ -4,7 +4,7 @@ use flowix_core::memo_file::{Memo, Notebook};
 use flowix_core::MemoService;
 use flowix_sync::{CloudState, LocalChangeKind};
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{cloud_sync_allowed, read_memo_file, MobileState};
 
@@ -72,38 +72,66 @@ fn notebook_id_for_memo(state: &MobileState, memo_id: &str) -> Result<String, St
         .ok_or_else(|| "NOTE_NOT_FOUND".to_string())
 }
 
-#[tauri::command]
-pub async fn mobile_initialize(state: State<'_, MobileState>) -> Result<CloudState, String> {
+const CLOUD_STATE_CHANGED_EVENT: &str = "cloud-state-changed";
+
+async fn restore_session_and_sync(app: AppHandle) {
+    let state = app.state::<MobileState>();
     let _guard = state.initialize_lock.lock().await;
-    state.ensure_local_notebook()?;
-    let current = state
-        .cloud_sync
-        .state()
-        .map_err(|error| error.to_string())?;
-    if !current.authenticated {
-        if let Some(token) = state.load_refresh_token()? {
-            match state.cloud_sync.restore(&token).await {
-                Ok(outcome) => state.save_refresh_token(&outcome.refresh_token)?,
-                Err(flowix_sync::SyncError::NotAuthenticated)
-                | Err(flowix_sync::SyncError::Api { status: 401, .. }) => {
-                    state.delete_refresh_token()?
-                }
-                Err(error) => {
-                    eprintln!("mobile session restore deferred: {error}");
+    let result = async {
+        let current = state
+            .cloud_sync
+            .state()
+            .map_err(|error| error.to_string())?;
+        if !current.authenticated {
+            if let Some(token) = state.load_refresh_token()? {
+                match state.cloud_sync.restore(&token).await {
+                    Ok(outcome) => state.save_refresh_token(&outcome.refresh_token)?,
+                    Err(flowix_sync::SyncError::NotAuthenticated)
+                    | Err(flowix_sync::SyncError::Api { status: 401, .. }) => {
+                        state.delete_refresh_token()?
+                    }
+                    Err(error) => {
+                        eprintln!("mobile session restore deferred: {error}");
+                    }
                 }
             }
         }
+        let next = state
+            .cloud_sync
+            .state()
+            .map_err(|error| error.to_string())?;
+        let sync_allowed = cloud_sync_allowed(&next);
+        state
+            .cloud_sync
+            .set_enabled(sync_allowed)
+            .map_err(|error| error.to_string())?;
+        if sync_allowed {
+            crate::sync::bootstrap_and_sync(state.inner()).await?;
+        }
+        Ok::<(), String>(())
     }
-    let next = state
+    .await;
+
+    if let Err(error) = result {
+        eprintln!("mobile background initialization failed: {error}");
+    }
+    if let Ok(cloud) = state.cloud_sync.state() {
+        let _ = app.emit(CLOUD_STATE_CHANGED_EVENT, cloud);
+    }
+}
+
+#[tauri::command]
+pub fn mobile_initialize(
+    state: State<'_, MobileState>,
+    app: AppHandle,
+) -> Result<CloudState, String> {
+    state.ensure_local_notebook()?;
+    let initial = state
         .cloud_sync
         .state()
         .map_err(|error| error.to_string())?;
-    let sync_allowed = cloud_sync_allowed(&next);
-    let _ = state.cloud_sync.set_enabled(sync_allowed);
-    if sync_allowed {
-        let _ = crate::sync::bootstrap_and_sync(state.inner()).await;
-    }
-    state.cloud_sync.state().map_err(|error| error.to_string())
+    tauri::async_runtime::spawn(restore_session_and_sync(app));
+    Ok(initial)
 }
 
 #[tauri::command]

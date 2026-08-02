@@ -4,14 +4,19 @@ use std::sync::{Arc, RwLock};
 use flowix_core::memo_file::{MemoFile, NotebookConfig};
 use flowix_core::secret::SecretStore;
 use flowix_sync::CloudState;
+#[cfg(target_os = "ios")]
+use tauri_plugin_keyring_store::WriteAccessibility;
+use tauri_plugin_keyring_store::{KeyringAvailability, KeyringStore};
 
 const CLOUD_REFRESH_TOKEN_KEY: &str = "flowix_cloud::refresh_token";
+const MOBILE_KEYRING_SERVICE: &str = "com.flowix.app.mobile.credentials";
 
 pub struct MobileState {
     pub data_dir: PathBuf,
     pub memo_file: Arc<RwLock<MemoFile>>,
     pub cloud_sync: Arc<flowix_sync::SyncManager>,
-    secrets: SecretStore,
+    credentials: KeyringStore,
+    legacy_secrets: SecretStore,
     pub initialize_lock: tokio::sync::Mutex<()>,
     pub sync_lock: tokio::sync::Mutex<()>,
 }
@@ -31,7 +36,8 @@ impl MobileState {
             data_dir,
             memo_file: Arc::new(RwLock::new(MemoFile::new(config_dir.clone()))),
             cloud_sync: Arc::new(cloud_sync),
-            secrets: SecretStore::new(config_dir.join("default.db")),
+            credentials: mobile_keyring(),
+            legacy_secrets: SecretStore::new(config_dir.join("default.db")),
             initialize_lock: tokio::sync::Mutex::new(()),
             sync_lock: tokio::sync::Mutex::new(()),
         })
@@ -69,22 +75,50 @@ impl MobileState {
     }
 
     pub fn load_refresh_token(&self) -> Result<Option<String>, String> {
-        self.secrets
+        if self.credentials.availability() == KeyringAvailability::Locked {
+            return Ok(None);
+        }
+        if let Some(token) = self
+            .credentials
+            .get_password_for_background(CLOUD_REFRESH_TOKEN_KEY)
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(Some(token));
+        }
+
+        // One-time migration from the pre-mobile-release SQLite credential.
+        let legacy = self
+            .legacy_secrets
             .load(CLOUD_REFRESH_TOKEN_KEY)
-            .map(|token| token.map(|value| value.into_inner()))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?
+            .map(|value| value.into_inner());
+        if let Some(token) = legacy.as_deref() {
+            self.credentials
+                .set_password(CLOUD_REFRESH_TOKEN_KEY, token)
+                .map_err(|error| error.to_string())?;
+            self.legacy_secrets
+                .delete(CLOUD_REFRESH_TOKEN_KEY)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(legacy)
     }
 
     pub fn save_refresh_token(&self, token: &str) -> Result<(), String> {
-        self.secrets
-            .save(CLOUD_REFRESH_TOKEN_KEY, token)
+        self.credentials
+            .set_password(CLOUD_REFRESH_TOKEN_KEY, token)
+            .map_err(|error| error.to_string())?;
+        self.legacy_secrets
+            .delete(CLOUD_REFRESH_TOKEN_KEY)
+            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
     pub fn delete_refresh_token(&self) -> Result<(), String> {
-        self.secrets
+        self.legacy_secrets
             .delete(CLOUD_REFRESH_TOKEN_KEY)
-            .map(|_| ())
+            .map_err(|error| error.to_string())?;
+        self.credentials
+            .delete(CLOUD_REFRESH_TOKEN_KEY)
             .map_err(|error| error.to_string())
     }
 
@@ -94,6 +128,13 @@ impl MobileState {
         }
         Ok(())
     }
+}
+
+fn mobile_keyring() -> KeyringStore {
+    let store = KeyringStore::new(MOBILE_KEYRING_SERVICE);
+    #[cfg(target_os = "ios")]
+    let store = store.with_write_accessibility(WriteAccessibility::AfterFirstUnlockThisDeviceOnly);
+    store
 }
 
 pub fn cloud_sync_allowed(state: &CloudState) -> bool {

@@ -13,13 +13,28 @@ npm run tauri:dev        # 推荐：独立 dev bundle ID (com.flowix.app.dev / "
 npm run tauri:dev:win    # Windows 开发启动：使用 app/flowix-desktop/tauri.windows.dev.conf.json
 npm run tauri dev        # ⚠️ 走默认 tauri.conf.json，与生产同 bundle ID (com.flowix.app)，已被生产占住时会立刻 exit 0
 npm run dev              # 仅前端 (localhost:1420)
-npm run tauri:mobile:dev # 移动端完整启动：Vite mobile 模式 + app/flowix-mobile Tauri 窗口
+npm run tauri:mobile:dev # 移动端桌面预览（等同 tauri:mobile:preview，不代表真机）
+npm run tauri:android:dev # Android 真机/模拟器；首次先运行 npm run tauri:android:init
+npm run tauri:ios:dev     # iOS 真机/模拟器；首次先运行 npm run tauri:ios:init
 npm run dev:mobile -- --port 1421 # 仅移动端前端预览 (localhost:1421)，不包含 Tauri 原生能力
 npm run tauri build      # 生产构建
 npm run cli:build        # 编 CLI sidecar 到 app/flowix-desktop/binaries/（当前 host）
 npm run cli:build:all    # CI 用：三平台（linux / macOS ×2 / windows）全编
 pkill -f "node.*vite" 2>/dev/null   # 端口冲突时
 sudo xcode-select -r                 # 首次运行
+```
+
+移动原生工程由 Tauri CLI 生成，不手工维护 `app/flowix-mobile/gen/android` 或
+`app/flowix-mobile/gen/apple`。Android 需要先安装 JDK、Android SDK/NDK 并设置
+`ANDROID_HOME`、`NDK_HOME`；iOS 需要完整 Xcode（只有 Command Line Tools 不够）。
+完成环境配置后分别运行：
+
+```bash
+npm run tauri:android:init
+npm run tauri:android:dev
+
+npm run tauri:ios:init
+npm run tauri:ios:dev
 ```
 
 Rust 测试（在 `app/` 目录跑）：

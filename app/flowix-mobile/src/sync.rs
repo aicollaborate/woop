@@ -10,7 +10,7 @@ use flowix_core::memo_file::{
 use flowix_sync::{
     v2_content_hash, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::{read_memo_file, MobileState};
 
@@ -376,6 +376,9 @@ pub fn schedule_sync(app: AppHandle) {
         if cloud.is_ok_and(|value| value.enabled && crate::state::cloud_sync_allowed(&value)) {
             if let Err(error) = sync_account(state.inner()).await {
                 eprintln!("mobile background sync failed: {error}");
+            }
+            if let Ok(next) = state.cloud_sync.state() {
+                let _ = app.emit("cloud-state-changed", next);
             }
         }
     });

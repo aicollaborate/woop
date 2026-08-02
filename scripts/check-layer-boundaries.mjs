@@ -61,13 +61,21 @@ for (const file of files) {
     if (!isTest(file) && isMidLayer(layer) && spec.startsWith('@tauri-apps/')) {
       violations.push(`${r}: 直接 import ${spec}  (须走 @platform/tauri/* 封装)`);
     }
+    // Rule C: mobile code must use the capability-limited mobile facade.
+    if (
+      !isTest(file)
+      && (r.startsWith('app/mobile/') || r.startsWith('features/editor/mobile/'))
+      && spec === '@platform/tauri/client'
+    ) {
+      violations.push(`${r}: 移动端引用桌面总 API  (须走 @platform/tauri/mobile-client)`);
+    }
   }
 }
 
 if (violations.length) {
   console.error(`\n❌ 层级边界违规 (${violations.length}):`);
   for (const v of violations) console.error('  ' + v);
-  console.error('\n规则: platform/lib/shared 不反向依赖 features/app; features/lib/shared 不直引 @tauri-apps/* (走 @platform/tauri/*)。');
+  console.error('\n规则: platform/lib/shared 不反向依赖 features/app; features/lib/shared 不直引 @tauri-apps/*; mobile 仅使用 mobile-client。');
   console.error('例外: platform 与 app 豁免 @tauri-apps; 测试文件豁免 @tauri-apps (vi.mock)。\n');
   process.exit(1);
 }

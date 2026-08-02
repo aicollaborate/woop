@@ -6,7 +6,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -34,6 +34,12 @@ pub fn run() {
             commands::write_document,
             commands::add_document,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Flowix Mobile");
+        .build(tauri::generate_context!())
+        .expect("error while building Flowix Mobile");
+
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Resumed) {
+            sync::schedule_sync(app_handle.clone());
+        }
+    });
 }

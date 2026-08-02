@@ -1,0 +1,39 @@
+/* 移动端 CSS 入口: 取代桌面 styles/index.css, 只加载移动端需要的基底
+ * (字体 + 主题色板 + Tailwind preflight/工具类 + 移动端模块), 不加载桌面
+ * editor*.css / overlay-scrollbar / sonner 等编辑器与桌面专属样式。
+ *
+ * 颜色 token 由 styles/theme/*.css 提供 (移动端固定 Rock 主题, 但全量导入
+ * 五套主题以保持与桌面一致的特异性结构; 体积可忽略)。非颜色 token 与全局
+ * 重置在 ./base.css @layer base 中。
+ *
+ * 模块拆分: base 基础布局 / list 列表 / drawer 导航抽屉 / editor 编辑器 /
+ * account 账号同步。新增移动端样式请落到对应模块, 不要回灌到本文件。 */
+
+@import '../fonts.css';
+@import '../theme/light.css';
+@import '../theme/dark.css';
+@import '../theme/rock.css';
+@import '../theme/mist.css';
+@import '../theme/ember.css';
+
+@import './base.css';
+@import './list.css';
+@import './drawer.css';
+@import './account.css';
+@import './editor.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@media (min-width: 700px) {
+  .mobile-memo-list { width: min(100%, 720px); margin: 0 auto; }
+  .mobile-account-sheet { right: max(0px, calc((100vw - 560px) / 2)); left: max(0px, calc((100vw - 560px) / 2)); border-radius: 24px 24px 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-drawer,
+  .mobile-account-sheet,
+  .mobile-pulse-mark,
+  .is-spinning { animation-duration: 1ms; animation-iteration-count: 1; }
+}

@@ -1,0 +1,86 @@
+/* 移动端文档编辑器: 文档屏幕骨架、保存状态、Tiptap ProseMirror 排版、
+ * 底部浮动工具栏、只读静态自定义块。移动端编辑器样式自包含, 不依赖桌面
+ * styles/editor*.css (那些以 .markdown-editor 为作用域)。 */
+
+.mobile-document-screen { display: flex; height: 100dvh; flex-direction: column; overflow: hidden; }
+.mobile-document-topbar { flex: none; }
+.mobile-topbar-spacer { width: 40px; }
+.mobile-save-status { display: inline-flex; align-items: center; gap: 3px; }
+.mobile-save-status--saved { color: color-mix(in oklch, var(--success) 52%, var(--muted-foreground)) !important; }
+.mobile-save-status--conflict,
+.mobile-save-status--error { color: var(--destructive) !important; }
+
+.mobile-markdown-editor { display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--document-bg); }
+.mobile-markdown-editor__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 20px 112px;
+  background: var(--document-bg);
+  scrollbar-width: none;
+}
+.mobile-markdown-editor__content::-webkit-scrollbar { display: none; }
+.mobile-markdown-editor__content .ProseMirror { min-height: 100%; max-width: 720px; margin: 0 auto; outline: none; color: var(--document-foreground); font-size: 16px; line-height: 1.74; caret-color: var(--brand); }
+.mobile-markdown-editor__content .ProseMirror > *:first-child { margin-top: 0; }
+.mobile-markdown-editor__content h1 { margin: .7em 0 .45em; font-size: 1.78em; line-height: 1.24; letter-spacing: -.035em; }
+.mobile-markdown-editor__content h2 { margin: 1em 0 .45em; font-size: 1.42em; line-height: 1.3; letter-spacing: -.025em; }
+.mobile-markdown-editor__content h3 { font-size: 1.18em; }
+.mobile-markdown-editor__content p { margin: .68em 0; }
+.mobile-markdown-editor__content ul,
+.mobile-markdown-editor__content ol { padding-inline-start: 1.45em; }
+.mobile-markdown-editor__content blockquote { margin-inline: 0; padding: 2px 0 2px 14px; border-left: 2px solid color-mix(in oklch, var(--brand) 48%, var(--border)); color: var(--muted-foreground); }
+.mobile-markdown-editor__content pre { overflow-x: auto; padding: 14px; border: 1px solid var(--mobile-hairline); border-radius: 12px; background: var(--code-bg); font-size: 13px; }
+
+.mobile-editor-toolbar {
+  position: fixed;
+  right: 10px;
+  bottom: calc(9px + env(safe-area-inset-bottom));
+  left: 10px;
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  max-width: 560px;
+  margin: 0 auto;
+  overflow-x: auto;
+  padding: 7px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 9%, transparent);
+  border-radius: 17px;
+  box-shadow: 0 14px 38px color-mix(in oklch, var(--foreground) 15%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 55%, transparent);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
+  backdrop-filter: blur(22px) saturate(1.12);
+  scrollbar-width: none;
+}
+.mobile-editor-toolbar::-webkit-scrollbar { display: none; }
+
+.mobile-editor-toolbar button {
+  min-width: 38px;
+  height: 38px;
+  flex: 1 0 38px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--secondary-foreground);
+}
+.mobile-editor-toolbar button:active { background: var(--muted); }
+.mobile-editor-toolbar button.starts-group { margin-inline-start: 5px; box-shadow: -6px 0 0 -5px var(--border); }
+.mobile-editor-toolbar button.is-active { background: var(--primary); color: var(--primary-foreground); }
+.mobile-editor-toolbar button:disabled { opacity: .4; }
+
+.mobile-static-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 17px 0;
+  padding: 14px 15px;
+  border: 1px solid var(--mobile-hairline);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px color-mix(in oklch, var(--foreground) 3%, transparent);
+  background: color-mix(in oklch, var(--muted) 48%, var(--card));
+  user-select: none;
+}
+
+.mobile-static-block__eyebrow { color: var(--brand); font-size: 9px; font-weight: 780; letter-spacing: .1em; text-transform: uppercase; }
+.mobile-static-block__title { overflow: hidden; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-static-block__meta { color: var(--muted-foreground); font-size: 10px; }
+.is-spinning { animation: mobile-spin .8s linear infinite; }
+@keyframes mobile-spin { to { transform: rotate(360deg); } }

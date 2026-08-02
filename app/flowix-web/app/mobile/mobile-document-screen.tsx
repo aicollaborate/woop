@@ -6,7 +6,7 @@ import {
   joinMobileDocumentContent,
   splitMobileDocumentContent,
 } from '@features/editor/mobile/mobile-document-content';
-import { memos } from '@platform/tauri/client';
+import { mobileClient } from '@platform/tauri/mobile-client';
 
 interface MobileDocumentScreenProps {
   memoId: string;
@@ -45,7 +45,7 @@ export function MobileDocumentScreen({
         const expected = savedContentRef.current;
         if (mountedRef.current) setSaveState('saving');
         try {
-          const result = await memos.writeDocument({
+          const result = await mobileClient.memos.writeDocument({
             key: memoId,
             content: candidate,
             expectedContent: expected,
@@ -95,6 +95,15 @@ export function MobileDocumentScreen({
     await saveLatest();
     onBack();
   }, [onBack, saveLatest]);
+  const handleBackRef = useRef(handleBack);
+  handleBackRef.current = handleBack;
+
+  useEffect(() => {
+    window.history.pushState({ flowixMobileLayer: 'document' }, '');
+    const handleSystemBack = () => void handleBackRef.current();
+    window.addEventListener('popstate', handleSystemBack);
+    return () => window.removeEventListener('popstate', handleSystemBack);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -126,7 +135,7 @@ export function MobileDocumentScreen({
   return (
     <main className="mobile-document-screen">
       <header className="mobile-topbar mobile-document-topbar">
-        <button type="button" className="mobile-icon-button" aria-label="返回列表" onClick={() => void handleBack()}>
+        <button type="button" className="mobile-icon-button" aria-label="返回列表" onClick={() => window.history.back()}>
           <ArrowLeft size={21} />
         </button>
         <div className="mobile-document-heading">
