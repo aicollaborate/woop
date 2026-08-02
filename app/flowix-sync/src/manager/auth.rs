@@ -8,13 +8,10 @@ impl SyncManager {
         display_name: &str,
     ) -> Result<AuthOutcome, SyncError> {
         let auth = self.client.register(email, password, display_name).await?;
-        let workspace = auth.workspace.clone().ok_or_else(|| {
-            SyncError::InvalidState("registration did not return a workspace".into())
-        })?;
         self.accept_auth(
-            CloudAccount {
+            V2CloudAccount {
                 user: auth.user,
-                workspace,
+                protocol_epoch: crate::v2::PROTOCOL_EPOCH,
             },
             auth.session.into(),
         )
@@ -25,16 +22,10 @@ impl SyncManager {
         let auth = self.client.login(email, password).await?;
         let runtime: RuntimeSession = auth.session.into();
         let me = self.client.me(&runtime.access_token).await?;
-        let workspace = me
-            .workspaces
-            .into_iter()
-            .find(|workspace| workspace.kind.as_deref() == Some("personal"))
-            .or(auth.workspace)
-            .ok_or_else(|| SyncError::InvalidState("account has no workspace".into()))?;
         self.accept_auth(
-            CloudAccount {
+            V2CloudAccount {
                 user: me.user,
-                workspace,
+                protocol_epoch: crate::v2::PROTOCOL_EPOCH,
             },
             runtime,
         )
@@ -52,16 +43,10 @@ impl SyncManager {
         let auth = self.client.apple_exchange(authorization).await?;
         let runtime: RuntimeSession = auth.session.into();
         let me = self.client.me(&runtime.access_token).await?;
-        let workspace = me
-            .workspaces
-            .into_iter()
-            .find(|workspace| workspace.kind.as_deref() == Some("personal"))
-            .or(auth.workspace)
-            .ok_or_else(|| SyncError::InvalidState("account has no workspace".into()))?;
         self.accept_auth(
-            CloudAccount {
+            V2CloudAccount {
                 user: me.user,
-                workspace,
+                protocol_epoch: crate::v2::PROTOCOL_EPOCH,
             },
             runtime,
         )
@@ -84,18 +69,21 @@ impl SyncManager {
     }
 
     pub async fn restore(&self, refresh_token: &str) -> Result<AuthOutcome, SyncError> {
-        let account = self.store.account()?.ok_or(SyncError::NotAuthenticated)?;
+        let account = self
+            .store
+            .v2_account()?
+            .ok_or(SyncError::NotAuthenticated)?;
         let refreshed = self.client.refresh(refresh_token).await?;
         self.accept_auth(account, refreshed.session.into()).await
     }
 
     async fn accept_auth(
         &self,
-        account: CloudAccount,
+        account: V2CloudAccount,
         runtime: RuntimeSession,
     ) -> Result<AuthOutcome, SyncError> {
         let refresh_token = runtime.refresh_token.clone();
-        self.store.save_account(&account)?;
+        self.store.save_v2_account(&account)?;
         *self
             .session
             .write()
@@ -129,7 +117,7 @@ impl SyncManager {
             .membership
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-        self.store.clear_account()?;
+        self.store.clear_v2_account()?;
         Ok(())
     }
 

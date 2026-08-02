@@ -9,6 +9,7 @@ impl SyncManager {
             membership: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            account_sync_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -24,7 +25,7 @@ impl SyncManager {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .is_some(),
-            account: self.store.account()?,
+            account: self.store.v2_account()?,
             membership: self
                 .membership
                 .read()

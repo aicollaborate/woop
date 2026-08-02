@@ -11,16 +11,6 @@ pub struct CloudUser {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct CloudWorkspace {
-    pub id: String,
-    pub name: Option<String>,
-    pub slug: String,
-    pub role: String,
-    pub kind: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct CloudNotebook {
     pub id: String,
     pub name: String,
@@ -46,7 +36,6 @@ pub(crate) struct CloudSession {
 pub(crate) struct AuthData {
     pub user: CloudUser,
     pub session: CloudSession,
-    pub workspace: Option<CloudWorkspace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,7 +72,6 @@ pub(crate) struct RefreshData {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MeData {
     pub user: CloudUser,
-    pub workspaces: Vec<CloudWorkspace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,13 +85,6 @@ pub(crate) struct ApiErrorBody {
     pub code: String,
     pub message: String,
     pub details: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudAccount {
-    pub user: CloudUser,
-    pub workspace: CloudWorkspace,
 }
 
 #[derive(Debug, Clone)]
@@ -182,7 +163,7 @@ pub struct CloudCheckout {
 pub struct CloudState {
     pub enabled: bool,
     pub authenticated: bool,
-    pub account: Option<CloudAccount>,
+    pub account: Option<crate::v2::V2CloudAccount>,
     pub membership: Option<CloudMembership>,
     pub last_error: Option<String>,
 }
@@ -193,160 +174,10 @@ pub struct AuthOutcome {
     pub refresh_token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct NotebookLink {
-    pub local_notebook_id: String,
-    pub workspace_id: String,
-    pub cloud_notebook_id: String,
-    pub enabled: bool,
-    pub last_cursor: i64,
-    pub last_sync_at: Option<i64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalNote {
-    pub id: String,
-    pub filename: String,
-    pub content: String,
-    /// Wall-clock millis of the last local edit. Used as the last-writer-wins
-    /// tiebreaker when both sides changed a note.
-    pub updated_at: i64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalChangeKind {
     Put,
     Delete,
-}
-
-impl LocalChangeKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Put => "put",
-            Self::Delete => "delete",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChangeVersion {
-    pub modified_at: i64,
-    pub logical_counter: i64,
-    pub device_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct OutboxEntry {
-    pub id: i64,
-    pub note_id: String,
-    pub operation: LocalChangeKind,
-    pub occurred_at: i64,
-    pub logical_counter: i64,
-    pub device_id: String,
-}
-
-pub(crate) struct OutboxWrite<'a> {
-    pub workspace_id: &'a str,
-    pub notebook_id: &'a str,
-    pub note_id: &'a str,
-    pub operation: LocalChangeKind,
-    pub occurred_at: i64,
-    pub logical_counter: i64,
-    pub device_id: &'a str,
-}
-
-impl OutboxEntry {
-    pub(crate) fn version(&self) -> ChangeVersion {
-        ChangeVersion {
-            modified_at: self.occurred_at,
-            logical_counter: self.logical_counter,
-            device_id: self.device_id.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct NoteState {
-    pub revision: String,
-    pub last_synced_hash: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ManifestData {
-    pub cursor: i64,
-    pub has_more: bool,
-    #[serde(default)]
-    pub server_time: Option<i64>,
-    pub changes: Vec<ManifestChange>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SyncStatusData {
-    pub head_cursor: i64,
-    pub has_changes: bool,
-    #[serde(default)]
-    pub server_time: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ManifestChange {
-    pub notebook_id: String,
-    pub note_id: String,
-    pub filename: String,
-    pub revision: Option<String>,
-    pub deleted_at: Option<i64>,
-    #[serde(default)]
-    pub updated_at: Option<i64>,
-    #[serde(default)]
-    pub modified_at: Option<i64>,
-    #[serde(default)]
-    pub logical_counter: i64,
-    #[serde(default)]
-    pub device_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PutNoteData {
-    pub note: PutNote,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PutNote {
-    pub revision: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum RemoteApplyKind {
-    Upsert {
-        filename: String,
-        content: String,
-        revision: String,
-    },
-    Delete,
-}
-
-#[derive(Debug, Clone)]
-pub struct RemoteApply {
-    pub note_id: String,
-    pub kind: RemoteApplyKind,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct SyncReport {
-    pub workspace_id: String,
-    pub started_at: i64,
-    pub outbox_through_id: i64,
-    pub uploaded: usize,
-    pub deleted: usize,
-    pub remote: Vec<RemoteApply>,
-    pub cursor: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

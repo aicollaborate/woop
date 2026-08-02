@@ -4,21 +4,13 @@ use serde_json::json;
 
 use crate::error::SyncError;
 use crate::models::{
-    ApiErrorEnvelope, AppleAuthChallenge, AppleAuthorization, AuthData, ChangeVersion,
-    CloudCheckout, CloudNotebook, CloudProduct, DataEnvelope, EntitlementData, ManifestData,
-    MeData, PutNoteData, RefreshData, SyncStatusData,
+    ApiErrorEnvelope, AppleAuthChallenge, AppleAuthorization, AuthData, CloudCheckout,
+    CloudProduct, DataEnvelope, EntitlementData, MeData, RefreshData,
 };
-
-pub(crate) struct PutNoteRequest<'a> {
-    pub access_token: &'a str,
-    pub workspace_id: &'a str,
-    pub notebook_id: &'a str,
-    pub note_id: &'a str,
-    pub filename: &'a str,
-    pub content: &'a str,
-    pub base_revision: Option<&'a str>,
-    pub change_version: &'a ChangeVersion,
-}
+use crate::v2::{
+    V2BlobReservationEnvelope, V2Bootstrap, V2ChangesPage, V2PushOperation, V2PushResult,
+    V2SyncStatus, PROTOCOL_EPOCH,
+};
 
 fn apple_authorization_body(authorization: &AppleAuthorization) -> serde_json::Value {
     let mut body = serde_json::Map::from_iter([
@@ -110,7 +102,7 @@ impl CloudClient {
     pub(crate) async fn products(&self) -> Result<Vec<CloudProduct>, SyncError> {
         self.send::<DataEnvelope<Vec<CloudProduct>>>(
             Method::GET,
-            "/v1/catalog/products",
+            "/v2/catalog/products",
             None,
             None,
         )
@@ -121,16 +113,12 @@ impl CloudClient {
     pub(crate) async fn checkout(
         &self,
         access_token: &str,
-        workspace_id: &str,
         product_id: &str,
         idempotency_key: &str,
     ) -> Result<CloudCheckout, SyncError> {
         let response = self
             .http
-            .post(format!(
-                "{}/v1/billing/{workspace_id}/checkout",
-                self.base_url
-            ))
+            .post(format!("{}/v2/billing/checkout", self.base_url))
             .bearer_auth(access_token)
             .header("Idempotency-Key", idempotency_key)
             .json(&json!({
@@ -255,11 +243,10 @@ impl CloudClient {
     pub(crate) async fn entitlements(
         &self,
         access_token: &str,
-        workspace_id: &str,
     ) -> Result<EntitlementData, SyncError> {
         self.send::<DataEnvelope<EntitlementData>>(
             Method::GET,
-            &format!("/v1/workspaces/{workspace_id}/entitlements"),
+            "/v2/entitlements/current",
             Some(access_token),
             None,
         )
@@ -267,146 +254,130 @@ impl CloudClient {
         .map(|value| value.data)
     }
 
-    pub(crate) async fn create_notebook(
+    pub async fn v2_sync_status(
         &self,
         access_token: &str,
-        workspace_id: &str,
-        notebook_id: &str,
-        name: &str,
+        cursor: i64,
+    ) -> Result<V2SyncStatus, SyncError> {
+        self.send::<DataEnvelope<V2SyncStatus>>(
+            Method::GET,
+            &format!("/v2/sync/status?cursor={cursor}"),
+            Some(access_token),
+            None,
+        )
+        .await
+        .map(|value| value.data)
+    }
+
+    pub async fn v2_changes(
+        &self,
+        access_token: &str,
+        cursor: i64,
+        limit: usize,
+    ) -> Result<V2ChangesPage, SyncError> {
+        let limit = limit.clamp(1, 1_000);
+        self.send::<DataEnvelope<V2ChangesPage>>(
+            Method::GET,
+            &format!("/v2/sync/changes?cursor={cursor}&limit={limit}"),
+            Some(access_token),
+            None,
+        )
+        .await
+        .map(|value| value.data)
+    }
+
+    pub async fn v2_bootstrap(&self, access_token: &str) -> Result<V2Bootstrap, SyncError> {
+        self.send::<DataEnvelope<V2Bootstrap>>(
+            Method::GET,
+            "/v2/sync/bootstrap",
+            Some(access_token),
+            None,
+        )
+        .await
+        .map(|value| value.data)
+    }
+
+    pub async fn v2_reserve_blob(
+        &self,
+        access_token: &str,
+        content_hash: &str,
+        size_bytes: i64,
+    ) -> Result<V2BlobReservationEnvelope, SyncError> {
+        self.send::<V2BlobReservationEnvelope>(
+            Method::POST,
+            "/v2/blobs/reservations",
+            Some(access_token),
+            Some(json!({
+                "protocolEpoch": PROTOCOL_EPOCH,
+                "contentHash": content_hash,
+                "sizeBytes": size_bytes,
+            })),
+        )
+        .await
+    }
+
+    pub async fn v2_upload_blob(
+        &self,
+        access_token: &str,
+        upload_path: &str,
+        content: Vec<u8>,
     ) -> Result<(), SyncError> {
-        let result = self
-            .send::<DataEnvelope<serde_json::Value>>(
-                Method::POST,
-                &format!("/v1/workspaces/{workspace_id}/notebooks"),
-                Some(access_token),
-                Some(json!({ "id": notebook_id, "name": name })),
-            )
-            .await;
-        match result {
-            Ok(_) => Ok(()),
-            Err(error) if error.api_code() == Some("NOTEBOOK_ALREADY_EXISTS") => Ok(()),
-            Err(error) => Err(error),
+        if !upload_path.starts_with("/v2/blobs/reservations/") {
+            return Err(SyncError::InvalidState(
+                "cloud returned an invalid v2 upload path".into(),
+            ));
         }
-    }
-
-    pub(crate) async fn notebooks(
-        &self,
-        access_token: &str,
-        workspace_id: &str,
-    ) -> Result<Vec<CloudNotebook>, SyncError> {
-        self.send::<DataEnvelope<Vec<CloudNotebook>>>(
-            Method::GET,
-            &format!("/v1/workspaces/{workspace_id}/notebooks"),
-            Some(access_token),
-            None,
-        )
-        .await
-        .map(|value| value.data)
-    }
-
-    pub(crate) async fn manifest(
-        &self,
-        access_token: &str,
-        workspace_id: &str,
-        cursor: i64,
-    ) -> Result<ManifestData, SyncError> {
-        self.send::<DataEnvelope<ManifestData>>(
-            Method::GET,
-            &format!("/v1/workspaces/{workspace_id}/sync/manifest?cursor={cursor}&limit=1000"),
-            Some(access_token),
-            None,
-        )
-        .await
-        .map(|value| value.data)
-    }
-
-    pub(crate) async fn sync_status(
-        &self,
-        access_token: &str,
-        workspace_id: &str,
-        cursor: i64,
-    ) -> Result<SyncStatusData, SyncError> {
-        self.send::<DataEnvelope<SyncStatusData>>(
-            Method::GET,
-            &format!("/v1/workspaces/{workspace_id}/sync/status?cursor={cursor}"),
-            Some(access_token),
-            None,
-        )
-        .await
-        .map(|value| value.data)
-    }
-
-    pub(crate) async fn delete_note(
-        &self,
-        access_token: &str,
-        workspace_id: &str,
-        notebook_id: &str,
-        note_id: &str,
-        base_revision: Option<&str>,
-        change_version: &ChangeVersion,
-    ) -> Result<(), SyncError> {
-        self.send::<DataEnvelope<serde_json::Value>>(
-            Method::DELETE,
-            &format!("/v1/workspaces/{workspace_id}/notebooks/{notebook_id}/notes/{note_id}"),
-            Some(access_token),
-            Some(json!({
-                "baseRevision": base_revision,
-                "changeVersion": change_version,
-            })),
-        )
-        .await
-        .map(|_| ())
-    }
-
-    pub(crate) async fn put_note(
-        &self,
-        input: PutNoteRequest<'_>,
-    ) -> Result<PutNoteData, SyncError> {
-        self.send::<DataEnvelope<PutNoteData>>(
-            Method::PUT,
-            &format!(
-                "/v1/workspaces/{}/notebooks/{}/notes/{}",
-                input.workspace_id, input.notebook_id, input.note_id
-            ),
-            Some(input.access_token),
-            Some(json!({
-                "filename": input.filename,
-                "content": input.content,
-                "baseRevision": input.base_revision,
-                "changeVersion": input.change_version,
-            })),
-        )
-        .await
-        .map(|value| value.data)
-    }
-
-    pub(crate) async fn get_note(
-        &self,
-        access_token: &str,
-        workspace_id: &str,
-        notebook_id: &str,
-        note_id: &str,
-    ) -> Result<String, SyncError> {
         let response = self
             .http
-            .get(format!(
-                "{}/v1/workspaces/{workspace_id}/notebooks/{notebook_id}/notes/{note_id}",
-                self.base_url
-            ))
+            .put(format!("{}{}", self.base_url, upload_path))
+            .bearer_auth(access_token)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "text/markdown; charset=utf-8",
+            )
+            .body(content)
+            .send()
+            .await?;
+        Self::decode::<DataEnvelope<serde_json::Value>>(response)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn v2_push(
+        &self,
+        access_token: &str,
+        operations: &[V2PushOperation],
+    ) -> Result<V2PushResult, SyncError> {
+        self.send::<DataEnvelope<V2PushResult>>(
+            Method::POST,
+            "/v2/sync/push",
+            Some(access_token),
+            Some(json!({
+                "protocolEpoch": PROTOCOL_EPOCH,
+                "operations": operations,
+            })),
+        )
+        .await
+        .map(|value| value.data)
+    }
+
+    pub async fn v2_download_blob(
+        &self,
+        access_token: &str,
+        content_hash: &str,
+    ) -> Result<Vec<u8>, SyncError> {
+        let response = self
+            .http
+            .get(format!("{}/v2/blobs/{content_hash}", self.base_url))
             .bearer_auth(access_token)
             .send()
             .await?;
         if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(SyncError::Api {
-                status,
-                code: "NOTE_DOWNLOAD_FAILED".into(),
-                message: body,
-                details: None,
-            });
+            return Self::decode::<DataEnvelope<serde_json::Value>>(response)
+                .await
+                .map(|_| Vec::new());
         }
-        Ok(response.text().await?)
+        Ok(response.bytes().await?.to_vec())
     }
 }
 
