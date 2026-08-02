@@ -196,3 +196,28 @@ fn switching_users_clears_user_scoped_sync_state() {
     assert!(store.v2_notebooks(false).unwrap().is_empty());
     assert_eq!(store.v2_account().unwrap().unwrap().user.id, "usr_b");
 }
+
+#[test]
+fn clearing_account_removes_user_scoped_sync_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SyncStore::new(temp.path().join("sync.db")).unwrap();
+    store
+        .save_v2_account(&V2CloudAccount {
+            user: CloudUser {
+                id: "usr_a".into(),
+                email: "a@example.com".into(),
+                display_name: "A".into(),
+                system_role: "user".into(),
+            },
+            protocol_epoch: PROTOCOL_EPOCH,
+        })
+        .unwrap();
+    store.set_v2_notebook("nb_a", true).unwrap();
+    store.commit_v2_cursor(9, 100).unwrap();
+
+    store.clear_v2_account().unwrap();
+
+    assert!(store.v2_account().unwrap().is_none());
+    assert_eq!(store.v2_cursor().unwrap(), 0);
+    assert!(store.v2_notebooks(false).unwrap().is_empty());
+}

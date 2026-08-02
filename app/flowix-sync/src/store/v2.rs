@@ -146,7 +146,22 @@ impl SyncStore {
     }
 
     pub fn clear_v2_account(&self) -> Result<(), SyncError> {
-        self.open()?.execute("DELETE FROM v2_cloud_account", [])?;
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            r#"
+            DELETE FROM v2_retry_state;
+            DELETE FROM v2_inflight_operations;
+            DELETE FROM v2_dirty_entities;
+            DELETE FROM v2_note_states;
+            DELETE FROM v2_notebook_states;
+            DELETE FROM v2_synced_notebooks;
+            DELETE FROM v2_cloud_account;
+            UPDATE v2_sync_state SET cursor = 0, last_success_at = NULL, updated_at = 0
+             WHERE singleton = 1;
+            "#,
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
