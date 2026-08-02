@@ -1,3 +1,7 @@
+<p align="right">
+  <a href="./README.md"><b>English</b></a> | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 <p align="center">
   <img src="./docs/images/app-icon.png" width="120" alt="Flowix" />
 </p>
