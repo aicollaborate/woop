@@ -11,14 +11,12 @@ import type {
   RunInfo,
   RuntimeConfig,
 } from "@/types/agent";
-import type { LiveMessageState } from "@features/agent/store/chunk-result";
 import { STORAGE_KEYS } from "@/lib/constants";
 import { translate } from "@/lib/i18n";
 import { applyExternalSessionResolved } from "@features/agent/store/external-session";
 import { agentClient } from "@features/agent/store/agent-client";
 import { createAgentChunkBridge } from "@features/agent/store/agent-chunk-bridge";
 import {
-  applyOptimisticUserRun,
   createSendErrorMessage,
   prepareUserMessage,
 } from "@features/agent/store/user-message";
@@ -41,10 +39,14 @@ import {
 } from "@features/agent/store/agent-conversation-store";
 import {
   emptyThreadState,
-  releaseThreadRuntimeMessages,
-  threadRunUpdate,
   type ThreadsMap,
 } from "@features/agent/store/thread-runtime-state";
+import {
+  mergeThreadProjections,
+  projectionToRuns,
+  runsToProjectionRuns,
+} from "@features/agent/store/session-reducer";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import {
   ensureConversationInstanceForThread,
 } from "@features/agent/store/conversation-run-sync";
@@ -52,6 +54,7 @@ import {
   createStreamEventDispatcher,
   type StreamEventDispatcher,
 } from "@features/agent/store/stream-event-dispatcher";
+import { startSessionMirror } from "@features/agent/store/session-mirror";
 import {
   reconcileThreadStatesFromRunningSnapshot,
 } from "@features/agent/store/snapshot-reconcile";
@@ -94,16 +97,6 @@ import {
 export { threadRunUpdate } from "@features/agent/store/thread-runtime-state";
 export type { ThreadState, ThreadsMap } from "@features/agent/store/thread-runtime-state";
 export { emptyThreadState } from "@features/agent/store/thread-runtime-state";
-
-function syncThreadLiveMessageState(
-  agentType: AgentTypeKey,
-  threadId: string,
-  liveState: LiveMessageState,
-): void {
-  useAgentConversationStore
-    .getState()
-    .syncLiveMessageState(agentType, threadId, liveState);
-}
 
 /**
  * chat-store 只持有运行时 ChatStore 形状。localStorage 持久化
@@ -231,22 +224,55 @@ export const useChatStore = create<ChatStore>()(
         () => get() as ChatStore,
       );
 
-      // 流式事件派发器 ── 阶段 6 抽离到这里, 把 rAF 缓冲 + reducer 调度 +
-      // conversation 投影三件事合并成一个对象, chat-store action 只保留
-      // 薄入口。 闭包捕获 set/get, 不反向 import 自身, 避免循环引用。
-      const streamDispatcher: StreamEventDispatcher = createStreamEventDispatcher({
-        getChatSlice: () => {
-          const s = get();
-          return {
-            threadStates: s.threadStates,
-            threadTypes: s.threadTypes,
-            activeAgentTypeKey: s.activeAgentTypeKey,
-            externalSessionResolutions: s.externalSessionResolutions,
-            activeThreadIds: s.activeThreadIds,
-          };
-        },
-        applyPatch: (patch) => set(patch as Partial<ChatStore>),
-      });
+      // 流式事件派发器 ── 单一真源 `useAgentSessionStore.dispatch(event)`.
+      // 旧 host 注入 (getChatSlice / applyPatch) 已废弃: dispatcher 不再写
+      // chat-store.threadStates.messages, 消除与 conversation-store 的双写.
+      // chat-store 在 Phase 3 通过 subscribe 镜像 session store 的 threadProjections
+      // ── 当前 chat-store.threadStates[tid] 的 messages / pendingAssistantId /
+      // pendingReasoningId 字段在流式期间会过期; 渲染层读 useChatStore 不再能拿到
+      // live 数据, 切到 useAgentSessionStore / selectRenderableThreadMessages.
+      const streamDispatcher: StreamEventDispatcher = createStreamEventDispatcher();
+      // 启动 session-store → 旧 store 镜像, 让 6 个月内老组件继续工作.
+      startSessionMirror();
+
+      // Phase 5 (2026-08-03): 收窄 meta mirror 到 5 个真正改
+      // threadLists / currentThreadTitles 的 action. session-store 真源
+      // 已经在 session-mirror.ts 里订阅 sessionMeta → chat-store 镜像
+      // (activeThreadIds / threadTypes / activeAgentTypeKey 等都覆盖),
+      // 所以绝大多数 chat-store action 改回原 set() 即可, mirror 自动跟随.
+      //
+      // 仍需 setWithMetaMirror 的 5 处 (改 threadLists / currentThreadTitles):
+      //   - setThreadList (loadThreadList family)
+      //   - renameThread (title + threadList)
+      //   - renameThread error 回滚
+      //   - deleteThread (threadList + active title 清空)
+      //   - sendMessageToThread isFirstMessage 路径 (title + threadList)
+      //
+      // Phase 5 删 chat-store 时此 helper 一起删.
+      const setWithMetaMirror = (
+        updater: (state: ChatStore) => Partial<ChatStore>,
+      ): void => {
+        const captured: { patch: Partial<ChatStore> | null } = { patch: null };
+        set((state) => {
+          const patch = updater(state);
+          captured.patch = patch;
+          return patch;
+        });
+        const capturedPatch = captured.patch;
+        const sessionPatch: Record<string, unknown> = {};
+        if (capturedPatch && capturedPatch.threadLists !== undefined) {
+          sessionPatch.threadLists = capturedPatch.threadLists;
+        }
+        if (capturedPatch && capturedPatch.currentThreadTitles !== undefined) {
+          sessionPatch.currentThreadTitles = capturedPatch.currentThreadTitles;
+        }
+        if (Object.keys(sessionPatch).length > 0) {
+          useAgentSessionStore.getState().setSessionMeta((meta) => ({
+            ...meta,
+            ...sessionPatch,
+          }));
+        }
+      };
 
       return {
         threadStates: {},
@@ -261,7 +287,9 @@ export const useChatStore = create<ChatStore>()(
         threadLists: {},
         currentThreadTitles: {},
 
-        setThreadList: (list) => {          set((state) => threadListUpdate(state, "flowix", list));
+        setThreadList: (list) => {
+          // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.threadLists.
+          setWithMetaMirror((state) => threadListUpdate(state, "flowix", list));
         },
         setActiveThreadId: (threadId) =>
           set((state) => ({
@@ -287,15 +315,16 @@ export const useChatStore = create<ChatStore>()(
         setActiveAgentTypeKey: (typeKey) => {
           const type = getAgentType(typeKey);
           if (!isAgentTypeSelectable(type.key)) return;
-          set({ activeAgentTypeKey: type.key });
+          // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.activeAgentTypeKey.
+          useAgentSessionStore.getState().setSessionMeta((meta) => ({
+            ...meta,
+            activeAgentTypeKey: type.key,
+          }));
         },
         setActiveAgentThread: (typeKey, threadId) => {
           const type = getAgentType(typeKey);
           set((state) => ({
             ...activeThreadUpdate(state, type.key, threadId),
-            // 跨 runtime 切换入口 ── 同步 activeAgentTypeKey, 让后续
-            // sendMessageToThread 路由到正确的 runtime。
-            // (修复 #12: 让 `activeThreadUpdate` 变纯后, 这里显式补。)
             activeAgentTypeKey: type.key,
             ...(threadId
               ? { threadTypes: { ...state.threadTypes, [threadId]: type.key } }
@@ -306,14 +335,45 @@ export const useChatStore = create<ChatStore>()(
           if (!fromThreadId || !toThreadId || fromThreadId === toThreadId)
             return;
           const type = getAgentType(typeKey);
+          // Phase 2 (2026-08-02): 同步迁移 session-store.threadProjections
+          // ── 这是真源, mirror 会跟随到 chat-store / conv-store. 旧
+          // resolveSessionByThreadId 写 conv-store + applyExternalSessionResolved
+          // 写 chat-store 已被 mirror 覆盖, 但保留作为迁移期间桥接 (后续
+          // snapshot reconcile 仍可能用到). Phase 3 完成后删除.
+          // Phase 6 (2026-08-03): 合并逻辑抽到 session-reducer/mergeThreadProjections.
+          const session = useAgentSessionStore.getState();
+          const fromProj = session.threadProjections[fromThreadId];
+          const toProj = session.threadProjections[toThreadId];
+          if (fromProj || toProj) {
+            const merged = mergeThreadProjections(fromProj, toProj, type.key);
+            session.setThreadProjection(toThreadId, () => merged);
+            session.removeThreadProjection(fromThreadId);
+          }
+          // Phase 4 (2026-08-02): 同步写 sessionMeta 真源 ── migration
+          // 涉及 threadTypes / externalSessionResolutions / activeThreadIds
+          // 三个 metadata 字段, 必须经 sessionStore 真源. 旧 chat-store
+          // 这三字段由 mirror 跟随.
+          session.setSessionMeta((meta) => ({
+            ...meta,
+            threadTypes: {
+              ...meta.threadTypes,
+              [fromThreadId]: type.key,
+              [toThreadId]: type.key,
+            },
+            externalSessionResolutions: {
+              ...meta.externalSessionResolutions,
+              [fromThreadId]: toThreadId,
+            },
+            activeThreadIds: {
+              ...meta.activeThreadIds,
+              [type.key]: toThreadId,
+            },
+            activeAgentTypeKey: type.key,
+          }));
+          // 兼容保留: 旧 store 仍收到更新以让非-mirror 路径不立即崩.
           useAgentConversationStore
             .getState()
             .resolveSessionByThreadId(fromThreadId, toThreadId, type.key);
-          // 与 session_resolved chunk / backend snapshot 共用同一个 runtime
-          // 迁移入口 ── session_resolved 走 dispatcher.applyEventToChatSlice,
-          // snapshot 走 snapshot-reconcile.reconcileThreadStatesFromRunningSnapshot,
-          // 这里也调 external-session.ts 的 applyExternalSessionResolved 保证
-          // threadTypes / externalSessionResolutions / 兼容映射只在一处实现。
           set((state) => {
             const resolved = applyExternalSessionResolved(
               state,
@@ -324,8 +384,6 @@ export const useChatStore = create<ChatStore>()(
             return {
               ...resolved,
               ...activeThreadUpdate(state, type.key, toThreadId),
-              // 跨 runtime resolve (e.g. Codex local id → session_id) ──
-              // 同步 activeAgentTypeKey 让 sendMessageToThread 路由到正确 runtime。
               activeAgentTypeKey: type.key,
             };
           });
@@ -339,10 +397,25 @@ export const useChatStore = create<ChatStore>()(
             },
           }));
         },
-        setAgentPermissionMode: (mode) => set({ agentPermissionMode: mode }),
-        setAgentCodexModel: (model) => set({ agentCodexModel: model }),
-        setAgentCodexReasoningEffort: (effort) =>
-          set({ agentCodexReasoningEffort: effort }),
+        setAgentPermissionMode: (mode) => {
+          // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.settings.
+          useAgentSessionStore.getState().setSessionMeta((meta) => ({
+            ...meta,
+            settings: { ...meta.settings, agentPermissionMode: mode },
+          }));
+        },
+        setAgentCodexModel: (model) => {
+          useAgentSessionStore.getState().setSessionMeta((meta) => ({
+            ...meta,
+            settings: { ...meta.settings, agentCodexModel: model },
+          }));
+        },
+        setAgentCodexReasoningEffort: (effort) => {
+          useAgentSessionStore.getState().setSessionMeta((meta) => ({
+            ...meta,
+            settings: { ...meta.settings, agentCodexReasoningEffort: effort },
+          }));
+        },
 
         loadThreadList: loadActions.loadThreadList,
         loadThread: loadActions.loadThread,
@@ -397,7 +470,13 @@ export const useChatStore = create<ChatStore>()(
             useAgentConversationStore
               .getState()
               .removeInstancesForThread(threadId);
-            set((state) => {
+            // Phase 3 (2026-08-02): 同步清 session-store 真源 ── 这是单
+            // 一真源, mirror 会自动把 chat-store / conv-store 投影同步.
+            // 直接调 useAgentSessionStore.removeThreadProjection 比 set 整个
+            // entry 更彻底, 也避免 listener 在 in-flight 流上写入时拿到
+            // stale state 抖动.
+            useAgentSessionStore.getState().removeThreadProjection(threadId);
+            setWithMetaMirror((state) => {
               // 保留 threadStates[threadId] 这个 entry (不删整条, 避免 listener
               // 在 in-flight 流上写入时拿不到 state ─ 视觉抖动), 但清空
               // messages / oldestSequence / hasMoreHistory / loadingMore,
@@ -480,7 +559,7 @@ export const useChatStore = create<ChatStore>()(
           )?.title;
           const previousActiveTitle = before.currentThreadTitles[type.key];
 
-          set((state) => {
+          setWithMetaMirror((state) => {
             const currentList = getThreadListForType(state, type.key);
             return {
               ...titleUpdate(state, type.key, nextTitle),
@@ -509,7 +588,7 @@ export const useChatStore = create<ChatStore>()(
             else await get().loadLocalAgentThreadList(type.key);
           } catch (err) {
             console.error("Failed to update thread title:", err);
-            set((state) => ({
+            setWithMetaMirror((state) => ({
               ...titleUpdate(state, type.key, previousActiveTitle),
               ...threadListUpdate(
                 state,
@@ -582,7 +661,7 @@ export const useChatStore = create<ChatStore>()(
             options?.conversationTitle,
           );
           if (isFirstMessage && conversationTitle) {
-            set((state) => ({
+            setWithMetaMirror((state) => ({
               ...titleUpdate(state, type.key, conversationTitle),
               ...threadListUpdate(
                 state,
@@ -613,42 +692,31 @@ export const useChatStore = create<ChatStore>()(
           const runId = createRunId(threadId);
           userMessage.id = `user-${runId}`;
 
-          set((state) => {
-            const st = state.threadStates[threadId] ?? emptyThreadState();
-            const startedAt = Date.now();
-            const eventBase: AgentEvent = {
-              kind: "stream_start",
-              agentType: type.key,
-              threadId,
-              runId,
-              timestamp: startedAt,
-            };
-            const nextThreadState = applyOptimisticUserRun(
-              st,
-              eventBase,
-              userMessage,
-            );
-            const nextThreadTypes = {
-              ...state.threadTypes,
-              [threadId]: type.key,
-            };
-            return {
-              threadTypes: nextThreadTypes,
-              threadStates: threadRunUpdate(
-                state.threadStates,
-                threadId,
-                nextThreadState,
-              ),
-            };
+          // Phase 3 (2026-08-02): 乐观 user run 直接写 session-store ── 旧
+          // 路径 applyOptimisticUserRun + syncThreadLiveMessageState 双写
+          // chat-store / conv-store, mirror 会覆盖 chat-store. 这里把
+          // stream_start + user message 作为两个 dispatch 原子落 session-store.
+          const startedAt = Date.now();
+          useAgentSessionStore.getState().dispatch({
+            kind: "stream_start",
+            agentType: type.key,
+            threadId,
+            runId,
+            timestamp: startedAt,
           });
-          const optimisticThreadState = get().threadStates[threadId];
-          if (optimisticThreadState) {
-            syncThreadLiveMessageState(
-              type.key,
-              threadId,
-              optimisticThreadState,
-            );
-          }
+          useAgentSessionStore.getState().dispatch({
+            kind: "user_message",
+            agentType: type.key,
+            threadId,
+            runId,
+            timestamp: startedAt,
+            text: userMessage.content,
+            id: userMessage.id,
+          });
+          // bindThreadType 仍要保留 ── sessionMeta.threadTypes 写一次.
+          set((state) => ({
+            threadTypes: { ...state.threadTypes, [threadId]: type.key },
+          }));
           if (options?.instanceId) {
             useAgentConversationStore.getState().updateThread(options.instanceId, {
               threadId,
@@ -682,24 +750,16 @@ export const useChatStore = create<ChatStore>()(
               err,
               translate(getLanguage(), "agent.chat.sendFailed"),
             );
-            set((state) => {
-              const st = state.threadStates[threadId] ?? emptyThreadState();
-              const nextThreadState = {
-                ...st,
-                isLoading: false,
-                activeRunId: null,
-                pendingAssistantId: null,
-                pendingReasoningId: null,
-                messages: [...st.messages, errorMessage],
-              };
-              syncThreadLiveMessageState(type.key, threadId, nextThreadState);
-              return {
-                threadStates: threadRunUpdate(
-                  state.threadStates,
-                  threadId,
-                  releaseThreadRuntimeMessages(nextThreadState),
-                ),
-              };
+            // Phase 3 (2026-08-02): 错误路径直接合成一个 error event 落到
+            // session-store, 由 reduceProjection.applyErrorToProjection 原子
+            // 合并 messages + 清 runs.pending + 设 lastRun.status=failed.
+            useAgentSessionStore.getState().dispatch({
+              kind: "error",
+              agentType: type.key,
+              threadId,
+              runId,
+              timestamp: Date.now(),
+              message: errorMessage.content,
             });
           }
         },
@@ -721,27 +781,31 @@ export const useChatStore = create<ChatStore>()(
           streamDispatcher.flushBuffer();
           let targetRunId: string | undefined;
           let stoppedAt: number | null = null;
-          set((state) => {
-            const st = state.threadStates[threadId];
-            if (!st) return state;
-            targetRunId = runId ?? st.activeRunId ?? undefined;
-            if (!targetRunId || !st.runs[targetRunId]) return state;
+          // Phase 2 (2026-08-02): 停流状态写 `useAgentSessionStore` 的
+          // `threadProjections[tid]`, 由 mirror 自动同步 chat-store. 旧路径
+          // 直接写 chat-store.threadStates[tid] 会被 mirror 覆盖, 故删除.
+          useAgentSessionStore.getState().setThreadProjection(threadId, (p) => {
+            const candidateRunId =
+              runId ?? p.runs.activeRunId ?? undefined;
+            if (!candidateRunId || !p.runs.runs[candidateRunId]) return p;
+            targetRunId = candidateRunId;
             stoppedAt = Date.now();
-            const type = getAgentType(
-              state.threadTypes[threadId] ?? state.activeAgentTypeKey,
-            );
-            const nextThreadState = applyRunStopped(
-              st,
-              targetRunId,
+            const agentType =
+              p.runs.runs[candidateRunId]?.agentType ?? "flowix";
+            const runsNext = applyRunStopped(
+              projectionToRuns(p),
+              candidateRunId,
               stoppedAt,
             );
-            recordAgentStopRequested(threadId, targetRunId, type.key);
+            recordAgentStopRequested(
+              threadId,
+              candidateRunId,
+              agentType,
+            );
             return {
-              threadStates: threadRunUpdate(
-                state.threadStates,
-                threadId,
-                nextThreadState,
-              ),
+              ...p,
+              runs: runsToProjectionRuns(runsNext),
+              pending: { assistantId: null, reasoningId: null },
             };
           });
           // 修复 #9: 之前 `targetRunId` 早 return 后仍发 IPC, 后端走
@@ -809,10 +873,6 @@ export const useChatStore = create<ChatStore>()(
                 ),
               ),
               {
-                // 保留 instance 已有 title ── 当 caller 传入的 title 就是
-                // 当前 instance 的 default title 时 (典型场景: 之前快照
-                // 把空 thread 升级成默认 "Codex 会话" 后, 又再次收到同
-                // thread 的 snapshot), 不覆盖 instance.title。
                 defaultTitle: defaultExternalThreadTitle(type.key),
               },
             );
@@ -846,6 +906,102 @@ export const useChatStore = create<ChatStore>()(
               },
             ),
           );
+          // Phase 3 (2026-08-02): 同步 snapshot → session-store 真源.
+          // reconcileThreadStatesFromRunningSnapshot 仅写 chat-store, 这里
+          // 把每个 running thread 的 projection 也更新一次, 包含 currentTool
+          // / model 等 stream_start event 不直接承载的字段. 直接走
+          // setThreadProjection 而不是 dispatch stream_start, 因为 reducer
+          // 的 stream_start 处理不接受 currentTool 入参.
+          //
+          // 当 snapshot 把 pending local id 迁到 session id 时, 同步把
+          // session-store 的 projection 也合并过去, 不然 mirror 覆盖会让
+          // 已经迁到 conv-store 的 messages 丢失 (conv-store 是 mirror 派生).
+          const session = useAgentSessionStore.getState();
+          for (const [threadId, info] of Object.entries(running)) {
+            const localThreadId = info.pendingThreadId || threadId;
+            const canonicalThreadId = info.sessionId || localThreadId;
+            const startedAt = info.startedAt || now;
+            const runId = info.runId ?? `${canonicalThreadId}-${now}`;
+            const agentType = (info.agentType ?? "flowix") as AgentTypeKey;
+
+            // 处理 local → session 的消息迁移 (与 conv-store.resolveSessionByThreadId
+            // 同语义, 但写 session-store 真源).
+            if (
+              info.sessionId &&
+              localThreadId &&
+              localThreadId !== canonicalThreadId
+            ) {
+              const fromProj = session.threadProjections[localThreadId];
+              const toProj = session.threadProjections[canonicalThreadId];
+              if (fromProj || toProj) {
+                // Phase 6 (2026-08-03): 合并逻辑抽到 session-reducer.
+                const merged = mergeThreadProjections(
+                  fromProj,
+                  toProj,
+                  agentType,
+                );
+                session.setThreadProjection(canonicalThreadId, () => merged);
+                session.removeThreadProjection(localThreadId);
+              }
+            } else {
+              // 常规 stream_start ── 仅写 runs 字段, 不动 messages.
+              session.setThreadProjection(canonicalThreadId, (p) => {
+                const existingRun = p.runs.runs[runId];
+                const run: typeof existingRun = {
+                  ...existingRun,
+                  runId,
+                  agentType,
+                  threadId: canonicalThreadId,
+                  startedAt: existingRun?.startedAt ?? startedAt,
+                  status: "running",
+                  currentTool:
+                    info.currentTool ?? existingRun?.currentTool ?? null,
+                  model: existingRun?.model,
+                  modelId: existingRun?.modelId,
+                };
+                return {
+                  ...p,
+                  runs: {
+                    isLoading: true,
+                    activeRunId: runId,
+                    runs: { ...p.runs.runs, [runId]: run },
+                    lastRun: p.runs.lastRun,
+                  },
+                };
+              });
+            }
+          }
+          // 同时处理"快照里没有但本地认为还在跑"的 thread ── 标 failed + 清
+          // isLoading, 避免本地"loading 卡死". 复用 snapshot-reconcile 的
+          // grace window 规则 ── startedAt + 3s 内的乐观本地 run 跳过.
+          const localProjectionKeys = Object.keys(
+            useAgentSessionStore.getState().threadProjections,
+          );
+          const snapshotKeys = new Set(
+            Object.entries(running).map(
+              ([tid, info]) => info.sessionId || info.pendingThreadId || tid,
+            ),
+          );
+          for (const tid of localProjectionKeys) {
+            if (snapshotKeys.has(tid)) continue;
+            const p = useAgentSessionStore.getState().threadProjections[tid];
+            if (!p || !p.runs.isLoading) continue;
+            const activeRunId = p.runs.activeRunId;
+            if (activeRunId) {
+              const startedAt = p.runs.runs[activeRunId]?.startedAt;
+              if (startedAt && startedAt + 3000 > now) continue;
+            }
+            session.dispatch({
+              kind: "stream_end",
+              agentType: activeRunId
+                ? p.runs.runs[activeRunId]?.agentType ?? "flowix"
+                : "flowix",
+              threadId: tid,
+              runId: activeRunId ?? `missing-${tid}`,
+              timestamp: now,
+              reason: "missing_from_snapshot",
+            });
+          }
         },
 
         reconcileRunningRuns: async () => {
@@ -893,3 +1049,9 @@ export const useChatStore = create<ChatStore>()(
 export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
   useChatStore.getState().dispatchAgentChunk(chunk);
 });
+
+// Phase 5 (2026-08-03): 注册 chat-store getState 到 session-store, 让
+// session-store 的委托 actions 可以同步调用本 store. 避免循环依赖:
+// session-store 不静态 import 本模块, 而是通过 late binding 获取引用.
+import { _bindChatStore } from "@features/agent/store/agent-session-store";
+_bindChatStore(() => useChatStore.getState());

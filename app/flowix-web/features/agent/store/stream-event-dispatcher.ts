@@ -1,111 +1,54 @@
-import type { AgentEvent, AgentTypeKey } from "@/types/agent";
+import type { AgentEvent } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
-import {
-  applyErrorChunk,
-  applyReasoningChunk,
-  applyTextChunk,
-  applyUserMessageChunk,
-} from "@features/agent/store/message-chunks";
-import {
-  applyToolCallChunk,
-  applyToolResultChunk,
-} from "@features/agent/store/tool-chunks";
-import {
-  applyRunEnded,
-  applyRunFailed,
-  applyRunStarted,
-  applyRunUsage,
-  applyRunToolState,
-} from "@features/agent/store/run-lifecycle";
 import { recordAgentLifecycleEvent } from "@features/agent/diagnostics/agent-run-trace";
-import type { LiveMessageState } from "@features/agent/store/chunk-result";
-import { createStreamingBuffer } from "@features/agent/store/streaming-buffer";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import {
-  closeLoadingToolRows,
-  emptyThreadState,
-  ensureRunActive,
-  isRunEnded,
-  isThreadRunActive,
-  releaseThreadRuntimeMessages,
-  threadRunUpdate,
-  type ThreadState,
-  type ThreadsMap,
-} from "@features/agent/store/thread-runtime-state";
+  emptyProjection,
+  isProjectionRunActive,
+  isProjectionRunEnded,
+  mergeThreadProjections,
+} from "@features/agent/store/session-reducer";
 import {
-  syncConversationInstanceForEvent,
-} from "@features/agent/store/conversation-run-sync";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
-import { applyExternalSessionResolved } from "@features/agent/store/external-session";
-
-type AgentTypeMap<T> = Partial<Record<AgentTypeKey, T>>;
-
-export interface DispatcherChatSlice {
-  threadStates: ThreadsMap;
-  threadTypes: Record<string, AgentTypeKey>;
-  activeAgentTypeKey: AgentTypeKey;
-  externalSessionResolutions: Record<string, string>;
-  activeThreadIds: AgentTypeMap<string | undefined>;
-}
-
-export interface StreamEventDispatcherHost {
-  /** 读出 chat-store 的 dispatcher 关心的子集。 */
-  getChatSlice: () => DispatcherChatSlice;
-  /** 把 dispatcher 计算出的 patch 写回 chat-store。 */
-  applyPatch: (patch: Partial<DispatcherChatSlice>) => void;
-}
+  createStreamingBuffer,
+  type StreamingBufferSnapshot,
+} from "@features/agent/store/streaming-buffer";
+import { syncConversationInstanceForEvent } from "@features/agent/store/conversation-run-sync";
 
 /**
- * 同步 conversation.messageStates[threadId] 的 live state (messages +
- * pending ids) 到当前 chat-store 算出的结果。 复用阶段 4 的 helper。
+ * `stream-event-dispatcher` 重构版 ── 单一写源 `useAgentSessionStore`.
+ *
+ * 历史: 旧实现经 `host.applyPatch` 写 chat-store, 同时直接调
+ * `useAgentConversationStore.syncLiveMessageState` 写 conv-store, 形成双写.
+ * 本文件仅做 orchestration: late chunk guard / ensureRunActive / buffering /
+ * session_resolved migration ── 单一 dispatch 落到 session store 的
+ * `threadProjections[tid]`, 老 store 由 subscribe 镜像 (后续 PR).
+ *
+ * 涉及模块边界 (2026-08-02):
+ * - session-reducer: 纯 reducer (`reduceProjection(projection, event) → projection`).
+ * - agent-session-store: 单一 zustand, 三 sub-projection, dispatch 入口.
+ * - chat-store / agent-conversation-store: 暂时保留 actions; 通过镜像订阅
+ *   跟随 session store, 6 个月分期最终删除.
  */
-function syncLiveMessageState(
-  agentType: AgentTypeKey,
-  threadId: string,
-  liveState: LiveMessageState,
-): void {
-  useAgentConversationStore
-    .getState()
-    .syncLiveMessageState(agentType, threadId, liveState);
+
+export interface StreamEventDispatcher {
+  /**
+   * 派发一个 AgentEvent。 text / reasoning 走 rAF 缓冲, 其它事件同步 flush
+   * 后再走 reducer。 session_resolved 还会清空 streamingBuffer 以避免悬空
+   * 缓冲写错 thread id。
+   */
+  dispatch(event: AgentEvent): void;
+  /** 同步 flush 当前 buffered text/reasoning chunk ── 给 stopThreadRun 用。 */
+  flushBuffer(): void;
 }
 
-/**
- * 把 chat-store 的 ThreadState 还原成 LiveMessageState (chat-store 现在只
- * 保留运行时 metadata, 不再持有 live messages 真源; live messages 在
- * conversation store). 这里仅作为兜底 fallback ── dispatch 时如果
- * conversation 还没有 entry, 用 chat-store 的 thread state 作为初始值。
- */
-function getConversationLiveMessageState(
-  threadId: string,
-  fallback: LiveMessageState,
-): LiveMessageState {
-  const current =
-    useAgentConversationStore.getState().messageStates[threadId];
-  if (!current) return fallback;
-  return {
-    messages: current.messages,
-    pendingAssistantId: current.pendingAssistantId,
-    pendingReasoningId: current.pendingReasoningId,
-  };
-}
-
-function activeThreadUpdate(
-  slice: DispatcherChatSlice,
-  type: AgentTypeKey,
-  threadId: string | undefined,
-): Partial<DispatcherChatSlice> {
-  return {
-    activeThreadIds: {
-      ...slice.activeThreadIds,
-      [type]: threadId,
-    },
-  };
-}
+// --------------------------------------------------------------------
+// helpers
+// --------------------------------------------------------------------
 
 /**
  * 是否为承载消息内容的 data chunk ── 这些 chunk 若在一个已终结 run 之后到达
  * (late chunk), 会被 dispatch 顶部 guard 丢弃, 防止 ensureRunActive 复活 run
- * 与 pendingAssistantId=null 导致的新建消息碎片化。stream_start / stream_end /
- * usage / error / session_resolved 是 lifecycle 元数据, 不在此列。
+ * 与 pendingAssistantId=null 导致的新建消息碎片化。
  */
 function isDataChunk(kind: AgentEvent["kind"]): boolean {
   return (
@@ -119,360 +62,163 @@ function isDataChunk(kind: AgentEvent["kind"]): boolean {
 }
 
 /**
- * 计算一条 AgentEvent 应当对 chat slice 产生的 patch。 仅处理需要同步
- * 落盘的 event ── 高频 text / reasoning 通过 rAF buffer 异步走, 不进这里。
- *
- * `session_resolved` 同时会主动改 activeAgentTypeKey (跨 runtime 入口) ──
- * 修复 #12: activeThreadUpdate 不再带这个副作用, 所以这里显式补。
+ * 哪些 event 表明 thread 已经处于 "应当 active" 但 projection 还没记录
+ * stream_start 的状态 ── 这种情况下 dispatcher 补丁式合成一个 stream_start
+ * event, 通过 `useAgentSessionStore.dispatch` 应用, 然后 dispatch 原 event.
  */
-function applyEventToChatSlice(
-  slice: DispatcherChatSlice,
-  event: AgentEvent,
-): Partial<DispatcherChatSlice> | null {
-  const tid = event.threadId;
-  const st = ensureRunActive(
-    slice.threadStates[tid] ?? emptyThreadState(),
-    event,
+function shouldEnsureRunActive(event: AgentEvent): boolean {
+  return (
+    event.kind === "text_delta" ||
+    event.kind === "final_message" ||
+    event.kind === "reasoning_delta" ||
+    event.kind === "tool_call" ||
+    event.kind === "tool_result"
   );
-  switch (event.kind) {
-    case "user_message": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyUserMessageChunk(liveState, event.text, {
-        id: event.id,
-        phase: "completed",
-        contentMode: "snapshot",
-        sourceTimestamp: event.sourceTimestamp,
-        sourceSequence: event.sourceSequence,
-        sourceSubsequence: event.sourceSubsequence,
-      });
-      const nextThreadState: ThreadState = {
-        ...st,
-        messages: next.messages,
-        pendingAssistantId: next.pendingAssistantId,
-        pendingReasoningId: next.pendingReasoningId,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "session_resolved": {
-      if (!event.sessionId || event.sessionId === tid) return null;
-      const resolved = applyExternalSessionResolved(
-        {
-          threadStates: slice.threadStates,
-          threadTypes: slice.threadTypes,
-          externalSessionResolutions: slice.externalSessionResolutions,
-        },
-        tid,
-        event.sessionId,
-        event.agentType,
-      );
-      return {
-        ...activeThreadUpdate(slice, event.agentType, event.sessionId),
-        activeAgentTypeKey: event.agentType,
-        threadTypes: resolved.threadTypes,
-        externalSessionResolutions: resolved.externalSessionResolutions,
-        threadStates: resolved.threadStates,
-      };
-    }
-    case "stream_start": {
-      const nextThreadState = applyRunStarted(st, event, {
-        model: event.model,
-        modelId: event.model,
-        lastRunAt: event.timestamp,
-        reasoning_effort: event.reasoning_effort,
-      });
-      const nextThreadTypes = {
-        ...slice.threadTypes,
-        [tid]: event.agentType,
-      };
-      return {
-        threadTypes: nextThreadTypes,
-        threadStates: threadRunUpdate(
-          slice.threadStates,
-          tid,
-          nextThreadState,
-        ),
-      };
-    }
-    case "stream_end": {
-      const ended = applyRunEnded(st, event);
-      const terminalMessages =
-        !ended.isLoading && st.pendingReasoningId
-          ? ended.messages.map((message) =>
-              message.id === st.pendingReasoningId &&
-              message.role === "reasoning"
-                ? { ...message, isCompleted: true }
-                : message,
-            )
-          : ended.messages;
-      // run 结束时把仍 loading 的 tool 行(被中断 / result 未到达)收尾,避免
-      // 永久转圈,并关闭没有后续 assistant text 的 reasoning 行。仅 thread
-      // 不再 loading 时收尾,避免误关并发 run 的消息。
-      const nextThreadState = ended.isLoading
-        ? ended
-        : { ...ended, messages: closeLoadingToolRows(terminalMessages) };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      const runtimeThreadState = nextThreadState.isLoading
-        ? nextThreadState
-        : releaseThreadRuntimeMessages(nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, runtimeThreadState),
-      };
-    }
-    case "usage": {
-      const nextThreadState = applyRunUsage(st, event);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "text_delta": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyTextChunk(liveState, event.text, {
-        id: event.messageId,
-        phase: event.messagePhase,
-        contentMode: event.contentMode,
-        sourceTimestamp: event.sourceTimestamp,
-        sourceSequence: event.sourceSequence,
-        sourceSubsequence: event.sourceSubsequence,
-      });
-      const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, null),
-        messages: next.messages,
-        pendingAssistantId: next.pendingAssistantId,
-        pendingReasoningId: null,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "reasoning_delta": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyReasoningChunk(liveState, event.text, {
-        id: event.messageId,
-        phase: event.messagePhase,
-        contentMode: event.contentMode,
-        sourceTimestamp: event.sourceTimestamp,
-        sourceSequence: event.sourceSequence,
-        sourceSubsequence: event.sourceSubsequence,
-      });
-      const nextThreadState: ThreadState = {
-        ...st,
-        messages: next.messages,
-        pendingAssistantId: next.pendingAssistantId,
-        pendingReasoningId: next.pendingReasoningId,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "final_message": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyTextChunk(liveState, event.text, {
-        id: event.messageId,
-        phase: event.messagePhase,
-        contentMode: event.contentMode,
-        sourceTimestamp: event.sourceTimestamp,
-        sourceSequence: event.sourceSequence,
-        sourceSubsequence: event.sourceSubsequence,
-      });
-      const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, null),
-        messages: next.messages,
-        pendingAssistantId: next.pendingAssistantId,
-        pendingReasoningId: null,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "tool_call": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyToolCallChunk(
-        liveState,
-        event.toolCallId,
-        event.name,
-        event.input,
-        event.agentType,
-        event.display,
-        {
-          id: event.messageId,
-          phase: event.messagePhase,
-          sourceTimestamp: event.sourceTimestamp,
-          sourceSequence: event.sourceSequence,
-          sourceSubsequence: event.sourceSubsequence,
-        },
-      );
-      const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, event.name),
-        messages: next.messages,
-        pendingAssistantId: null,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "tool_result": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyToolResultChunk(
-        liveState,
-        event.toolCallId,
-        event.name,
-        event.result,
-        event.agentType,
-        {
-          id: event.messageId,
-          phase: event.messagePhase,
-          sourceTimestamp: event.sourceTimestamp,
-          sourceSequence: event.sourceSequence,
-          sourceSubsequence: event.sourceSubsequence,
-        },
-      );
-      const nextThreadState: ThreadState = {
-        ...applyRunToolState(st, event, null),
-        messages: next.messages,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, nextThreadState),
-      };
-    }
-    case "error": {
-      const liveState = getConversationLiveMessageState(tid, st);
-      const next = applyErrorChunk(liveState, event.message);
-      const nextThreadState: ThreadState = {
-        ...applyRunFailed(st, event, event.message),
-        messages: next.messages,
-      };
-      syncLiveMessageState(event.agentType, tid, nextThreadState);
-      const runtimeThreadState = nextThreadState.isLoading
-        ? nextThreadState
-        : releaseThreadRuntimeMessages(nextThreadState);
-      return {
-        threadStates: threadRunUpdate(slice.threadStates, tid, runtimeThreadState),
-      };
-    }
-    default:
-      return null;
+}
+
+function synthesizeStreamStart(event: AgentEvent): AgentEvent & {
+  kind: "stream_start";
+} {
+  return {
+    kind: "stream_start",
+    agentType: event.agentType,
+    threadId: event.threadId,
+    runId: event.runId ?? `${event.threadId}-synthetic`,
+    timestamp: event.timestamp,
+  };
+}
+
+// --------------------------------------------------------------------
+// session_resolved ── 跨 thread 合并 projection + 更新 sessionMeta
+// --------------------------------------------------------------------
+
+function applySessionResolved(
+  event: AgentEvent & { kind: "session_resolved" },
+): void {
+  const tid = event.threadId;
+  const sessionId = event.sessionId;
+  if (!sessionId || sessionId === tid) return;
+
+  const session = useAgentSessionStore.getState();
+  const fromProjection = session.threadProjections[tid];
+  const toProjection = session.threadProjections[sessionId];
+
+  // 合并 projection ── 抽到 session-reducer/mergeThreadProjections.
+  // 任一边缺失都按另一边兜底, 都没则跳过 (emptyProjection 噪音).
+  if (toProjection || fromProjection) {
+    const merged = mergeThreadProjections(
+      fromProjection,
+      toProjection,
+      event.agentType,
+    );
+    session.setThreadProjection(sessionId, () => merged);
+    session.removeThreadProjection(tid);
   }
+
+  session.setSessionMeta((meta) => ({
+    ...meta,
+    threadTypes: {
+      ...meta.threadTypes,
+      [tid]: event.agentType,
+      [sessionId]: event.agentType,
+    },
+    externalSessionResolutions: {
+      ...meta.externalSessionResolutions,
+      [tid]: sessionId,
+    },
+    activeThreadIds: {
+      ...meta.activeThreadIds,
+      [event.agentType]: sessionId,
+    },
+    activeAgentTypeKey: event.agentType,
+  }));
 }
 
-export interface StreamEventDispatcher {
-  /**
-   * 派发一个 AgentEvent。 text / reasoning 走 rAF 缓冲, 其它事件同步 flush
-   * 后再走 reducer。 session_resolved 还会清空 streamingBuffer 以避免悬空
-   * 缓冲写错 thread id。
-   */
-  dispatch(event: AgentEvent): void;
-  /** 同步 flush 当前 buffered text/reasoning chunk ── 给 stopThreadRun 用。 */
-  flushBuffer(): void;
-}
+// --------------------------------------------------------------------
+// dispatcher factory
+// --------------------------------------------------------------------
 
-export function createStreamEventDispatcher(
-  host: StreamEventDispatcherHost,
-): StreamEventDispatcher {
+export function createStreamEventDispatcher(): StreamEventDispatcher {
   const streamingBuffer = createStreamingBuffer(
-    (textSnapshot, reasoningSnapshot) => {
-      const bufferedLiveStates = new Map<string, LiveMessageState>();
-      const syncedThreads = new Map<
-        string,
-        { threadId: string; agentType: AgentTypeKey; liveState: LiveMessageState }
-      >();
-      const readLiveState = (
-        threadId: string,
-        fallback: LiveMessageState,
-      ): LiveMessageState =>
-        bufferedLiveStates.get(threadId) ??
-        getConversationLiveMessageState(threadId, fallback);
-
-      const slice = host.getChatSlice();
-      const threadStates: ThreadsMap = { ...slice.threadStates };
-
+    (
+      textSnapshot: StreamingBufferSnapshot,
+      reasoningSnapshot: StreamingBufferSnapshot,
+    ) => {
+      const session = useAgentSessionStore.getState();
+      const now = Date.now();
       // reasoning 先 apply ── 与旧 store 时序一致 (reasoning chunk 先于
-      // text 出现; text chunk 落地时会 close reasoning 行). 但 rAF 内两者
-      // 可能同帧到达, 用 reasoning-first 顺序保证 close 语义正确。
+      // text 出现; text chunk 落地时会 close reasoning 行).
       for (const [tid, text] of reasoningSnapshot) {
-        const st = threadStates[tid];
-        // thread 已被清掉 (切换 / 删除) ── 直接丢弃缓冲, 与 "chunk 到达时
-        // thread 已无对应 state" 行为一致。
-        if (!st) continue;
-        const liveState = readLiveState(tid, st);
-        const next = applyReasoningChunk(liveState, text);
-        threadStates[tid] = {
-          ...st,
-          messages: next.messages,
-          pendingAssistantId: next.pendingAssistantId,
-          pendingReasoningId: next.pendingReasoningId,
-        };
-        bufferedLiveStates.set(tid, threadStates[tid]);
-        syncedThreads.set(tid, {
+        const current = session.threadProjections[tid];
+        if (!current || !current.runs.activeRunId) continue;
+        const agentType = getAgentType(
+          session.sessionMeta.threadTypes[tid] ?? session.sessionMeta.activeAgentTypeKey,
+        ).key;
+        session.dispatch({
+          kind: "reasoning_delta",
+          agentType,
           threadId: tid,
-          agentType: getAgentType(
-            slice.threadTypes[tid] ?? slice.activeAgentTypeKey,
-          ).key,
-          liveState: threadStates[tid],
+          runId: current.runs.activeRunId,
+          timestamp: now,
+          text,
+          messagePhase: "updated",
+          contentMode: "delta",
+          sourceTimestamp: now,
         });
       }
       for (const [tid, text] of textSnapshot) {
-        const st = threadStates[tid];
-        if (!st) continue;
-        const liveState = readLiveState(tid, st);
-        const next = applyTextChunk(liveState, text);
-        threadStates[tid] = {
-          ...st,
-          messages: next.messages,
-          pendingAssistantId: next.pendingAssistantId,
-          pendingReasoningId: null, // text 落地后 reasoning 行 closed
-        };
-        bufferedLiveStates.set(tid, threadStates[tid]);
-        syncedThreads.set(tid, {
+        const current = session.threadProjections[tid];
+        if (!current || !current.runs.activeRunId) continue;
+        const agentType = getAgentType(
+          session.sessionMeta.threadTypes[tid] ?? session.sessionMeta.activeAgentTypeKey,
+        ).key;
+        session.dispatch({
+          kind: "text_delta",
+          agentType,
           threadId: tid,
-          agentType: getAgentType(
-            slice.threadTypes[tid] ?? slice.activeAgentTypeKey,
-          ).key,
-          liveState: threadStates[tid],
+          runId: current.runs.activeRunId,
+          timestamp: now,
+          text,
+          messagePhase: "updated",
+          contentMode: "delta",
+          sourceTimestamp: now,
         });
-      }
-      host.applyPatch({ threadStates });
-      for (const { agentType, threadId, liveState } of syncedThreads.values()) {
-        syncLiveMessageState(agentType, threadId, liveState);
       }
     },
   );
 
   function dispatch(event: AgentEvent): void {
-    const tid = event.threadId;
-    const slice = host.getChatSlice();
-    const currentThreadState = slice.threadStates[tid] ?? emptyThreadState();
+    const session = useAgentSessionStore.getState();
+    const current =
+      session.threadProjections[event.threadId] ?? emptyProjection();
+
     recordAgentLifecycleEvent(event, {
-      activeRunId: currentThreadState.activeRunId,
-      isLoading: currentThreadState.isLoading,
+      activeRunId: current.runs.activeRunId,
+      isLoading: current.runs.isLoading,
     });
 
-    // Final/StreamEnd 是正常 run 的可见终止边界。所有 late data chunk
-    // (包括工具)都丢弃,避免结束后追加消息或补丁式复活 run。异常恢复必须走
-    // 独立的 turn 级恢复路径,不能伪装成正常流的迟到 chunk。
-    if (isDataChunk(event.kind) && isRunEnded(currentThreadState, event.runId)) {
+    // Late chunk guard: data chunk 到达已终结 run 时丢弃.
+    if (isDataChunk(event.kind) && isProjectionRunEnded(current, event.runId)) {
       return;
     }
 
-    // Layer 2: text / reasoning 走 rAF 节流; 其它 chunk 进入前先同步
-    // flush 缓冲, 保证后端发出的顺序 (text → tool_call → text →
-    // tool_result → text) 在 UI 上呈现的顺序与时序一致。
+    // session_resolved 是跨 thread 合并, 不进单 projection dispatch.
+    if (event.kind === "session_resolved") {
+      streamingBuffer.flushSync();
+      syncConversationInstanceForEvent(event);
+      applySessionResolved(event);
+      return;
+    }
+
+    // ensureRunActive: data chunk 但 projection 还不是 running 状态.
+    if (shouldEnsureRunActive(event) && !isProjectionRunActive(current)) {
+      session.dispatch(synthesizeStreamStart(event));
+    }
+
+    // text / reasoning 走 rAF 缓冲.
     switch (event.kind) {
       case "text_delta": {
         if (!event.text || !event.text.trim()) return;
-        if (!isThreadRunActive(currentThreadState)) {
-          const ensured = ensureRunActive(currentThreadState, event);
-          host.applyPatch({
-            threadStates: threadRunUpdate(slice.threadStates, tid, ensured),
-          });
-        }
         if (
           event.messageId ||
           event.contentMode === "snapshot" ||
@@ -482,23 +228,19 @@ export function createStreamEventDispatcher(
           event.sourceSequence !== undefined
         ) {
           streamingBuffer.flushSync();
-          break;
+          session.dispatch(event);
+          return;
         }
-        streamingBuffer.appendText(tid, event.text);
+        streamingBuffer.appendText(event.threadId, event.text);
         return;
       }
       case "reasoning_delta": {
-        if (!isThreadRunActive(currentThreadState)) {
-          const ensured = ensureRunActive(currentThreadState, event);
-          host.applyPatch({
-            threadStates: threadRunUpdate(slice.threadStates, tid, ensured),
-          });
-        }
         if (event.messageId || event.contentMode === "snapshot") {
           streamingBuffer.flushSync();
-          break;
+          session.dispatch(event);
+          return;
         }
-        streamingBuffer.appendReasoning(tid, event.text);
+        streamingBuffer.appendReasoning(event.threadId, event.text);
         return;
       }
       case "final_message":
@@ -506,16 +248,15 @@ export function createStreamEventDispatcher(
       case "tool_result":
       case "error":
       case "stream_end":
-      case "session_resolved":
-        // 这些 chunk 频率低且必须立刻可见, 不走节流; 但必须先 flush 缓冲,
-        // 否则文本顺序错乱 ── 例: 一段 assistant 文本被 tool_call 切走
-        // 时, 缓冲里残留的文字应该先落到 pending assistant, 再让 tool_call
-        // 走 close 逻辑。
+        // 这些 chunk 频率低且必须立刻可见, 不走节流; 但必须先 flush 缓冲.
         streamingBuffer.flushSync();
         break;
       case "stream_start":
       case "usage":
-        // stream_start / usage 无需 flush, 不影响消息缓冲。
+        // stream_start / usage 无需 flush.
+        break;
+      case "user_message":
+        streamingBuffer.flushSync();
         break;
     }
 
@@ -523,8 +264,7 @@ export function createStreamEventDispatcher(
       syncConversationInstanceForEvent(event);
     }
 
-    const nextPatch = applyEventToChatSlice(host.getChatSlice(), event);
-    if (nextPatch) host.applyPatch(nextPatch);
+    session.dispatch(event);
   }
 
   return {

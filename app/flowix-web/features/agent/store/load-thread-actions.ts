@@ -11,6 +11,7 @@ import {
 } from "@features/agent/store/chat-thread-accessors";
 import type { ThreadState, ThreadsMap } from "@features/agent/store/thread-runtime-state";
 import type { ChatStore } from "@features/agent/store/chat-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { findHistoryThreadInfo } from "@features/agent/store/thread-history";
 import { replayExternalEventsForThread } from "@features/agent/store/external-event-replay";
 
@@ -27,9 +28,6 @@ export async function loadThreadForType(
 ): Promise<void> {
   const type = getAgentType(typeKey);
   try {
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
-    );
     const threadInfo = await findHistoryThreadInfo(
       type.key,
       threadId,
@@ -71,11 +69,11 @@ export async function loadThreadForType(
         threadId,
       );
       if (!replayedPersistedEvents) {
-        await useAgentConversationStore.getState().loadMessages(type.key, threadId);
+        await useAgentSessionStore.getState().loadMessages(type.key, threadId);
       }
       return;
     }
-    await useAgentConversationStore.getState().loadMessages(type.key, threadId);
+    await useAgentSessionStore.getState().loadMessages(type.key, threadId);
   } catch (err) {
     console.error(`Failed to load ${type.name} thread:`, err);
   }

@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentConversationStoreMock = vi.hoisted(() => ({
-  loadMessages: vi.fn(
-    async (_typeKey?: string, _threadId?: string) => undefined,
-  ),
+  // 测试内部消息 fixture 数据载体 (历史命名); 生产代码已不读 conv-store.
   messageStates: {},
 }));
 const replayExternalEventsMock = vi.hoisted(() =>
@@ -12,6 +10,32 @@ const replayExternalEventsMock = vi.hoisted(() =>
       false,
   ),
 );
+// Phase 5 (2026-08-03): cache helper now reads 唯一真源 threadProjections.
+// Mock 这里让 loadMessages 同步更新 threadProjections 的对应 entry, 模拟
+// 真实环境 session-store.setThreadProjection 行为.
+const sessionStoreMock = vi.hoisted(() => ({
+  loadMessages: vi.fn(
+    async (_typeKey: string, _threadId: string) => undefined,
+  ),
+  threadProjections: {} as Record<
+    string,
+    { messages: unknown[]; pagination: object; runs: object }
+  >,
+  sessionMeta: {
+    externalSessionResolutions: {},
+    activeAgentTypeKey: "flowix",
+    threadTypes: {},
+    threadLists: {},
+    currentThreadTitles: {},
+    activeThreadIds: {},
+    lastRunningRunsReconciledAt: null,
+    settings: {
+      agentPermissionMode: "danger-full-access",
+      agentCodexModel: "inherit",
+      agentCodexReasoningEffort: "medium",
+    },
+  },
+}));
 
 vi.mock("@features/agent/store/agent-conversation-store", () => ({
   useAgentConversationStore: {
@@ -23,6 +47,12 @@ vi.mock("@features/agent/store/chat-store", () => ({
   useChatStore: {
     setState: vi.fn(),
     getState: vi.fn(() => ({})),
+  },
+}));
+
+vi.mock("@features/agent/store/agent-session-store", () => ({
+  useAgentSessionStore: {
+    getState: () => sessionStoreMock,
   },
 }));
 
@@ -44,6 +74,34 @@ describe("agent thread card cache helper", () => {
     vi.clearAllMocks();
     replayExternalEventsMock.mockResolvedValue(false);
     agentConversationStoreMock.messageStates = {};
+    sessionStoreMock.threadProjections = {};
+    // 模拟 loadMessages 路径: sessionStoreMock.loadMessages 被
+    // mock 时, 同步把 messageStates 投影到 sessionStoreMock.threadProjections,
+    // 模拟真实环境 session-store.setThreadProjection.
+    sessionStoreMock.loadMessages.mockImplementation(
+      async (_typeKey, threadId) => {
+        const ms = (agentConversationStoreMock.messageStates as Record<
+          string,
+          { messages: unknown[] }
+        >)[threadId];
+        if (ms) {
+          sessionStoreMock.threadProjections[threadId] = {
+            messages: ms.messages,
+            pagination: {
+              oldestSequence: null,
+              hasMoreHistory: false,
+              loadingInitial: false,
+              loadingMore: false,
+            },
+            runs: {
+              isLoading: false,
+              activeRunId: null,
+              runs: {},
+            },
+          };
+        }
+      },
+    );
   });
 
   it("loads standard thread cache for non external agents", async () => {
@@ -55,7 +113,7 @@ describe("agent thread card cache helper", () => {
       typeKey: "flowix",
     });
 
-    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+    expect(sessionStoreMock.loadMessages).toHaveBeenCalledWith(
       "flowix",
       "flowix-thread",
     );
@@ -85,7 +143,7 @@ describe("agent thread card cache helper", () => {
       loadedThreadId: "codex-real-session",
       messages: [],
     });
-    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+    expect(sessionStoreMock.loadMessages).toHaveBeenCalledWith(
       "codex",
       "codex-real-session",
     );
@@ -101,7 +159,7 @@ describe("agent thread card cache helper", () => {
       typeKey: "codex",
     });
 
-    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+    expect(sessionStoreMock.loadMessages).toHaveBeenCalledWith(
       "codex",
       "codex-real-session",
     );
@@ -118,7 +176,7 @@ describe("agent thread card cache helper", () => {
       typeKey: "claude",
     });
 
-    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+    expect(sessionStoreMock.loadMessages).toHaveBeenCalledWith(
       "claude",
       "claude-real-session",
     );
@@ -131,12 +189,24 @@ describe("agent thread card cache helper", () => {
       { id: "user-1", role: "user", content: "hello", timestamp: "1" },
       { id: "assistant-1", role: "assistant", content: "hi", timestamp: "2" },
     ];
-    agentConversationStoreMock.loadMessages.mockImplementationOnce(
+    sessionStoreMock.loadMessages.mockImplementationOnce(
       async (typeKey, threadId) => {
         expect(typeKey).toBe("opencode");
         expect(threadId).toBe("opencode-session-1");
         agentConversationStoreMock.messageStates = {
           "opencode-session-1": { messages },
+        };
+        // Phase 5 (2026-08-03): 同步投到 session-store 真源, 模拟
+        // session-store.setThreadProjection 行为. cache helper 读真源.
+        sessionStoreMock.threadProjections["opencode-session-1"] = {
+          messages,
+          pagination: {
+            oldestSequence: null,
+            hasMoreHistory: false,
+            loadingInitial: false,
+            loadingMore: false,
+          },
+          runs: { isLoading: false, activeRunId: null, runs: {} },
         };
       },
     );
@@ -149,7 +219,7 @@ describe("agent thread card cache helper", () => {
     });
 
     expect(replayExternalEventsMock).not.toHaveBeenCalled();
-    expect(agentConversationStoreMock.loadMessages).toHaveBeenCalledWith(
+    expect(sessionStoreMock.loadMessages).toHaveBeenCalledWith(
       "opencode",
       "opencode-session-1",
     );

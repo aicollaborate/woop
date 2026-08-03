@@ -6,8 +6,7 @@ import {
   getAgentType,
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
-import { useChatStore } from "@features/agent/store/chat-store";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import {
   DEFAULT_AGENT_THREAD_CARD_TITLE as DEFAULT_TITLE,
@@ -159,9 +158,10 @@ export const AgentThreadCard = Node.create({
           const nodeType = state.schema.nodes[this.name];
           if (!nodeType) return false;
           const typeKey = normalizeAgentTypeKey(
-            options?.typeKey ?? useChatStore.getState().activeAgentTypeKey,
+            options?.typeKey ??
+              useAgentSessionStore.getState().sessionMeta.activeAgentTypeKey,
           );
-          const instance = useAgentConversationStore.getState().createInstance({
+          const instance = useAgentSessionStore.getState().createInstance({
             agentType: typeKey,
             title: DEFAULT_TITLE,
             threadId: null,

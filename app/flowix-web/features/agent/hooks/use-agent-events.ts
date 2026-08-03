@@ -1,29 +1,33 @@
 import { useEffect } from 'react';
 
-import { acquireAgentChunkBridge, useChatStore } from '@features/agent/store/chat-store';
-import { useAgentConversationStore } from '@features/agent/store/agent-conversation-store';
-import { isThreadRunActive } from '@features/agent/store/thread-runtime-state';
+import { acquireAgentChunkBridge } from '@features/agent/store/chat-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
+import { isProjectionRunActive } from '@features/agent/store/session-reducer';
 
 export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> {
-  const before = useChatStore.getState();
-  const locallyRunning = Object.entries(before.threadStates)
-    .filter(([, state]) => isThreadRunActive(state))
+  // Phase 4 (2026-08-02): 真源切到 useAgentSessionStore, chat-store 保留
+  // 作为 facade 镜像, 这里直接读 projection 避免 mirror round-trip.
+  const before = useAgentSessionStore.getState();
+  const locallyRunning = Object.entries(before.threadProjections)
+    .filter(([, projection]) => isProjectionRunActive(projection))
     .map(([threadId]) => ({
       threadId,
-      agentType: before.threadTypes[threadId] ?? before.activeAgentTypeKey,
+      agentType:
+        before.sessionMeta.threadTypes[threadId] ??
+        before.sessionMeta.activeAgentTypeKey,
     }));
 
-  await before.reconcileRunningRuns();
+  await useAgentSessionStore.getState().reconcileRunningRuns();
   if (locallyRunning.length === 0) return;
 
-  const after = useChatStore.getState();
+  const after = useAgentSessionStore.getState();
   const endedWhileDisconnected = locallyRunning.filter(({ threadId }) => {
-    const state = after.threadStates[threadId];
-    return !state || !isThreadRunActive(state);
+    const projection = after.threadProjections[threadId];
+    return !projection || !isProjectionRunActive(projection);
   });
   await Promise.allSettled(
     endedWhileDisconnected.map(({ threadId, agentType }) => (
-      useAgentConversationStore.getState().loadMessages(agentType, threadId)
+      useAgentSessionStore.getState().loadMessages(agentType, threadId)
     )),
   );
 }

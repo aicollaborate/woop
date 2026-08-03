@@ -23,8 +23,8 @@ vi.mock('@features/agent/store/agent-runtime-store', () => ({
     selector({ refresh: mocks.refreshRuntime })
   ),
 }));
-vi.mock('@features/agent/store/agent-conversation-store', () => ({
-  useAgentConversationStore: (
+vi.mock('@features/agent/store/agent-session-store', () => ({
+  useAgentSessionStore: (
     selector: (state: { hydrateFromBackend: typeof mocks.hydrateConversations }) => unknown,
   ) => selector({ hydrateFromBackend: mocks.hydrateConversations }),
 }));

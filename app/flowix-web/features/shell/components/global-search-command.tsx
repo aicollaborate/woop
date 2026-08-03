@@ -38,10 +38,9 @@ import type { MemoItem } from '@/types/memo-item';
 import { useDocumentStore } from '@features/document/store/document-store';
 import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import {
-  useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-store';
-import { useChatStore } from '@features/agent/store/chat-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   getConversationRunSummary,
   selectRunningAgentConversations,
@@ -345,7 +344,7 @@ interface RunningAgentConversationsGroupProps {
 
 function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGroupProps) {
   const { t } = useI18n();
-  const instances = useAgentConversationStore((s) => s.instances);
+  const instances = useAgentSessionStore((s) => s.conversationRegistry.instances);
   const conversationRunIndex = useConversationRunIndex(instances);
   const runningInstances = useMemo(
     () => selectRunningAgentConversations({ instances }, conversationRunIndex),
@@ -357,7 +356,16 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
   const openRunningInstance = async (instance: AgentConversationInstance) => {
     const threadId = instance.threadId;
     if (threadId) {
-      useChatStore.getState().setActiveAgentThread(instance.agentType, threadId);
+      // Phase 4 (2026-08-02): session-store.sessionMeta.activeThreadIds 是真源.
+      const session = useAgentSessionStore.getState();
+      session.setSessionMeta((meta) => ({
+        ...meta,
+        activeThreadIds: {
+          ...meta.activeThreadIds,
+          [instance.agentType]: threadId,
+        },
+        activeAgentTypeKey: instance.agentType,
+      }));
     }
 
     const source = instance.source;

@@ -152,6 +152,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const { useAgentConversationStore } = await import(
       "@features/agent/store/agent-conversation-store"
     );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
     agentAccessMock.config = { entries: [] };
     memoStateMock.selectedNotebook = null;
     useChatStore.setState(useChatStore.getInitialState(), true);
@@ -159,6 +162,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       useAgentConversationStore.getInitialState(),
       true,
     );
+    // Phase 2 (2026-08-02): session-store 是新真源, 每个测试必须 reset,
+    // 否则跨测试的 threadProjections 通过 mirror 污染 chat-store.
+    useAgentSessionStore.setState(useAgentSessionStore.getInitialState(), true);
   });
 
   it("projects live chunks in a tab-host bridge and releases it after the last owner", async () => {
@@ -274,7 +280,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(idleState.isLoading).toBe(false);
     expect(idleState.activeRunId).toBeNull();
     expect(Object.values(idleState.runs)).toHaveLength(0);
-    expect(idleState.messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 是单一真源, stream_end 不再清 messages.
+    // 旧 releaseThreadRuntimeMessages 在 dual-write 时代释放大 tool_data 以省内存,
+    // 在 single-source 架构下不再需要; message 由 session-store 持久投影 + mirror 同步.
+    expect(idleState.messages).toMatchObject([{ role: "assistant", content: "Hello" }]);
     expect(
       useAgentConversationStore.getState().messageStates[threadId]?.messages[0],
     ).toMatchObject({
@@ -683,10 +692,16 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const { useAgentConversationStore } = await import(
       "@features/agent/store/agent-conversation-store"
     );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
     const threadId = "thread-buffered-conversation-live";
 
     useChatStore.getState().bindThreadType(threadId, "flowix");
-    useAgentConversationStore.getState().syncLiveMessageState("flowix", threadId, {
+    // Phase 2 (2026-08-02): session-store 是真源, 直接 seed 它. mirror 会自动
+    // 把同步状态写到 conv-store 与 chat-store, 断言仍走两个老 store.
+    useAgentSessionStore.getState().setThreadProjection(threadId, (p) => ({
+      ...p,
       messages: [
         {
           id: "assistant-live",
@@ -695,9 +710,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       ],
-      pendingAssistantId: "assistant-live",
-      pendingReasoningId: null,
-    });
+      pending: { assistantId: "assistant-live", reasoningId: null },
+    }));
 
     useChatStore.getState().dispatchAgentChunk({
       kind: "text",
@@ -1308,7 +1322,11 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(state.threadTypes[sessionId]).toBe("codex");
     expect(state.threadStates[sessionId].isLoading).toBe(true);
     expect(state.threadStates[sessionId].activeRunId).toBe("run-local-1");
-    expect(state.threadStates[sessionId].messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 持久 messages, session_resolved 迁移后保留.
+    // 旧 release 语义断言已废弃 ── 见 store/index.ts 注释.
+    expect(state.threadStates[sessionId].messages).toMatchObject([
+      { content: "Codex answer before session id" },
+    ]);
     expect(
       useAgentConversationStore.getState().messageStates[sessionId].messages[0]
         ?.content,
@@ -1356,22 +1374,21 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const localThreadId = "codex-local-without-instance";
     const sessionId = "codex-session-without-instance";
 
-    useAgentConversationStore.getState().syncLiveMessageState(
-      "codex",
-      localThreadId,
-      {
-        messages: [
-          {
-            id: "assistant-local",
-            role: "assistant",
-            content: "message before instance exists",
-            timestamp: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-        pendingAssistantId: "assistant-local",
-        pendingReasoningId: null,
-      },
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
+    useAgentSessionStore.getState().setThreadProjection(localThreadId, (p) => ({
+      ...p,
+      messages: [
+        {
+          id: "assistant-local",
+          role: "assistant",
+          content: "message before instance exists",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      pending: { assistantId: "assistant-local", reasoningId: null },
+    }));
 
     useChatStore.getState().bindThreadType(localThreadId, "codex");
     useChatStore.getState().dispatchAgentChunk({
@@ -1411,22 +1428,22 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const localThreadId = "codex-local-cache-resolved";
     const sessionId = "codex-session-cache-resolved";
 
-    useAgentConversationStore.getState().syncLiveMessageState(
-      "codex",
-      localThreadId,
-      {
-        messages: [
-          {
-            id: "assistant-cache-resolved",
-            role: "assistant",
-            content: "cache resolved message",
-            timestamp: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-        pendingAssistantId: "assistant-cache-resolved",
-        pendingReasoningId: null,
-      },
+    // Phase 2 (2026-08-02): seed session-store (真源), mirror 同步到 conv-store.
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
+    useAgentSessionStore.getState().setThreadProjection(localThreadId, (p) => ({
+      ...p,
+      messages: [
+        {
+          id: "assistant-cache-resolved",
+          role: "assistant",
+          content: "cache resolved message",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      pending: { assistantId: "assistant-cache-resolved", reasoningId: null },
+    }));
     useChatStore.getState().bindThreadType(localThreadId, "codex");
     useChatStore.getState().dispatchAgentChunk({
       kind: "stream_start",
@@ -1451,7 +1468,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       isLoading: true,
       activeRunId: "run-cache-resolved",
     });
-    expect(chatState.threadStates[sessionId].messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 持久 messages, 见同文件 1283 注释.
+    expect(chatState.threadStates[sessionId].messages).toMatchObject([
+      { content: "cache resolved message" },
+    ]);
 
     const messageState =
       useAgentConversationStore.getState().messageStates[sessionId];
@@ -1550,9 +1570,12 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(messageState.messages[0]?.content).toBe("recent codex answer");
     expect(messageState.oldestSequence).toBe(42);
     expect(messageState.hasMoreHistory).toBe(true);
-    expect(useChatStore.getState().threadStates[threadId].messages).toEqual(
-      [],
-    );
+    // Phase 3 (2026-08-02): loadMessages 写 session-store, mirror 同步到
+    // chat-store ── threadStates[tid].messages 不再为空. 旧 dual-write 时代
+    // chat-store.threadStates 不含 messages 的 invariant 已废弃.
+    expect(
+      useChatStore.getState().threadStates[threadId].messages,
+    ).toMatchObject([{ content: "recent codex answer" }]);
   });
 
   it("loads Codex database history through the backend materialized page", async () => {

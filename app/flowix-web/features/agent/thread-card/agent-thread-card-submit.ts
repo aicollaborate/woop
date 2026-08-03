@@ -2,7 +2,7 @@ import { agent } from '@platform/tauri/client';
 import type { AgentTypeKey } from '@/types/agent';
 import { getAgentType } from '@/lib/agent-types';
 import { stripSystemBlock } from '@features/agent/message';
-import { useChatStore } from '@features/agent/store/chat-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { beginExternalAgentThreadCardRun } from '@features/agent/services/external-agent-runtime-service';
 
 export interface EnsureAgentThreadCardThreadInput {
@@ -47,8 +47,18 @@ export async function ensureAgentThreadCardThread(
   }
 
   const thread = await agent.createThread(nextTitle);
-  useChatStore.getState().setActiveAgentThread(type.key, thread.threadId);
-  void useChatStore.getState().loadThreadList();
+  // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.activeThreadIds.
+  // setActiveAgentThread 仍可用 (mirror 同步), 但这里直接写 session-store
+  // 避免 round-trip 与将来删除 chat-store 时的二次迁移.
+  useAgentSessionStore.getState().setSessionMeta((meta) => ({
+    ...meta,
+    activeThreadIds: {
+      ...meta.activeThreadIds,
+      [type.key]: thread.threadId,
+    },
+    activeAgentTypeKey: type.key,
+  }));
+  void useAgentSessionStore.getState().loadThreadList();
   return {
     threadId: thread.threadId,
     title: stripSystemBlock(thread.title || nextTitle).replace(/\s+/g, ' ').trim(),

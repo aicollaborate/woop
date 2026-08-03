@@ -2,8 +2,8 @@ import type { AgentChunk, AgentTypeKey } from "@/types/agent";
 import type { AgentExternalEvent } from "@platform/tauri/client";
 import { agentClient } from "@features/agent/store/agent-client";
 import type { ChatStore } from "@features/agent/store/chat-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
 
 const REPLAY_PAGE_SIZE = 1000;
 const MAX_COMPLETE_EXTERNAL_EVENTS = 10_000;
@@ -70,7 +70,9 @@ function resetThreadsForReplay(
 ): void {
   const ids = Array.from(new Set(Array.from(threadIds).filter(Boolean)));
   if (ids.length === 0) return;
-  useAgentConversationStore.getState().resetMessageStates(ids);
+  // Phase 4 (2026-08-02): 真源切到 session-store.resetThreadProjections.
+  // 旧 conv-store.resetMessageStates 由 mirror 自动同步.
+  useAgentSessionStore.getState().resetThreadProjections(ids);
   set((state) => {
     const threadStates = { ...state.threadStates };
     const threadTypes = { ...state.threadTypes };

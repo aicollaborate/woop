@@ -11,6 +11,7 @@ import type {
 } from "@platform/tauri/client";
 import { stripSystemBlock } from "@features/agent/message";
 import { agentClient } from "@features/agent/store/agent-client";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import type { LiveMessageState } from "@features/agent/store/chunk-result";
 import type { ThreadsMap } from "@features/agent/store/thread-runtime-state";
 import {
@@ -572,19 +573,19 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
       },
 
       loadMessages: async (agentType, threadId) => {
-        set((state) => {
-          const current = state.messageStates[threadId] ?? emptyMessageState();
-          if (current.loadingInitial) return state;
-          return {
-            messageStates: {
-              ...state.messageStates,
-              [threadId]: {
-                ...current,
-                loadingInitial: true,
-              },
-            },
-          };
-        });
+        // Phase 5 (2026-08-03): 真源是 useAgentSessionStore.threadProjections,
+        // conv-store.messageStates 是 mirror. 写 threadProjections, mirror
+        // 自动同步 messageStates ── 这里只写真源, 不再直接 set conv-store.
+        const session = useAgentSessionStore.getState();
+        if (
+          session.threadProjections[threadId]?.pagination.loadingInitial
+        ) {
+          return;
+        }
+        session.setThreadProjection(threadId, (p) => ({
+          ...p,
+          pagination: { ...p.pagination, loadingInitial: true },
+        }));
 
         try {
           const page = await getInitialThreadHistory(
@@ -593,117 +594,94 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
             HISTORY_PAGE_SIZE,
           );
           const messages = filterRenderableHistoryMessages(page.messages);
-          set((state) => {
-            const current = state.messageStates[threadId] ?? emptyMessageState();
+          session.setThreadProjection(threadId, (p) => {
             const merged = mergeHistoricalMessages(
-              current.messages,
+              p.messages,
               messages,
               agentType,
             );
             return {
-              messageStates: {
-                ...state.messageStates,
-                [threadId]: {
-                  ...current,
-                  messages: merged,
-                  oldestSequence: page.oldestSequence,
-                  hasMoreHistory: page.hasMore,
-                  loadingInitial: false,
-                },
+              ...p,
+              messages: merged,
+              pagination: {
+                oldestSequence: page.oldestSequence,
+                hasMoreHistory: page.hasMore,
+                loadingInitial: false,
+                loadingMore: false,
               },
             };
           });
         } catch (err) {
           console.error("[AgentConversation] Failed to load messages:", err);
-          set((state) => {
-            const current = state.messageStates[threadId];
-            if (!current) return state;
-            return {
-              messageStates: {
-                ...state.messageStates,
-                [threadId]: {
-                  ...current,
-                  loadingInitial: false,
-                },
-              },
-            };
-          });
+          session.setThreadProjection(threadId, (p) => ({
+            ...p,
+            pagination: { ...p.pagination, loadingInitial: false },
+          }));
         }
       },
 
       loadMoreMessages: async (agentType, threadId) => {
-        const current = get().messageStates[threadId];
+        // Phase 5: 写真源 session-store.threadProjections, mirror 同步
+        // conv-store.messageStates. 避免 session-store ↔ conv-store 循环.
+        const session = useAgentSessionStore.getState();
+        const current = session.threadProjections[threadId];
         if (
           !current ||
-          current.loadingMore ||
-          !current.hasMoreHistory ||
-          current.oldestSequence === null
+          current.pagination.loadingMore ||
+          !current.pagination.hasMoreHistory ||
+          current.pagination.oldestSequence === null
         ) {
           return;
         }
-
-        set((state) => {
-          const next = state.messageStates[threadId];
-          if (!next || next.loadingMore) return state;
-          return {
-            messageStates: {
-              ...state.messageStates,
-              [threadId]: {
-                ...next,
-                loadingMore: true,
-              },
-            },
-          };
-        });
+        session.setThreadProjection(threadId, (p) => ({
+          ...p,
+          pagination: { ...p.pagination, loadingMore: true },
+        }));
 
         try {
           const page = await getHistoryPage(
             agentType,
             threadId,
-            current.oldestSequence,
+            current.pagination.oldestSequence,
             HISTORY_PAGE_SIZE,
           );
           const messages = filterRenderableHistoryMessages(page.messages);
-          set((state) => {
-            const next = state.messageStates[threadId] ?? emptyMessageState();
+          session.setThreadProjection(threadId, (p) => {
             const merged = prependHistoricalMessages(
-              next.messages,
+              p.messages,
               messages,
               agentType,
             );
             return {
-              messageStates: {
-                ...state.messageStates,
-                [threadId]: {
-                  ...next,
-                  messages: merged,
-                  oldestSequence: page.oldestSequence ?? next.oldestSequence,
-                  hasMoreHistory: page.hasMore,
-                  loadingMore: false,
-                },
+              ...p,
+              messages: merged,
+              pagination: {
+                oldestSequence:
+                  page.oldestSequence ?? p.pagination.oldestSequence,
+                hasMoreHistory: page.hasMore,
+                loadingInitial: false,
+                loadingMore: false,
               },
             };
           });
         } catch (err) {
           console.error("[AgentConversation] Failed to load more messages:", err);
-          set((state) => {
-            const next = state.messageStates[threadId];
-            if (!next) return state;
-            return {
-              messageStates: {
-                ...state.messageStates,
-                [threadId]: {
-                  ...next,
-                  loadingMore: false,
-                },
-              },
-            };
-          });
+          session.setThreadProjection(threadId, (p) => ({
+            ...p,
+            pagination: { ...p.pagination, loadingMore: false },
+          }));
         }
       },
     }),
   ),
 );
+
+// Phase 4 (2026-08-02): 注册 conv-store getState 到 session-store, 让
+// session-store 的委托 actions (loadMessages / renameInstance / removeInstance
+// 等) 可以同步调用本 store. 避免循环依赖: session-store 不静态 import
+// 本模块, 而是通过 late binding 获取引用.
+import { _bindConvStore } from "@features/agent/store/agent-session-store";
+_bindConvStore(() => useAgentConversationStore.getState());
 
 export function selectAgentConversationRunStatus(
   instance: AgentConversationInstance | null | undefined,

@@ -1,7 +1,6 @@
 import type { AgentTypeKey } from "@/types/agent";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
-import { useChatStore } from "@features/agent/store/chat-store";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 
 export interface AgentThreadCardCleanupAttrs {
   threadId?: unknown;
@@ -22,12 +21,15 @@ export function terminateAgentThreadCardRuntime(
   );
 
   if (threadId) {
-    const chatStore = useChatStore.getState();
-    chatStore.bindThreadType(threadId, typeKey);
-    void chatStore.stopThreadRun(threadId);
+    // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.threadTypes.
+    useAgentSessionStore.getState().setSessionMeta((meta) => ({
+      ...meta,
+      threadTypes: { ...meta.threadTypes, [threadId]: typeKey },
+    }));
+    void useAgentSessionStore.getState().stopThreadRun(threadId);
   }
 
   if (instanceId) {
-    useAgentConversationStore.getState().removeInstance(instanceId);
+    useAgentSessionStore.getState().removeInstance(instanceId);
   }
 }

@@ -8,10 +8,9 @@ import { AGENT_TYPES, getAgentType, isAgentTypeComingSoon } from '@/lib/agent-ty
 import { cn } from '@/lib/utils';
 import { Kbd } from '@shared/ui/shortcut-kbd';
 import {
-  useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-store';
-import { useChatStore } from '@features/agent/store/chat-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isAgentConversationRunning,
   useConversationRunIndex,
@@ -40,7 +39,9 @@ export function AgentConversationOverlay({
 }: AgentConversationOverlayProps) {
   const { language, t } = useI18n();
   const [activeType, setActiveType] = useState<AgentConversationFilter>(initialAgentType);
-  const instancesMap = useAgentConversationStore((state) => state.instances);
+  const instancesMap = useAgentSessionStore(
+    (state) => state.conversationRegistry.instances,
+  );
   const conversationRunIndex = useConversationRunIndex(instancesMap);
   const instancesByType = useMemo(() => {
     const result = {} as Record<AgentTypeKey, AgentConversationInstance[]>;
@@ -74,7 +75,17 @@ export function AgentConversationOverlay({
     const source = instance.source;
     if (!source.memoId && !source.documentPath) return;
     if (instance.threadId) {
-      useChatStore.getState().setActiveAgentThread(instance.agentType, instance.threadId);
+      // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.activeThreadIds,
+      // 通过 setSessionMeta 单点更新, mirror 会同步 chat-store 老字段.
+      const session = useAgentSessionStore.getState();
+      session.setSessionMeta((meta) => ({
+        ...meta,
+        activeThreadIds: {
+          ...meta.activeThreadIds,
+          [instance.agentType]: instance.threadId,
+        },
+        activeAgentTypeKey: instance.agentType,
+      }));
     }
     if (source.memoId) {
       await openNoteByMemoId(source.memoId);

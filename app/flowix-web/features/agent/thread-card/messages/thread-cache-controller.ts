@@ -19,6 +19,11 @@ export interface ThreadCacheControllerOptions {
 }
 
 export class ThreadCacheController {
+  // 30s 兜底: external session 路径 resolveExternalSessionId 失败 / applyResolvedSession
+  // 早 return 时, skeleton 永远不会被清. 用一个绝对时间窗口强制退出 loading, 让
+  // skeleton 至少在用户感知层面收敛 (用户能看到空状态, 而不是无尽 loading).
+  private static readonly LOADING_TIMEOUT_MS = 30_000;
+
   private readonly element: HTMLElement;
   private readonly isDestroyed: () => boolean;
   private readonly getThreadId: () => string | null;
@@ -38,6 +43,7 @@ export class ThreadCacheController {
   private loading = false;
   private loadedFor: string | null = null;
   private loadingFor: string | null = null;
+  private loadingStartedAt: number | null = null;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private idleId: number | null = null;
   private settling = false;
@@ -63,6 +69,17 @@ export class ThreadCacheController {
   }
 
   isPresentationHidden(): boolean {
+    // 30s 后强制退出 loading, 防止外部 session 路径卡死导致 skeleton 永远显示.
+    // 此时投影可能仍空, 但 UI 至少能进入"空状态"分支, 用户可以操作重试 / 关闭.
+    if (
+      this.loading &&
+      this.loadingStartedAt !== null &&
+      Date.now() - this.loadingStartedAt > ThreadCacheController.LOADING_TIMEOUT_MS
+    ) {
+      this.loading = false;
+      this.loadingStartedAt = null;
+      this.loadingFor = null;
+    }
     return (
       !!this.getThreadId() &&
       this.getMessageCount() === 0 &&
@@ -122,6 +139,7 @@ export class ThreadCacheController {
 
     this.loadingFor = threadId;
     this.loading = true;
+    this.loadingStartedAt = Date.now();
     this.settling = false;
     this.cancelRevealFrame();
     this.render();
@@ -142,6 +160,7 @@ export class ThreadCacheController {
         if (this.loadingFor === threadId) {
           this.loadingFor = null;
           this.loading = false;
+          this.loadingStartedAt = null;
         }
         if (!this.isDestroyed() && this.getThreadId() === threadId) {
           const hasLoadedMessages = this.getMessageCount() > 0;
@@ -192,6 +211,7 @@ export class ThreadCacheController {
     if (hadScheduledLoad && this.loadingFor) {
       this.loadingFor = null;
       this.loading = false;
+      this.loadingStartedAt = null;
       this.settling = false;
       this.render();
     }

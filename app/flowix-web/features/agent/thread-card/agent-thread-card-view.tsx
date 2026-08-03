@@ -8,12 +8,10 @@ import type {
 } from "@tiptap/pm/view";
 import { createRoot } from "react-dom/client";
 import {
-  useChatStore,
   type ThreadState,
 } from "@features/agent/store/chat-store";
-import {
-  useAgentConversationStore,
-} from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import type { ThreadProjection } from "@features/agent/store/session-reducer";
 import { selectRenderableThreadMessages } from "@features/agent/store/thread-render-messages";
 import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
 import type { AgentTypeKey } from "@/types/agent";
@@ -390,7 +388,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getInstanceId: () => this.instanceId,
       isDestroyed: () => this.isDestroyed,
       updateConversationThread: (instanceId, update) => {
-        useAgentConversationStore.getState().updateThread(instanceId, update);
+        useAgentSessionStore.getState().updateThread(instanceId, update);
       },
       updateAttrs: (attrs) => this.updateAttrs(attrs),
       renderThreadState: () => this.renderThreadState(),
@@ -415,7 +413,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getRuntimeThreadId: () => this.runtimeThreadId,
       getConversationMessageState: () => this.currentConversationMessageState(),
       loadMoreMessages: (threadId) => {
-        void useAgentConversationStore
+        // Phase 7 (2026-08-03): 改直读 session-store 真源. session-store
+        // .loadMoreMessages delegate 给 conv-store.loadMoreMessages, 后者
+        // 写真源 session-store.threadProjections. mirror 同步 messageStates.
+        void useAgentSessionStore
           .getState()
           .loadMoreMessages(this.typeKey, threadId);
       },
@@ -520,7 +521,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private get instance() {
-    return useAgentConversationStore.getState().getInstance(this.instanceId);
+    return useAgentSessionStore.getState().getInstance(this.instanceId);
   }
 
   /**
@@ -547,7 +548,14 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private ensureInstanceBinding(): void {
     if (this.isDestroyed || this.instanceId) return;
-    const instance = useAgentConversationStore.getState().createInstance({
+    // Phase 5.3 修正 (2026-08-03): 改走 conv-store.createInstance, 让
+    // setWithInstanceMirror 同时写两个 store. 旧路径走 session-store
+    // 直接 createInstance, 但 renameAgentConversation 走 conv-store
+    // renameInstance ── 在 conv-store 找不到 instance 就 no-op, 导致
+    // session-store 的 instance.title 永远不更新, syncTitleText 卡在
+    // 旧 title. 双写保证两个 store 的 instance 形状一致, 重命名 /
+    // 角色 / runtimeConfig 后续 mutation 都能正确收敛.
+    const instance = useAgentSessionStore.getState().createInstance({
       agentType: this.typeKey,
       title: this.title,
       threadId: this.threadId,
@@ -663,7 +671,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
     const instanceId = this.instanceId;
     if (!instanceId) return;
-    useAgentConversationStore.getState().upsertInstance(instanceId, {
+    useAgentSessionStore.getState().upsertInstance(instanceId, {
       role,
     });
   }
@@ -1086,11 +1094,40 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     }
   }
 
+  // Phase 5.3: 缓存 projection -> ThreadState 映射, 保证同一 projection 引用
+  // 返回同一 ThreadState 引用 (ref-stable), 避免 composer 因新对象 identity
+  // 触发重渲染清空 input draft.
+  private _threadStateCache: { projection: ThreadProjection | undefined; state: ThreadState | undefined } = {
+    projection: undefined,
+    state: undefined,
+  };
+
   private currentThreadState(): ThreadState | undefined {
     const threadId = this.renderThreadId;
-    return threadId
-      ? useChatStore.getState().threadStates[threadId]
-      : undefined;
+    if (!threadId) return undefined;
+    // Phase 5.3: 直接读 session-store 真源 (不经 mirror, 无延迟).
+    const projection = useAgentSessionStore.getState().threadProjections[threadId];
+    if (projection === this._threadStateCache.projection) {
+      return this._threadStateCache.state;
+    }
+    if (!projection) {
+      this._threadStateCache = { projection: undefined, state: undefined };
+      return undefined;
+    }
+    const state: ThreadState = {
+      messages: projection.messages,
+      isLoading: projection.runs.isLoading,
+      activeRunId: projection.runs.activeRunId,
+      runs: projection.runs.runs,
+      pendingAssistantId: projection.pending.assistantId,
+      pendingReasoningId: projection.pending.reasoningId,
+      lastRun: projection.runs.lastRun,
+      oldestSequence: projection.pagination.oldestSequence,
+      hasMoreHistory: projection.pagination.hasMoreHistory,
+      loadingMore: projection.pagination.loadingMore,
+    };
+    this._threadStateCache = { projection, state };
+    return state;
   }
 
   private currentRuntimeView(state: ThreadState | undefined = this.currentThreadState()) {
@@ -1104,8 +1141,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private currentConversationMessageState() {
     const threadId = this.renderThreadId;
+    // Phase 4 (2026-08-02): 同上, 保持读 conv-store.messageStates 由
+    // session-mirror 同步, reference 稳定.
     return threadId
-      ? useAgentConversationStore.getState().getMessageState(threadId)
+      ? useAgentSessionStore.getState().getMessageState(threadId)
       : null;
   }
 

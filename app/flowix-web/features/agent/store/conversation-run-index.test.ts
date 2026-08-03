@@ -4,21 +4,24 @@ import {
   buildConversationRunIndex,
   getConversationRunSummary,
 } from '@features/agent/store/conversation-run-index';
-import { emptyThreadState } from '@features/agent/store/thread-runtime-state';
+import { emptyProjection } from '@features/agent/store/session-reducer';
+import type { ThreadProjection } from '@features/agent/store/session-reducer';
 
 describe('conversation run index', () => {
   it('ignores message-only thread state changes', () => {
-    const running = {
-      ...emptyThreadState(),
-      isLoading: true,
-      activeRunId: 'run-1',
+    const running: ThreadProjection = {
+      ...emptyProjection(),
       runs: {
-        'run-1': {
-          runId: 'run-1',
-          status: 'running' as const,
-          startedAt: 42,
-          agentType: 'flowix' as const,
-          threadId: 'thread',
+        isLoading: true,
+        activeRunId: 'run-1',
+        runs: {
+          'run-1': {
+            runId: 'run-1',
+            status: 'running' as const,
+            startedAt: 42,
+            agentType: 'flowix' as const,
+            threadId: 'thread',
+          },
         },
       },
     };
@@ -26,7 +29,7 @@ describe('conversation run index', () => {
     const after = buildConversationRunIndex({
       thread: {
         ...running,
-        pendingAssistantId: 'message-1',
+        pending: { assistantId: 'message-1', reasoningId: null },
       },
     }, ['thread']);
 
@@ -39,23 +42,37 @@ describe('conversation run index', () => {
   });
 
   it('changes when lifecycle status changes', () => {
-    const running = {
-      ...emptyThreadState(),
-      activeRunId: 'run-1',
+    const running: ThreadProjection = {
+      ...emptyProjection(),
       runs: {
-        'run-1': {
-          runId: 'run-1',
-          status: 'running' as const,
-          startedAt: 42,
-          agentType: 'flowix' as const,
-          threadId: 'thread',
+        isLoading: true,
+        activeRunId: 'run-1',
+        runs: {
+          'run-1': {
+            runId: 'run-1',
+            status: 'running' as const,
+            startedAt: 42,
+            agentType: 'flowix' as const,
+            threadId: 'thread',
+          },
         },
       },
     };
-    const completed = {
+    const completed: ThreadProjection = {
       ...running,
       runs: {
-        'run-1': { ...running.runs['run-1'], status: 'completed' as const },
+        isLoading: false,
+        activeRunId: null,
+        runs: {
+          'run-1': { ...running.runs.runs['run-1'], status: 'completed' as const, endedAt: 50 },
+        },
+        lastRun: {
+          runId: 'run-1',
+          status: 'completed' as const,
+          agentType: 'flowix' as const,
+          startedAt: 42,
+          endedAt: 50,
+        },
       },
     };
 

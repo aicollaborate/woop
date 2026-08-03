@@ -13,9 +13,7 @@ import { AGENT_TYPES, isAgentTypeComingSoon } from '@/lib/agent-types';
 import { cn } from '@/lib/utils';
 import type { AgentTypeKey } from '@/types/agent';
 import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
-import {
-  useAgentConversationStore,
-} from '@features/agent/store/agent-conversation-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isAgentConversationRunning,
   useConversationRunIndex,
@@ -40,7 +38,9 @@ export function AgentRuntimeStatusMenu() {
   const statusByType = useAgentRuntimeStore((s) => s.statusByType);
   const isChecking = useAgentRuntimeStore((s) => s.isChecking);
   const refreshIfStale = useAgentRuntimeStore((s) => s.refreshIfStale);
-  const instancesMap = useAgentConversationStore((s) => s.instances);
+  const instancesMap = useAgentSessionStore(
+    (s) => s.conversationRegistry.instances,
+  );
   const conversationRunIndex = useConversationRunIndex(instancesMap);
   const hasRunning = useMemo(
     () =>

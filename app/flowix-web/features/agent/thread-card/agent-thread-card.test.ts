@@ -200,16 +200,18 @@ async function waitForEnabledSendButton(
 }
 
 async function seedRenderableMessages(
-  typeKey: "flowix" | "codex" | "claude" | "gemini" | "hermes" | "openclaw",
+  _typeKey: "flowix" | "codex" | "claude" | "gemini" | "hermes" | "openclaw",
   threadId: string,
   messages: ChatMessage[],
 ): Promise<void> {
-  const { useAgentConversationStore } = await import(
-    "@features/agent/store/agent-conversation-store"
+  // Phase 4 (2026-08-02): 真源切到 session-store.threadProjections[tid].messages.
+  const { useAgentSessionStore } = await import(
+    "@features/agent/store/agent-session-store"
   );
-  useAgentConversationStore
-    .getState()
-    .syncRenderableMessages(typeKey, threadId, messages);
+  useAgentSessionStore.getState().setThreadProjection(threadId, (p) => ({
+    ...p,
+    messages,
+  }));
 }
 
 describe("AgentThreadCard NodeView streaming", () => {
@@ -274,11 +276,15 @@ describe("AgentThreadCard NodeView streaming", () => {
     const { useAgentConversationStore } = await import(
       "@features/agent/store/agent-conversation-store"
     );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
     useChatStore.setState(useChatStore.getInitialState(), true);
     useAgentConversationStore.setState(
       useAgentConversationStore.getInitialState(),
       true,
     );
+    useAgentSessionStore.setState(useAgentSessionStore.getInitialState(), true);
     agentAccessState.config = { entries: [] };
   });
 
@@ -1327,9 +1333,6 @@ describe("AgentThreadCard NodeView streaming", () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const { agent } = await import("@platform/tauri/client");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
-    );
     const threadId = "thread-card-expand-rerender-cache";
     const host = document.createElement("div");
     document.body.append(host);
@@ -1367,7 +1370,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    useAgentConversationStore.getState().syncRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("flowix", threadId, [
       {
         id: "assistant-cached",
         role: "assistant",
@@ -3093,9 +3096,6 @@ describe("AgentThreadCard input latency optimizations", () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
-    );
     const threadId = "thread-card-lite-render";
     const host = document.createElement("div");
     document.body.append(host);
@@ -3140,9 +3140,14 @@ describe("AgentThreadCard input latency optimizations", () => {
         timestamp: new Date().toISOString(),
       },
     ];
-    useAgentConversationStore
-      .getState()
-      .syncRenderableMessages("flowix", threadId, messages);
+    // Phase 4 (2026-08-02): 真源切到 session-store.
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    useAgentSessionStore.getState().setThreadProjection(threadId, (p) => ({
+      ...p,
+      messages,
+    }));
     useChatStore.setState((state) => ({
       threadStates: {
         ...state.threadStates,
@@ -3238,7 +3243,9 @@ describe("AgentThreadCard composer during agent run", () => {
   it("keeps the composer enabled while a run is in flight and preserves the draft", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
     const threadId = "thread-card-busy-composer";
     const host = document.createElement("div");
     document.body.append(host);
@@ -3263,20 +3270,21 @@ describe("AgentThreadCard composer during agent run", () => {
     });
     await flushAnimationFrame();
 
-    // 模拟 agent 在跑 ── isLoading=true, activeRunId 已设置。
-    useChatStore.setState((state) => ({
-      threadStates: {
-        ...state.threadStates,
-        [threadId]: {
-          messages: [],
-          isLoading: true,
-          activeRunId: "run-1",
-          runs: {},
-          pendingAssistantId: null,
-          pendingReasoningId: null,
-          oldestSequence: null,
-          hasMoreHistory: false,
-          loadingMore: false,
+    // 模拟 agent 在跑 ── 真源是 useAgentSessionStore.threadProjections.
+    // Phase 4 重构后 view 只读真源, 写 chat-store.threadStates 不会被读到.
+    useAgentSessionStore.getState().setThreadProjection(threadId, (p) => ({
+      ...p,
+      runs: {
+        isLoading: true,
+        activeRunId: "run-1",
+        runs: {
+          "run-1": {
+            runId: "run-1",
+            agentType: "flowix",
+            threadId,
+            startedAt: Date.now(),
+            status: "running",
+          },
         },
       },
     }));

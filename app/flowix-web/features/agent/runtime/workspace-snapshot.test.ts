@@ -43,6 +43,17 @@ vi.mock("@features/agent/store/agent-conversation-store", () => ({
   },
 }));
 
+// Phase 7 (2026-08-03): workspace-snapshot 改读 useAgentSessionStore 真源.
+// 测试同步 mock session-store 的 getInstance / setRuntimeConfig.
+vi.mock("@features/agent/store/agent-session-store", () => ({
+  useAgentSessionStore: {
+    getState: () => ({
+      getInstance: () => state.instance,
+      setRuntimeConfig: state.setRuntimeConfig,
+    }),
+  },
+}));
+
 vi.mock("@features/memo/store/memo-store", () => ({
   useMemoStore: {
     getState: () => ({
