@@ -273,6 +273,10 @@ pub fn run() {
                 security_bookmarks: security_bookmarks_for_state.clone(),
             };
             app.manage(app_state);
+            // 注入 AppHandle 给 agent 工具链，使其 delete 等 memo 写入工具能
+            // mark_self_write + emit memo-event（构造 AgentManager 时还在 builder
+            // 链上，拿不到 handle）。
+            agent_manager.set_app_handle(app.handle().clone());
             commands::cloud::start_cloud_sync_polling(app.handle().clone());
             if let Ok(Some(refresh_token)) = user_config_for_state.load_cloud_refresh_token() {
                 let cloud_sync = cloud_sync_for_state.clone();

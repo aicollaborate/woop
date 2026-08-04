@@ -70,11 +70,12 @@ pub async fn execute_tool(
     read_snapshot: Option<&str>,
     scope: &ToolScope,
     memo_file: &std::sync::RwLock<flowix_core::memo_file::MemoFile>,
+    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     match tool_name {
         "read" => operations::read(arguments, scope).await,
         "write" => operations::write_with_memo(arguments, scope, Some(memo_file)).await,
-        "delete" => operations::delete(arguments, scope).await,
+        "delete" => operations::delete(arguments, scope, memo_file, app).await,
         "edit" => edit::edit_with_memo(arguments, read_snapshot, scope, Some(memo_file)).await,
         "ls" => operations::ls(arguments, scope).await,
         "glob" => search::glob_paths(arguments, scope).await,
@@ -674,7 +675,8 @@ mod tests {
             "path": path.display().to_string()
         })
         .to_string();
-        let result = delete(&args, &test_scope(root.clone())).await;
+        let memo_file = std::sync::RwLock::new(flowix_core::memo_file::MemoFile::default());
+        let result = delete(&args, &test_scope(root.clone()), &memo_file, None).await;
 
         assert!(result.success, "delete should succeed: {:?}", result);
         assert!(!path.exists());
@@ -691,7 +693,8 @@ mod tests {
             "path": dir.display().to_string()
         })
         .to_string();
-        let result = delete(&args, &test_scope(root.clone())).await;
+        let memo_file = std::sync::RwLock::new(flowix_core::memo_file::MemoFile::default());
+        let result = delete(&args, &test_scope(root.clone()), &memo_file, None).await;
 
         assert!(!result.success);
         assert!(dir.exists());

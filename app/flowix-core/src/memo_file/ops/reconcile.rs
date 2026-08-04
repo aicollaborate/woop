@@ -352,12 +352,18 @@ impl MemoFile {
         };
         let expected_abs = base.join(&memo.filename);
         if normalize_for_compare(&expected_abs) != normalize_for_compare(abs_path) {
+            // 对齐 Create 路径 (save_registered_memo) 的设计: filename 已在
+            // notebook 内反查命中 = 唯一 memo, 此处 `normalize` 不一致多源自
+            // macOS /var vs /private/var / 大小写 / trailing slash 等表示差异,
+            // 不应阻断 watcher Remove -> emit Deleted (否则外部 rm / claude code
+            // 删除不会更新 memo list, 与 Create 走 watcher 正常工作的不对称)。
+            // `sync_index_on_delete` 按 memo.id 注销, 与 abs_path 表示无关,
+            // 继续 unregister 不存在误删风险。
             tracing::debug!(
-                "[unregister_memo_by_path_for_notebook_id] refused: memo index entry.filename={} but abs_path={}",
+                "[watcher-delete] unregister_memo_by_path_for_notebook_id path mismatch (continuing): expected={} actual={}",
                 expected_abs.display(),
                 abs_path.display()
             );
-            return false;
         }
         MemoFile::sync_index_on_delete_for_notebook_id_locked(self, notebook_id, &memo.id).is_ok()
     }

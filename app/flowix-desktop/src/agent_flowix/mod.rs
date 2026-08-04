@@ -77,6 +77,10 @@ pub struct AgentManager {
     /// `load_skill` 工具 handler �?`get(name)` �?body�?
     /// �?��后不�?�� ── 无内部锁, `Arc` 共享�?prompt builder / tool handler�?
     skill_store: Arc<SkillStore>,
+    /// AppHandle 由 bootstrap 在 Tauri `.setup` 阶段注入（构造时尚未进入 run()）。
+    /// agent 的 memo 写入工具（如 delete）据此 mark_self_write + emit memo-event，
+    /// 不再依赖 watcher 对 Remove 的被动反查（见 operations.rs `delete`）。
+    app_handle: std::sync::OnceLock<tauri::AppHandle>,
 }
 
 /// �?`AgentManager` drop 时清掉与每个 thread 关联�?in-memory 状�?──
@@ -141,7 +145,14 @@ impl AgentManager {
             agent_access,
             security_bookmarks,
             skill_store,
+            app_handle: std::sync::OnceLock::new(),
         }
+    }
+
+    /// 由 bootstrap 在 Tauri `.setup` 阶段注入 AppHandle（`AgentManager::new` 时
+    /// 尚未 run()，拿不到 handle）。注入后 agent 工具链据此 emit memo-event。
+    pub fn set_app_handle(&self, app: tauri::AppHandle) {
+        let _ = self.app_handle.set(app);
     }
 
     /// 测试�?fixture ── 用空 / 临时�?��构造依�? 不真正�?写业务�?盘�?    /// 现存的单元测试只验证 `record_tool_call` / `clear_tool_call_attempts` /

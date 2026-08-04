@@ -279,7 +279,7 @@ fn chunk_payload_json(
     serde_json::to_string(&payload).ok()
 }
 
-fn chunk_payload_value(
+pub(crate) fn chunk_payload_value(
     chunk: &AgentChunk,
     agent_type: &'static str,
     run_id: &str,
