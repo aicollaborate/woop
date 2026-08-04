@@ -6,11 +6,35 @@ export interface StreamingBuffer {
   flushSync(): void;
 }
 
+export interface StreamingScheduler {
+  request(callback: FrameRequestCallback): number;
+  cancel(id: number): void;
+}
+
+function defaultStreamingScheduler(): StreamingScheduler {
+  return {
+    request: (callback) => {
+      if (typeof requestAnimationFrame === "function") {
+        return requestAnimationFrame(callback);
+      }
+      return setTimeout(
+        () => callback(performance.now()),
+        16,
+      ) as unknown as number;
+    },
+    cancel: (id) => {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
+      else clearTimeout(id);
+    },
+  };
+}
+
 export function createStreamingBuffer(
   onFlush: (
     textSnapshot: StreamingBufferSnapshot,
     reasoningSnapshot: StreamingBufferSnapshot,
   ) => void,
+  scheduler: StreamingScheduler = defaultStreamingScheduler(),
 ): StreamingBuffer {
   const textBuffer = new Map<string, string>();
   const reasoningBuffer = new Map<string, string>();
@@ -27,8 +51,7 @@ export function createStreamingBuffer(
   function flushSync(): void {
     if (textBuffer.size === 0 && reasoningBuffer.size === 0) {
       if (pendingRafId != null) {
-        if (typeof cancelAnimationFrame === "function")
-          cancelAnimationFrame(pendingRafId);
+        scheduler.cancel(pendingRafId);
         pendingRafId = null;
       }
       return;
@@ -39,8 +62,7 @@ export function createStreamingBuffer(
     textBuffer.clear();
     reasoningBuffer.clear();
     if (pendingRafId != null) {
-      if (typeof cancelAnimationFrame === "function")
-        cancelAnimationFrame(pendingRafId);
+      scheduler.cancel(pendingRafId);
       pendingRafId = null;
     }
     onFlush(textSnapshot, reasoningSnapshot);
@@ -48,12 +70,7 @@ export function createStreamingBuffer(
 
   function scheduleFlush(): void {
     if (pendingRafId != null) return;
-    const raf =
-      typeof requestAnimationFrame === "function"
-        ? requestAnimationFrame
-        : (cb: FrameRequestCallback) =>
-            setTimeout(() => cb(performance.now()), 16) as unknown as number;
-    pendingRafId = raf(() => {
+    pendingRafId = scheduler.request(() => {
       pendingRafId = null;
       flushSync();
     });

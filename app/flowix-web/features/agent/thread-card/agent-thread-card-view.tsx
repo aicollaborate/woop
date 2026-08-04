@@ -9,8 +9,9 @@ import type {
 import { createRoot } from "react-dom/client";
 import {
   type ThreadState,
-} from "@features/agent/store/chat-store";
+} from "@features/agent/store/thread-runtime-state";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { acquireThreadInterest } from "@features/agent/store/thread-interest";
 import type { ThreadProjection } from "@features/agent/store/session-reducer";
 import { selectRenderableThreadMessages } from "@features/agent/store/thread-render-messages";
 import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
@@ -155,6 +156,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private agentRolePicker: AgentRolePickerController;
   private isCreating = false;
   private isDestroyed = false;
+  private interestedThreadId: string | null = null;
+  private releaseThreadInterest: (() => void) | null = null;
   private isFullscreen = false;
   private fullscreenRestoreGeneration = 0;
   private fullscreenRestorePending = false;
@@ -413,9 +416,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getRuntimeThreadId: () => this.runtimeThreadId,
       getConversationMessageState: () => this.currentConversationMessageState(),
       loadMoreMessages: (threadId) => {
-        // Phase 7 (2026-08-03): 改直读 session-store 真源. session-store
-        // .loadMoreMessages delegate 给 conv-store.loadMoreMessages, 后者
-        // 写真源 session-store.threadProjections. mirror 同步 messageStates.
+        // Load the next history page directly into the canonical projection.
         void useAgentSessionStore
           .getState()
           .loadMoreMessages(this.typeKey, threadId);
@@ -462,6 +463,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.composerController.setSendButtonState("");
 
     this.refreshAttrs();
+    this.syncThreadInterest();
     this.renderThreadState();
     window.addEventListener(
       AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT,
@@ -488,6 +490,16 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       (this.node.attrs.threadId as string | null) ||
       null
     );
+  }
+
+  private syncThreadInterest(): void {
+    const nextThreadId = this.threadId;
+    if (nextThreadId === this.interestedThreadId) return;
+    this.releaseThreadInterest?.();
+    this.releaseThreadInterest = nextThreadId
+      ? acquireThreadInterest(nextThreadId)
+      : null;
+    this.interestedThreadId = nextThreadId;
   }
 
   private get runtimeHandleId(): string {
@@ -547,7 +559,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private ensureInstanceBinding(): void {
-    if (this.isDestroyed || this.instanceId) return;
+    if (this.isDestroyed) return;
+    const existingInstanceId = this.instanceId;
+    if (existingInstanceId) return;
     // Phase 5.3 修正 (2026-08-03): 改走 conv-store.createInstance, 让
     // setWithInstanceMirror 同时写两个 store. 旧路径走 session-store
     // 直接 createInstance, 但 renameAgentConversation 走 conv-store
@@ -1105,7 +1119,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private currentThreadState(): ThreadState | undefined {
     const threadId = this.renderThreadId;
     if (!threadId) return undefined;
-    // Phase 5.3: 直接读 session-store 真源 (不经 mirror, 无延迟).
+    // Read the canonical ref-stable projection directly.
     const projection = useAgentSessionStore.getState().threadProjections[threadId];
     if (projection === this._threadStateCache.projection) {
       return this._threadStateCache.state;
@@ -1141,8 +1155,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private currentConversationMessageState() {
     const threadId = this.renderThreadId;
-    // Phase 4 (2026-08-02): 同上, 保持读 conv-store.messageStates 由
-    // session-mirror 同步, reference 稳定.
+    // Derived directly from the canonical projection.
     return threadId
       ? useAgentSessionStore.getState().getMessageState(threadId)
       : null;
@@ -1367,6 +1380,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const oldAttrs = this.node.attrs;
     const wasCollapsed = !!oldAttrs.collapsed;
     this.node = node;
+    this.syncThreadInterest();
     if (
       this.isFullscreen &&
       (!this.persistedFullscreen || !this.isFirstPersistedFullscreenCard())
@@ -1448,6 +1462,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     );
     this.setComposerRolePopoverOpen(false);
     this.isDestroyed = true;
+    this.releaseThreadInterest?.();
+    this.releaseThreadInterest = null;
+    this.interestedThreadId = null;
     this.messages.dispose();
     this.body.removeEventListener("scroll", this.boundHandleBodyScroll);
     this.runtime.dispose();

@@ -1,6 +1,6 @@
 import type { AgentTypeKey, StatusInfo, UsageInfo } from "@/types/agent";
 import type { I18nKey } from "@/lib/i18n";
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import { selectAgentThreadCardRunStatus } from "@features/agent/thread-card/agent-thread-card-selectors";
 
 export interface AgentThreadCardBadgeData {

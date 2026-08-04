@@ -25,7 +25,15 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
 /// 数据源是 Claude Code 子进程的 stdout ── 两条 path 处理的是同一�?/// 对话的不同�?�?streaming �?��时切�? history �?��缩后的全�?�?
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let session_id = session_id.to_string();
-    tokio::task::spawn_blocking(move || read_claude_session_messages(&session_id))
+    tokio::task::spawn_blocking(move || {
+        let mut messages = read_claude_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
+        Ok(messages)
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -37,7 +45,12 @@ pub async fn get_session_page(
 ) -> Result<ThreadMessagesPage, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || {
-        let messages = read_claude_session_messages(&session_id)?;
+        let mut messages = read_claude_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
         Ok(paginate_claude_messages(messages, before_sequence, limit))
     })
     .await

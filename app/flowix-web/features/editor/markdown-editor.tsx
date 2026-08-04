@@ -35,6 +35,7 @@ import { MenuPinExtension } from '@features/editor/extensions/menu-pin';
 import { BlockDragExtension } from '@features/editor/extensions/block-drag';
 import { SlashMenu } from '@features/editor/extensions/slash-menu';
 import { AgentThreadCard } from '@features/agent/thread-card';
+import { SKIP_AGENT_THREAD_CARD_CLEANUP_META } from '@features/agent/thread-card/agent-thread-card-extension';
 import { TabAgentRun } from '@features/editor/extensions/tab-agent-run';
 import { TabCharacter } from '@features/editor/extensions/tab-character';
 import { TablePlugin } from '@features/editor/extensions/table/table-plugin';
@@ -453,7 +454,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     contentRef.current = normalizedNextContent;
     isApplyingExternalContentRef.current = true;
     try {
-      editor.commands.setContent(normalizedNextContent, { contentType: 'markdown', emitUpdate: false });
+      editor
+        .chain()
+        .setMeta(SKIP_AGENT_THREAD_CARD_CLEANUP_META, true)
+        .setContent(normalizedNextContent, { contentType: 'markdown', emitUpdate: false })
+        .run();
       normalizeTaskItemPlaceholders(editor);
     } finally {
       isApplyingExternalContentRef.current = false;

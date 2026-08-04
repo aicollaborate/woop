@@ -12,8 +12,7 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 /**
  * Store-layer selector for the message list consumed by AgentThreadCard.
  *
- * Phase 4 (2026-08-02): 真源切到 useAgentSessionStore.threadProjections[tid].
- * messages. 旧 conv-store.messageStates 仍由 mirror 同步, 但这里直接读真源.
+ * Messages come directly from useAgentSessionStore.threadProjections[tid].
  *
  * Phase 5 (2026-08-03): external session fallback. 外部类型 (codex /
  * claude / opencode) 的 threadId 早期是 local id (e.g. "codex-local-abc"),

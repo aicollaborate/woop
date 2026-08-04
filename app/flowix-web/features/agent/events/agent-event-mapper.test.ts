@@ -31,9 +31,9 @@ describe("agent event mapper", () => {
 
     expect(event).toMatchObject({
       kind: "user_message",
-      id: "user-1",
+      id: "msg:claude:run-1:user:user-1",
       text: "question",
-      messageId: "user-1",
+      messageId: "msg:claude:run-1:user:user-1",
       sourceTimestamp: 456,
       sourceSequence: 0,
     });
@@ -85,7 +85,7 @@ describe("agent event mapper", () => {
       threadId: "codex-thread",
       agentType: "codex",
       text: "complete answer",
-      messageId: "run-1::assistant::assistant-item-1",
+      messageId: "msg:codex:run-1:assistant:assistant-item-1",
       messagePhase: "completed",
       contentMode: "snapshot",
       sourceTimestamp: 456,
@@ -188,7 +188,9 @@ describe("agent event mapper", () => {
       mapperState,
     );
 
-    expect(first.messageId).toBe("reasoning-run-1");
+    expect(first.messageId).toBe(
+      "msg:claude:run-1:reasoning:reasoning-run-1",
+    );
     expect(second.messageId).toBe(first.messageId);
   });
 
@@ -232,7 +234,7 @@ describe("agent event mapper", () => {
     );
 
     expect(event.messageId).toBe(
-      "assistant-06bbbb1512785f3d1da3e1f495c31702-block-1",
+      "msg:claude:run-1:assistant:assistant-06bbbb1512785f3d1da3e1f495c31702-block-1",
     );
   });
 

@@ -39,10 +39,11 @@ impl ThreadManager {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT
-                i.instance_id, i.agent_type, i.title, i.thread_id, i.runtime_config,
+                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
                 i.role_memo_id, i.role_name, i.created_at, i.updated_at
              FROM agent_conversation_instances i
+             LEFT JOIN threads t ON t.thread_id = i.thread_id
              ORDER BY i.updated_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_agent_conversation_instance)?;
@@ -65,10 +66,11 @@ impl ThreadManager {
         let conn = self.lock_conn();
         conn.query_row(
             "SELECT
-                i.instance_id, i.agent_type, i.title, i.thread_id, i.runtime_config,
+                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
                 i.role_memo_id, i.role_name, i.created_at, i.updated_at
              FROM agent_conversation_instances i
+             LEFT JOIN threads t ON t.thread_id = i.thread_id
              WHERE i.instance_id = ?1",
             [instance_id],
             Self::row_to_agent_conversation_instance,
@@ -93,10 +95,11 @@ impl ThreadManager {
         let conn = self.lock_conn();
         conn.query_row(
             "SELECT
-                i.instance_id, i.agent_type, i.title, i.thread_id, i.runtime_config,
+                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
                 i.role_memo_id, i.role_name, i.created_at, i.updated_at
              FROM agent_conversation_instances i
+             LEFT JOIN threads t ON t.thread_id = i.thread_id
              WHERE i.thread_id = ?1
              ORDER BY i.updated_at DESC
              LIMIT 1",
@@ -131,28 +134,61 @@ impl ThreadManager {
         };
         let role_memo_id = input.role.as_ref().and_then(|role| role.memo_id.clone());
         let role_name = input.role.as_ref().and_then(|role| role.name.clone());
-        let conn = self.lock_conn();
-        conn.execute(
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction()?;
+        if let Some(thread_id) = input.thread_id.as_deref() {
+            let existing_owner = tx
+                .query_row(
+                    "SELECT instance_id FROM agent_conversation_instances
+                     WHERE thread_id = ?1 AND instance_id <> ?2
+                     LIMIT 1",
+                    params![thread_id, input.instance_id.as_str()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if existing_owner.is_some() {
+                return Err(ThreadError::ConversationThreadConflict {
+                    thread_id: thread_id.to_string(),
+                    instance_id: input.instance_id,
+                });
+            }
+            // External-agent cards can bind to a temporary product thread id
+            // before the first event arrives. Create the product row here so
+            // the 1:1 foreign key remains valid without making the frontend
+            // perform a second race-prone write.
+            tx.execute(
+                "INSERT OR IGNORE INTO threads (
+                    thread_id, agent_id, title, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    thread_id,
+                    input.agent_type.as_str(),
+                    input.initial_title.as_str(),
+                    created_at,
+                    updated_at,
+                ],
+            )?;
+        }
+        tx.execute(
             "INSERT INTO agent_conversation_instances (
-                instance_id, agent_type, title, thread_id,
+                instance_id, agent_type, thread_id,
                 runtime_config, source_kind, source_document_path, source_memo_id,
                 role_memo_id, role_name, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(instance_id) DO UPDATE SET
                 agent_type = excluded.agent_type,
-                title = excluded.title,
                 thread_id = excluded.thread_id,
                 runtime_config = excluded.runtime_config,
                 source_kind = excluded.source_kind,
                 source_document_path = excluded.source_document_path,
                 source_memo_id = excluded.source_memo_id,
                 role_memo_id = excluded.role_memo_id,
-                role_name = excluded.role_name,
-                updated_at = excluded.updated_at",
+                 role_name = excluded.role_name,
+                 updated_at = excluded.updated_at
+              WHERE excluded.updated_at >= agent_conversation_instances.updated_at",
             params![
                 input.instance_id,
                 input.agent_type,
-                input.title,
                 input.thread_id,
                 runtime_config,
                 source_kind,
@@ -164,18 +200,20 @@ impl ThreadManager {
                 updated_at,
             ],
         )?;
-        let instance = conn
+        let instance = tx
             .query_row(
                 "SELECT
-                    i.instance_id, i.agent_type, i.title, i.thread_id, i.runtime_config,
+                    i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                     i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
                     i.role_memo_id, i.role_name, i.created_at, i.updated_at
                  FROM agent_conversation_instances i
+                 LEFT JOIN threads t ON t.thread_id = i.thread_id
                  WHERE i.instance_id = ?1",
                 [instance_id.as_str()],
                 Self::row_to_agent_conversation_instance,
             )
             .optional()?;
+        tx.commit()?;
         instance.ok_or_else(|| ThreadError::NotFound(instance_id))
     }
 
@@ -394,7 +432,7 @@ impl ThreadManager {
         Ok(AgentConversationInstance {
             instance_id: row.get(0)?,
             agent_type: row.get(1)?,
-            title: row.get(2)?,
+            thread_title: row.get(2)?,
             thread_id: row.get(3)?,
             runtime_config: row.get(4)?,
             frozen_cwd: row.get(5)?,

@@ -184,8 +184,7 @@ export class ExternalAgentSettingsController {
       return;
     }
     // 无 instanceId (编辑器临时态) ── 退化到全局, 保留兼容。
-    // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.settings.
-    // setSessionMeta 单点更新, mirror 同步 chat-store 旧字段.
+    // Update canonical global settings when no instance override exists.
     if (kind === "model") {
       useAgentSessionStore.getState().setSessionMeta((meta) => ({
         ...meta,

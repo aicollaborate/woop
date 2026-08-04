@@ -98,7 +98,10 @@ pub struct AgentConversationRole {
 pub struct AgentConversationInstance {
     pub instance_id: String,
     pub agent_type: String,
-    pub title: String,
+    /// Product title projected from `threads.title`; it is not stored on the
+    /// conversation-instance row. `None` means the card has not started a
+    /// conversation yet.
+    pub thread_title: Option<String>,
     pub thread_id: Option<String>,
     pub runtime_config: Option<String>,
     /// Backend-owned working directory frozen on the first external-agent run.
@@ -117,6 +120,7 @@ pub struct AgentExternalEvent {
     pub id: i64,
     pub runtime: String,
     pub thread_id: String,
+    pub event_key: Option<String>,
     pub normalized_json: String,
     pub raw_json: Option<String>,
     pub created_at: i64,
@@ -137,7 +141,9 @@ pub struct NewAgentExternalEvent {
 pub struct UpsertAgentConversationInstance {
     pub instance_id: String,
     pub agent_type: String,
-    pub title: String,
+    /// Initial title used only when `thread_id` needs a product thread row.
+    /// Later title changes must go through the thread title command.
+    pub initial_title: String,
     pub thread_id: Option<String>,
     pub runtime_config: Option<String>,
     pub source: AgentConversationSource,

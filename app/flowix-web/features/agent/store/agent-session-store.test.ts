@@ -130,6 +130,7 @@ describe("useAgentSessionStore", () => {
 describe("useAgentSessionStore persist", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.resetModules();
   });
 
@@ -164,6 +165,7 @@ describe("useAgentSessionStore persist", () => {
     expect(meta.settings.agentCodexModel).toBe("claude-opus-4-8");
     expect(meta.settings.agentCodexReasoningEffort).toBe("high");
     expect(meta.externalSessionResolutions["local-1"]).toBe("real-1");
+    expect(localStorage.getItem(STORAGE_KEYS.CHAT)).toBeNull();
     // runtime-only 字段不从持久化恢复
     expect(meta.threadLists).toEqual({});
     expect(meta.lastRunningRunsReconciledAt).toBeNull();
@@ -183,10 +185,14 @@ describe("useAgentSessionStore persist", () => {
     const stored = JSON.parse(
       localStorage.getItem(STORAGE_KEYS.AGENT_SESSION)!,
     );
-    expect(stored.state.sessionMeta.activeAgentTypeKey).toBe("codex");
+    expect(stored.state.sessionMeta.activeAgentTypeKey).toBeUndefined();
     expect(stored.state.sessionMeta.settings.agentCodexReasoningEffort).toBe(
       "high",
     );
+    const windowStored = JSON.parse(
+      sessionStorage.getItem(`${STORAGE_KEYS.AGENT_SESSION}:window:main`)!,
+    );
+    expect(windowStored.state.sessionMeta.activeAgentTypeKey).toBe("codex");
 
     vi.resetModules();
     const { useAgentSessionStore: rehydrated } = await import(

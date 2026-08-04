@@ -13,7 +13,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
-use crate::agent_session::{NewAgentExternalEvent, ThreadManager};
+use crate::agent_session::{ChatMessage, NewAgentExternalEvent, ThreadManager};
 use crate::events as dispatcher;
 use crate::runtime_log;
 
@@ -60,6 +60,38 @@ pub fn complete_chunk_metadata(
     metadata.source_sequence = Some(source_sequence);
     metadata.source_subsequence = Some(source_subsequence);
     metadata
+}
+
+/// Canonicalize provider-owned transcript rows that were created outside a
+/// Flowix run. The provider message id is the stable source key; each user row
+/// starts a deterministic imported run for the following assistant/tool rows.
+pub fn canonicalize_imported_messages(
+    agent_type: &str,
+    session_id: &str,
+    messages: &mut [ChatMessage],
+) {
+    let mut run_id = format!("import:{session_id}:orphan");
+    for message in messages {
+        let source_message_id = message.id.clone();
+        if message.role == "user" {
+            run_id = format!("import:{session_id}:{source_message_id}");
+        }
+        let role = match message.role.as_str() {
+            "user" => "user",
+            "reasoning" => "reasoning",
+            "tool" => "tool",
+            _ => "assistant",
+        };
+        message.id = canonical_message_id(agent_type, &run_id, role, &source_message_id);
+        if let Some(tool_call_id) = message.tool_call_id.as_ref() {
+            message.tool_call_id = Some(canonical_message_id(
+                agent_type,
+                &run_id,
+                "tool-call",
+                tool_call_id,
+            ));
+        }
+    }
 }
 
 /// Turn-level event compaction shared by the Claude and Codex runtimes.

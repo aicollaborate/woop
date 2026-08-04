@@ -45,7 +45,7 @@ import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/clie
 import { toast } from '@/lib/toast';
 import {
   type AgentConversationInstance,
-} from '@features/agent/store/agent-conversation-store';
+} from '@features/agent/store/agent-conversation-types';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isAgentConversationRunning,

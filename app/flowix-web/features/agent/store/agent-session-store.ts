@@ -4,55 +4,28 @@
  * 三 sub-projection: sessionMeta (localStorage) / conversationRegistry
  * (backend SQLite) / threadProjections (in-memory, 派生自 events).
  *
- * Phase 5 (2026-08-03): 所有 action 方法在本 store 上可用. 复杂 action
- * (sendMessageToThread / loadThread / deleteThread 等) 委托到老 store
- * 实现 (chat-store / agent-conversation-store), 老 store 已通过
- * setWithMetaMirror / setWithInstanceMirror / dispatch 写回本 store.
- * 简单 setter (bindThreadType / setActiveAgentTypeKey / setAgent* 等)
- * 直接在本 store 实现, 不经老 store.
+ * 本文件只负责 Zustand 组合、持久化边界和 runtime 编排。各状态域由 slice
+ * 实现，但只在这里执行一次 create/persist，因此消息所有权仍保持单一。
  *
  * 完整方案: `/Users/rop/Desktop/Notes/开发任务管理/Agent 消息双写重构方案.md`
  */
 
 import { create } from "zustand";
-import { persist, subscribeWithSelector } from "zustand/middleware";
+import {
+  createJSONStorage,
+  persist,
+  subscribeWithSelector,
+} from "zustand/middleware";
 import type {
   AgentChunk,
-  AgentCodexModel,
-  AgentCodexReasoningEffort,
   AgentEvent,
-  AgentPermissionMode,
   AgentTypeKey,
   RunInfo,
   RuntimeConfig,
-  RuntimeConfigPatch,
 } from "@/types/agent";
-import type { ThreadListItem, ChatMessage } from "@/types";
 import { agentClient } from "@features/agent/store/agent-client";
-import { stripSystemBlock } from "@features/agent/message";
-import type {
-  AgentConversationInstance,
-  AgentConversationMessageState,
-  CreateAgentConversationInstanceInput,
-} from "@features/agent/store/agent-conversation-store";
-import type { AgentConversationInstance as BackendAgentConversationInstance } from "@platform/tauri/client";
-import type { LiveMessageState } from "@features/agent/store/chunk-result";
-import {
-  emptyProjection,
-  mergeThreadProjections,
-  reduceProjection,
-  type ThreadProjection,
-} from "@features/agent/store/session-reducer";
-import {
-  filterRenderableHistoryMessages,
-  getHistoryPage,
-  getInitialThreadHistory,
-  HISTORY_PAGE_SIZE,
-  mergeHistoricalMessages,
-  mergeLiveMessagesIntoRenderableMessages,
-  prependHistoricalMessages,
-  trySwapLastLiveMessage,
-} from "@features/agent/store/thread-history";
+import type { AgentConversationInstance } from "@features/agent/store/agent-conversation-types";
+import { type ThreadProjection } from "@features/agent/store/session-reducer";
 import { STORAGE_KEYS } from "@/lib/constants";
 import {
   DEFAULT_AGENT_TYPE_KEY,
@@ -61,99 +34,85 @@ import {
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
 import { normalizeCodexPermissionMode } from "@features/agent/runtime/agent-runtime-spec";
+import {
+  createStreamEventDispatcher,
+} from "@features/agent/store/stream-event-dispatcher";
+import {
+  createRunId,
+  mapAgentChunkToEvent,
+  type AgentEventMapperState,
+} from "@features/agent/events/agent-event-mapper";
+import { completedRunUserMessageId } from "@features/agent/events/message-identity";
+import { resolveExternalChunkThreadId } from "@features/agent/store/external-session";
+import {
+  recordAgentChunkMapped,
+  recordAgentStopRequested,
+} from "@features/agent/diagnostics/agent-run-trace";
+import { createAgentChunkBridge } from "@features/agent/store/agent-chunk-bridge";
+import { hasThreadInterest } from "@features/agent/store/thread-interest";
+import {
+  defaultExternalThreadTitle,
+  getConversationTitleForThread,
+  getLanguage,
+  normalizeThreadTitle,
+} from "@features/agent/store/thread-titles";
+import { createSendErrorMessage, prepareUserMessage } from "@features/agent/store/user-message";
+import { dispatchChatStream } from "@features/agent/store/chat-stream";
+import { translate } from "@/lib/i18n";
+import { applyRunStopped } from "@features/agent/store/run-lifecycle";
+import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
+import { createAgentSessionStateStorage } from "@features/agent/store/window-session-storage";
+import { installGlobalAgentSettingsSync } from "@features/agent/store/global-agent-settings-sync";
+import {
+  DEFAULT_AGENT_SESSION_META,
+  type AgentSessionMeta,
+} from "@features/agent/store/session-state";
+import {
+  createSessionMetaSlice,
+  type SessionMetaSlice,
+} from "@features/agent/store/session-meta-slice";
+import {
+  createProjectionSlice,
+  type ProjectionSlice,
+} from "@features/agent/store/projection-slice";
+import {
+  createConversationSlice,
+  persistConversationInstance,
+  type ConversationSlice,
+} from "@features/agent/store/conversation-slice";
+import {
+  createThreadHistorySlice,
+  type ThreadHistorySlice,
+} from "@features/agent/store/thread-history-slice";
+import {
+  createThreadLifecycleSlice,
+  type ThreadLifecycleSlice,
+} from "@features/agent/store/thread-lifecycle-slice";
+
+export {
+  DEFAULT_AGENT_SESSION_META,
+  type AgentConversationRegistry,
+  type AgentSessionMeta,
+} from "@features/agent/store/session-state";
+import {
+  projectionToRuns,
+  runsToProjectionRuns,
+} from "@features/agent/store/session-reducer";
+
+const RUNNING_RUN_OPTIMISTIC_GRACE_MS = 3000;
+const RUN_MISSING_FROM_SNAPSHOT_REASON = "missing_from_snapshot";
 
 // --------------------------------------------------------------------
 // Types
 // --------------------------------------------------------------------
 
-export interface AgentSessionMeta {
-  activeThreadIds: Partial<Record<AgentTypeKey, string | undefined>>;
-  activeAgentTypeKey: AgentTypeKey;
-  threadTypes: Record<string, AgentTypeKey>;
-  threadLists: Partial<Record<AgentTypeKey, ThreadListItem[]>>;
-  currentThreadTitles: Partial<Record<AgentTypeKey, string | undefined>>;
-  externalSessionResolutions: Record<string, string>;
-  lastRunningRunsReconciledAt: number | null;
-  settings: {
-    agentPermissionMode: AgentPermissionMode;
-    agentCodexModel: AgentCodexModel;
-    agentCodexReasoningEffort: AgentCodexReasoningEffort;
-  };
-}
+export interface AgentSessionStore
+  extends SessionMetaSlice,
+    ProjectionSlice,
+    ConversationSlice,
+    ThreadHistorySlice,
+    ThreadLifecycleSlice {
 
-export const DEFAULT_AGENT_SESSION_META: AgentSessionMeta = {
-  activeThreadIds: {},
-  activeAgentTypeKey: "flowix",
-  threadTypes: {},
-  threadLists: {},
-  currentThreadTitles: {},
-  externalSessionResolutions: {},
-  lastRunningRunsReconciledAt: null,
-  settings: {
-    agentPermissionMode: "danger-full-access",
-    agentCodexModel: "inherit",
-    agentCodexReasoningEffort: "medium",
-  },
-};
-
-export interface AgentConversationRegistry {
-  instances: Record<string, AgentConversationInstance>;
-}
-
-const EMPTY_REGISTRY: AgentConversationRegistry = { instances: {} };
-
-export interface AgentSessionStore {
-  sessionMeta: AgentSessionMeta;
-  conversationRegistry: AgentConversationRegistry;
-  threadProjections: Record<string, ThreadProjection>;
-
-  // 核心写入
-  dispatch: (event: AgentEvent) => void;
-  setSessionMeta: (updater: (meta: AgentSessionMeta) => AgentSessionMeta) => void;
-  setConversationRegistry: (
-    updater: (registry: AgentConversationRegistry) => AgentConversationRegistry,
-  ) => void;
-  setThreadProjection: (
-    threadId: string,
-    updater: (p: ThreadProjection) => ThreadProjection,
-  ) => void;
-  removeThreadProjection: (threadId: string) => void;
-  resetThreadProjections: (threadIds: string[]) => void;
-
-  // 简单 setter (直接实现, 不经老 store)
-  setThreadList: (list: ThreadListItem[]) => void;
-  setActiveThreadId: (threadId: string | undefined) => void;
-  setActiveCodexThreadId: (threadId: string | undefined) => void;
-  setActiveClaudeThreadId: (threadId: string | undefined) => void;
-  setActiveAgentTypeKey: (typeKey: AgentTypeKey) => void;
-  setActiveAgentThread: (typeKey: AgentTypeKey, threadId: string | undefined) => void;
-  bindThreadType: (threadId: string, typeKey: AgentTypeKey) => void;
-  setAgentPermissionMode: (mode: AgentPermissionMode) => void;
-  setAgentCodexModel: (model: AgentCodexModel) => void;
-  setAgentCodexReasoningEffort: (effort: AgentCodexReasoningEffort) => void;
-
-  // 复杂 action (委托老 store, 动态 import 避免循环依赖)
-  migrateThreadState: (fromThreadId: string, toThreadId: string, typeKey: AgentTypeKey) => void;
-  loadThreadList: () => Promise<void>;
-  loadThread: (threadId: string) => Promise<void>;
-  loadCodexThreadList: () => Promise<void>;
-  loadCodexThread: (threadId: string) => Promise<void>;
-  loadClaudeThreadList: () => Promise<void>;
-  loadClaudeThread: (threadId: string) => Promise<void>;
-  loadHermesThreadList: () => Promise<void>;
-  loadHermesThread: (threadId: string) => Promise<void>;
-  loadAgentThread: (typeKey: AgentTypeKey, threadId: string) => Promise<void>;
-  loadLocalAgentThreadList: (typeKey: AgentTypeKey) => Promise<void>;
-  loadThreadCache: (threadId: string) => Promise<void>;
-  loadMoreHistory: (typeKey: AgentTypeKey, threadId: string) => Promise<void>;
-  deleteThread: (threadId: string) => Promise<void>;
-  renameThread: (threadId: string, title: string, typeKey?: AgentTypeKey) => Promise<void>;
-  renameAgentConversation: (input: {
-    instanceId?: string | null;
-    threadId?: string | null;
-    title: string;
-    typeKey?: AgentTypeKey;
-  }) => Promise<void>;
   sendMessageToThread: (
     threadId: string,
     content: string,
@@ -178,105 +137,59 @@ export interface AgentSessionStore {
   reconcileRunningRunsFromSnapshot: (running: Record<string, RunInfo>) => void;
   reconcileRunningRuns: () => Promise<Record<string, RunInfo>>;
 
-  // Instance actions (委托 conv-store, 同步 via late binding)
-  hydrateFromBackend: () => Promise<void>;
-  createInstance: (input: CreateAgentConversationInstanceInput) => AgentConversationInstance;
-  upsertInstance: (
-    instanceId: string,
-    patch: Partial<Omit<AgentConversationInstance, "instanceId" | "createdAt">>,
-  ) => AgentConversationInstance;
-  setRuntimeConfig: (instanceId: string, patch: RuntimeConfigPatch) => void;
-  getInstance: (instanceId: string | null | undefined) => AgentConversationInstance | null;
-  updateThread: (instanceId: string, patch: { threadId?: string | null; agentType?: AgentTypeKey }) => void;
-  renameInstance: (instanceId: string, title: string) => void;
-  removeInstance: (instanceId: string) => void;
-  removeInstancesForThread: (threadId: string) => void;
-  resolveSessionByThreadId: (localThreadId: string, sessionId: string, agentType: AgentTypeKey) => string | null;
-  findByThreadId: (threadId: string) => AgentConversationInstance | null;
-  getMessageState: (threadId: string | null | undefined) => AgentConversationMessageState | null;
-  mergeMessages: (agentType: AgentTypeKey, threadId: string, messages: ChatMessage[]) => void;
-  syncRenderableMessages: (agentType: AgentTypeKey, threadId: string, messages: ChatMessage[]) => void;
-  syncLiveMessageState: (agentType: AgentTypeKey, threadId: string, liveState: LiveMessageState) => void;
-  resetMessageStates: (threadIds: string[]) => void;
-  loadMessages: (agentType: AgentTypeKey, threadId: string) => Promise<void>;
-  loadMoreMessages: (agentType: AgentTypeKey, threadId: string) => Promise<void>;
 }
 
 // --------------------------------------------------------------------
 // Persist config
 // --------------------------------------------------------------------
-// Instance helpers (Phase 5.3: 直接在 session-store 上实现 instance
-// 管理, 不经 convStore late binding, 消除 mirror 反馈环)
-// --------------------------------------------------------------------
-
-let _instanceSeq = 0;
-
-function _normalizeTitle(title: string | null | undefined): string {
-  return stripSystemBlock(title ?? "").replace(/\s+/g, " ").trim();
-}
-
-function _persistInstance(instance: AgentConversationInstance): Promise<void> {
-  return agentClient
-    .upsertConversationInstance({
-      ...instance,
-      runtimeConfig:
-        instance.runtimeConfig && Object.keys(instance.runtimeConfig).length > 0
-          ? JSON.stringify(instance.runtimeConfig)
-          : null,
-    })
-    .then(() => undefined)
-    .catch((err) => {
-      console.error("[AgentSession] Failed to persist instance:", err);
-    });
-}
-
-function _deletePersistedInstance(instanceId: string): void {
-  agentClient.deleteConversationInstance(instanceId).catch((err) => {
-    console.error("[AgentSession] Failed to delete instance:", err);
-  });
-}
-
-function _deletePersistedInstancesForThread(threadId: string): void {
-  agentClient.deleteConversationInstancesForThread(threadId).catch((err) => {
-    console.error("[AgentSession] Failed to delete thread instances:", err);
-  });
-}
-
-function _parseRuntimeConfig(value: unknown): RuntimeConfig | null {
-  if (!value) return null;
-  if (typeof value !== "string") return value as RuntimeConfig;
-  try {
-    return JSON.parse(value) as RuntimeConfig;
-  } catch {
-    return null;
-  }
-}
-
-function _normalizeBackendInstance(
-  instance: AgentConversationInstance | BackendAgentConversationInstance,
-): AgentConversationInstance {
+function eventMapperStateForChunk(
+  chunk: AgentChunk,
+  state: Pick<AgentSessionStore, "sessionMeta" | "threadProjections">,
+): AgentEventMapperState {
+  const threadId = resolveExternalChunkThreadId(
+    chunk,
+    state.sessionMeta.externalSessionResolutions,
+  );
+  const projection = state.threadProjections[threadId];
   return {
-    ...instance,
-    runtimeConfig: _parseRuntimeConfig(instance.runtimeConfig),
-    role: instance.role ?? undefined,
+    threadTypes: state.sessionMeta.threadTypes,
+    externalSessionResolutions: state.sessionMeta.externalSessionResolutions,
+    // The mapper only reads activeRunId. Keep this adapter scoped to the one
+    // routed thread so high-frequency chunks do not rebuild the whole map.
+    threadStates: projection
+      ? { [threadId]: { activeRunId: projection.runs.activeRunId } }
+      : {},
   };
 }
 
-// --------------------------------------------------------------------
-// Late binding: conv-store / chat-store 在自身初始化后注册 getState,
-// 避免循环依赖. session-store 的委托 actions 通过此引用同步调用.
-// --------------------------------------------------------------------
+type SessionGet = () => AgentSessionStore;
 
-type ChatStoreGetState = () => import("@features/agent/store/chat-store").ChatStore;
-let _chatGetState: ChatStoreGetState | null = null;
-
-export function _bindChatStore(getState: ChatStoreGetState): void {
-  _chatGetState = getState;
-}
-
-function chatStore() {
-  if (_chatGetState) return _chatGetState();
-  throw new Error("ChatStore not bound. Import chat-store.ts first.");
+function ensureConversationInstanceForSession(
+  get: SessionGet,
+  threadId: string,
+  type: AgentTypeKey,
+  title: string,
+  options?: { defaultTitle?: string },
+): AgentConversationInstance {
+  const session = get();
+  const existing = session.findByThreadId(threadId);
+  if (existing) {
+    const shouldUpdateTitle =
+      title &&
+      (type === "flowix" || !options?.defaultTitle || title !== options.defaultTitle);
+    return session.upsertInstance(existing.instanceId, {
+      agentType: type,
+      ...(shouldUpdateTitle ? { title } : {}),
+      threadId,
+    });
+  }
+  return session.createInstance({
+    agentType: type,
+    title,
+    threadId,
+    source: { kind: "thread-card" },
+    runtimeConfig: buildInitialInstanceRuntimeConfig(type),
+  });
 }
 
 // --------------------------------------------------------------------
@@ -286,8 +199,8 @@ function chatStore() {
 /**
  * 迁移旧 chat-store persist 格式 (STORAGE_KEYS.CHAT, 扁平 8 字段) → sessionMeta
  * (嵌套 settings). 首次升级到 session-store persist 时, 若 AGENT_SESSION key 无
- * 数据, 从旧 key 读一次迁移; 之后 session-store 自持久化, 旧 key 留待 Phase 5
- * 删 chat-store 时清理. threadLists / lastRunningRunsReconciledAt 不持久化
+ * 数据, 从旧 key 读一次迁移; 之后 session-store 自持久化并删除旧 key。
+ * threadLists / lastRunningRunsReconciledAt 不持久化
  * (runtime-fetched / runtime-only), 用 DEFAULT.
  */
 function migrateChatPersistToSessionMeta(): AgentSessionMeta | null {
@@ -364,6 +277,11 @@ function rehydrateSessionMeta(persisted: unknown): AgentSessionMeta {
   base.settings.agentPermissionMode = normalizeCodexPermissionMode(
     base.settings.agentPermissionMode,
   );
+  try {
+    localStorage.removeItem(STORAGE_KEYS.CHAT);
+  } catch {
+    // SSR / restricted storage: persistence middleware handles the same case.
+  }
   return base;
 }
 
@@ -374,508 +292,294 @@ function rehydrateSessionMeta(persisted: unknown): AgentSessionMeta {
 export const useAgentSessionStore = create<AgentSessionStore>()(
   subscribeWithSelector(
     persist(
-    (set, get) => ({
-        sessionMeta: DEFAULT_AGENT_SESSION_META,
-        conversationRegistry: EMPTY_REGISTRY,
-        threadProjections: {},
+    (set, get) => {
+      const streamDispatcher = createStreamEventDispatcher({
+        getProjection: (threadId) => get().threadProjections[threadId],
+        getThreadAgentType: (threadId) =>
+          get().sessionMeta.threadTypes[threadId] ??
+          get().sessionMeta.activeAgentTypeKey,
+        resolveThreadId: (threadId) =>
+          get().sessionMeta.externalSessionResolutions[threadId] ?? threadId,
+        canDispatch: (threadId) => !get().threadTombstones[threadId],
+        dispatch: (event) => get().dispatch(event),
+        applySessionResolved: (event) => get().applySessionResolved(event),
+      });
+      return ({
+        ...createSessionMetaSlice(set, get),
+        ...createConversationSlice(set, get),
+        ...createProjectionSlice(set, (instance) => {
+          persistConversationInstance(instance);
+        }),
+        ...createThreadHistorySlice(set, get),
+        ...createThreadLifecycleSlice(set, get),
 
-        // === 核心写入 ===
-        dispatch: (event) => {
-          set((state) => {
-            const current = state.threadProjections[event.threadId] ?? emptyProjection();
-            const next = reduceProjection(current, event);
-            if (next === current) return state;
-            return {
-              threadProjections: { ...state.threadProjections, [event.threadId]: next },
-            };
-          });
-        },
-        setSessionMeta: (updater) => set((s) => ({ sessionMeta: updater(s.sessionMeta) })),
-        setConversationRegistry: (updater) =>
-          set((s) => ({ conversationRegistry: updater(s.conversationRegistry) })),
-        setThreadProjection: (threadId, updater) => {
-          set((state) => {
-            const current = state.threadProjections[threadId] ?? emptyProjection();
-            const next = updater(current);
-            if (next === current) return state;
-            return { threadProjections: { ...state.threadProjections, [threadId]: next } };
-          });
-        },
-        removeThreadProjection: (threadId) => {
-          set((state) => {
-            if (!(threadId in state.threadProjections)) return state;
-            const { [threadId]: _, ...rest } = state.threadProjections;
-            return { threadProjections: rest };
-          });
-        },
-        resetThreadProjections: (threadIds) => {
-          set((state) => {
-            const next = { ...state.threadProjections };
-            for (const tid of threadIds) next[tid] = emptyProjection();
-            return { threadProjections: next };
-          });
-        },
-
-        // === 简单 setter ===
-        setThreadList: (list) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              threadLists: { ...s.sessionMeta.threadLists, flowix: list },
-            },
-          })),
-        setActiveThreadId: (threadId) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              activeThreadIds: { ...s.sessionMeta.activeThreadIds, flowix: threadId },
-              ...(threadId
-                ? { threadTypes: { ...s.sessionMeta.threadTypes, [threadId]: "flowix" as AgentTypeKey } }
-                : {}),
-            },
-          })),
-        setActiveCodexThreadId: (threadId) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              activeThreadIds: { ...s.sessionMeta.activeThreadIds, codex: threadId },
-              ...(threadId
-                ? { threadTypes: { ...s.sessionMeta.threadTypes, [threadId]: "codex" as AgentTypeKey } }
-                : {}),
-            },
-          })),
-        setActiveClaudeThreadId: (threadId) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              activeThreadIds: { ...s.sessionMeta.activeThreadIds, claude: threadId },
-              ...(threadId
-                ? { threadTypes: { ...s.sessionMeta.threadTypes, [threadId]: "claude" as AgentTypeKey } }
-                : {}),
-            },
-          })),
-        setActiveAgentTypeKey: (typeKey) =>
-          set((s) => ({ sessionMeta: { ...s.sessionMeta, activeAgentTypeKey: typeKey } })),
-        setActiveAgentThread: (typeKey, threadId) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              activeAgentTypeKey: typeKey,
-              activeThreadIds: { ...s.sessionMeta.activeThreadIds, [typeKey]: threadId },
-              ...(threadId
-                ? { threadTypes: { ...s.sessionMeta.threadTypes, [threadId]: typeKey } }
-                : {}),
-            },
-          })),
-        bindThreadType: (threadId, typeKey) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              threadTypes: { ...s.sessionMeta.threadTypes, [threadId]: typeKey },
-            },
-          })),
-        setAgentPermissionMode: (mode) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              settings: { ...s.sessionMeta.settings, agentPermissionMode: mode },
-            },
-          })),
-        setAgentCodexModel: (model) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              settings: { ...s.sessionMeta.settings, agentCodexModel: model },
-            },
-          })),
-        setAgentCodexReasoningEffort: (effort) =>
-          set((s) => ({
-            sessionMeta: {
-              ...s.sessionMeta,
-              settings: { ...s.sessionMeta.settings, agentCodexReasoningEffort: effort },
-            },
-          })),
-
-        // === 复杂 action 委托 (同步 via late binding) ===
-        migrateThreadState: (fromThreadId, toThreadId, typeKey) =>
-          void chatStore().migrateThreadState(fromThreadId, toThreadId, typeKey),
-        loadThreadList: () => chatStore().loadThreadList(),
-        loadThread: (tid) => chatStore().loadThread(tid),
-        loadCodexThreadList: () => chatStore().loadCodexThreadList(),
-        loadCodexThread: (tid) => chatStore().loadCodexThread(tid),
-        loadClaudeThreadList: () => chatStore().loadClaudeThreadList(),
-        loadClaudeThread: (tid) => chatStore().loadClaudeThread(tid),
-        loadHermesThreadList: () => chatStore().loadHermesThreadList(),
-        loadHermesThread: (tid) => chatStore().loadHermesThread(tid),
-        loadAgentThread: (typeKey, tid) => chatStore().loadAgentThread(typeKey, tid),
-        loadLocalAgentThreadList: (typeKey) => chatStore().loadLocalAgentThreadList(typeKey),
-        loadThreadCache: async (threadId) => {
-          try {
-            await get().loadMessages("flowix", threadId);
-          } catch (err) {
-            console.error("[AgentSession] Failed to load thread cache:", err);
-          }
-        },
-        loadMoreHistory: async (typeKey, threadId) => {
-          await get().loadMoreMessages(getAgentType(typeKey).key, threadId);
-        },
-        deleteThread: (tid) => chatStore().deleteThread(tid),
-        renameThread: (tid, title, typeKey) => chatStore().renameThread(tid, title, typeKey),
-        renameAgentConversation: (input) => chatStore().renameAgentConversation(input),
-        sendMessageToThread: (tid, content, typeKey, options) =>
-          chatStore().sendMessageToThread(tid, content, typeKey, options),
-        stopStream: () => chatStore().stopStream(),
-        stopThreadRun: (tid, runId) => chatStore().stopThreadRun(tid, runId),
-        dispatchAgentEvent: (event) => void chatStore().dispatchAgentEvent(event),
-        flushAgentEventBuffer: () => void chatStore().flushAgentEventBuffer(),
-        dispatchAgentChunk: (chunk) => void chatStore().dispatchAgentChunk(chunk),
-        reconcileRunningRunsFromSnapshot: (running) =>
-          void chatStore().reconcileRunningRunsFromSnapshot(running),
-        reconcileRunningRuns: () => chatStore().reconcileRunningRuns(),
-
-        // === Instance actions ===
-        // Phase 5.3: createInstance / upsertInstance / updateThread /
-        // setRuntimeConfig 直接写 conversationRegistry + 调 agentClient
-        // 持久化, 不经 convStore late binding. 消除 setWithInstanceMirror
-        // -> setConversationRegistry -> mirror -> conv-store 双写反馈环
-        // (该反馈环导致 agent-thread-card-view.tsx 17 分钟超时).
-        hydrateFromBackend: async () => {
-          try {
-            const instances = await agentClient.listConversationInstances();
-            set((state) => {
-              const next = { ...state.conversationRegistry.instances };
-              for (const instance of instances) {
-                const normalized = _normalizeBackendInstance(instance);
-                const existing = next[normalized.instanceId];
-                if (!existing || normalized.updatedAt >= existing.updatedAt) {
-                  next[normalized.instanceId] = normalized;
-                }
-              }
-              return { conversationRegistry: { instances: next } };
-            });
-          } catch (err) {
-            console.error("[AgentSession] Failed to hydrate instances:", err);
-          }
-        },
-        createInstance: (input) => {
-          const now = Date.now();
-          _instanceSeq += 1;
-          const instance: AgentConversationInstance = {
-            instanceId: `agent-inst-${now}-${_instanceSeq}`,
-            agentType: input.agentType,
-            title: _normalizeTitle(input.title),
-            threadId: input.threadId ?? null,
-            runtimeConfig: input.runtimeConfig ?? null,
-            source: input.source,
-            role: input.role,
-            createdAt: now,
-            updatedAt: now,
-          };
-          get().setConversationRegistry((reg) => ({
-            ...reg,
-            instances: { ...reg.instances, [instance.instanceId]: instance },
-          }));
-          void _persistInstance(instance);
-          return instance;
-        },
-        upsertInstance: (instanceId, patch) => {
-          const existing = get().conversationRegistry.instances[instanceId];
-          const now = Date.now();
-          const nextInstance: AgentConversationInstance = {
-            instanceId,
-            agentType: patch.agentType ?? existing?.agentType ?? "flowix",
-            title:
-              patch.title !== undefined
-                ? _normalizeTitle(patch.title)
-                : existing?.title ?? "",
-            threadId: patch.threadId ?? existing?.threadId ?? null,
-            runtimeConfig:
-              patch.runtimeConfig !== undefined
-                ? patch.runtimeConfig
-                : existing?.runtimeConfig ?? null,
-            source: patch.source ?? existing?.source ?? { kind: "thread-card" },
-            role: patch.role ?? existing?.role,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now,
-          };
-          get().setConversationRegistry((reg) => ({
-            ...reg,
-            instances: { ...reg.instances, [instanceId]: nextInstance },
-          }));
-          void _persistInstance(nextInstance);
-          return nextInstance;
-        },
-        setRuntimeConfig: (instanceId, patch) => {
-          const existing = get().conversationRegistry.instances[instanceId];
-          if (!existing) return;
-          const mergedConfig: RuntimeConfig = { ...(existing.runtimeConfig ?? {}) };
-          for (const key of Object.keys(patch) as (keyof RuntimeConfigPatch)[]) {
-            const value = patch[key];
-            if (value === undefined) continue;
-            (mergedConfig as Record<string, unknown>)[key] = value;
-          }
-          const nextInstance = { ...existing, runtimeConfig: mergedConfig, updatedAt: Date.now() };
-          get().setConversationRegistry((reg) => ({
-            ...reg,
-            instances: { ...reg.instances, [instanceId]: nextInstance },
-          }));
-          void _persistInstance(nextInstance);
-        },
-        getInstance: (instanceId) => {
-          const reg = get().conversationRegistry.instances;
-          return instanceId ? (reg[instanceId] ?? null) : null;
-        },
-        updateThread: (instanceId, patch) => {
-          const existing = get().conversationRegistry.instances[instanceId];
-          if (!existing) return;
-          const nextInstance: AgentConversationInstance = {
-            ...existing,
-            agentType: patch.agentType ?? existing.agentType,
-            threadId:
-              patch.threadId !== undefined ? patch.threadId : existing.threadId,
-            updatedAt: Date.now(),
-          };
-          get().setConversationRegistry((reg) => ({
-            ...reg,
-            instances: { ...reg.instances, [instanceId]: nextInstance },
-          }));
-          void _persistInstance(nextInstance);
-        },
-        renameInstance: (instanceId, title) => {
-          const nextTitle = _normalizeTitle(title);
-          if (!nextTitle) return;
-          const existing = get().conversationRegistry.instances[instanceId];
-          if (!existing || existing.title === nextTitle) return;
-          const nextInstance: AgentConversationInstance = {
-            ...existing,
-            title: nextTitle,
-            updatedAt: Date.now(),
-          };
-          set((state) => ({
-            conversationRegistry: {
-              instances: {
-                ...state.conversationRegistry.instances,
-                [instanceId]: nextInstance,
-              },
-            },
-          }));
-          void _persistInstance(nextInstance);
-        },
-        removeInstance: (instanceId) => {
-          set((state) => {
-            if (!state.conversationRegistry.instances[instanceId]) return state;
-            const { [instanceId]: _removed, ...instances } =
-              state.conversationRegistry.instances;
-            return { conversationRegistry: { instances } };
-          });
-          _deletePersistedInstance(instanceId);
-        },
-        removeInstancesForThread: (threadId) => {
-          const removedIds: string[] = [];
-          set((state) => {
-            const instances = Object.fromEntries(
-              Object.entries(state.conversationRegistry.instances).filter(
-                ([instanceId, instance]) => {
-                  const remove = instance.threadId === threadId;
-                  if (remove) removedIds.push(instanceId);
-                  return !remove;
-                },
-              ),
-            );
-            return { conversationRegistry: { instances } };
-          });
-          get().removeThreadProjection(threadId);
-          for (const instanceId of removedIds) _deletePersistedInstance(instanceId);
-          _deletePersistedInstancesForThread(threadId);
-        },
-        resolveSessionByThreadId: (localThreadId, sessionId, agentType) => {
-          const instance = get().findByThreadId(localThreadId);
-          if (instance) {
-            get().updateThread(instance.instanceId, {
-              agentType,
-              threadId: sessionId,
-            });
-          }
-          set((state) => {
-            const local = state.threadProjections[localThreadId];
-            if (!local) return state;
-            const existing =
-              state.threadProjections[sessionId] ?? emptyProjection();
-            const merged = mergeThreadProjections(local, existing, agentType);
-            const { [localThreadId]: _removed, ...rest } = state.threadProjections;
-            return { threadProjections: { ...rest, [sessionId]: merged } };
-          });
-          return instance?.instanceId ?? null;
-        },
-        findByThreadId: (threadId) => {
-          const instances = get().conversationRegistry.instances;
-          return (
-            Object.values(instances).find((inst) => inst.threadId === threadId) ?? null
+        sendMessageToThread: async (threadId, content, typeKey, options) => {
+          const trimmed = content.trim();
+          if (!threadId || (!trimmed && !options?.imagePaths?.length)) return;
+          const state = get();
+          const type = getAgentType(
+            typeKey ??
+              state.sessionMeta.threadTypes[threadId] ??
+              state.sessionMeta.activeAgentTypeKey,
           );
-        },
-        getMessageState: (threadId) => {
-          if (!threadId) return null;
-          const p = get().threadProjections[threadId];
-          if (!p) return null;
-          return {
-            messages: p.messages,
-            pendingAssistantId: p.pending.assistantId,
-            pendingReasoningId: p.pending.reasoningId,
-            oldestSequence: p.pagination.oldestSequence,
-            hasMoreHistory: p.pagination.hasMoreHistory,
-            loadingInitial: p.pagination.loadingInitial,
-            loadingMore: p.pagination.loadingMore,
-          };
-        },
-        mergeMessages: (agentType, threadId, messages) => {
-          const renderable = filterRenderableHistoryMessages(messages);
-          if (renderable.length === 0) return;
-          set((state) => {
-            const current = state.threadProjections[threadId] ?? emptyProjection();
-            const merged = mergeHistoricalMessages(current.messages, renderable, agentType);
-            if (merged === current.messages) return state;
-            return {
-              threadProjections: {
-                ...state.threadProjections,
-                [threadId]: { ...current, messages: merged },
+          state.bindThreadType(threadId, type.key);
+          const isFirstMessage =
+            options?.isFirstMessage ??
+            (state.threadProjections[threadId]?.messages.length ?? 0) === 0;
+          const conversationTitle = normalizeThreadTitle(options?.conversationTitle);
+          if (isFirstMessage && conversationTitle) {
+            state.setSessionMeta((meta) => ({
+              ...meta,
+              currentThreadTitles: {
+                ...meta.currentThreadTitles,
+                [type.key]: conversationTitle,
               },
-            };
-          });
-        },
-        syncRenderableMessages: (agentType, threadId, messages) => {
-          const renderable = filterRenderableHistoryMessages(messages);
-          if (renderable.length === 0) return;
-          set((state) => {
-            const current = state.threadProjections[threadId] ?? emptyProjection();
-            const merged = mergeLiveMessagesIntoRenderableMessages(
-              current.messages,
-              renderable,
-              agentType,
-            );
-            if (merged === current.messages) return state;
-            return {
-              threadProjections: {
-                ...state.threadProjections,
-                [threadId]: { ...current, messages: merged },
-              },
-            };
-          });
-        },
-        syncLiveMessageState: (agentType, threadId, liveState) => {
-          const renderable = filterRenderableHistoryMessages(liveState.messages);
-          set((state) => {
-            const current = state.threadProjections[threadId] ?? emptyProjection();
-            const swapped = trySwapLastLiveMessage(current.messages, renderable);
-            const merged =
-              swapped ??
-              (renderable.length > 0
-                ? mergeLiveMessagesIntoRenderableMessages(
-                    current.messages,
-                    renderable,
-                    agentType,
-                  )
-                : current.messages);
-            if (
-              merged === current.messages &&
-              current.pending.assistantId === liveState.pendingAssistantId &&
-              current.pending.reasoningId === liveState.pendingReasoningId
-            ) {
-              return state;
-            }
-            return {
-              threadProjections: {
-                ...state.threadProjections,
-                [threadId]: {
-                  ...current,
-                  messages: merged,
-                  pending: {
-                    assistantId: liveState.pendingAssistantId,
-                    reasoningId: liveState.pendingReasoningId,
-                  },
-                },
-              },
-            };
-          });
-        },
-        resetMessageStates: (threadIds) => {
-          get().resetThreadProjections(threadIds);
-        },
-        // Phase 5 阶段2: loadMessages / loadMoreMessages direct 写真源
-        // threadProjections, 不再 delegate 到 conv-store.
-        loadMessages: async (agentType, threadId) => {
-          if (get().threadProjections[threadId]?.pagination.loadingInitial) return;
-          get().setThreadProjection(threadId, (p) => ({
-            ...p,
-            pagination: { ...p.pagination, loadingInitial: true },
-          }));
-          try {
-            const page = await getInitialThreadHistory(agentType, threadId, HISTORY_PAGE_SIZE);
-            const messages = filterRenderableHistoryMessages(page.messages);
-            get().setThreadProjection(threadId, (p) => ({
-              ...p,
-              messages: mergeHistoricalMessages(p.messages, messages, agentType),
-              pagination: {
-                oldestSequence: page.oldestSequence,
-                hasMoreHistory: page.hasMore,
-                loadingInitial: false,
-                loadingMore: false,
+              threadLists: {
+                ...meta.threadLists,
+                [type.key]: (meta.threadLists[type.key] ?? []).map((item) =>
+                  item.threadId === threadId
+                    ? { ...item, title: conversationTitle }
+                    : item,
+                ),
               },
             }));
-          } catch (err) {
-            console.error("[AgentSession] Failed to load messages:", err);
-            get().setThreadProjection(threadId, (p) => ({
-              ...p,
-              pagination: { ...p.pagination, loadingInitial: false },
-            }));
           }
-        },
-        loadMoreMessages: async (agentType, threadId) => {
-          const current = get().threadProjections[threadId];
-          if (
-            !current ||
-            current.pagination.loadingMore ||
-            !current.pagination.hasMoreHistory ||
-            current.pagination.oldestSequence === null
-          ) {
-            return;
+          const { userPayload, llmContent, userMessage } = prepareUserMessage({
+            content: trimmed,
+            isFirstMessage,
+            agentType: type.key,
+            currentNoteContent: options?.currentNoteContent,
+            agentRoleMemoId: options?.agentRoleMemoId,
+            agentRoleName: options?.agentRoleName,
+            agentRoleBody: options?.agentRoleBody ?? null,
+            systemReminderDirectory:
+              options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
+          });
+          const runId = createRunId(threadId);
+          userMessage.id = completedRunUserMessageId(type.key, runId);
+          const startedAt = Date.now();
+          state.dispatch({
+            kind: "stream_start",
+            agentType: type.key,
+            threadId,
+            runId,
+            timestamp: startedAt,
+          });
+          state.dispatch({
+            kind: "user_message",
+            agentType: type.key,
+            threadId,
+            runId,
+            timestamp: startedAt,
+            text: userMessage.content,
+            id: userMessage.id,
+          });
+          if (options?.instanceId) {
+            state.updateThread(options.instanceId, { threadId, agentType: type.key });
           }
-          get().setThreadProjection(threadId, (p) => ({
-            ...p,
-            pagination: { ...p.pagination, loadingMore: true },
-          }));
+          const settings = get().sessionMeta.settings;
           try {
-            const page = await getHistoryPage(
-              agentType,
+            await dispatchChatStream({
               threadId,
-              current.pagination.oldestSequence,
-              HISTORY_PAGE_SIZE,
-            );
-            const messages = filterRenderableHistoryMessages(page.messages);
-            get().setThreadProjection(threadId, (p) => ({
-              ...p,
-              messages: prependHistoricalMessages(p.messages, messages, agentType),
-              pagination: {
-                oldestSequence: page.oldestSequence ?? p.pagination.oldestSequence,
-                hasMoreHistory: page.hasMore,
-                loadingInitial: false,
-                loadingMore: false,
-              },
-            }));
+              content: trimmed,
+              llmContent,
+              runId,
+              userPayload,
+              agentType: type.key,
+              permissionMode: settings.agentPermissionMode,
+              codexModel: settings.agentCodexModel,
+              codexReasoningEffort: settings.agentCodexReasoningEffort,
+              agentRoleMemoId: options?.agentRoleMemoId,
+              agentRoleName: options?.agentRoleName,
+              runtimeConfig: options?.runtimeConfig ?? undefined,
+              imagePaths: options?.imagePaths,
+              conversationTitle:
+                isFirstMessage && conversationTitle ? conversationTitle : undefined,
+            });
           } catch (err) {
-            console.error("[AgentSession] Failed to load more messages:", err);
-            get().setThreadProjection(threadId, (p) => ({
-              ...p,
-              pagination: { ...p.pagination, loadingMore: false },
-            }));
+            console.error("Failed to dispatch thread card chat_stream:", err);
+            const errorMessage = createSendErrorMessage(
+              err,
+              translate(getLanguage(), "agent.chat.sendFailed"),
+            );
+            get().dispatch({
+              kind: "error",
+              agentType: type.key,
+              threadId,
+              runId,
+              timestamp: Date.now(),
+              message: errorMessage.content,
+            });
           }
         },
-    }),
+        stopStream: async () => {
+          const meta = get().sessionMeta;
+          const type = getAgentType(meta.activeAgentTypeKey);
+          const activeId = meta.activeThreadIds[type.key];
+          if (activeId) await get().stopThreadRun(activeId);
+        },
+        stopThreadRun: async (threadId, runId) => {
+          if (!threadId) return;
+          streamDispatcher.flushBuffer();
+          let targetRunId: string | undefined;
+          get().setThreadProjection(threadId, (projection) => {
+            const candidate = runId ?? projection.runs.activeRunId ?? undefined;
+            if (!candidate || !projection.runs.runs[candidate]) return projection;
+            targetRunId = candidate;
+            const run = projection.runs.runs[candidate];
+            recordAgentStopRequested(threadId, candidate, run.agentType);
+            const runs = applyRunStopped(projectionToRuns(projection), candidate, Date.now());
+            return {
+              ...projection,
+              runs: runsToProjectionRuns(runs),
+              pending: { assistantId: null, reasoningId: null },
+            };
+          });
+          try {
+            const meta = get().sessionMeta;
+            const type = getAgentType(
+              meta.threadTypes[threadId] ?? meta.activeAgentTypeKey,
+            );
+            await agentClient.stopChatStream(threadId, type.key, targetRunId);
+          } catch (err) {
+            console.error("Failed to stop stream:", err);
+          }
+        },
+        dispatchAgentEvent: (event) => streamDispatcher.dispatch(event),
+        flushAgentEventBuffer: () => streamDispatcher.flushBuffer(),
+        dispatchAgentChunk: (chunk) => {
+          const state = get();
+          const event = mapAgentChunkToEvent(
+            chunk,
+            eventMapperStateForChunk(chunk, state),
+          );
+          recordAgentChunkMapped(chunk, event);
+          streamDispatcher.dispatch(event);
+        },
+        reconcileRunningRunsFromSnapshot: (running) => {
+          const now = Date.now();
+          const snapshotThreadIds = new Set<string>();
+          for (const [reportedThreadId, info] of Object.entries(running)) {
+            const localThreadId = info.pendingThreadId || reportedThreadId;
+            const canonicalThreadId = info.sessionId || localThreadId;
+            snapshotThreadIds.add(canonicalThreadId);
+            const current = get();
+            const agentType = normalizeAgentTypeKey(
+              info.agentType ??
+                current.sessionMeta.threadTypes[canonicalThreadId] ??
+                current.sessionMeta.threadTypes[localThreadId] ??
+                current.sessionMeta.activeAgentTypeKey,
+            );
+            if (localThreadId !== canonicalThreadId) {
+              current.resolveSessionByThreadId(
+                localThreadId,
+                canonicalThreadId,
+                agentType,
+              );
+            }
+            get().setSessionMeta((meta) => ({
+              ...meta,
+              threadTypes: {
+                ...meta.threadTypes,
+                [localThreadId]: agentType,
+                [canonicalThreadId]: agentType,
+              },
+              externalSessionResolutions:
+                localThreadId !== canonicalThreadId
+                  ? {
+                      ...meta.externalSessionResolutions,
+                      [localThreadId]: canonicalThreadId,
+                    }
+                  : meta.externalSessionResolutions,
+            }));
+            const titleMeta = get().sessionMeta;
+            ensureConversationInstanceForSession(
+              get,
+              canonicalThreadId,
+              agentType,
+              normalizeThreadTitle(
+                getConversationTitleForThread(
+                  titleMeta,
+                  agentType,
+                  canonicalThreadId,
+                ),
+              ),
+              { defaultTitle: defaultExternalThreadTitle(agentType) },
+            );
+            const startedAt = info.startedAt || now;
+            get().setThreadProjection(canonicalThreadId, (projection) => {
+              const runId =
+                info.runId ??
+                projection.runs.activeRunId ??
+                `${canonicalThreadId}-${now}`;
+              const existing = projection.runs.runs[runId];
+              return {
+                ...projection,
+                runs: {
+                  isLoading: true,
+                  activeRunId: runId,
+                  runs: {
+                    ...projection.runs.runs,
+                    [runId]: {
+                      ...existing,
+                      runId,
+                      agentType,
+                      threadId: canonicalThreadId,
+                      startedAt: existing?.startedAt ?? startedAt,
+                      status: "running",
+                      currentTool: info.currentTool ?? existing?.currentTool ?? null,
+                      model: existing?.model,
+                      modelId: existing?.modelId,
+                    },
+                  },
+                  lastRun: projection.runs.lastRun,
+                },
+              };
+            });
+          }
+          for (const [threadId, projection] of Object.entries(
+            get().threadProjections,
+          )) {
+            if (snapshotThreadIds.has(threadId) || !projection.runs.isLoading) continue;
+            const activeRunId = projection.runs.activeRunId;
+            const activeRun = activeRunId
+              ? projection.runs.runs[activeRunId]
+              : undefined;
+            if (
+              activeRun?.startedAt &&
+              activeRun.startedAt + RUNNING_RUN_OPTIMISTIC_GRACE_MS > now
+            ) {
+              continue;
+            }
+            get().dispatch({
+              kind: "stream_end",
+              agentType: activeRun?.agentType ?? "flowix",
+              threadId,
+              runId: activeRunId ?? `missing-${threadId}`,
+              timestamp: now,
+              reason: RUN_MISSING_FROM_SNAPSHOT_REASON,
+            });
+          }
+          get().setSessionMeta((meta) => ({
+            ...meta,
+            lastRunningRunsReconciledAt: now,
+          }));
+        },
+        reconcileRunningRuns: async () => {
+          const running = await agentClient.runningThreads();
+          get().reconcileRunningRunsFromSnapshot(running);
+          return running;
+        },
+
+      });
+    },
     {
       name: STORAGE_KEYS.AGENT_SESSION,
+      storage: createJSONStorage(() => createAgentSessionStateStorage()),
       partialize: (state) => ({
         sessionMeta: {
           ...state.sessionMeta,
-          // runtime-fetched / runtime-only, 不持久化 (与 chat-store partializeChat 对齐)
+          // runtime-fetched / runtime-only fields are not persisted.
           threadLists: DEFAULT_AGENT_SESSION_META.threadLists,
           lastRunningRunsReconciledAt:
             DEFAULT_AGENT_SESSION_META.lastRunningRunsReconciledAt,
@@ -903,3 +607,42 @@ export const selectSessionMeta = (state: AgentSessionStore) => state.sessionMeta
 
 export const selectConversationRegistry = (state: AgentSessionStore) =>
   state.conversationRegistry;
+
+installGlobalAgentSettingsSync((updater) =>
+  useAgentSessionStore.getState().setSessionMeta(updater),
+);
+
+/** Window-local bridge that routes native agent chunks into the canonical store. */
+export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
+  useAgentSessionStore.getState().dispatchAgentChunk(chunk);
+  if (chunk.kind !== "stream_end") return;
+
+  const state = useAgentSessionStore.getState();
+  const canonicalThreadId = resolveExternalChunkThreadId(
+    chunk,
+    state.sessionMeta.externalSessionResolutions,
+  );
+  const ownsThread =
+    hasThreadInterest(canonicalThreadId) ||
+    Object.values(state.sessionMeta.activeThreadIds).some(
+      (threadId) =>
+        threadId === canonicalThreadId ||
+        (threadId
+          ? state.sessionMeta.externalSessionResolutions[threadId] ===
+            canonicalThreadId
+          : false),
+    );
+  if (!ownsThread) return;
+
+  const agentType =
+    state.sessionMeta.threadTypes[canonicalThreadId] ??
+    state.sessionMeta.threadTypes[chunk.thread_id] ??
+    state.sessionMeta.activeAgentTypeKey;
+  const runId =
+    chunk.run_id ?? state.threadProjections[canonicalThreadId]?.runs.lastRun?.runId;
+  if (runId) {
+    void state.reconcileCompletedRun(agentType, canonicalThreadId, runId);
+  } else {
+    void state.loadMessages(agentType, canonicalThreadId);
+  }
+});

@@ -223,6 +223,11 @@ impl AgentManager {
     ) -> Result<String, AgentError> {
         let cancel = Arc::new(AtomicBool::new(false));
         let run_id = resolve_run_id(thread_id, message.run_id.as_deref());
+        // The user row is business state, not an event journal. Commit it
+        // before publishing anything so sibling Webviews can never render a
+        // user message that authoritative history cannot return.
+        self.persist_user_message(thread_id, &message, &run_id)
+            .await?;
         {
             let mut in_flight = self.in_flight.lock().await;
             // �?���? 如果�?thread 已有 in-flight chat, �?set true
@@ -244,6 +249,22 @@ impl AgentManager {
                 },
             );
         }
+
+        // Publish the product-owned user row before StreamStart, matching the
+        // external runtime protocol. The sending Webview already has the same
+        // run-scoped id optimistically; sibling Webviews need this event to
+        // render the complete turn without waiting for a history reload.
+        emit_chunk_with_run_id(
+            app_handle,
+            &AgentChunk::UserMessage {
+                thread_id: thread_id.to_string(),
+                id: format!("user-{run_id}"),
+                text: message.content.clone(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            },
+            FLOWIX_AGENT_TYPE,
+            &run_id,
+        );
 
         // 閫氱敤 metadata 鍗忚 鈹€鈹€ StreamStart 鎼哄甫 model / reasoning_effort,
         // �?run 锁定。前�?hover card / 状态栏�??这两�?��段展示�?        // �?provider 不识�?���?None,前�? fallback 到全局配置 / 显示 "—」�?        //
@@ -690,7 +711,6 @@ impl AgentManager {
         cancel: &Arc<AtomicBool>,
         run_id: String,
     ) -> Result<String, AgentError> {
-        self.persist_user_message(thread_id, &message).await?;
         // 兜底清空�?thread 的卡死�?测�?数。LLM 给最终回答的正常�?��也会�?
         // A user retry starts a fresh stuck-tool detection window.
         self.clear_tool_call_attempts(thread_id).await;

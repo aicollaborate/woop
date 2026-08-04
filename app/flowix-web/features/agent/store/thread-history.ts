@@ -7,6 +7,7 @@ import {
   getAgentHistoryAdapter,
   type ThreadHistoryPage,
 } from "@features/agent/store/agent-history-adapters";
+import { completedRunUserMessageId } from "@features/agent/events/message-identity";
 
 /** Layer 4: 单页大小. 每次加载 10 条, 用户向上翻页时每页同样 10 条. */
 export const HISTORY_PAGE_SIZE = 10;
@@ -101,6 +102,12 @@ function messageContentStableKey(message: ChatMessage): string | null {
   return null;
 }
 
+function toolCallIdentityKey(toolCallId: string): string {
+  const marker = ":tool-call:";
+  const markerIndex = toolCallId.lastIndexOf(marker);
+  return markerIndex >= 0 ? toolCallId.slice(markerIndex + marker.length) : toolCallId;
+}
+
 export function hydrateToolDisplay(
   message: ChatMessage,
   agentType?: AgentTypeKey,
@@ -169,6 +176,7 @@ export function mergeHistoricalMessages(
   for (const [index, message] of existing.entries()) {
     if (message.role === "tool" && message.toolCallId) {
       existingToolIndexByCallId.set(message.toolCallId, index);
+      existingToolIndexByCallId.set(toolCallIdentityKey(message.toolCallId), index);
     }
 
     const key = userMessageStableKey(message);
@@ -201,7 +209,9 @@ export function mergeHistoricalMessages(
     if (seenIds.has(message.id)) continue;
 
     if (message.role === "tool" && message.toolCallId) {
-      const existingIndex = existingToolIndexByCallId.get(message.toolCallId);
+      const existingIndex =
+        existingToolIndexByCallId.get(message.toolCallId) ??
+        existingToolIndexByCallId.get(toolCallIdentityKey(message.toolCallId));
       if (existingIndex !== undefined) {
         if (mergedExisting === existing) mergedExisting = [...existing];
         // 合并消息代表历史 tool, 放历史顺序位置(missing); existing 的 live
@@ -288,6 +298,40 @@ export function mergeHistoricalMessages(
 function messageTime(message: ChatMessage): number {
   const timestamp = Date.parse(message.timestamp);
   return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+/**
+ * Replace the just-completed live run with its persisted representation.
+ * The stable user id is the run boundary, so older pages already loaded by the
+ * user stay intact while partial assistant/tool rows from the live stream are
+ * removed instead of being appended beside the final history rows.
+ */
+export function replaceCompletedRunWithHistory(
+  existing: ChatMessage[],
+  historical: ChatMessage[],
+  runId: string,
+  agentType?: AgentTypeKey,
+): ChatMessage[] {
+  const history = hydrateHistoricalMessages(historical, agentType);
+  if (history.length === 0) return existing;
+  const anchorId = completedRunUserMessageId(agentType, runId);
+  const existingAnchor = existing.findIndex((message) => message.id === anchorId);
+  const historyAnchor = history.findIndex((message) => message.id === anchorId);
+  if (existingAnchor >= 0 && historyAnchor >= 0) {
+    return [...existing.slice(0, existingAnchor), ...history.slice(historyAnchor)];
+  }
+
+  // Other runtimes may not yet expose run-scoped user ids. An exact overlap
+  // still gives a safe page boundary; otherwise retain the normal merge path.
+  const historyIndexById = new Map(history.map((message, index) => [message.id, index]));
+  const existingOverlap = existing.findIndex((message) =>
+    historyIndexById.has(message.id),
+  );
+  if (existingOverlap >= 0) {
+    const historyOverlap = historyIndexById.get(existing[existingOverlap].id) ?? 0;
+    return [...existing.slice(0, existingOverlap), ...history.slice(historyOverlap)];
+  }
+  return mergeHistoricalMessages(existing, history, agentType);
 }
 
 /**

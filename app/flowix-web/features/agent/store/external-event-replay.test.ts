@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentSessionStore } from "@features/agent/store/agent-session-store";
+import type { ExternalReplayPorts } from "@features/agent/store/external-event-replay";
 
 const externalEventsMock = vi.hoisted(() => vi.fn());
 
@@ -101,28 +103,46 @@ function event(
   };
 }
 
+function replayPorts(store: {
+  getState(): AgentSessionStore;
+}): ExternalReplayPorts {
+  return {
+    canCommit: () => true,
+    resetThreads: (threadIds, typeKey) => {
+      store.getState().resetThreadProjections(threadIds);
+      store.getState().setSessionMeta((meta) => {
+        const threadTypes = { ...meta.threadTypes };
+        for (const threadId of threadIds) threadTypes[threadId] ??= typeKey;
+        return { ...meta, threadTypes };
+      });
+    },
+    dispatchChunk: (chunk) => store.getState().dispatchAgentChunk(chunk),
+    flush: () => store.getState().flushAgentEventBuffer(),
+  };
+}
+
 describe("external event replay", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     localStorage.clear();
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { DEFAULT_AGENT_SESSION_META, useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
-    useChatStore.setState(useChatStore.getInitialState(), true);
-    useAgentConversationStore.setState(
-      useAgentConversationStore.getInitialState(),
-      true,
-    );
+    useAgentSessionStore.setState({
+      sessionMeta: DEFAULT_AGENT_SESSION_META,
+      conversationRegistry: { instances: {} },
+      threadProjections: {},
+      threadEpochs: {},
+      threadTombstones: {},
+    });
   });
 
   it("rebuilds messages and terminal run state from persisted payload events", async () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "codex-replay-thread";
     const runId = "codex-replay-run";
@@ -168,31 +188,29 @@ describe("external event replay", () => {
     ]);
 
     const replayedDisplay = await replayExternalEventsForThread(
-      useChatStore.setState,
-      useChatStore.getState,
       "codex",
       threadId,
+      replayPorts(useAgentSessionStore),
     );
 
-    expect(replayedDisplay).toBe(true);
+    expect(replayedDisplay.status).toBe("replayed");
     expect(externalEventsMock).toHaveBeenCalledWith(threadId, null, 1000);
 
-    const threadState = useChatStore.getState().threadStates[threadId];
-    expect(threadState.isLoading).toBe(false);
-    expect(threadState.activeRunId).toBeNull();
-    expect(threadState.runs[runId]).toBeUndefined();
-    expect(threadState.lastRun).toMatchObject({
+    const projection = useAgentSessionStore.getState().threadProjections[threadId];
+    expect(projection.runs.isLoading).toBe(false);
+    expect(projection.runs.activeRunId).toBeNull();
+    expect(projection.runs.runs[runId]).toBeUndefined();
+    expect(projection.runs.lastRun).toMatchObject({
       runId,
       status: "completed",
       usage: { total_tokens: 7 },
       model: "gpt-5",
     });
 
-    const messages =
-      useAgentConversationStore.getState().messageStates[threadId].messages;
+    const messages = projection.messages;
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({
-      id: "user-replay-1",
+      id: "msg:codex:codex-replay-run:user:user-replay-1",
       role: "user",
       content: "Persisted question",
     });
@@ -206,9 +224,8 @@ describe("external event replay", () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "codex-reused-item-ids";
     const firstRunId = "run-first";
@@ -291,15 +308,14 @@ describe("external event replay", () => {
 
     expect(
       await replayExternalEventsForThread(
-        useChatStore.setState,
-        useChatStore.getState,
         "codex",
         threadId,
+        replayPorts(useAgentSessionStore),
       ),
-    ).toBe(true);
+    ).toMatchObject({ status: "replayed" });
 
     const messages =
-      useAgentConversationStore.getState().messageStates[threadId].messages;
+      useAgentSessionStore.getState().threadProjections[threadId].messages;
     expect(messages.map(({ role, content }) => ({ role, content }))).toEqual([
       { role: "user", content: "question 1" },
       { role: "assistant", content: "answer 1" },
@@ -308,19 +324,26 @@ describe("external event replay", () => {
       { role: "assistant", content: "answer 2" },
       { role: "tool", content: '"result 2"' },
     ]);
-    expect(messages[1].id).toBe("run-first::assistant::assistant-item_0");
-    expect(messages[4].id).toBe("run-second::assistant::assistant-item_0");
-    expect(messages[2].toolCallId).toBe("run-first::tool-call::tool-item_1");
-    expect(messages[5].toolCallId).toBe("run-second::tool-call::tool-item_1");
+    expect(messages[1].id).toBe(
+      "msg:codex:run-first:assistant:assistant-item_0",
+    );
+    expect(messages[4].id).toBe(
+      "msg:codex:run-second:assistant:assistant-item_0",
+    );
+    expect(messages[2].toolCallId).toBe(
+      "msg:codex:run-first:tool-call:tool-item_1",
+    );
+    expect(messages[5].toolCallId).toBe(
+      "msg:codex:run-second:tool-call:tool-item_1",
+    );
   });
 
   it("folds legacy Claude reasoning ids into one row during database replay", async () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "claude-replay-reasoning-tool-cycle";
     const runId = "claude-replay-reasoning-run";
@@ -458,20 +481,19 @@ describe("external event replay", () => {
     ]);
 
     const replayedDatabase = await replayExternalEventsForThread(
-      useChatStore.setState,
-      useChatStore.getState,
       "claude",
       threadId,
+      replayPorts(useAgentSessionStore),
     );
 
-    expect(replayedDatabase).toBe(true);
-    const messages =
-      useAgentConversationStore.getState().messageStates[threadId].messages;
+    expect(replayedDatabase.status).toBe("replayed");
+    const projection = useAgentSessionStore.getState().threadProjections[threadId];
+    const messages = projection.messages;
     const reasoning = messages.filter((message) => message.role === "reasoning");
 
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0]).toMatchObject({
-      id: `reasoning-${runId}`,
+      id: `msg:claude:${runId}:reasoning:reasoning-${runId}`,
       content: "first persisted thought\n\nsecond persisted thought",
       isCompleted: true,
     });
@@ -482,10 +504,10 @@ describe("external event replay", () => {
       "assistant",
     ]);
     expect(messages[2]).toMatchObject({
-      toolCallId: "persisted-tool-1",
+      toolCallId: `msg:claude:${runId}:tool-call:persisted-tool-1`,
       isLoading: false,
     });
-    expect(useChatStore.getState().threadStates[threadId]).toMatchObject({
+    expect(projection.runs).toMatchObject({
       isLoading: false,
       activeRunId: null,
       lastRun: { runId, status: "completed" },
@@ -496,9 +518,8 @@ describe("external event replay", () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "claude-replay-envelope-text";
     const runId = "claude-replay-envelope-run";
@@ -583,15 +604,14 @@ describe("external event replay", () => {
 
     expect(
       await replayExternalEventsForThread(
-        useChatStore.setState,
-        useChatStore.getState,
         "claude",
         threadId,
+        replayPorts(useAgentSessionStore),
       ),
-    ).toBe(true);
+    ).toMatchObject({ status: "replayed" });
 
     const messages =
-      useAgentConversationStore.getState().messageStates[threadId].messages;
+      useAgentSessionStore.getState().threadProjections[threadId].messages;
     expect(messages).toHaveLength(2);
     expect(messages[1]).toMatchObject({
       role: "assistant",
@@ -604,33 +624,92 @@ describe("external event replay", () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "claude-database-error";
     externalEventsMock.mockRejectedValueOnce(new Error("database unavailable"));
 
     const replayedDatabase = await replayExternalEventsForThread(
-      useChatStore.setState,
-      useChatStore.getState,
       "claude",
       threadId,
+      replayPorts(useAgentSessionStore),
     );
 
-    expect(replayedDatabase).toBe(false);
+    expect(replayedDatabase).toEqual({
+      status: "fallback",
+      reason: "read_failed",
+    });
     expect(
-      useAgentConversationStore.getState().messageStates[threadId].messages,
-    ).toEqual([]);
+      useAgentSessionStore.getState().threadProjections[threadId],
+    ).toBeUndefined();
+  });
+
+  it("preserves an existing live projection when database replay falls back", async () => {
+    const { replayExternalEventsForThread } = await import(
+      "@features/agent/store/external-event-replay"
+    );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const threadId = "claude-live-before-replay-error";
+    useAgentSessionStore.getState().dispatch({
+      kind: "stream_start",
+      agentType: "claude",
+      threadId,
+      runId: "live-run",
+      timestamp: 1,
+    });
+    const before = useAgentSessionStore.getState().threadProjections[threadId];
+    externalEventsMock.mockRejectedValueOnce(new Error("database unavailable"));
+
+    const result = await replayExternalEventsForThread(
+      "claude",
+      threadId,
+      replayPorts(useAgentSessionStore),
+    );
+
+    expect(result).toEqual({ status: "fallback", reason: "read_failed" });
+    expect(useAgentSessionStore.getState().threadProjections[threadId]).toBe(before);
+  });
+
+  it("does not reset or dispatch when a validated replay becomes stale", async () => {
+    const { replayExternalEventsForThread } = await import(
+      "@features/agent/store/external-event-replay"
+    );
+    const threadId = "codex-stale-replay";
+    externalEventsMock.mockResolvedValueOnce([
+      event(1, threadId, {
+        kind: "user_message",
+        thread_id: threadId,
+        run_id: "stale-run",
+        agent_type: "codex",
+        text: "question",
+      }),
+    ]);
+    const resetThreads = vi.fn();
+    const dispatchChunk = vi.fn();
+    const flush = vi.fn();
+
+    const result = await replayExternalEventsForThread("codex", threadId, {
+      canCommit: () => false,
+      resetThreads,
+      dispatchChunk,
+      flush,
+    });
+
+    expect(result).toEqual({ status: "stale" });
+    expect(resetThreads).not.toHaveBeenCalled();
+    expect(dispatchChunk).not.toHaveBeenCalled();
+    expect(flush).not.toHaveBeenCalled();
   });
 
   it("rejects the entire database source when history is marked truncated", async () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "claude-truncated-thread";
 
@@ -646,15 +725,17 @@ describe("external event replay", () => {
     ]);
 
     const replayedDatabase = await replayExternalEventsForThread(
-      useChatStore.setState,
-      useChatStore.getState,
       "claude",
       threadId,
+      replayPorts(useAgentSessionStore),
     );
 
-    expect(replayedDatabase).toBe(false);
+    expect(replayedDatabase).toEqual({
+      status: "fallback",
+      reason: "truncated",
+    });
     expect(
-      useAgentConversationStore.getState().messageStates[threadId].messages,
-    ).toEqual([]);
+      useAgentSessionStore.getState().threadProjections[threadId],
+    ).toBeUndefined();
   });
 });

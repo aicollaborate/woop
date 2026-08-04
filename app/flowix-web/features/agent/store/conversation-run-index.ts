@@ -3,8 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type {
   AgentConversationInstance,
-  AgentConversationStore,
-} from '@features/agent/store/agent-conversation-store';
+} from '@features/agent/store/agent-conversation-types';
 import {
   useAgentSessionStore,
 } from '@features/agent/store/agent-session-store';
@@ -74,8 +73,7 @@ export function useConversationRunIndex(
     ),
     [threadIds],
   );
-  // Phase 4 (2026-08-02): 真源切到 session-store.threadProjections. 旧
-  // chat-store.threadStates 经 mirror 同步, 但这里直接读真源.
+  // Subscribe directly to canonical run projections.
   return useAgentSessionStore(useShallow(selector));
 }
 
@@ -105,7 +103,7 @@ export function isAgentConversationRunning(
 }
 
 export function selectRunningAgentConversations(
-  state: Pick<AgentConversationStore, 'instances'>,
+  state: { instances: Record<string, AgentConversationInstance> },
   index: ConversationRunIndex,
 ): AgentConversationInstance[] {
   return Object.values(state.instances)

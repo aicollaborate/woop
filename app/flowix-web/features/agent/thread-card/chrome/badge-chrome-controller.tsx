@@ -2,7 +2,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
-import { type ThreadState } from "@features/agent/store/chat-store";
+import { type ThreadState } from "@features/agent/store/thread-runtime-state";
 import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { BadgeHoverCard } from "@features/agent/thread-card/badge-hover-card";

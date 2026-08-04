@@ -1,7 +1,7 @@
 import type { EditorView } from "@tiptap/pm/view";
 import type { AgentTypeKey } from "@/types/agent";
 import type { I18nKey } from "@/lib/i18n";
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import { AgentThreadCardHeaderChromeController } from "@features/agent/thread-card/chrome/header-chrome-controller";
 import { AgentThreadCardTitleEditController } from "@features/agent/thread-card/chrome/title-edit-controller";
 import { AgentThreadCardBadgeChromeController } from "@features/agent/thread-card/chrome/badge-chrome-controller";

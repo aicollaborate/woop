@@ -117,7 +117,8 @@ export interface AgentConversationRole {
 export interface AgentConversationInstance {
   instanceId: string;
   agentType: AgentTypeKey;
-  title: string;
+  /** Product title projected from threads.title; null before a thread exists. */
+  threadTitle: string | null;
   threadId: string | null;
   runtimeConfig?: string | null;
   /** Backend-owned cwd; omitted from conversation upsert requests. */
@@ -127,6 +128,12 @@ export interface AgentConversationInstance {
   createdAt: number;
   updatedAt: number;
 }
+
+export type AgentConversationInstanceUpsert = Omit<AgentConversationInstance, 'threadTitle' | 'runtimeConfig'> & {
+  /** Initial title used when the upsert creates the product thread. */
+  initialTitle: string;
+  runtimeConfig?: string | null;
+};
 
 export interface AgentRuntimeAvailability {
   available: boolean;
@@ -222,7 +229,7 @@ export const agent = {
       'agent_conversation_find_by_thread',
       { threadId },
     ),
-  upsertConversationInstance: (instance: AgentConversationInstance) =>
+  upsertConversationInstance: (instance: AgentConversationInstanceUpsert) =>
     invoke<AgentConversationInstance>('agent_conversation_upsert', { instance }),
   deleteConversationInstance: (instanceId: string) =>
     invoke<boolean>('agent_conversation_delete', { instanceId }),

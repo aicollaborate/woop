@@ -47,9 +47,7 @@ export async function ensureAgentThreadCardThread(
   }
 
   const thread = await agent.createThread(nextTitle);
-  // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.activeThreadIds.
-  // setActiveAgentThread 仍可用 (mirror 同步), 但这里直接写 session-store
-  // 避免 round-trip 与将来删除 chat-store 时的二次迁移.
+  // Store the new active thread in canonical session metadata.
   useAgentSessionStore.getState().setSessionMeta((meta) => ({
     ...meta,
     activeThreadIds: {

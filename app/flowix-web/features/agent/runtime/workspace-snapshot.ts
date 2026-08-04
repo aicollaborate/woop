@@ -98,9 +98,7 @@ function migrateLegacyWorkspace(
 export function ensureConversationWorkspaceSnapshot(
   instanceId: string,
 ): RuntimeConfig {
-  // Phase 7 (2026-08-03): 改读 session-store 真源. setRuntimeConfig
-  // 直接写真源 session-store.conversationRegistry, mirror 自动同步到
-  // conv-store.instances, Phase 5 删 conv-store 时不再需要桥接.
+  // Persist the workspace snapshot on the canonical conversation instance.
   const session = useAgentSessionStore.getState();
   const instance = session.getInstance(instanceId);
   if (!instance) throw new Error("Agent conversation instance was not found");

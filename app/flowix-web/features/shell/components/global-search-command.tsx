@@ -39,7 +39,7 @@ import { useDocumentStore } from '@features/document/store/document-store';
 import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import {
   type AgentConversationInstance,
-} from '@features/agent/store/agent-conversation-store';
+} from '@features/agent/store/agent-conversation-types';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   getConversationRunSummary,

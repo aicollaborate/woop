@@ -1,5 +1,6 @@
-import { Editor } from "@tiptap/core";
+﻿import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types/agent";
@@ -253,6 +254,64 @@ describe("AgentThreadCard NodeView streaming", () => {
     }]);
   });
 
+  it("does not create a conversation instance during a Tiptap can() dry run", async () => {
+    const { AgentThreadCard } = await import("@features/agent/thread-card");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: "<p></p>",
+    });
+
+    expect(editor.can().insertAgentThreadCard()).toBe(true);
+    expect(
+      Object.keys(useAgentSessionStore.getState().conversationRegistry.instances),
+    ).toHaveLength(0);
+  }, 30_000);
+
+  it("cleans up a programmatically deleted card and restores its binding on undo", async () => {
+    const { AgentThreadCard } = await import("@features/agent/thread-card");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const { agent } = await import("@platform/tauri/client");
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: "<p></p>",
+    });
+    expect(editor.commands.insertAgentThreadCard()).toBe(true);
+    const [instanceId] = Object.keys(
+      useAgentSessionStore.getState().conversationRegistry.instances,
+    );
+    expect(instanceId).toBeTruthy();
+    editor.view.dispatch(closeHistory(editor.state.tr));
+
+    let cardPos = -1;
+    let cardSize = 0;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "agentThreadCard") {
+        cardPos = pos;
+        cardSize = node.nodeSize;
+      }
+    });
+    expect(cardPos).toBeGreaterThanOrEqual(0);
+    editor.view.dispatch(editor.state.tr.delete(cardPos, cardPos + cardSize));
+    await flushPromises();
+    expect(useAgentSessionStore.getState().getInstance(instanceId)).toBeNull();
+    expect(agent.deleteConversationInstance).toHaveBeenCalledWith(instanceId);
+
+    expect(editor.commands.undo()).toBe(true);
+    await flushPromises();
+    expect(useAgentSessionStore.getState().getInstance(instanceId)).not.toBeNull();
+  }, 10_000);
+
   beforeEach(async () => {
     document.body.innerHTML = "";
     localStorage.clear();
@@ -272,9 +331,9 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
     );
 
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { useAgentSessionStore } = await import(
       "@features/agent/store/agent-session-store"
@@ -300,7 +359,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("renders streamed assistant deltas in the Thread Card DOM", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-dom-flow";
     const host = document.createElement("div");
     document.body.append(host);
@@ -370,7 +429,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("opens an encoded absolute assistant link with the system default app", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { openPath, openUrl } = await import("@tauri-apps/plugin-opener");
     vi.mocked(openPath).mockClear();
     vi.mocked(openUrl).mockClear();
@@ -428,7 +487,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("routes an assistant Markdown link through the Flowix tab window", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { openPath } = await import("@tauri-apps/plugin-opener");
     const { windows } = await import("@platform/tauri/client");
     vi.mocked(openPath).mockClear();
@@ -484,9 +543,9 @@ describe("AgentThreadCard NodeView streaming", () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-conversation-run-source";
     const instance = useAgentConversationStore.getState().createInstance({
       agentType: "flowix",
@@ -534,7 +593,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("patches the last rendered message without rebuilding previous message DOM", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-incremental-last-message";
     const host = document.createElement("div");
     document.body.append(host);
@@ -627,7 +686,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("renders oversized assistant messages in full without folding", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { ASSISTANT_MESSAGE_DISPLAY_MAX_CHARS } = await import(
       "@features/agent/message/display-limits"
     );
@@ -696,7 +755,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("does not select the Thread Card when clicking messages while editing the title", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-title-edit-click-message";
     const host = document.createElement("div");
     document.body.append(host);
@@ -770,7 +829,7 @@ describe("AgentThreadCard NodeView streaming", () => {
 
   it("keeps the instance title when an existing conversation is rebound", async () => {
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { upsertAgentThreadCardConversationInstance } = await import(
       "@features/agent/thread-card/runtime/thread-card-conversation"
@@ -802,7 +861,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("submits from the Thread Card and renders the response stream on the same card", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { agent } = await import("@platform/tauri/client");
     const threadId = "thread-card-submit-flow";
     const host = document.createElement("div");
@@ -1084,7 +1143,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("renders Codex command tool calls with JSON-string arguments in Thread Card DOM", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-dom-codex-command-json";
     const host = document.createElement("div");
     document.body.append(host);
@@ -1144,7 +1203,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("renders the concrete MCP tool name in the primary color without a dot separator", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-mcp-tool-name";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2274,7 +2333,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("keeps a new Codex Thread Card without a document threadId until the session id is known", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { agent } = await import("@platform/tauri/client");
     const sessionId = "codex-session-after-first-run";
     const host = document.createElement("div");
@@ -2364,7 +2423,7 @@ describe("AgentThreadCard NodeView streaming", () => {
   it("falls back instead of crashing when one Thread Card message cannot be rendered", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-dom-message-fallback";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2469,7 +2528,7 @@ describe("AgentThreadCard input history navigation", () => {
       },
     );
 
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     useChatStore.setState(useChatStore.getInitialState(), true);
     agentAccessState.config = { entries: [] };
   });
@@ -2537,7 +2596,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("Up on empty input fills with the most recent user message", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-up-empty";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2617,7 +2676,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("saves the existing draft as preNavDraft and restores it on Down past newest", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-draft-roundtrip";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2687,7 +2746,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("does not persist previewed history entries over the latest draft", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-draft-not-overwritten";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2774,7 +2833,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("treats Down as a no-op when not navigating", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-down-idle";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2834,7 +2893,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("typing in nav mode exits navigation but keeps the edited text", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-typing-exits";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2902,7 +2961,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("lets native Up and Down move the caret until the composer reaches a boundary line", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-caret-boundaries";
     const host = document.createElement("div");
     document.body.append(host);
@@ -2975,7 +3034,7 @@ describe("AgentThreadCard input history navigation", () => {
   it("keeps the current history position when the selected history text is not modified", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-history-unmodified-entry";
     const host = document.createElement("div");
     document.body.append(host);
@@ -3075,7 +3134,7 @@ describe("AgentThreadCard input latency optimizations", () => {
     });
     vi.stubGlobal("cancelIdleCallback", vi.fn());
 
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     useChatStore.setState(useChatStore.getInitialState(), true);
     agentAccessState.config = { entries: [] };
   });
@@ -3095,7 +3154,7 @@ describe("AgentThreadCard input latency optimizations", () => {
   it("keeps the existing message DOM when only the inputDraft attr changes", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-lite-render";
     const host = document.createElement("div");
     document.body.append(host);
@@ -3228,7 +3287,7 @@ describe("AgentThreadCard composer during agent run", () => {
       },
     );
 
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     useChatStore.setState(useChatStore.getInitialState(), true);
     agentAccessState.config = { entries: [] };
   });

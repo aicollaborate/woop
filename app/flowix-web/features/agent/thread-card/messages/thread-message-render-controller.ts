@@ -1,4 +1,4 @@
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import type { AppLanguage, I18nKey } from "@/lib/i18n";
 import type { AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
@@ -75,8 +75,7 @@ export class ThreadMessageRenderController {
     }
     // 流式中: rAF 合并(trailing edge)。claude text_delta 带 messageId 走
     // flushSync 绕过 streaming-buffer, 每个 Tauri 事件(已按字节 batch 的
-    // token 组)都 applyPatch chat-store + syncLiveMessageState conversation-store
-    // -> 2 次 sync render; 高 token 率下一帧多事件 -> 多次 patch-last DOM
+    // token 组)都更新 canonical projection; 高 token 率下一帧多事件 -> 多次 patch-last DOM
     // 重建。rAF 合并把同帧内所有 render 调用收拢为帧末一次(渲染最新 input),
     // 降到每帧最多 1 次。
     // 延迟代价: 内容渲染推迟到下一帧(~16ms, 流式下不可察)。非流式态已走上面

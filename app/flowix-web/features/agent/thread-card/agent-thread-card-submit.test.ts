@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chatStoreMock = vi.hoisted(() => ({
   setActiveAgentThread: vi.fn(),
@@ -9,7 +9,7 @@ const sessionStoreMock = vi.hoisted(() => ({
   loadThreadList: vi.fn(async () => undefined),
 }));
 
-vi.mock('@features/agent/store/chat-store', () => ({
+vi.mock('@features/agent/store/agent-session-test-facade', () => ({
   useChatStore: {
     getState: () => chatStoreMock,
   },

@@ -76,10 +76,15 @@ async fn run_scripted_react_loop(
     };
     let emitter = RecordingAgentChunkEmitter::default();
     let cancel = Arc::new(AtomicBool::new(cancelled));
+    let message = scripted_user_message();
+    manager
+        .persist_user_message(&thread.thread_id, &message, "run-scripted")
+        .await
+        .expect("persist scripted user message");
     let result = manager
         .run_react_loop(
             &thread.thread_id,
-            scripted_user_message(),
+            message,
             instance,
             &emitter,
             &cancel,

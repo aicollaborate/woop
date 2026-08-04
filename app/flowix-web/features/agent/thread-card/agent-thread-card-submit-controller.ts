@@ -1,5 +1,5 @@
 import type { AgentTypeKey } from "@/types/agent";
-import type { AgentConversationSource } from "@features/agent/store/agent-conversation-store";
+import type { AgentConversationSource } from "@features/agent/store/agent-conversation-types";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import { ensureConversationWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";

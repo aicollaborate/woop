@@ -43,7 +43,8 @@ pub(crate) fn acquire_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 // `shared`. Per-runtime APIs (ClaudeCliManager etc.) live on the
 // submodules.
 pub use shared::{
-    append_workspace_context, default_thread_title, emit_chunk_with_run_id,
+    append_workspace_context, canonical_message_id, canonicalize_imported_messages,
+    default_thread_title, emit_chunk_with_run_id,
     emit_chunk_with_run_id_and_metadata, persist_and_emit_external_chunk, persist_external_chunk,
     persist_external_chunk_for_thread_with_metadata, read_capped_line, read_stderr_to_string,
     read_to_string, resolve_and_freeze_runtime_cwd, resolve_run_id,

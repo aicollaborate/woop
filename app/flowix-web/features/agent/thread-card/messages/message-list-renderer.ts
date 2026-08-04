@@ -1,4 +1,4 @@
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import type { AppLanguage } from "@/lib/i18n";
 import {
   createAgentMessageViewModel,

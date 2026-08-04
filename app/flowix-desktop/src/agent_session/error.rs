@@ -9,6 +9,8 @@ pub enum ThreadError {
     Sqlite(#[from] rusqlite::Error),
     #[error("thread not found: {0}")]
     NotFound(String),
+    #[error("conversation thread already belongs to another instance: thread={thread_id}, instance={instance_id}")]
+    ConversationThreadConflict { thread_id: String, instance_id: String },
     #[error("thread store join error: {0}")]
     Join(String),
 }

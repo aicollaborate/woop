@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { Kbd } from '@shared/ui/shortcut-kbd';
 import {
   type AgentConversationInstance,
-} from '@features/agent/store/agent-conversation-store';
+} from '@features/agent/store/agent-conversation-types';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isAgentConversationRunning,
@@ -75,8 +75,7 @@ export function AgentConversationOverlay({
     const source = instance.source;
     if (!source.memoId && !source.documentPath) return;
     if (instance.threadId) {
-      // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.activeThreadIds,
-      // 通过 setSessionMeta 单点更新, mirror 会同步 chat-store 老字段.
+      // Keep the active-thread pointer in canonical session metadata.
       const session = useAgentSessionStore.getState();
       session.setSessionMeta((meta) => ({
         ...meta,

@@ -2,6 +2,47 @@ use super::*;
 use tokio::io::BufReader;
 
 #[test]
+fn canonical_message_identity_is_shared_and_idempotent() {
+    for agent_type in ["codex", "claude", "hermes", "opencode"] {
+        let id = canonical_message_id(agent_type, "run-1", "assistant", "source-1");
+        assert_eq!(
+            id,
+            format!("msg:{agent_type}:run-1:assistant:source-1")
+        );
+        assert_eq!(
+            canonical_message_id(agent_type, "run-1", "assistant", &id),
+            id
+        );
+    }
+}
+
+#[test]
+fn chunk_payload_keeps_provider_id_beside_canonical_id() {
+    let chunk = AgentChunk::Text {
+        thread_id: "thread-1".to_string(),
+        text: "hello".to_string(),
+    };
+    let payload = chunk_payload_value(
+        &chunk,
+        "codex",
+        "run-1",
+        &AgentChunkMetadata {
+            message_id: Some("assistant-source-1".to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("serialize canonical chunk");
+    assert_eq!(
+        payload.get("message_id").and_then(Value::as_str),
+        Some("msg:codex:run-1:assistant:assistant-source-1")
+    );
+    assert_eq!(
+        payload.get("source_message_id").and_then(Value::as_str),
+        Some("assistant-source-1")
+    );
+}
+
+#[test]
 fn streaming_emit_buffer_batches_text_and_reasoning_in_order() {
     let mut buf = StreamingEmitBuffer::new("t1".to_string());
     assert!(buf.is_empty());

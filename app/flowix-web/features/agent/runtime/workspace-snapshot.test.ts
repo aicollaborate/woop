@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeConfig } from "@/types/agent";
 
 const state = vi.hoisted(() => ({
@@ -34,7 +34,7 @@ const state = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock("@features/agent/store/agent-conversation-store", () => ({
+vi.mock("@features/agent/store/agent-session-test-facade", () => ({
   useAgentConversationStore: {
     getState: () => ({
       getInstance: () => state.instance,

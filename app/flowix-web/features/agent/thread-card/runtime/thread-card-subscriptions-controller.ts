@@ -54,12 +54,7 @@ export class AgentThreadCardSubscriptionsController {
       (state) => {
         const threadId = options.getRenderThreadId();
         const typeKey = options.getTypeKey();
-        // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta ──
-        // chat-store 经 mirror 同步, 仍可继续工作, 但这里直接读真源避免
-        // 跨 store round-trip. 镜像字段 7 个全部覆盖 (activeThreadIds /
-        // activeAgentTypeKey / threadTypes / threadLists /
-        // currentThreadTitles / externalSessionResolutions /
-        // lastRunningRunsReconciledAt).
+        // Read canonical metadata directly.
         const meta = state.sessionMeta;
         return {
           listTitle: threadId
@@ -91,7 +86,7 @@ export class AgentThreadCardSubscriptionsController {
   private subscribeThreadState(): Unsubscribe {
     const options = this.options;
     // Phase 5.3: 订阅 session-store.threadProjections (projection ref-stable).
-    // currentThreadState() 也读 session-store (cached), 无 mirror 延迟.
+    // currentThreadState() reads the same ref-stable projection cache.
     // handleThreadStateChange 内 session resolution 路径仅 codex/claude
     // 触发, flowix 不走 -> 无循环.
     return useAgentSessionStore.subscribe(
@@ -140,7 +135,6 @@ export class AgentThreadCardSubscriptionsController {
   }): void {
     const options = this.options;
     const typeKey = options.getTypeKey();
-    options.renderThreadState();
     if (
       (typeKey === "codex" || typeKey === "claude") &&
       next.localThreadId &&
@@ -206,10 +200,13 @@ export class AgentThreadCardSubscriptionsController {
     // session-store dispatch 的 shallow 不到的场景. 这里拆成两个独立
     // subscription, 每个 selector 只返回单一引用 (string/number/
     // record), equalityFn 直接 === 比较, 干净过滤.
-    const instanceId = options.getInstanceId();
-    const threadId = options.getRenderThreadId();
     const unsubInstance = useAgentSessionStore.subscribe(
-      (state) => (instanceId ? state.conversationRegistry.instances[instanceId] : undefined),
+      (state) => {
+        const instanceId = options.getInstanceId();
+        return instanceId
+          ? state.conversationRegistry.instances[instanceId]
+          : undefined;
+      },
       (next, previous) => {
         if (next !== previous) {
           options.refreshAttrs();
@@ -225,14 +222,15 @@ export class AgentThreadCardSubscriptionsController {
     // threadProjections 由 session-store 真源持有, equalityFn 用 === 比较
     // 引用, 没变化时不触发 callback. dispatch 每次新建 projection 引用,
     // 但这是 session-store 自身行为, callback 会被正确触发.
-    const unsubMessage = useAgentSessionStore.subscribe(
-      (state) => (threadId ? state.threadProjections[threadId] : undefined),
-      () => {
-        options.renderThreadState();
+    const unsubProjection = useAgentSessionStore.subscribe(
+      (state) => {
+        const threadId = options.getRenderThreadId();
+        return threadId ? state.threadProjections[threadId] : undefined;
       },
+      () => options.renderThreadState(),
       { equalityFn: (a, b) => a === b },
     );
-    return [unsubInstance, unsubMessage];
+    return [unsubInstance, unsubProjection];
   }
 
   private subscribeRuntime(): Unsubscribe {

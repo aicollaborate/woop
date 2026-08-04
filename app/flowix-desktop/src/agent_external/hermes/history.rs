@@ -46,7 +46,13 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
 }
 
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
-    Ok(session_messages(session_id).await?.0)
+    let mut messages = session_messages(session_id).await?.0;
+    crate::agent_external::canonicalize_imported_messages(
+        AGENT_TYPE,
+        session_id,
+        &mut messages,
+    );
+    Ok(messages)
 }
 
 pub async fn get_session_page(
@@ -54,7 +60,12 @@ pub async fn get_session_page(
     before_sequence: Option<i64>,
     limit: i64,
 ) -> Result<ThreadMessagesPage, String> {
-    let (messages, _) = session_messages(session_id).await?;
+    let (mut messages, _) = session_messages(session_id).await?;
+    crate::agent_external::canonicalize_imported_messages(
+        AGENT_TYPE,
+        session_id,
+        &mut messages,
+    );
     Ok(page_from_messages(messages, before_sequence, limit))
 }
 

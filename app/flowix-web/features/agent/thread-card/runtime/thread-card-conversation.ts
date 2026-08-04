@@ -3,7 +3,7 @@ import { useAgentSessionStore } from "@features/agent/store/agent-session-store"
 import type {
   AgentConversationInstance,
   AgentConversationSource,
-} from "@features/agent/store/agent-conversation-store";
+} from "@features/agent/store/agent-conversation-types";
 
 export function upsertAgentThreadCardConversationInstance(options: {
   instanceId: string;
@@ -21,9 +21,7 @@ export function upsertAgentThreadCardConversationInstance(options: {
 } {
   const { instanceId, agentType, title, threadId, source, role } = options;
 
-  // Phase 7 (2026-08-03): 改读 / 写真源 session-store.upsertInstance.
-  // 旧双写路径 (conv-store.upsertInstance + setConversationRegistry)
-  // 已合并到 session-store 内部, mirror 自动同步 conv-store.instances.
+  // Read and update the canonical conversation registry.
   const session = useAgentSessionStore.getState();
   const existing = session.getInstance(instanceId);
   const instance = session.upsertInstance(instanceId, {

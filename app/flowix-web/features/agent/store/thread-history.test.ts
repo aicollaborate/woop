@@ -4,6 +4,7 @@ import type { ChatMessage } from "@/types";
 import {
   mergeLiveMessagesIntoRenderableMessages,
   mergeMessagesForThreadRender,
+  replaceCompletedRunWithHistory,
 } from "@features/agent/store/thread-history";
 
 function message(
@@ -67,6 +68,24 @@ describe("mergeLiveMessagesIntoRenderableMessages", () => {
       id: "assistant-live",
       content: "Hello",
     });
+  });
+});
+
+describe("replaceCompletedRunWithHistory", () => {
+  it("replaces a partial live run while preserving older loaded messages", () => {
+    const existing = [
+      message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),
+      message("user-run-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("assistant-live", "assistant", "part", "2026-01-01T00:00:02.000Z"),
+    ];
+    const history = [
+      message("user-run-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("assistant-final", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
+    ];
+
+    expect(
+      replaceCompletedRunWithHistory(existing, history, "run-1").map((m) => m.id),
+    ).toEqual(["older-user", "user-run-1", "assistant-final"]);
   });
 });
 

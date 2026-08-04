@@ -1,33 +1,26 @@
-import type { AgentEvent } from "@/types/agent";
+import type { AgentEvent, AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
 import { recordAgentLifecycleEvent } from "@features/agent/diagnostics/agent-run-trace";
-import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import {
   emptyProjection,
   isProjectionRunActive,
   isProjectionRunEnded,
-  mergeThreadProjections,
 } from "@features/agent/store/session-reducer";
 import {
   createStreamingBuffer,
+  type StreamingScheduler,
   type StreamingBufferSnapshot,
 } from "@features/agent/store/streaming-buffer";
-import { syncConversationInstanceForEvent } from "@features/agent/store/conversation-run-sync";
 
 /**
- * `stream-event-dispatcher` 重构版 ── 单一写源 `useAgentSessionStore`.
- *
- * 历史: 旧实现经 `host.applyPatch` 写 chat-store, 同时直接调
- * `useAgentConversationStore.syncLiveMessageState` 写 conv-store, 形成双写.
- * 本文件仅做 orchestration: late chunk guard / ensureRunActive / buffering /
- * session_resolved migration ── 单一 dispatch 落到 session store 的
- * `threadProjections[tid]`, 老 store 由 subscribe 镜像 (后续 PR).
+ * Stream orchestration over an injected single-write port:
+ * late-chunk guard, ensureRunActive, buffering and session resolution all end
+ * in one canonical `threadProjections[tid]` dispatch path.
  *
  * 涉及模块边界 (2026-08-02):
  * - session-reducer: 纯 reducer (`reduceProjection(projection, event) → projection`).
- * - agent-session-store: 单一 zustand, 三 sub-projection, dispatch 入口.
- * - chat-store / agent-conversation-store: 暂时保留 actions; 通过镜像订阅
- *   跟随 session store, 6 个月分期最终删除.
+ * - agent-session-store: composition root and state ownership.
+ * - this module: buffering and event ordering without a Zustand dependency.
  */
 
 export interface StreamEventDispatcher {
@@ -39,6 +32,15 @@ export interface StreamEventDispatcher {
   dispatch(event: AgentEvent): void;
   /** 同步 flush 当前 buffered text/reasoning chunk ── 给 stopThreadRun 用。 */
   flushBuffer(): void;
+}
+
+export interface StreamEventDispatcherPorts {
+  getProjection(threadId: string): ReturnType<typeof emptyProjection> | undefined;
+  getThreadAgentType(threadId: string): AgentTypeKey;
+  resolveThreadId(threadId: string): string;
+  canDispatch(threadId: string): boolean;
+  dispatch(event: AgentEvent): void;
+  applySessionResolved(event: AgentEvent & { kind: "session_resolved" }): void;
 }
 
 // --------------------------------------------------------------------
@@ -64,7 +66,7 @@ function isDataChunk(kind: AgentEvent["kind"]): boolean {
 /**
  * 哪些 event 表明 thread 已经处于 "应当 active" 但 projection 还没记录
  * stream_start 的状态 ── 这种情况下 dispatcher 补丁式合成一个 stream_start
- * event, 通过 `useAgentSessionStore.dispatch` 应用, 然后 dispatch 原 event.
+ * event, 通过注入的 dispatch port 应用, 然后 dispatch 原 event.
  */
 function shouldEnsureRunActive(event: AgentEvent): boolean {
   return (
@@ -92,72 +94,32 @@ function synthesizeStreamStart(event: AgentEvent): AgentEvent & {
 // session_resolved ── 跨 thread 合并 projection + 更新 sessionMeta
 // --------------------------------------------------------------------
 
-function applySessionResolved(
-  event: AgentEvent & { kind: "session_resolved" },
-): void {
-  const tid = event.threadId;
-  const sessionId = event.sessionId;
-  if (!sessionId || sessionId === tid) return;
-
-  const session = useAgentSessionStore.getState();
-  const fromProjection = session.threadProjections[tid];
-  const toProjection = session.threadProjections[sessionId];
-
-  // 合并 projection ── 抽到 session-reducer/mergeThreadProjections.
-  // 任一边缺失都按另一边兜底, 都没则跳过 (emptyProjection 噪音).
-  if (toProjection || fromProjection) {
-    const merged = mergeThreadProjections(
-      fromProjection,
-      toProjection,
-      event.agentType,
-    );
-    session.setThreadProjection(sessionId, () => merged);
-    session.removeThreadProjection(tid);
-  }
-
-  session.setSessionMeta((meta) => ({
-    ...meta,
-    threadTypes: {
-      ...meta.threadTypes,
-      [tid]: event.agentType,
-      [sessionId]: event.agentType,
-    },
-    externalSessionResolutions: {
-      ...meta.externalSessionResolutions,
-      [tid]: sessionId,
-    },
-    activeThreadIds: {
-      ...meta.activeThreadIds,
-      [event.agentType]: sessionId,
-    },
-    activeAgentTypeKey: event.agentType,
-  }));
-}
-
 // --------------------------------------------------------------------
 // dispatcher factory
 // --------------------------------------------------------------------
 
-export function createStreamEventDispatcher(): StreamEventDispatcher {
+export function createStreamEventDispatcher(
+  ports: StreamEventDispatcherPorts,
+  scheduler?: StreamingScheduler,
+): StreamEventDispatcher {
   const streamingBuffer = createStreamingBuffer(
     (
       textSnapshot: StreamingBufferSnapshot,
       reasoningSnapshot: StreamingBufferSnapshot,
     ) => {
-      const session = useAgentSessionStore.getState();
       const now = Date.now();
       // reasoning 先 apply ── 与旧 store 时序一致 (reasoning chunk 先于
       // text 出现; text chunk 落地时会 close reasoning 行).
       for (const [tid, text] of reasoningSnapshot) {
-        const current = session.threadProjections[tid];
+        const canonicalThreadId = ports.resolveThreadId(tid);
+        if (!ports.canDispatch(canonicalThreadId)) continue;
+        const current = ports.getProjection(canonicalThreadId);
         if (!current || !current.runs.activeRunId) continue;
-        const agentType = getAgentType(
-          session.sessionMeta.threadTypes[tid] ?? session.sessionMeta.activeAgentTypeKey,
-        ).key;
-        session.dispatch({
+        const agentType = getAgentType(ports.getThreadAgentType(canonicalThreadId)).key;
+        ports.dispatch({
           kind: "reasoning_delta",
           agentType,
-          threadId: tid,
+          threadId: canonicalThreadId,
           runId: current.runs.activeRunId,
           timestamp: now,
           text,
@@ -167,15 +129,15 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
         });
       }
       for (const [tid, text] of textSnapshot) {
-        const current = session.threadProjections[tid];
+        const canonicalThreadId = ports.resolveThreadId(tid);
+        if (!ports.canDispatch(canonicalThreadId)) continue;
+        const current = ports.getProjection(canonicalThreadId);
         if (!current || !current.runs.activeRunId) continue;
-        const agentType = getAgentType(
-          session.sessionMeta.threadTypes[tid] ?? session.sessionMeta.activeAgentTypeKey,
-        ).key;
-        session.dispatch({
+        const agentType = getAgentType(ports.getThreadAgentType(canonicalThreadId)).key;
+        ports.dispatch({
           kind: "text_delta",
           agentType,
-          threadId: tid,
+          threadId: canonicalThreadId,
           runId: current.runs.activeRunId,
           timestamp: now,
           text,
@@ -185,12 +147,19 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
         });
       }
     },
+    scheduler,
   );
 
-  function dispatch(event: AgentEvent): void {
-    const session = useAgentSessionStore.getState();
-    const current =
-      session.threadProjections[event.threadId] ?? emptyProjection();
+  function dispatch(inputEvent: AgentEvent): void {
+    let event = inputEvent;
+    if (event.kind !== "session_resolved") {
+      const canonicalThreadId = ports.resolveThreadId(event.threadId);
+      if (canonicalThreadId !== event.threadId) {
+        event = { ...event, threadId: canonicalThreadId } as AgentEvent;
+      }
+    }
+    if (!ports.canDispatch(event.threadId)) return;
+    const current = ports.getProjection(event.threadId) ?? emptyProjection();
 
     recordAgentLifecycleEvent(event, {
       activeRunId: current.runs.activeRunId,
@@ -205,14 +174,13 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
     // session_resolved 是跨 thread 合并, 不进单 projection dispatch.
     if (event.kind === "session_resolved") {
       streamingBuffer.flushSync();
-      syncConversationInstanceForEvent(event);
-      applySessionResolved(event);
+      ports.applySessionResolved(event);
       return;
     }
 
     // ensureRunActive: data chunk 但 projection 还不是 running 状态.
     if (shouldEnsureRunActive(event) && !isProjectionRunActive(current)) {
-      session.dispatch(synthesizeStreamStart(event));
+      ports.dispatch(synthesizeStreamStart(event));
     }
 
     // text / reasoning 走 rAF 缓冲.
@@ -228,7 +196,7 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
           event.sourceSequence !== undefined
         ) {
           streamingBuffer.flushSync();
-          session.dispatch(event);
+          ports.dispatch(event);
           return;
         }
         streamingBuffer.appendText(event.threadId, event.text);
@@ -237,7 +205,7 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
       case "reasoning_delta": {
         if (event.messageId || event.contentMode === "snapshot") {
           streamingBuffer.flushSync();
-          session.dispatch(event);
+          ports.dispatch(event);
           return;
         }
         streamingBuffer.appendReasoning(event.threadId, event.text);
@@ -260,11 +228,7 @@ export function createStreamEventDispatcher(): StreamEventDispatcher {
         break;
     }
 
-    if (event.kind !== "usage") {
-      syncConversationInstanceForEvent(event);
-    }
-
-    session.dispatch(event);
+    ports.dispatch(event);
   }
 
   return {

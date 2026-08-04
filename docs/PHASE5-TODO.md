@@ -2,6 +2,20 @@
 
 > 分支 `refactor/agent-session-store`。本文件是阶段 2b / 3 的接续指南,供新会话无需重新评估即可继续。
 
+## 完成状态（2026-08-04）
+
+Phase 5 已完成，以下原清单保留为历史实施记录。
+
+- `useAgentSessionStore` 现直接拥有 dispatch/chunk bridge、load、rename、send、stop、delete、snapshot reconcile 和 instance/message actions。
+- Agent Thread Card 的消息、运行态、分页、会话实例与 metadata 均直接读写 `sessionMeta` / `conversationRegistry` / `threadProjections`。
+- 已删除 `chat-store.ts`、`agent-conversation-store.ts`、`session-mirror.ts`、旧 chat persist/migration、legacy load/snapshot helper 与 late binding。
+- Conversation/ThreadState 类型已迁到存活模块；生产代码不再引用旧 store。
+- 旧 `STORAGE_KEYS.CHAT` 首次迁移后自动删除，仅保留 `AGENT_SESSION` 持久化源。
+- 原 `chat-store.test.ts` 行为规范已迁为 `agent-session-actions.test.ts`，通过 test-only facade 写入并断言 canonical Session Store；外部事件 replay 测试已直接 re-root。
+- 验证：全量 Vitest 通过、`tsc --noEmit` 通过、层级边界与前端债务门禁通过、`npm run build` 通过。
+
+> 注意：未在本次自动化会话中执行需要真实 Tauri runtime 的手工消息链路验证。
+
 ## 一、当前状态(2026-08-04)
 
 已落地(全程 605 测试绿,2 个 commit `8a3d4e8` + `ff98ca1`):

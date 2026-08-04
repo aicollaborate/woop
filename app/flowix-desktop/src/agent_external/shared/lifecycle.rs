@@ -3,6 +3,9 @@ use super::*;
 #[derive(Clone, Debug, Default)]
 pub struct AgentChunkMetadata {
     pub message_id: Option<String>,
+    /// Provider-native item/message id retained for diagnostics and future
+    /// transcript imports. `message_id` is the Flowix canonical identity.
+    pub source_message_id: Option<String>,
     pub message_phase: Option<&'static str>,
     pub content_mode: Option<&'static str>,
     pub source_timestamp: Option<i64>,
@@ -14,6 +17,12 @@ impl AgentChunkMetadata {
     fn apply_to_payload(&self, object: &mut serde_json::Map<String, Value>) {
         if let Some(message_id) = self.message_id.as_ref() {
             object.insert("message_id".to_string(), Value::String(message_id.clone()));
+        }
+        if let Some(source_message_id) = self.source_message_id.as_ref() {
+            object.insert(
+                "source_message_id".to_string(),
+                Value::String(source_message_id.clone()),
+            );
         }
         if let Some(message_phase) = self.message_phase {
             object.insert(
@@ -283,9 +292,58 @@ fn chunk_payload_value(
             "agent_type".to_string(),
             Value::String(agent_type.to_string()),
         );
-        metadata.apply_to_payload(object);
+        let canonical_metadata = canonical_chunk_metadata(agent_type, run_id, chunk, metadata);
+        canonical_metadata.apply_to_payload(object);
+        if let AgentChunk::UserMessage { id, .. } = chunk {
+            object.insert("source_message_id".to_string(), Value::String(id.clone()));
+            let canonical_id = canonical_message_id(agent_type, run_id, "user", id);
+            object.insert("id".to_string(), Value::String(canonical_id.clone()));
+            object.insert("message_id".to_string(), Value::String(canonical_id));
+        }
     }
     Ok(payload)
+}
+
+/// Product-owned identity shared by Codex, Claude, Hermes and OpenCode.
+/// Provider ids remain in `source_message_id`; frontend and history only use
+/// this run-scoped canonical id. The function is intentionally idempotent so
+/// old and newly-normalized rows can pass through the same materializer.
+pub fn canonical_message_id(
+    agent_type: &str,
+    run_id: &str,
+    role: &str,
+    source_message_id: &str,
+) -> String {
+    if source_message_id.starts_with("msg:") {
+        return source_message_id.to_string();
+    }
+    format!("msg:{agent_type}:{run_id}:{role}:{source_message_id}")
+}
+
+fn canonical_chunk_metadata(
+    agent_type: &str,
+    run_id: &str,
+    chunk: &AgentChunk,
+    metadata: &AgentChunkMetadata,
+) -> AgentChunkMetadata {
+    let mut canonical = metadata.clone();
+    let (role, fallback_source) = match chunk {
+        AgentChunk::Text { .. } => ("assistant", "stream".to_string()),
+        AgentChunk::Reasoning { .. } => ("reasoning", "stream".to_string()),
+        AgentChunk::ToolCall { id, .. } | AgentChunk::ToolResult { id, .. } => {
+            ("tool", id.clone())
+        }
+        AgentChunk::Error { .. } => ("error", "error".to_string()),
+        _ => return canonical,
+    };
+    let source = metadata
+        .source_message_id
+        .clone()
+        .or_else(|| metadata.message_id.clone())
+        .unwrap_or(fallback_source);
+    canonical.source_message_id = Some(source.clone());
+    canonical.message_id = Some(canonical_message_id(agent_type, run_id, role, &source));
+    canonical
 }
 
 fn external_event_raw_json_enabled(agent_type: &str) -> bool {

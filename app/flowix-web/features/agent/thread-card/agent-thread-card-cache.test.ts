@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentConversationStoreMock = vi.hoisted(() => ({
   // 测试内部消息 fixture 数据载体 (历史命名); 生产代码已不读 conv-store.
@@ -37,13 +37,13 @@ const sessionStoreMock = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@features/agent/store/agent-conversation-store", () => ({
+vi.mock("@features/agent/store/agent-session-test-facade", () => ({
   useAgentConversationStore: {
     getState: () => agentConversationStoreMock,
   },
 }));
 
-vi.mock("@features/agent/store/chat-store", () => ({
+vi.mock("@features/agent/store/agent-session-test-facade", () => ({
   useChatStore: {
     setState: vi.fn(),
     getState: vi.fn(() => ({})),

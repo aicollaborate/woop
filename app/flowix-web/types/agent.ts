@@ -243,6 +243,8 @@ export interface AgentChunkUserMessage {
   timestamp: number;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  source_message_id?: string;
 }
 
 export interface AgentChunkText {
@@ -252,6 +254,7 @@ export interface AgentChunkText {
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
+  source_message_id?: string;
   message_phase?: "started" | "updated" | "completed";
   content_mode?: "delta" | "snapshot";
   source_timestamp?: number;
@@ -266,6 +269,7 @@ export interface AgentChunkReasoning {
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
+  source_message_id?: string;
   message_phase?: "started" | "updated" | "completed";
   content_mode?: "delta" | "snapshot";
   source_timestamp?: number;
@@ -282,6 +286,7 @@ export interface AgentChunkToolCall {
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
+  source_message_id?: string;
   message_phase?: "started" | "updated" | "completed";
   source_timestamp?: number;
   source_sequence?: number;
@@ -297,6 +302,7 @@ export interface AgentChunkToolResult {
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
+  source_message_id?: string;
   message_phase?: "started" | "updated" | "completed";
   source_timestamp?: number;
   source_sequence?: number;
@@ -309,6 +315,8 @@ export interface AgentChunkError {
   message: string;
   agent_type?: AgentTypeKey;
   run_id?: string;
+  message_id?: string;
+  source_message_id?: string;
 }
 
 // 生命周期变体 —— 由后端 `chat_stream` 外层在 insert / remove cancel_flag
