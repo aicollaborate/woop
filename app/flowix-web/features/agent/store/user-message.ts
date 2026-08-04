@@ -8,7 +8,7 @@ import {
   buildUserLlmContent,
 } from "@features/agent/store/context-block";
 import { applyRunStarted } from "@features/agent/store/run-lifecycle";
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 
 export interface OutgoingUserPayload {
   llmContent: string;

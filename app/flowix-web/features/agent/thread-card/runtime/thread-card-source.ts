@@ -1,5 +1,5 @@
 import { useDocumentStore } from "@features/document";
-import type { AgentConversationSource } from "@features/agent/store/agent-conversation-store";
+import type { AgentConversationSource } from "@features/agent/store/agent-conversation-types";
 
 export function getCurrentThreadCardSource(): AgentConversationSource {
   const documentState = useDocumentStore.getState();

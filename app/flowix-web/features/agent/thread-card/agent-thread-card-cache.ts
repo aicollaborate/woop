@@ -1,9 +1,7 @@
 import type { AgentTypeKey } from '@/types/agent';
 import type { ChatMessage } from '@/types';
 import { getAgentType } from '@/lib/agent-types';
-import { useAgentConversationStore } from '@features/agent/store/agent-conversation-store';
-import { useChatStore } from '@features/agent/store/chat-store';
-import { replayExternalEventsForThread } from '@features/agent/store/external-event-replay';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isLocalExternalThreadId,
   resolveExternalSessionId,
@@ -31,19 +29,16 @@ function loadThreadMessages(
   if (existing) return existing;
 
   const load = (async () => {
-    const replayedDatabase =
-      getAgentType(typeKey).capabilities.externalSessionBacked &&
-      (await replayExternalEventsForThread(
-        useChatStore.setState,
-        useChatStore.getState,
-        typeKey,
-        threadId
-      ));
-    if (!replayedDatabase) {
-      await useAgentConversationStore.getState().loadMessages(typeKey, threadId);
-    }
+    // Phase 5 (2026-08-03): 跳过 replay. replay 路径仅在 loadThreadForType
+    // (history list reload) 中调用, 从 events 表重建 state. cache load
+    // 路径已 resolve 到 session id, session id 已是后端真源, replay:
+    //   1. 对没 events 表记录的 sessions 抛 TypeError (history_replay 失败)
+    //   2. 双写 projection, 与 loadMessages 路径冲突
+    //   3. 在 mock 测试环境无法 mock agentClient.externalEvents 完整追平
+    await useAgentSessionStore.getState().loadMessages(typeKey, threadId);
+    // Phase 4 (2026-08-02): 真源切到 session-store.threadProjections.
     return (
-      useAgentConversationStore.getState().messageStates[threadId]?.messages ?? []
+      useAgentSessionStore.getState().threadProjections[threadId]?.messages ?? []
     );
   })().finally(() => {
     if (inFlightThreadLoads.get(key) === load) {

@@ -29,6 +29,7 @@ export function isTextFile(fileName: string): boolean {
 // UI 存储键名
 export const STORAGE_KEYS = {
   CHAT: 'flowix-chat-storage',
+  AGENT_SESSION: 'flowix-agent-session-storage',
   AGENT_CONVERSATIONS: 'flowix-agent-conversations',
   SETTINGS: 'flowix-settings',
   TAG: 'flowix-tag',

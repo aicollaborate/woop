@@ -4,7 +4,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use uuid::Uuid;
 
 use super::super::lifecycle::ExternalLifecycleEmitter;
 use super::history::is_hermes_session_id;
@@ -12,7 +11,7 @@ use crate::agent_external::cli_resolver::{
     no_extra_candidates, resolve_external_cli, ExternalCliSpec,
 };
 use crate::agent_external::{
-    append_workspace_context, default_thread_title, persist_and_emit_external_chunk,
+    append_workspace_context, canonical_message_id, default_thread_title, persist_and_emit_external_chunk,
     persist_external_chunk, read_to_string, resolve_and_freeze_runtime_cwd,
     select_external_session_for_runtime, truncate_for_log, ExternalRunRegistry,
     USER_STOPPED_REASON,
@@ -236,7 +235,7 @@ impl HermesCliManager {
             })),
         );
 
-        self.persist_user_message(thread_id, &user_prompt, &message)
+        self.persist_user_message(thread_id, run_id, &user_prompt, &message)
             .await?;
 
         let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -354,7 +353,7 @@ impl HermesCliManager {
             if !stderr_text.trim().is_empty() {
                 tracing::info!("[HermesCli] stderr: {}", stderr_text.trim());
             }
-            self.persist_assistant_message(thread_id, &assistant_text)
+            self.persist_assistant_message(thread_id, run_id, &assistant_text)
                 .await?;
             self.resolve_and_persist_session(thread_id, run_id, started_at_ms, app_handle)
                 .await;
@@ -363,7 +362,7 @@ impl HermesCliManager {
         .await;
 
         if let Err(err) = &result {
-            if let Err(persist_err) = self.persist_error_message(thread_id, err).await {
+            if let Err(persist_err) = self.persist_error_message(thread_id, run_id, err).await {
                 tracing::warn!(
                     "[HermesCli] failed to persist error message for {thread_id}: {persist_err}"
                 );
@@ -376,6 +375,7 @@ impl HermesCliManager {
     async fn persist_user_message(
         &self,
         thread_id: &str,
+        run_id: &str,
         prompt: &str,
         message: &AgentUserMessage,
     ) -> Result<(), String> {
@@ -392,7 +392,12 @@ impl HermesCliManager {
             .add_message(
                 thread_id,
                 ThreadChatMessage {
-                    id: format!("user_{}", Uuid::new_v4()),
+                    id: canonical_message_id(
+                        AGENT_TYPE,
+                        run_id,
+                        "user",
+                        &format!("user-{run_id}"),
+                    ),
                     role: "user".to_string(),
                     content: prompt.to_string(),
                     llm_content: Some(prompt.to_string()),
@@ -413,7 +418,12 @@ impl HermesCliManager {
             .map_err(|e| e.to_string())
     }
 
-    async fn persist_assistant_message(&self, thread_id: &str, text: &str) -> Result<(), String> {
+    async fn persist_assistant_message(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
         if text.trim().is_empty() {
             return Ok(());
         }
@@ -421,7 +431,7 @@ impl HermesCliManager {
             .add_message(
                 thread_id,
                 ThreadChatMessage {
-                    id: format!("assistant_{}", Uuid::new_v4()),
+                    id: canonical_message_id(AGENT_TYPE, run_id, "assistant", "stream"),
                     role: "assistant".to_string(),
                     content: text.to_string(),
                     llm_content: None,
@@ -442,9 +452,39 @@ impl HermesCliManager {
             .map_err(|e| e.to_string())
     }
 
-    async fn persist_error_message(&self, thread_id: &str, error: &str) -> Result<(), String> {
+    async fn persist_error_message(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        error: &str,
+    ) -> Result<(), String> {
         let text = format!("Error: {}", error.trim());
-        self.persist_assistant_message(thread_id, &text).await
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        self.thread_manager
+            .add_message(
+                thread_id,
+                ThreadChatMessage {
+                    id: canonical_message_id(AGENT_TYPE, run_id, "error", "error"),
+                    role: "assistant".to_string(),
+                    content: text,
+                    llm_content: None,
+                    system_reminder_directory: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    is_loading: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_data: None,
+                    tool_input: None,
+                    tool_calls: None,
+                    reasoning: None,
+                    is_completed: Some(true),
+                    is_collapsed: None,
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn resolve_and_persist_session(

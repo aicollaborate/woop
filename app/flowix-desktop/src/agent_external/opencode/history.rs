@@ -31,11 +31,15 @@ pub async fn get_session_page(
     }
     let value: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("invalid OpenCode session export: {error}"))?;
-    Ok(paginate_turns(
-        export_to_turns(&value),
-        before_sequence,
-        limit,
-    ))
+    let mut turns = export_to_turns(&value);
+    for turn in &mut turns {
+        crate::agent_external::canonicalize_imported_messages(
+            "opencode",
+            session_id,
+            turn,
+        );
+    }
+    Ok(paginate_turns(turns, before_sequence, limit))
 }
 
 fn export_to_turns(value: &Value) -> Vec<Vec<ChatMessage>> {

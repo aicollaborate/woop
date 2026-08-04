@@ -322,7 +322,39 @@ pub async fn hermes_thread_list(state: State<'_, AppState>) -> Result<Vec<Thread
 }
 
 #[tauri::command]
-pub async fn hermes_thread_get(thread_id: String) -> Result<GetThreadResponse, String> {
+pub async fn hermes_thread_get(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<GetThreadResponse, String> {
+    if let Some(mut page) = state
+        .thread_manager
+        .get_external_event_messages_page("hermes", &thread_id, None, 50)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        let mut messages = page.messages;
+        while page.has_more {
+            page = state
+                .thread_manager
+                .get_external_event_messages_page(
+                    "hermes",
+                    &thread_id,
+                    page.oldest_sequence,
+                    50,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .unwrap_or(ThreadMessagesPage {
+                    messages: Vec::new(),
+                    oldest_sequence: None,
+                    has_more: false,
+                });
+            let mut combined = page.messages;
+            combined.extend(messages);
+            messages = combined;
+        }
+        return Ok(GetThreadResponse { messages });
+    }
     let messages = crate::agent_external::hermes::get_session(&thread_id).await?;
     Ok(GetThreadResponse { messages })
 }
@@ -332,7 +364,16 @@ pub async fn hermes_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
     limit: i64,
+    state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
+    if let Some(page) = state
+        .thread_manager
+        .get_external_event_messages_page("hermes", &thread_id, before_sequence, limit)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(page);
+    }
     crate::agent_external::hermes::get_session_page(&thread_id, before_sequence, limit).await
 }
 

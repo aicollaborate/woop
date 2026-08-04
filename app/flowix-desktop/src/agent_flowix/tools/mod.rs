@@ -254,6 +254,7 @@ pub async fn execute_tool(
     skill_store: &SkillStore,
     runtime_workspace_paths: Option<&[String]>,
     read_snapshot: Option<&str>,
+    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let scope = if let Some(paths) = runtime_workspace_paths {
         ToolScope::from_runtime_workspace_paths(memo_file, paths, security_bookmarks)
@@ -266,7 +267,7 @@ pub async fn execute_tool(
                 .await
         }
         ToolDispatchTarget::Filesystem => {
-            filesystem::execute_tool(tool_name, arguments, read_snapshot, &scope, memo_file).await
+            filesystem::execute_tool(tool_name, arguments, read_snapshot, &scope, memo_file, app).await
         }
         ToolDispatchTarget::WebSearch => web_search::execute_tool(arguments).await,
         ToolDispatchTarget::Shell => shell::execute_tool(arguments, &scope).await,
@@ -390,6 +391,7 @@ mod tests {
             &fx.skill_store,
             Some(&runtime_paths),
             None,
+            None,
         )
         .await;
 
@@ -418,6 +420,7 @@ mod tests {
             &fx.skill_store,
             Some(&runtime_paths),
             None,
+            None,
         )
         .await;
 
@@ -443,6 +446,7 @@ mod tests {
             &fx.skill_store,
             Some(&runtime_paths),
             None,
+            None,
         )
         .await;
         assert!(runtime_read.success, "{runtime_read:?}");
@@ -455,6 +459,7 @@ mod tests {
             None,
             &fx.skill_store,
             Some(&runtime_paths),
+            None,
             None,
         )
         .await;
@@ -469,6 +474,7 @@ mod tests {
             None,
             &fx.skill_store,
             Some(&empty_paths),
+            None,
             None,
         )
         .await;

@@ -191,7 +191,12 @@ pub(super) async fn write_with_memo(
     }
 }
 
-pub(super) async fn delete(arguments: &str, scope: &ToolScope) -> ToolResult {
+pub(super) async fn delete(
+    arguments: &str,
+    scope: &ToolScope,
+    memo_file: &std::sync::RwLock<flowix_core::memo_file::MemoFile>,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     #[derive(Deserialize)]
     struct Args {
         path: String,
@@ -222,6 +227,15 @@ pub(super) async fn delete(arguments: &str, scope: &ToolScope) -> ToolResult {
         ));
     }
 
+    // 已索引的 .md memo → 走领域删除 (注销 memo index + 删文件) 并直接 emit
+    // `Deleted`, 绕开 watcher 对 Remove 的被动反查 —— 那条路径在 filename / 绝对
+    // 路径校验不一致时会静默丢事件 (见 watcher/processor.rs `unregister_and_emit`
+    // 与 reconcile.rs `unregister_memo_by_path_for_notebook_id`)。非 memo 或反查
+    // 不到 → fallback 裸 fs::remove_file, 保留通用文件删除语义 (附件 / 孤立 .md)。
+    if let Some(result) = delete_indexed_memo(&path, memo_file, app) {
+        return result;
+    }
+
     match tokio::fs::remove_file(&path).await {
         Ok(()) => ToolResult::success(serde_json::json!({
             "path": path.display().to_string(),
@@ -229,6 +243,100 @@ pub(super) async fn delete(arguments: &str, scope: &ToolScope) -> ToolResult {
         })),
         Err(e) => ToolResult::error(format!("Failed to delete {}: {}", path.display(), e)),
     }
+}
+
+/// 若 `path` 指向一个已索引的 memo, 走领域服务删除并 emit `MemoEvent::Deleted`;
+/// 否则返回 `None`, 由调用方 fallback 到裸 `fs::remove_file`。
+///
+/// 判定对齐 `save_registered_memo`: 读 frontmatter `key` → `resolve_memo` →
+/// canonicalize 后路径必须与 `resolved.path` 一致, 才认定是受管理的 memo。
+///
+/// 不调用 `mark_self_write`: watcher 的 `Remove` 分支不查 self-write 表, 且
+/// `MemoService::delete_memo` 先删文件后注销 index —— watcher 收到 Remove 时
+/// filename 反查要么已空 (未命中 → worker → `unregister_and_emit` no-op), 要么
+/// 进 tombstone、450ms 后再查时 index 已空 (no-op), 天然不会重复 emit。
+fn delete_indexed_memo(
+    path: &std::path::Path,
+    memo_file: &std::sync::RwLock<flowix_core::memo_file::MemoFile>,
+    app: Option<&tauri::AppHandle>,
+) -> Option<ToolResult> {
+    use tauri::Manager;
+
+    let is_md = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+    if !is_md {
+        return None;
+    }
+    let app = app?;
+
+    let content = std::fs::read_to_string(path).ok()?;
+    let key = flowix_core::memo_file::extract_frontmatter_key(&content)?;
+
+    // 解析 + 路径校验 (与 save_registered_memo 同一口径)
+    let (id, notebook_id, abs_path, before) = {
+        let guard = memo_file.read().ok()?;
+        let mut service = flowix_core::MemoService::new(&guard);
+        let resolved = service.resolve_memo(&key).ok()?;
+        let requested = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let resolved_path =
+            dunce::canonicalize(&resolved.path).unwrap_or_else(|_| resolved.path.clone());
+        if requested != resolved_path {
+            return None;
+        }
+        let before = service.memo_metadata(&resolved.id).ok();
+        (
+            resolved.id,
+            resolved.notebook.id,
+            resolved.path.display().to_string(),
+            before,
+        )
+    };
+
+    // 领域删除: 注销 memo index + 删文件 (delete_memo_result_global)
+    let file_removed = {
+        let guard = memo_file.read().ok()?;
+        let mut service = flowix_core::MemoService::new(&guard);
+        match service.delete_memo(&id) {
+            Ok(deleted) => deleted.file_removed,
+            Err(error) => {
+                return Some(ToolResult::error(format!(
+                    "Failed to delete memo {}: {}",
+                    path.display(),
+                    error
+                )));
+            }
+        }
+    };
+    if !file_removed {
+        return None;
+    }
+
+    // search index 清理 (对齐 IPC delete_memo)
+    if let Some(state) = app.try_state::<crate::app::state::AppState>() {
+        crate::app::search_index::try_index_remove(state.inner(), &id);
+    }
+
+    let derived_changed = before
+        .as_ref()
+        .map(crate::memo_events::MemoDerivedChanged::from_deleted)
+        .unwrap_or_default();
+    crate::memo_events::emit(
+        app,
+        crate::memo_events::MemoEvent::Deleted {
+            id,
+            path: abs_path,
+            notebook_id,
+            derived_changed,
+            source: crate::memo_events::MemoChangeSource::ExternalTool,
+        },
+    );
+
+    Some(ToolResult::success(serde_json::json!({
+        "path": path.display().to_string(),
+        "deleted": true,
+    })))
 }
 
 pub(super) async fn ls(arguments: &str, scope: &ToolScope) -> ToolResult {

@@ -157,9 +157,13 @@ impl AgentManager {
         &self,
         thread_id: &str,
         message: &AgentUserMessage,
+        run_id: &str,
     ) -> Result<(), AgentError> {
         let thread_message = ThreadChatMessage {
-            id: format!("user_{}", Uuid::new_v4()),
+            // The frontend creates the same id for its optimistic row. Keeping
+            // the durable row run-scoped makes the broadcast idempotent in the
+            // originating Webview while sibling Webviews can insert it live.
+            id: format!("user-{run_id}"),
             role: MessageRole::User.as_str().to_string(),
             content: message
                 .llm_content

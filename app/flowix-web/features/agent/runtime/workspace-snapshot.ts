@@ -3,7 +3,7 @@ import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
 
 function uniquePaths(paths: Array<string | null | undefined>): string[] {
@@ -98,8 +98,9 @@ function migrateLegacyWorkspace(
 export function ensureConversationWorkspaceSnapshot(
   instanceId: string,
 ): RuntimeConfig {
-  const conversationStore = useAgentConversationStore.getState();
-  const instance = conversationStore.getInstance(instanceId);
+  // Persist the workspace snapshot on the canonical conversation instance.
+  const session = useAgentSessionStore.getState();
+  const instance = session.getInstance(instanceId);
   if (!instance) throw new Error("Agent conversation instance was not found");
 
   const runtimeConfig = instance.runtimeConfig ?? {};
@@ -107,7 +108,7 @@ export function ensureConversationWorkspaceSnapshot(
   if (existing) {
     const resolvedNotebookId = runtimeConfig.notebookId ?? existing.notebookId;
     if (!runtimeConfig.notebookId && resolvedNotebookId) {
-      conversationStore.setRuntimeConfig(instanceId, {
+      session.setRuntimeConfig(instanceId, {
         notebookId: resolvedNotebookId,
         workspaceSnapshot: existing,
       });
@@ -157,7 +158,7 @@ export function ensureConversationWorkspaceSnapshot(
   }
 
   const resolvedNotebookId = runtimeConfig.notebookId ?? snapshot.notebookId;
-  conversationStore.setRuntimeConfig(instanceId, {
+  session.setRuntimeConfig(instanceId, {
     workspaceSnapshot: snapshot,
     ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
   });

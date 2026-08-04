@@ -1,30 +1,81 @@
 import { useEffect } from 'react';
 
-import { acquireAgentChunkBridge, useChatStore } from '@features/agent/store/chat-store';
-import { useAgentConversationStore } from '@features/agent/store/agent-conversation-store';
-import { isThreadRunActive } from '@features/agent/store/thread-runtime-state';
+import {
+  acquireAgentChunkBridge,
+  useAgentSessionStore,
+} from '@features/agent/store/agent-session-store';
+import { isProjectionRunActive } from '@features/agent/store/session-reducer';
+import { getInterestedThreadIds } from '@features/agent/store/thread-interest';
 
 export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> {
-  const before = useChatStore.getState();
-  const locallyRunning = Object.entries(before.threadStates)
-    .filter(([, state]) => isThreadRunActive(state))
+  // Canonical run state lives in AgentSessionStore projections.
+  const before = useAgentSessionStore.getState();
+  const locallyRunning = Object.entries(before.threadProjections)
+    .filter(([, projection]) => isProjectionRunActive(projection))
     .map(([threadId]) => ({
       threadId,
-      agentType: before.threadTypes[threadId] ?? before.activeAgentTypeKey,
+      runId: before.threadProjections[threadId].runs.activeRunId,
+      agentType:
+        before.sessionMeta.threadTypes[threadId] ??
+        before.sessionMeta.activeAgentTypeKey,
     }));
 
-  await before.reconcileRunningRuns();
-  if (locallyRunning.length === 0) return;
-
-  const after = useChatStore.getState();
+  await useAgentSessionStore.getState().reconcileRunningRuns();
+  const after = useAgentSessionStore.getState();
   const endedWhileDisconnected = locallyRunning.filter(({ threadId }) => {
-    const state = after.threadStates[threadId];
-    return !state || !isThreadRunActive(state);
+    const projection = after.threadProjections[threadId];
+    return !projection || !isProjectionRunActive(projection);
   });
+
+  // Tauri events are intentionally ephemeral. On startup/focus/listener
+  // recovery, refresh the conversations this Webview currently owns so missed
+  // user rows or stream chunks converge through the normal history API. This
+  // is business-state reconciliation, not event replay.
+  const refreshTargets = new Map<string, typeof after.sessionMeta.activeAgentTypeKey>();
+  for (const [agentType, activeThreadId] of Object.entries(
+    after.sessionMeta.activeThreadIds,
+  )) {
+    if (!activeThreadId) continue;
+    const canonicalThreadId =
+      after.sessionMeta.externalSessionResolutions[activeThreadId] ?? activeThreadId;
+    refreshTargets.set(
+      canonicalThreadId,
+      after.sessionMeta.threadTypes[canonicalThreadId] ??
+        after.sessionMeta.threadTypes[activeThreadId] ??
+        (agentType as typeof after.sessionMeta.activeAgentTypeKey),
+    );
+  }
+  for (const { threadId, agentType } of endedWhileDisconnected) {
+    refreshTargets.set(threadId, agentType);
+  }
+
+  for (const interestedThreadId of getInterestedThreadIds()) {
+    const canonicalThreadId =
+      after.sessionMeta.externalSessionResolutions[interestedThreadId] ??
+      interestedThreadId;
+    refreshTargets.set(
+      canonicalThreadId,
+      after.sessionMeta.threadTypes[canonicalThreadId] ??
+        after.sessionMeta.threadTypes[interestedThreadId] ??
+        after.sessionMeta.activeAgentTypeKey,
+    );
+  }
+
+  const completedTargets = new Map(
+    endedWhileDisconnected
+      .filter((target): target is typeof target & { runId: string } => !!target.runId)
+      .map((target) => [target.threadId, target]),
+  );
+
   await Promise.allSettled(
-    endedWhileDisconnected.map(({ threadId, agentType }) => (
-      useAgentConversationStore.getState().loadMessages(agentType, threadId)
-    )),
+    [...refreshTargets].map(([threadId, agentType]) => {
+      const completed = completedTargets.get(threadId);
+      return completed
+        ? useAgentSessionStore
+            .getState()
+            .reconcileCompletedRun(agentType, threadId, completed.runId)
+        : useAgentSessionStore.getState().loadMessages(agentType, threadId);
+    }),
   );
 }
 

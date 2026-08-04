@@ -1,9 +1,9 @@
 import type { AgentTypeKey } from "@/types/agent";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import type {
   AgentConversationInstance,
   AgentConversationSource,
-} from "@features/agent/store/agent-conversation-store";
+} from "@features/agent/store/agent-conversation-types";
 
 export function upsertAgentThreadCardConversationInstance(options: {
   instanceId: string;
@@ -21,10 +21,10 @@ export function upsertAgentThreadCardConversationInstance(options: {
 } {
   const { instanceId, agentType, title, threadId, source, role } = options;
 
-  const store = useAgentConversationStore.getState();
-
-  const existing = store.getInstance(instanceId);
-  const instance = store.upsertInstance(instanceId, {
+  // Read and update the canonical conversation registry.
+  const session = useAgentSessionStore.getState();
+  const existing = session.getInstance(instanceId);
+  const instance = session.upsertInstance(instanceId, {
     agentType,
     ...(existing?.title ? {} : { title }),
     threadId,

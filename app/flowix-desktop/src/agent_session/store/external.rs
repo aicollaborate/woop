@@ -7,11 +7,37 @@ use crate::agent_session::types::{
 };
 use crate::agent_types::AgentId;
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_EXTERNAL_EVENTS_PER_THREAD: i64 = 10_000;
 const EXTERNAL_HISTORY_TRUNCATED_JSON: &str = r#"{"kind":"history_truncated","version":1}"#;
+
+fn derive_external_event_key(runtime: &str, payload: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
+    let run_id = value.get("run_id").and_then(|v| v.as_str()).map(str::trim);
+    let kind = value.get("kind").and_then(|v| v.as_str()).map(str::trim);
+    let sequence = value
+        .get("source_sequence")
+        .and_then(serde_json::Value::as_u64);
+    if let (Some(run_id), Some(kind), Some(sequence)) = (run_id, kind, sequence) {
+        let subsequence = value
+            .get("source_subsequence")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        return Some(format!(
+            "{runtime}:{run_id}:{kind}:{sequence}:{subsequence}"
+        ));
+    }
+
+    // Older adapters may not provide source sequence metadata. Hashing the
+    // canonical payload still makes exact retries idempotent without merging
+    // distinct events that merely share a run id or kind.
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    Some(format!("{runtime}:payload:{:x}", hasher.finalize()))
+}
 
 fn session_metadata_cwd(metadata: Option<&serde_json::Value>) -> Option<String> {
     let value = metadata?;
@@ -220,15 +246,6 @@ impl ThreadManager {
             params![product_thread_id, runtime, default_title, now],
         )?;
 
-        let title = tx
-            .query_row(
-                "SELECT title FROM threads WHERE thread_id = ?1",
-                [product_thread_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .unwrap_or_else(|| default_title.to_string());
-
         tx.execute(
             "INSERT INTO thread_external_sessions (
                 thread_id, runtime, external_session_id, session_metadata_json, created_at, updated_at
@@ -247,12 +264,10 @@ impl ThreadManager {
         )?;
         tx.execute(
             "UPDATE agent_conversation_instances
-             SET title = ?1,
-                 frozen_cwd = COALESCE(?2, frozen_cwd),
-                 updated_at = max(updated_at, ?3)
-             WHERE thread_id IN (?4, ?5, ?6)",
+             SET frozen_cwd = COALESCE(?1, frozen_cwd),
+                 updated_at = max(updated_at, ?2)
+             WHERE thread_id IN (?3, ?4, ?5)",
             params![
-                title,
                 session_cwd,
                 now,
                 product_thread_id,
@@ -282,6 +297,7 @@ impl ThreadManager {
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         let conn = self.lock_conn();
         let thread_id = event.thread_id.clone();
+        let event_key = derive_external_event_key(&event.runtime, &event.normalized_json);
         conn.execute(
             "INSERT OR IGNORE INTO threads (thread_id, agent_id, title, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -293,18 +309,30 @@ impl ThreadManager {
             ],
         )?;
         conn.execute(
-            "INSERT INTO agent_external_events (
-                runtime, thread_id, normalized_json, raw_json, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR IGNORE INTO agent_external_events (
+                runtime, thread_id, event_key, normalized_json, raw_json, created_at
+             ) VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6)",
             params![
                 event.runtime.as_str(),
                 event.thread_id.as_str(),
+                event_key.as_deref(),
                 event.normalized_json.as_str(),
                 event.raw_json.as_deref(),
                 now,
             ],
         )?;
-        let id = conn.last_insert_rowid();
+        let id = conn.query_row(
+            "SELECT id FROM agent_external_events
+             WHERE runtime = ?1 AND thread_id = ?2
+               AND ((?3 IS NOT NULL AND event_key = ?3) OR (?3 IS NULL AND id = last_insert_rowid()))
+             ORDER BY id DESC LIMIT 1",
+            params![
+                event.runtime.as_str(),
+                event.thread_id.as_str(),
+                event_key.as_deref(),
+            ],
+            |row| row.get(0),
+        )?;
         self.prune_agent_external_events_for_thread(&conn, &event.thread_id)?;
         Ok(id)
     }
@@ -378,7 +406,7 @@ impl ThreadManager {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT
-                id, runtime, thread_id, normalized_json, raw_json, created_at
+                id, runtime, thread_id, event_key, normalized_json, raw_json, created_at
              FROM agent_external_events
              WHERE thread_id = ?1 AND id > ?2
              ORDER BY id ASC
@@ -396,9 +424,10 @@ impl ThreadManager {
             id: row.get(0)?,
             runtime: row.get(1)?,
             thread_id: row.get(2)?,
-            normalized_json: row.get(3)?,
-            raw_json: row.get(4)?,
-            created_at: row.get(5)?,
+            event_key: row.get(3)?,
+            normalized_json: row.get(4)?,
+            raw_json: row.get(5)?,
+            created_at: row.get(6)?,
         })
     }
 
@@ -462,6 +491,30 @@ impl ThreadManager {
             }
             tm.get_external_event_messages_page_inner(
                 "claude",
+                &thread_id,
+                before_event_id,
+                turn_limit,
+            )
+            .map(Some)
+        })
+        .await
+    }
+
+    pub async fn get_external_event_messages_page(
+        self: &Arc<Self>,
+        runtime: &str,
+        thread_id: &str,
+        before_event_id: Option<i64>,
+        turn_limit: i64,
+    ) -> Result<Option<ThreadMessagesPage>, ThreadError> {
+        let runtime = runtime.to_string();
+        let thread_id = thread_id.to_string();
+        self.run_blocking(move |tm| {
+            if !tm.external_event_history_exists_inner(&runtime, &thread_id)? {
+                return Ok(None);
+            }
+            tm.get_external_event_messages_page_inner(
+                &runtime,
                 &thread_id,
                 before_event_id,
                 turn_limit,
@@ -577,7 +630,7 @@ impl ThreadManager {
         };
 
         let mut event_stmt = conn.prepare(
-            "SELECT id, runtime, thread_id, normalized_json, raw_json, created_at
+            "SELECT id, runtime, thread_id, event_key, normalized_json, raw_json, created_at
              FROM agent_external_events
              WHERE thread_id IN (?1, ?2) AND runtime = ?3
                AND id >= ?4 AND id < ?5
@@ -650,20 +703,24 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
             .clone()
             .unwrap_or_else(|| format!("external-event-{}", event.id));
         match kind {
-            Some("user_message") => messages.push(external_history_message(
-                payload
+            Some("user_message") => {
+                let raw_id = payload
                     .get("id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(&message_id)
-                    .to_string(),
-                "user",
-                payload
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                timestamp,
-            )),
+                    .to_string();
+                let id = external_run_scoped_id(&event.runtime, &payload, "user", &raw_id);
+                messages.push(external_history_message(
+                    id,
+                    "user",
+                    payload
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    timestamp,
+                ));
+            }
             Some("text") | Some("reasoning") => {
                 let role = if kind == Some("reasoning") {
                     "reasoning"
@@ -722,11 +779,7 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                     "tool-call",
                     &raw_tool_call_id,
                 );
-                let tool_message_id = if event.runtime == "codex" {
-                    message_id.clone()
-                } else {
-                    format!("external-tool-{raw_tool_call_id}")
-                };
+                let tool_message_id = message_id.clone();
                 let message_id =
                     external_run_scoped_id(&event.runtime, &payload, "tool", &tool_message_id);
                 let mut message =
@@ -795,10 +848,8 @@ fn external_run_scoped_id(
         .get("run_id")
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty());
-    if runtime == "codex" {
-        if let Some(run_id) = run_id {
-            return format!("{run_id}::{role}::{item_id}");
-        }
+    if let Some(run_id) = run_id {
+        return crate::agent_external::canonical_message_id(runtime, run_id, role, item_id);
     }
     item_id.to_string()
 }

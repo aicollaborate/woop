@@ -1,13 +1,13 @@
 import { Node, mergeAttributes, type MarkdownToken } from "@tiptap/core";
-import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { AgentTypeKey } from "@/types/agent";
 import {
   DEFAULT_AGENT_TYPE_KEY,
   getAgentType,
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
-import { useChatStore } from "@features/agent/store/chat-store";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import {
   DEFAULT_AGENT_THREAD_CARD_TITLE as DEFAULT_TITLE,
@@ -18,8 +18,41 @@ import {
 } from "@features/agent/thread-card/agent-thread-card-markdown";
 import { focusAgentThreadCardInput } from "@features/agent/thread-card/agent-thread-card-dom";
 import { AgentThreadCardView } from "@features/agent/thread-card/agent-thread-card-view";
-import { terminateAgentThreadCardRuntime } from "@features/agent/thread-card/agent-thread-card-cleanup";
+import {
+  restoreRemovedAgentThreadCardInstance,
+  terminateAgentThreadCardRuntime,
+} from "@features/agent/thread-card/agent-thread-card-cleanup";
 import { getCurrentThreadCardSource } from "@features/agent/thread-card/runtime/thread-card-source";
+
+export const SKIP_AGENT_THREAD_CARD_CLEANUP_META =
+  "flowixSkipAgentThreadCardCleanup";
+
+function collectAgentThreadCards(
+  doc: ProseMirrorNode,
+): Record<string, unknown>[] {
+  const cards: Record<string, unknown>[] = [];
+  doc.descendants((node) => {
+    if (node.type.name !== "agentThreadCard") return;
+    cards.push(node.attrs as Record<string, unknown>);
+  });
+  return cards;
+}
+
+function isSameAgentThreadCard(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  const beforeInstanceId =
+    typeof before.instanceId === "string" ? before.instanceId : "";
+  const afterInstanceId =
+    typeof after.instanceId === "string" ? after.instanceId : "";
+  if (beforeInstanceId && beforeInstanceId === afterInstanceId) return true;
+  const beforeThreadId =
+    typeof before.threadId === "string" ? before.threadId : "";
+  const afterThreadId =
+    typeof after.threadId === "string" ? after.threadId : "";
+  return !!beforeThreadId && beforeThreadId === afterThreadId;
+}
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -159,9 +192,11 @@ export const AgentThreadCard = Node.create({
           const nodeType = state.schema.nodes[this.name];
           if (!nodeType) return false;
           const typeKey = normalizeAgentTypeKey(
-            options?.typeKey ?? useChatStore.getState().activeAgentTypeKey,
+            options?.typeKey ??
+              useAgentSessionStore.getState().sessionMeta.activeAgentTypeKey,
           );
-          const instance = useAgentConversationStore.getState().createInstance({
+          if (!dispatch) return true;
+          const instance = useAgentSessionStore.getState().createInstance({
             agentType: typeKey,
             title: DEFAULT_TITLE,
             threadId: null,
@@ -195,32 +230,43 @@ export const AgentThreadCard = Node.create({
             tr.insert(after, paragraphType.create());
             tr.setSelection(TextSelection.create(tr.doc, after + 1));
           }
-          if (dispatch) {
-            dispatch(tr);
-            focusAgentThreadCardInput(this.editor.view, from);
-          }
+          dispatch(tr);
+          focusAgentThreadCardInput(this.editor.view, from);
           return true;
         },
     };
   },
 
-  addKeyboardShortcuts() {
-    const cleanupSelectedCard = () => {
-      const { selection } = this.editor.state;
-      if (
-        !(selection instanceof NodeSelection) ||
-        selection.node.type.name !== this.name
-      ) {
-        return false;
-      }
-      terminateAgentThreadCardRuntime(selection.node.attrs);
-      return false;
-    };
-
-    return {
-      Backspace: cleanupSelectedCard,
-      Delete: cleanupSelectedCard,
-    };
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        appendTransaction: (transactions, oldState, newState) => {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+          if (
+            transactions.some((transaction) =>
+              transaction.getMeta(SKIP_AGENT_THREAD_CARD_CLEANUP_META),
+            )
+          ) {
+            return null;
+          }
+          const before = collectAgentThreadCards(oldState.doc);
+          const after = collectAgentThreadCards(newState.doc);
+          for (const attrs of before) {
+            if (!after.some((candidate) => isSameAgentThreadCard(attrs, candidate))) {
+              terminateAgentThreadCardRuntime(attrs);
+            }
+          }
+          for (const attrs of after) {
+            if (!before.some((candidate) => isSameAgentThreadCard(candidate, attrs))) {
+              restoreRemovedAgentThreadCardInstance(attrs);
+            }
+          }
+          return null;
+        },
+      }),
+    ];
   },
 
   addNodeView() {

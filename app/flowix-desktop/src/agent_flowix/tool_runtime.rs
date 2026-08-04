@@ -198,6 +198,7 @@ impl AgentManager {
                         &self.skill_store,
                         runtime_workspace_paths,
                         None,
+                        self.app_handle.get(),
                     )
                     .await
                 } else {
@@ -292,6 +293,7 @@ impl AgentManager {
             &self.skill_store,
             runtime_workspace_paths.as_deref(),
             read_snapshot.as_deref(),
+            self.app_handle.get(),
         )
         .await;
 

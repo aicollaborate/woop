@@ -1,5 +1,5 @@
 import type { AgentTypeKey } from '@/types/agent';
-import { useChatStore } from '@features/agent/store/chat-store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { getExternalAgentRuntimeAdapter } from './external-agent-runtime-adapters';
 
 const localThreadIdsByHandle = new Map<string, string>();
@@ -35,13 +35,22 @@ export function beginExternalAgentThreadCardRun(
   const localThreadId = adapter?.createLocalThreadId(instanceId) ??
     `${typeKey}-local-${instanceId}`;
   localThreadIdsByHandle.set(handleId, localThreadId);
-  useChatStore.getState().setActiveAgentThread(typeKey, localThreadId);
+  // Phase 4 (2026-08-02): session-store.sessionMeta.activeThreadIds 是真源.
+  useAgentSessionStore.getState().setSessionMeta((meta) => ({
+    ...meta,
+    activeThreadIds: {
+      ...meta.activeThreadIds,
+      [typeKey]: localThreadId,
+    },
+    activeAgentTypeKey: typeKey,
+  }));
   return localThreadId;
 }
 
 export function getResolvedExternalSessionId(runtimeThreadId: string | null): string | undefined {
   if (!runtimeThreadId) return undefined;
-  return useChatStore.getState().externalSessionResolutions[runtimeThreadId];
+  // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.externalSessionResolutions.
+  return useAgentSessionStore.getState().sessionMeta.externalSessionResolutions[runtimeThreadId];
 }
 
 export function applyResolvedExternalSession(
@@ -51,7 +60,7 @@ export function applyResolvedExternalSession(
   typeKey: AgentTypeKey
 ): boolean {
   if (!sessionId || sessionId === runtimeThreadId) return false;
-  useChatStore.getState().migrateThreadState(runtimeThreadId, sessionId, typeKey);
+  useAgentSessionStore.getState().migrateThreadState(runtimeThreadId, sessionId, typeKey);
   if (localThreadIdsByHandle.get(handleId) === runtimeThreadId) {
     localThreadIdsByHandle.delete(handleId);
   }
@@ -80,6 +89,8 @@ export async function stopExternalAgentThreadCardRun(
 ): Promise<void> {
   const runtimeThreadId = getExternalAgentRuntimeThreadId(handleId, persistedThreadId);
   if (!runtimeThreadId) return;
-  const runId = useChatStore.getState().threadStates[runtimeThreadId]?.activeRunId ?? undefined;
-  await useChatStore.getState().stopThreadRun(runtimeThreadId, runId);
+  // Phase 4 (2026-08-02): 真源是 session-store.threadProjections.
+  const projection = useAgentSessionStore.getState().threadProjections[runtimeThreadId];
+  const runId = projection?.runs.activeRunId ?? undefined;
+  await useAgentSessionStore.getState().stopThreadRun(runtimeThreadId, runId);
 }

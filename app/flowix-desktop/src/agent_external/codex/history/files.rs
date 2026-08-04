@@ -135,6 +135,7 @@ pub(super) fn truncate_history_tool_output(text: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn normalize_epoch_millis(ts: i64) -> i64 {
     if ts < 10_000_000_000 {
         ts * 1000

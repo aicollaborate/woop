@@ -83,7 +83,7 @@ impl ThreadManager {
         title: String,
     ) -> Result<ThreadInfo, ThreadError> {
         let now = chrono::Utc::now().timestamp_millis();
-        let thread_id = format!("thread_{}", now);
+        let thread_id = format!("thread_{}", uuid::Uuid::new_v4());
 
         let info = ThreadInfo {
             thread_id: thread_id.clone(),
@@ -206,6 +206,7 @@ impl ThreadManager {
         Ok(Some(Thread { info, messages }))
     }
 
+    #[allow(dead_code)]
     pub async fn get_thread_info(
         self: &Arc<Self>,
         thread_id: &str,
@@ -257,9 +258,9 @@ impl ThreadManager {
             params![target_thread_id, agent_id.0, title, now],
         )?;
         tx.execute(
-            "UPDATE agent_conversation_instances SET title = ?1, updated_at = max(updated_at, ?2)
-             WHERE thread_id = ?3",
-            params![title, now, target_thread_id],
+            "UPDATE agent_conversation_instances SET updated_at = max(updated_at, ?1)
+             WHERE thread_id = ?2",
+            params![now, target_thread_id],
         )?;
         // Keep SELECT inside the same std::sync::MutexGuard. ThreadManager uses
         // synchronous rusqlite calls internally; async signatures are kept for

@@ -55,8 +55,9 @@ describe("ComposerImageController", () => {
     });
     input.dispatchEvent(paste);
 
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    await vi.waitFor(() => {
+      expect(controller.hasPending).toBe(false);
+    });
     expect(mocks.cacheImage).toHaveBeenCalled();
     expect(container.querySelector("img")).not.toBeNull();
     expect(onChange).toHaveBeenCalledWith([

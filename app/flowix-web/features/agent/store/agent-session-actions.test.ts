@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentChunk } from "@/types/agent";
 import { CONTEXT_PROMPT_MARKER } from "@features/agent/message";
 
@@ -148,9 +148,12 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       );
     }
 
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
+    );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     agentAccessMock.config = { entries: [] };
     memoStateMock.selectedNotebook = null;
@@ -159,12 +162,49 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       useAgentConversationStore.getInitialState(),
       true,
     );
+    // Phase 2 (2026-08-02): session-store 是新真源, 每个测试必须 reset,
+    // 否则跨测试的 threadProjections 通过 mirror 污染 chat-store.
+    useAgentSessionStore.setState(useAgentSessionStore.getInitialState(), true);
+  });
+
+  it("serializes persistence writes for the same conversation instance", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const persistedTitles: string[] = [];
+    vi.mocked(agent.upsertConversationInstance).mockImplementation(
+      async (instance) => {
+        persistedTitles.push(instance.initialTitle);
+        if (persistedTitles.length === 1) await firstPending;
+        return { ...instance, threadTitle: instance.initialTitle };
+      },
+    );
+
+    const instance = useAgentSessionStore.getState().createInstance({
+      agentType: "flowix",
+      title: "First title",
+      threadId: null,
+      source: { kind: "thread-card" },
+    });
+    useAgentSessionStore.getState().renameInstance(instance.instanceId, "Latest title");
+
+    expect(agent.upsertConversationInstance).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await vi.waitFor(() => {
+      expect(agent.upsertConversationInstance).toHaveBeenCalledTimes(2);
+    });
+    expect(persistedTitles).toEqual(["First title", "Latest title"]);
   });
 
   it("projects live chunks in a tab-host bridge and releases it after the last owner", async () => {
     const { listenToAgentStream } = await import("@platform/tauri/client");
     const { acquireAgentChunkBridge, useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const unlisten = vi.fn();
     let emitChunk!: (chunk: AgentChunk) => void;
@@ -181,16 +221,40 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(listenToAgentStream).toHaveBeenCalledTimes(1);
 
     const threadId = "tab-host-thread";
-    emitChunk({ kind: "stream_start", thread_id: threadId });
-    emitChunk({ kind: "text", thread_id: threadId, text: "Live child-window reply" });
+    useChatStore.getState().setActiveThreadId(threadId);
+    emitChunk({
+      kind: "user_message",
+      thread_id: threadId,
+      id: "user-run-tab-host",
+      text: "Question from sibling window",
+      timestamp: 100,
+      run_id: "run-tab-host",
+    });
+    emitChunk({ kind: "stream_start", thread_id: threadId, run_id: "run-tab-host" });
+    emitChunk({
+      kind: "text",
+      thread_id: threadId,
+      text: "Live child-window reply",
+      run_id: "run-tab-host",
+    });
     await flushAnimationFrame();
 
     const running = useChatStore.getState().threadStates[threadId];
     expect(running.isLoading).toBe(true);
-    expect(running.messages[0]?.content).toBe("Live child-window reply");
+    expect(running.messages.map((message) => message.content)).toEqual([
+      "Question from sibling window",
+      "Live child-window reply",
+    ]);
 
-    emitChunk({ kind: "stream_end", thread_id: threadId, reason: null });
+    const { agent } = await import("@platform/tauri/client");
+    emitChunk({
+      kind: "stream_end",
+      thread_id: threadId,
+      reason: null,
+      run_id: "run-tab-host",
+    });
     expect(useChatStore.getState().threadStates[threadId].isLoading).toBe(false);
+    await vi.waitFor(() => expect(agent.getThreadPage).toHaveBeenCalled());
 
     releaseA();
     expect(unlisten).not.toHaveBeenCalled();
@@ -200,9 +264,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("refreshes final history when listener recovery finds a locally running thread ended", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const { reconcileAgentRunsAndRefreshEndedHistory } = await import(
       "@features/agent/hooks/use-agent-events"
@@ -217,20 +281,24 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       },
     });
     vi.mocked(agent.runningThreads).mockResolvedValueOnce({});
-    const loadMessages = vi
-      .spyOn(useAgentConversationStore.getState(), "loadMessages")
+    const reconcileCompletedRun = vi
+      .spyOn(useAgentSessionStore.getState(), "reconcileCompletedRun")
       .mockResolvedValueOnce();
 
     await reconcileAgentRunsAndRefreshEndedHistory();
 
     expect(useChatStore.getState().threadStates[threadId].isLoading).toBe(false);
-    expect(loadMessages).toHaveBeenCalledWith("flowix", threadId);
+    expect(reconcileCompletedRun).toHaveBeenCalledWith(
+      "flowix",
+      threadId,
+      "run-ended-offline",
+    );
   });
 
   it("routes streamed assistant text into the same thread state consumed by Thread Card", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-flowix";
@@ -274,7 +342,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(idleState.isLoading).toBe(false);
     expect(idleState.activeRunId).toBeNull();
     expect(Object.values(idleState.runs)).toHaveLength(0);
-    expect(idleState.messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 是单一真源, stream_end 不再清 messages.
+    // 旧 releaseThreadRuntimeMessages 在 dual-write 时代释放大 tool_data 以省内存,
+    // 在 single-source 架构下不再需要; message 由 session-store 持久投影 + mirror 同步.
+    expect(idleState.messages).toMatchObject([{ role: "assistant", content: "Hello" }]);
     expect(
       useAgentConversationStore.getState().messageStates[threadId]?.messages[0],
     ).toMatchObject({
@@ -288,9 +359,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("syncs optimistic user messages into the render message state before chunks arrive", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { selectRenderableThreadMessages } = await import(
       "@features/agent/store/thread-render-messages"
@@ -315,9 +386,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("uses canonical render messages to detect non-first follow-up sends", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "thread-follow-up-after-runtime-release";
 
@@ -346,9 +417,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("applies low-frequency chunks against conversation live messages", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "thread-low-frequency-conversation-live";
     const toolCallId = "tool-live-state";
@@ -397,9 +468,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("keeps Claude reasoning in one run-scoped row across a tool cycle", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "claude-live-reasoning-tool-cycle";
     const runId = "claude-live-reasoning-run";
@@ -499,13 +570,13 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0]).toMatchObject({
-      id: `reasoning-${runId}`,
+      id: `msg:claude:${runId}:reasoning:reasoning-${runId}`,
       content: "first thought\n\nsecond thought",
       isCompleted: true,
     });
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({
-      toolCallId: "tool-cycle-1",
+      toolCallId: `msg:claude:${runId}:tool-call:tool-cycle-1`,
       isLoading: false,
     });
     expect(messages.map((message) => message.role)).toEqual([
@@ -522,9 +593,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("completes a Claude reasoning-only row when the stream ends", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "claude-reasoning-only-end";
     const runId = "claude-reasoning-only-run";
@@ -559,7 +630,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       useAgentConversationStore.getState().messageStates[threadId];
     expect(messageState.messages).toMatchObject([
       {
-        id: `reasoning-${runId}`,
+        id: `msg:claude:${runId}:reasoning:reasoning-${runId}`,
         role: "reasoning",
         content: "reasoning without final text",
         isCompleted: true,
@@ -570,9 +641,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("folds legacy Claude envelope text ids without crossing a tool boundary", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "claude-live-envelope-text";
     const runId = "claude-live-envelope-run";
@@ -679,14 +750,20 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("applies buffered text chunks against conversation live messages", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
+    );
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const threadId = "thread-buffered-conversation-live";
 
     useChatStore.getState().bindThreadType(threadId, "flowix");
-    useAgentConversationStore.getState().syncLiveMessageState("flowix", threadId, {
+    // Phase 2 (2026-08-02): session-store 是真源, 直接 seed 它. mirror 会自动
+    // 把同步状态写到 conv-store 与 chat-store, 断言仍走两个老 store.
+    useAgentSessionStore.getState().setThreadProjection(threadId, (p) => ({
+      ...p,
       messages: [
         {
           id: "assistant-live",
@@ -695,9 +772,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       ],
-      pendingAssistantId: "assistant-live",
-      pendingReasoningId: null,
-    });
+      pending: { assistantId: "assistant-live", reasoningId: null },
+    }));
 
     useChatStore.getState().dispatchAgentChunk({
       kind: "text",
@@ -724,7 +800,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("restores running state from non-terminal chunks when stream_start was missed", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-missed-start";
@@ -750,7 +826,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("reconciles running thread state from backend snapshot", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-snapshot-running";
@@ -775,10 +851,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("migrates conversation messages when backend snapshot resolves a pending thread", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const localThreadId = "codex-local-snapshot-pending";
     const sessionId = "codex-session-snapshot-pending";
@@ -818,7 +894,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       isLoading: true,
       activeRunId: "run-snapshot-pending",
     });
-    expect(chatState.threadStates[sessionId].messages).toEqual([]);
+    expect(chatState.threadStates[sessionId].messages[0]).toMatchObject({
+      id: "assistant-snapshot-pending",
+      content: "snapshot restored pending message",
+    });
 
     const messageState =
       useAgentConversationStore.getState().messageStates[sessionId];
@@ -833,9 +912,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("reconciles Agent conversation instances from backend running snapshot", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "thread-snapshot-instance-running";
 
@@ -872,9 +951,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("does not replace an existing external conversation title with the default snapshot title", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "codex-session-title-preserved";
     const instance = useAgentConversationStore.getState().createInstance({
@@ -901,9 +980,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("syncs usage totals into Agent conversation run when usage arrives", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "thread-usage-instance-sync";
     const runId = "run-usage-instance-sync";
@@ -958,7 +1037,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("removes stale local running state when backend snapshot is empty", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-stale-running";
@@ -1002,7 +1081,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("keeps optimistic local run during backend snapshot grace window", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-optimistic-run";
@@ -1022,7 +1101,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   it("honors caller-provided non-first-message state when preparing llmContent", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "codex-session-with-history-only";
 
@@ -1043,7 +1122,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("鈶?deleteThread clears in-memory messages and runs", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-delete-clears-state";
 
@@ -1088,21 +1167,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     await store.deleteThread(threadId);
 
-    // deleteThread 涔嬪悗 (Week 1 #2 淇): entry 淇濈暀浣?messages 娓呯┖,
-    // 閲婃斁 24KB tool_data 绱Н銆俽uns / pendingXxxId / isLoading 涔熻褰掗浂,
-    // 闃叉 stopStream 鍚?flush 缂撳啿鎶婃枃瀛楀啓鍒板凡鍒?thread銆?  
+    // Canonical projection is removed completely after backend deletion.
     const after = useChatStore.getState().threadStates[threadId];
-    expect(after).toBeDefined();
-    expect(after.messages).toEqual([]);
-    expect(after.runs).toEqual({});
-    expect(after.isLoading).toBe(false);
-    expect(after.pendingAssistantId).toBeNull();
-    expect(after.pendingReasoningId).toBeNull();
-    expect(after.activeRunId).toBeNull();
-    expect(after.oldestSequence).toBeNull();
-    expect(after.hasMoreHistory).toBe(false);
-    expect(after.loadingMore).toBe(false);
-    expect(after.lastRun).toBeUndefined();
+    expect(after).toBeUndefined();
   });
 
   it("deleteThread clears threadTypes and reverse-mapped externalSessionResolutions", async () => {
@@ -1111,7 +1178,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     // 璇垽 dispatch 璺緞銆?鍚屾椂鍙嶅悜鏄犲皠 `externalSessionResolutions[local] === threadId`
     // (鍗?local id 宸茬粡琚?resolve 鍒拌繖涓鍒犵殑 thread) 涔熻娓? 鍚﹀垯 findByThreadId
     // 浼氳鍛戒腑宸插垹 id銆?  
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-delete-cleans-thread-types";
     const localThreadId = "codex-local-agent-inst-orphan";
@@ -1140,8 +1207,73 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     ).toBeUndefined();
   });
 
+  it("does not revive a deleted projection when an initial history request resolves late", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const threadId = "deleted-while-history-loading";
+    let resolvePage!: (page: {
+      messages: [];
+      oldestSequence: null;
+      hasMore: boolean;
+    }) => void;
+    vi.mocked(agent.getCodexThreadPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        }),
+    );
+
+    const loading = useAgentSessionStore
+      .getState()
+      .loadMessages("codex", threadId);
+    await vi.waitFor(() => {
+      expect(
+        useAgentSessionStore.getState().threadProjections[threadId]?.pagination
+          .loadingInitial,
+      ).toBe(true);
+    });
+
+    await useAgentSessionStore.getState().deleteThread(threadId);
+    resolvePage({ messages: [], oldestSequence: null, hasMore: false });
+    await loading;
+
+    expect(
+      useAgentSessionStore.getState().threadProjections[threadId],
+    ).toBeUndefined();
+    expect(useAgentSessionStore.getState().threadTombstones[threadId]).toBe(true);
+  });
+
+  it("drops stream chunks that arrive after a thread was deleted", async () => {
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const threadId = "deleted-before-late-stream";
+    await useAgentSessionStore.getState().deleteThread(threadId);
+
+    useAgentSessionStore.getState().dispatchAgentChunk({
+      kind: "stream_start",
+      thread_id: threadId,
+      run_id: "late-run",
+      agent_type: "codex",
+    });
+    useAgentSessionStore.getState().dispatchAgentChunk({
+      kind: "text",
+      thread_id: threadId,
+      run_id: "late-run",
+      agent_type: "codex",
+      text: "must be ignored",
+    });
+    await flushAnimationFrame();
+
+    expect(
+      useAgentSessionStore.getState().threadProjections[threadId],
+    ).toBeUndefined();
+  });
+
   it("clears running state when stream_end matches the active run id", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-run-id-match";
 
@@ -1165,9 +1297,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("ignores late tool chunks after stream_end", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-late-tool";
@@ -1222,7 +1354,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("ignores stale stream_end after a newer run has started", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-stale-end";
 
@@ -1253,12 +1385,12 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("migrates a local Codex thread to the resolved session id", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const {
       selectRunningAgentConversationThreadIds,
       useAgentConversationStore,
-    } = await import("@features/agent/store/agent-conversation-store");
+    } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const localThreadId = "codex-local-agent-inst-store-session";
     const sessionId = "019f0000-0000-7000-8000-000000000000";
@@ -1308,7 +1440,11 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(state.threadTypes[sessionId]).toBe("codex");
     expect(state.threadStates[sessionId].isLoading).toBe(true);
     expect(state.threadStates[sessionId].activeRunId).toBe("run-local-1");
-    expect(state.threadStates[sessionId].messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 持久 messages, session_resolved 迁移后保留.
+    // 旧 release 语义断言已废弃 ── 见 store/index.ts 注释.
+    expect(state.threadStates[sessionId].messages).toMatchObject([
+      { content: "Codex answer before session id" },
+    ]);
     expect(
       useAgentConversationStore.getState().messageStates[sessionId].messages[0]
         ?.content,
@@ -1348,30 +1484,29 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("migrates conversation messages on session resolution without requiring an instance", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const localThreadId = "codex-local-without-instance";
     const sessionId = "codex-session-without-instance";
 
-    useAgentConversationStore.getState().syncLiveMessageState(
-      "codex",
-      localThreadId,
-      {
-        messages: [
-          {
-            id: "assistant-local",
-            role: "assistant",
-            content: "message before instance exists",
-            timestamp: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-        pendingAssistantId: "assistant-local",
-        pendingReasoningId: null,
-      },
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
+    useAgentSessionStore.getState().setThreadProjection(localThreadId, (p) => ({
+      ...p,
+      messages: [
+        {
+          id: "assistant-local",
+          role: "assistant",
+          content: "message before instance exists",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      pending: { assistantId: "assistant-local", reasoningId: null },
+    }));
 
     useChatStore.getState().bindThreadType(localThreadId, "codex");
     useChatStore.getState().dispatchAgentChunk({
@@ -1397,12 +1532,58 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     ).toBe(sessionId);
   });
 
+  it("commits projection, metadata, and conversation migration in one store update", async () => {
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const localThreadId = "atomic-local-thread";
+    const sessionId = "atomic-session-thread";
+    const instance = useAgentSessionStore.getState().createInstance({
+      agentType: "codex",
+      title: "Atomic migration",
+      threadId: localThreadId,
+      source: { kind: "thread-card" },
+    });
+    useAgentSessionStore.getState().dispatch({
+      kind: "stream_start",
+      agentType: "codex",
+      threadId: localThreadId,
+      runId: "atomic-run",
+      timestamp: 1,
+    });
+    let notifications = 0;
+    const unsubscribe = useAgentSessionStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    useAgentSessionStore.getState().dispatchAgentEvent({
+      kind: "session_resolved",
+      agentType: "codex",
+      threadId: localThreadId,
+      sessionId,
+      runId: "atomic-run",
+      timestamp: 2,
+    });
+    unsubscribe();
+
+    const state = useAgentSessionStore.getState();
+    expect(notifications).toBe(1);
+    expect(state.threadProjections[localThreadId]).toBeUndefined();
+    expect(state.threadProjections[sessionId]).toBeDefined();
+    expect(state.sessionMeta.externalSessionResolutions[localThreadId]).toBe(
+      sessionId,
+    );
+    expect(state.conversationRegistry.instances[instance.instanceId].threadId).toBe(
+      sessionId,
+    );
+  });
+
   it("migrates external session cache resolution through conversation messages", async () => {
     const { useChatStore } = await import(
-      "@features/agent/store/chat-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const { applyResolvedExternalSession, getResolvedExternalSessionId } =
       await import(
@@ -1411,22 +1592,22 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const localThreadId = "codex-local-cache-resolved";
     const sessionId = "codex-session-cache-resolved";
 
-    useAgentConversationStore.getState().syncLiveMessageState(
-      "codex",
-      localThreadId,
-      {
-        messages: [
-          {
-            id: "assistant-cache-resolved",
-            role: "assistant",
-            content: "cache resolved message",
-            timestamp: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-        pendingAssistantId: "assistant-cache-resolved",
-        pendingReasoningId: null,
-      },
+    // Phase 2 (2026-08-02): seed session-store (真源), mirror 同步到 conv-store.
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
+    useAgentSessionStore.getState().setThreadProjection(localThreadId, (p) => ({
+      ...p,
+      messages: [
+        {
+          id: "assistant-cache-resolved",
+          role: "assistant",
+          content: "cache resolved message",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      pending: { assistantId: "assistant-cache-resolved", reasoningId: null },
+    }));
     useChatStore.getState().bindThreadType(localThreadId, "codex");
     useChatStore.getState().dispatchAgentChunk({
       kind: "stream_start",
@@ -1451,7 +1632,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       isLoading: true,
       activeRunId: "run-cache-resolved",
     });
-    expect(chatState.threadStates[sessionId].messages).toEqual([]);
+    // Phase 2 (2026-08-02): projection 持久 messages, 见同文件 1283 注释.
+    expect(chatState.threadStates[sessionId].messages).toMatchObject([
+      { content: "cache resolved message" },
+    ]);
 
     const messageState =
       useAgentConversationStore.getState().messageStates[sessionId];
@@ -1466,7 +1650,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("keeps parallel Thread Card streams isolated by thread id", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const firstThreadId = "thread-card-codex";
     const secondThreadId = "thread-card-flowix";
@@ -1507,9 +1691,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("loads Codex history through paged IPC", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "codex-history-page";
 
@@ -1550,16 +1734,19 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(messageState.messages[0]?.content).toBe("recent codex answer");
     expect(messageState.oldestSequence).toBe(42);
     expect(messageState.hasMoreHistory).toBe(true);
-    expect(useChatStore.getState().threadStates[threadId].messages).toEqual(
-      [],
-    );
+    // Phase 3 (2026-08-02): loadMessages 写 session-store, mirror 同步到
+    // chat-store ── threadStates[tid].messages 不再为空. 旧 dual-write 时代
+    // chat-store.threadStates 不含 messages 的 invariant 已废弃.
+    expect(
+      useChatStore.getState().threadStates[threadId].messages,
+    ).toMatchObject([{ content: "recent codex answer" }]);
   });
 
   it("loads Codex database history through the backend materialized page", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "codex-database-only-history";
     vi.mocked(agent.listCodexThreads).mockResolvedValueOnce([
@@ -1600,9 +1787,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("hydrates tool display when loading Codex history", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "codex-history-web-search";
 
@@ -1655,9 +1842,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("loads Claude history tool rows after external replay has no display events", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const store = useChatStore.getState();
     const threadId = "claude-history-tool-merge";
@@ -1733,7 +1920,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("treats Codex text chunks as a final message instead of streaming deltas", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-final";
 
@@ -1754,7 +1941,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("renders tool-call lifecycle in the target thread without rebuilding other threads", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-tool";
 
@@ -1789,7 +1976,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("normalizes Codex command tool input when arguments arrive as JSON text", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-command-json";
 
@@ -1822,7 +2009,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("summarizes Codex command execution results without full output", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-command-result";
 
@@ -1863,7 +2050,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(threadState.activeRunId).toBe("run-codex-1");
     expect(message).toMatchObject({
       role: "tool",
-      toolCallId: "run-codex-1::tool-call::cmd-1",
+      toolCallId: "msg:codex:run-codex-1:tool-call:cmd-1",
       toolName: "command_execution",
       isLoading: false,
     });
@@ -1872,7 +2059,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   });
 
   it("keeps tool result rendering safe for non-serializable command output", async () => {
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-codex-command-circular-result";
     const result: Record<string, unknown> = {};
@@ -1906,7 +2093,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("passes the thread agent type when stopping a run", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
     const threadId = "thread-card-stop-codex";
 
@@ -1952,7 +2139,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     // 浼氭薄鏌撳彟涓€涓?panel 鐨?send 璺緞銆?    //
     // 鐜板湪 `activeThreadUpdate` 鍙洿鏂?activeThreadIds[type], activeAgentTypeKey
     // 鐢?setActiveAgentThread / setActiveAgentTypeKey 鏄惧紡绠＄悊銆?  
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
 
     // 鍒濆 activeAgentTypeKey (DEFAULT_AGENT_TYPE_KEY 閫氬父鏄?'flowix', 浣嗕笉渚濊禆鍏蜂綋鍊?
@@ -1979,7 +2166,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     // stop 鍏滃簳, 鏄氮璐广€?鐜板湪 targetRunId 鏈В鏋愭椂鐩存帴 return, 涓嶅彂 IPC銆?    // 楠岃瘉涓ょ鎯呭舰:
     //   1. thread 瀹屽叏娌?dispatch 杩?stream_start, 鍐呴儴鏃?active run銆?    //   2. thread 宸?stream_end, activeRunId 琚竻, 涔熸病涓滆タ鍙仠銆?  
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const store = useChatStore.getState();
 
     // Scenario 1: a brand-new thread that has never run.
@@ -2020,7 +2207,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("sends Codex model and permission through runtime config", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-runtime-config-codex";
 
     useChatStore.setState({
@@ -2051,7 +2238,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("derives Codex cwd and workspacePaths from notebook folder defaults + current notebook", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-runtime-config-codex-workspaces";
     memoStateMock.selectedNotebook = {
       id: "nb-current",
@@ -2102,7 +2289,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("uses first folder as cwd when no workspace is set, includes current notebook", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-runtime-config-first-folder";
     memoStateMock.selectedNotebook = {
       id: "nb-current",
@@ -2147,7 +2334,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("uses the notebook workspace snapshot as cwd before backend freezing", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-frozen-workspace";
     memoStateMock.selectedNotebook = {
       id: "nb-changed",
@@ -2216,7 +2403,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("renames local agent threads through the standard action", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-rename-gemini";
     vi.mocked(agent.listLocalAgentThreads).mockResolvedValueOnce([
       { threadId, title: "New title", createdAt: 1, updatedAt: 2 },
@@ -2246,9 +2433,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("renames Agent conversations through the instance-backed action", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "thread-card-rename-conversation";
     vi.mocked(agent.listLocalAgentThreads).mockResolvedValueOnce([
@@ -2302,9 +2489,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("persists Codex titles and synchronizes every card bound to the thread", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "019f-product-title-canonical";
     vi.mocked(agent.listCodexThreads).mockResolvedValueOnce([
@@ -2348,9 +2535,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
   it("rolls every title snapshot back when product persistence fails", async () => {
     const { agent } = await import("@platform/tauri/client");
-    const { useChatStore } = await import("@features/agent/store/chat-store");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+      "@features/agent/store/agent-session-test-facade"
     );
     const threadId = "019f-title-rollback";
     vi.mocked(agent.updateThreadTitle).mockRejectedValueOnce(

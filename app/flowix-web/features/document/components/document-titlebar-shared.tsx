@@ -44,9 +44,9 @@ import {
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
 import { toast } from '@/lib/toast';
 import {
-  useAgentConversationStore,
   type AgentConversationInstance,
-} from '@features/agent/store/agent-conversation-store';
+} from '@features/agent/store/agent-conversation-types';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   isAgentConversationRunning,
   useConversationRunIndex,
@@ -465,7 +465,9 @@ function AgentThreadNavigator({
   const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AgentThreadTitlebarItem[]>([]);
-  const conversationInstances = useAgentConversationStore((state) => state.instances);
+  const conversationInstances = useAgentSessionStore(
+    (state) => state.conversationRegistry.instances,
+  );
   const conversationRunIndex = useConversationRunIndex(conversationInstances);
   const currentDocumentPath = useDocumentStore((state) => state.currentDocumentPath);
   const currentDocumentSource = useDocumentStore((state) => state.currentDocumentSource);

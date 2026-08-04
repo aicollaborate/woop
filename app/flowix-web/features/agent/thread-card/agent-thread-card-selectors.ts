@@ -1,5 +1,5 @@
 import type { AgentRunState, AgentTypeKey } from '@/types/agent';
-import type { ThreadState } from '@features/agent/store/chat-store';
+import type { ThreadState } from '@features/agent/store/thread-runtime-state';
 import { getAgentType } from '@/lib/agent-types';
 
 export interface AgentThreadCardRunStatusView {

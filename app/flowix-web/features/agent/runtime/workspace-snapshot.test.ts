@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeConfig } from "@/types/agent";
 
 const state = vi.hoisted(() => ({
@@ -34,8 +34,19 @@ const state = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock("@features/agent/store/agent-conversation-store", () => ({
+vi.mock("@features/agent/store/agent-session-test-facade", () => ({
   useAgentConversationStore: {
+    getState: () => ({
+      getInstance: () => state.instance,
+      setRuntimeConfig: state.setRuntimeConfig,
+    }),
+  },
+}));
+
+// Phase 7 (2026-08-03): workspace-snapshot 改读 useAgentSessionStore 真源.
+// 测试同步 mock session-store 的 getInstance / setRuntimeConfig.
+vi.mock("@features/agent/store/agent-session-store", () => ({
+  useAgentSessionStore: {
     getState: () => ({
       getInstance: () => state.instance,
       setRuntimeConfig: state.setRuntimeConfig,

@@ -31,6 +31,7 @@ impl Deref for CodexRolloutEvent {
     }
 }
 
+#[allow(dead_code)]
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_codex_sessions)
         .await
@@ -39,7 +40,15 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
 
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let session_id = session_id.to_string();
-    tokio::task::spawn_blocking(move || read_codex_session_messages(&session_id))
+    tokio::task::spawn_blocking(move || {
+        let mut messages = read_codex_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
+        Ok(messages)
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -51,7 +60,12 @@ pub async fn get_session_page(
 ) -> Result<ThreadMessagesPage, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || {
-        let messages = read_codex_session_messages(&session_id)?;
+        let mut messages = read_codex_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
         Ok(paginate_codex_messages(messages, before_sequence, limit))
     })
     .await
@@ -130,6 +144,7 @@ pub fn is_codex_session_id(text: &str) -> bool {
     value.len() >= 32 && value.chars().filter(|c| *c == '-').count() == 4
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct CodexSessionDraft {
     id: String,
@@ -139,6 +154,7 @@ struct CodexSessionDraft {
     path: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 fn list_codex_sessions() -> Result<Vec<ThreadInfo>, String> {
     let mut sessions: BTreeMap<String, CodexSessionDraft> = BTreeMap::new();
 
@@ -405,12 +421,14 @@ fn paginate_codex_messages(
     }
 }
 
+#[allow(dead_code)]
 struct HistoryItem {
     session_id: String,
     text: String,
     ts: i64,
 }
 
+#[allow(dead_code)]
 fn read_codex_history_items() -> Result<Vec<HistoryItem>, String> {
     let Some(home) = dirs::home_dir() else {
         return Ok(Vec::new());
@@ -450,6 +468,7 @@ fn read_codex_history_items() -> Result<Vec<HistoryItem>, String> {
     Ok(items)
 }
 
+#[allow(dead_code)]
 struct SessionMeta {
     id: String,
     title: Option<String>,

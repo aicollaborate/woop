@@ -7,9 +7,9 @@ import { useShortcutScope, pushHandler } from '@features/shortcuts';
 import { SquarePen, Search, ChevronDown, Check, ChevronRight, Loader2 } from 'lucide-react';
 import { useDocumentStore } from '@features/document';
 import {
-  useAgentConversationStore,
   type AgentConversationInstance,
 } from '@features/agent/store';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import {
   selectRunningAgentConversations,
   useConversationRunIndex,
@@ -177,7 +177,9 @@ export function MemoList() {
   const selectedNotebookId = selectedNotebook?.id;
   const selectedTagId = useTagStore((s) => s.selectedTagId);
   const tagMetadataRefreshVersion = useTagStore((s) => s.metadataRefreshVersion);
-  const agentConversationInstances = useAgentConversationStore((s) => s.instances);
+  const agentConversationInstances = useAgentSessionStore(
+    (s) => s.conversationRegistry.instances,
+  );
   const conversationRunIndex = useConversationRunIndex(agentConversationInstances);
   const runningAgentInstances = useMemo(
     () =>

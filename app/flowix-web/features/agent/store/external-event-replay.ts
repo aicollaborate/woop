@@ -1,9 +1,6 @@
 import type { AgentChunk, AgentTypeKey } from "@/types/agent";
 import type { AgentExternalEvent } from "@platform/tauri/client";
 import { agentClient } from "@features/agent/store/agent-client";
-import type { ChatStore } from "@features/agent/store/chat-store";
-import type { ThreadState } from "@features/agent/store/thread-runtime-state";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
 
 const REPLAY_PAGE_SIZE = 1000;
 const MAX_COMPLETE_EXTERNAL_EVENTS = 10_000;
@@ -19,20 +16,6 @@ const AGENT_CHUNK_KINDS = new Set<AgentChunk["kind"]>([
   "stream_end",
   "session_resolved",
 ]);
-function resetReplayState(state: ThreadState | undefined): ThreadState {
-  return {
-    messages: [],
-    isLoading: false,
-    activeRunId: null,
-    runs: {},
-    pendingAssistantId: null,
-    pendingReasoningId: null,
-    oldestSequence: null,
-    hasMoreHistory: false,
-    loadingMore: state?.loadingMore ?? false,
-  };
-}
-
 function parseReplayChunk(normalizedJson: string): AgentChunk | null {
   try {
     const value = JSON.parse(normalizedJson) as AgentChunk;
@@ -63,36 +46,28 @@ function replayEventKind(event: AgentExternalEvent): string | null {
   }
 }
 
-function resetThreadsForReplay(
-  set: (updater: (state: ChatStore) => Partial<ChatStore>) => void,
-  threadIds: Iterable<string>,
-  typeKey: AgentTypeKey,
-): void {
-  const ids = Array.from(new Set(Array.from(threadIds).filter(Boolean)));
-  if (ids.length === 0) return;
-  useAgentConversationStore.getState().resetMessageStates(ids);
-  set((state) => {
-    const threadStates = { ...state.threadStates };
-    const threadTypes = { ...state.threadTypes };
-    for (const id of ids) {
-      threadStates[id] = resetReplayState(threadStates[id]);
-      threadTypes[id] = threadTypes[id] ?? typeKey;
-    }
-    return { threadStates, threadTypes };
-  });
+export interface ExternalReplayPorts {
+  canCommit(): boolean;
+  resetThreads(threadIds: string[], typeKey: AgentTypeKey): void;
+  dispatchChunk(chunk: AgentChunk): void;
+  flush(): void;
 }
 
+export type ReplayResult =
+  | { status: "replayed"; eventCount: number }
+  | {
+      status: "fallback";
+      reason: "empty" | "truncated" | "legacy" | "read_failed";
+    }
+  | { status: "stale" };
+
 export async function replayExternalEventsForThread(
-  set: (updater: (state: ChatStore) => Partial<ChatStore>) => void,
-  get: () => ChatStore,
   typeKey: AgentTypeKey,
   threadId: string,
-): Promise<boolean> {
+  ports: ExternalReplayPorts,
+): Promise<ReplayResult> {
   let afterId: number | null = null;
   const persistedEvents: AgentExternalEvent[] = [];
-  const resetThreadIds = new Set<string>();
-  resetThreadsForReplay(set, [threadId], typeKey);
-  resetThreadIds.add(threadId);
 
   for (;;) {
     let events: AgentExternalEvent[];
@@ -107,7 +82,7 @@ export async function replayExternalEventsForThread(
         "[AgentExternalReplay] database replay failed; using external history:",
         err,
       );
-      return false;
+      return { status: "fallback", reason: "read_failed" };
     }
     if (events.length === 0) break;
     persistedEvents.push(...events);
@@ -116,31 +91,36 @@ export async function replayExternalEventsForThread(
     if (events.length < REPLAY_PAGE_SIZE) break;
   }
 
-  if (persistedEvents.length === 0) return false;
+  if (persistedEvents.length === 0) {
+    return { status: "fallback", reason: "empty" };
+  }
   if (
     persistedEvents.length >= MAX_COMPLETE_EXTERNAL_EVENTS ||
-    persistedEvents.some(isTruncatedHistoryEvent) ||
+    persistedEvents.some(isTruncatedHistoryEvent)
+  ) {
+    return { status: "fallback", reason: "truncated" };
+  }
+  if (
     // user_message became the first normalized event in the complete-history
     // protocol. Older databases started at stream_start and therefore lack
     // user turns; treat those as incomplete and use transcript/main history.
     replayEventKind(persistedEvents[0]) !== "user_message"
   ) {
-    return false;
+    return { status: "fallback", reason: "legacy" };
   }
 
-  const newThreadIds = persistedEvents
-    .map((event) => event.threadId)
-    .filter((id) => !resetThreadIds.has(id));
-  if (newThreadIds.length > 0) {
-    resetThreadsForReplay(set, newThreadIds, typeKey);
-    for (const id of newThreadIds) resetThreadIds.add(id);
-  }
+  if (!ports.canCommit()) return { status: "stale" };
+
+  const resetThreadIds = Array.from(
+    new Set([threadId, ...persistedEvents.map((event) => event.threadId)].filter(Boolean)),
+  );
+  ports.resetThreads(resetThreadIds, typeKey);
 
   for (const event of persistedEvents) {
     const chunk = parseReplayChunk(event.normalizedJson);
     if (!chunk) continue;
-    get().dispatchAgentChunk(chunk);
+    ports.dispatchChunk(chunk);
   }
-  get().flushAgentEventBuffer();
-  return true;
+  ports.flush();
+  return { status: "replayed", eventCount: persistedEvents.length };
 }

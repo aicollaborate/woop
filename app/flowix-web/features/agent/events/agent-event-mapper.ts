@@ -8,6 +8,7 @@ import {
   resolveExternalChunkThreadId,
 } from "@features/agent/store/external-session";
 import { createAgentToolDisplay } from "@features/agent/tool-display";
+import { canonicalAgentMessageId } from "@features/agent/events/message-identity";
 
 interface AgentEventMapperThreadState {
   activeRunId: string | null;
@@ -29,16 +30,6 @@ function resolveChunkRunId(
   st: AgentEventMapperThreadState | undefined,
 ): string {
   return chunk.run_id ?? st?.activeRunId ?? createRunId(threadId);
-}
-
-function scopeCodexItemId(
-  agentType: AgentTypeKey,
-  runId: string,
-  role: "assistant" | "reasoning" | "tool" | "tool-call",
-  itemId: string | undefined,
-): string | undefined {
-  if (agentType !== "codex" || !itemId) return itemId;
-  return `${runId}::${role}::${itemId}`;
 }
 
 const CLAUDE_ENVELOPE_TEXT_MESSAGE_ID =
@@ -107,15 +98,27 @@ export function mapAgentChunkToEvent(
       return {
         ...base,
         kind: "user_message",
-        id: chunk.id,
+        id:
+          canonicalAgentMessageId(
+            base.agentType,
+            base.runId,
+            "user",
+            chunk.id,
+          ) ?? chunk.id,
         text: chunk.text,
-        messageId: chunk.id,
+        messageId:
+          canonicalAgentMessageId(
+            base.agentType,
+            base.runId,
+            "user",
+            chunk.id,
+          ) ?? chunk.id,
         sourceTimestamp: chunk.timestamp,
         sourceSequence: 0,
         sourceSubsequence: 0,
       };
     case "text": {
-      const messageId = scopeCodexItemId(
+      const messageId = canonicalAgentMessageId(
         base.agentType,
         base.runId,
         "assistant",
@@ -130,31 +133,33 @@ export function mapAgentChunkToEvent(
         ...base,
         kind: "reasoning_delta",
         text: chunk.text,
-        // Claude starts a new provider message around every tool cycle. Its
-        // reasoning is one product-run panel, including replay of rows written
-        // before the backend adopted the run-scoped id.
-        messageId:
-          base.agentType === "claude"
+        messageId: canonicalAgentMessageId(
+          base.agentType,
+          base.runId,
+          "reasoning",
+          base.agentType === "claude" &&
+            !base.messageId?.startsWith("msg:")
             ? `reasoning-${base.runId}`
-            : scopeCodexItemId(
-                base.agentType,
-                base.runId,
-                "reasoning",
-                base.messageId,
-              ),
+            : base.messageId,
+        ),
       };
     case "tool_call":
       return {
         ...base,
         kind: "tool_call",
-        messageId: scopeCodexItemId(
+        messageId: canonicalAgentMessageId(
           base.agentType,
           base.runId,
           "tool",
           base.messageId,
         ),
         toolCallId:
-          scopeCodexItemId(base.agentType, base.runId, "tool-call", chunk.id) ??
+          canonicalAgentMessageId(
+            base.agentType,
+            base.runId,
+            "tool-call",
+            chunk.id,
+          ) ??
           chunk.id,
         name: chunk.name,
         input: chunk.input,
@@ -168,14 +173,19 @@ export function mapAgentChunkToEvent(
       return {
         ...base,
         kind: "tool_result",
-        messageId: scopeCodexItemId(
+        messageId: canonicalAgentMessageId(
           base.agentType,
           base.runId,
           "tool",
           base.messageId,
         ),
         toolCallId:
-          scopeCodexItemId(base.agentType, base.runId, "tool-call", chunk.id) ??
+          canonicalAgentMessageId(
+            base.agentType,
+            base.runId,
+            "tool-call",
+            chunk.id,
+          ) ??
           chunk.id,
         name: chunk.name,
         result: chunk.result,

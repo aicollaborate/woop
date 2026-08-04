@@ -234,7 +234,7 @@ mod tests {
             .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
                 instance_id: "inst-frozen-cwd".to_string(),
                 agent_type: "claude".to_string(),
-                title: "frozen cwd test".to_string(),
+                initial_title: "frozen cwd test".to_string(),
                 thread_id: Some("thread-frozen-cwd".to_string()),
                 runtime_config: Some(
                     r#"{"workspaceSnapshot":{"cwd":"/old"},"model":{"key":"sonnet"}}"#.to_string(),
@@ -298,7 +298,7 @@ mod tests {
             .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
                 instance_id: "inst-frozen-cwd".to_string(),
                 agent_type: "claude".to_string(),
-                title: "frontend refresh".to_string(),
+                initial_title: "frontend refresh".to_string(),
                 thread_id: Some("thread-frozen-cwd".to_string()),
                 runtime_config: Some(
                     r#"{"model":{"key":"opus"},"frozenCwd":"/stale/frontend"}"#.to_string(),
@@ -333,6 +333,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_conversation_upsert_cannot_overwrite_newer_state() {
+        let manager = ThreadManager::for_tests();
+        let input = |title: &str, updated_at: i64| UpsertAgentConversationInstance {
+            instance_id: "inst-versioned-upsert".to_string(),
+            agent_type: "flowix".to_string(),
+            initial_title: title.to_string(),
+            thread_id: Some("thread-versioned-upsert".to_string()),
+            runtime_config: None,
+            source: AgentConversationSource {
+                kind: "thread-card".to_string(),
+                document_path: None,
+                memo_id: None,
+            },
+            role: None,
+            created_at: Some(1),
+            updated_at: Some(updated_at),
+        };
+
+        manager
+            .upsert_agent_conversation_instance(input("newest", 200))
+            .await
+            .unwrap();
+        let returned = manager
+            .upsert_agent_conversation_instance(input("stale", 100))
+            .await
+            .unwrap();
+
+        assert_eq!(returned.thread_title.as_deref(), Some("newest"));
+        assert_eq!(returned.updated_at, 200);
+    }
+
+    #[tokio::test]
     async fn external_session_binding_atomically_reconciles_authoritative_cwd() {
         let manager = ThreadManager::for_tests();
         manager
@@ -347,7 +379,7 @@ mod tests {
             .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
                 instance_id: "inst-claude-cwd".to_string(),
                 agent_type: "claude".to_string(),
-                title: "Claude cwd".to_string(),
+                initial_title: "Claude cwd".to_string(),
                 thread_id: Some("claude-local-cwd".to_string()),
                 runtime_config: None,
                 source: AgentConversationSource {
@@ -465,15 +497,20 @@ mod tests {
         };
 
         let id1 = manager
-            .insert_agent_external_event(first)
+            .insert_agent_external_event(first.clone())
             .await
             .expect("insert first event");
+        let duplicate_id = manager
+            .insert_agent_external_event(first)
+            .await
+            .expect("deduplicate first event");
         let id2 = manager
             .insert_agent_external_event(second)
             .await
             .expect("insert second event");
 
         assert!(id1 > 0);
+        assert_eq!(duplicate_id, id1);
         assert!(id2 > id1);
 
         let all = manager

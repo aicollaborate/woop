@@ -1,4 +1,4 @@
-import { useChatStore } from "@features/agent/store/chat-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import type { AgentTypeKey } from "@/types/agent";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { focusWithoutScroll } from "@features/agent/thread-card/agent-thread-card-dom";
@@ -46,13 +46,13 @@ export class AgentThreadCardTitleEditController {
     const attrTypeKey = normalizeAgentTypeKey(this.getAttrTypeKey());
     const threadId = this.getThreadId();
     if (threadId) {
-      const state = useChatStore.getState();
-      const listTitle = state.threadLists[attrTypeKey]?.find(
+      const meta = useAgentSessionStore.getState().sessionMeta;
+      const listTitle = meta.threadLists[attrTypeKey]?.find(
         (item) => item.threadId === threadId,
       )?.title;
       if (listTitle) return listTitle;
-      if (state.activeThreadIds[attrTypeKey] === threadId) {
-        const activeTitle = state.currentThreadTitles[attrTypeKey];
+      if (meta.activeThreadIds[attrTypeKey] === threadId) {
+        const activeTitle = meta.currentThreadTitles[attrTypeKey];
         if (activeTitle) return activeTitle;
       }
     }
@@ -126,10 +126,17 @@ export class AgentThreadCardTitleEditController {
     }
 
     this.titleEl.textContent = nextTitle;
+    // Phase 5.3 修正 (2026-08-03): 同步先调 renameInstance 更新 conv-store
+    // + session-store 的 instance.title, 再触发 updateAttrs. 否则后续
+    // syncTitleText 读 instance.title 仍是 previousTitle, 把刚设的
+    // nextTitle 又覆盖回去, DOM 卡在旧 title.
+    if (instanceId) {
+      useAgentSessionStore.getState().renameInstance(instanceId, nextTitle);
+    }
     this.updateAttrs({ title: nextTitle });
 
     try {
-      await useChatStore.getState().renameAgentConversation({
+      await useAgentSessionStore.getState().renameAgentConversation({
         instanceId,
         threadId,
         title: nextTitle,
@@ -137,6 +144,9 @@ export class AgentThreadCardTitleEditController {
       });
     } catch {
       this.titleEl.textContent = previousTitle;
+      if (instanceId) {
+        useAgentSessionStore.getState().renameInstance(instanceId, previousTitle);
+      }
       this.updateAttrs({ title: previousTitle });
     }
   }

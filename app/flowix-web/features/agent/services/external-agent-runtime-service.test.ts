@@ -1,18 +1,46 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chatStoreMock = vi.hoisted(() => ({
   state: {
     externalSessionResolutions: {} as Record<string, string>,
     threadStates: {} as Record<string, { activeRunId: string | null }>,
     setActiveAgentThread: vi.fn(),
+  },
+}));
+
+const sessionStoreMock = vi.hoisted(() => ({
+  state: {
+    sessionMeta: {
+      activeThreadIds: {} as Record<string, string | undefined>,
+      activeAgentTypeKey: "flowix" as const,
+      threadTypes: {},
+      externalSessionResolutions: {} as Record<string, string>,
+      lastRunningRunsReconciledAt: null,
+      threadLists: {},
+      currentThreadTitles: {},
+      settings: {
+        agentPermissionMode: "danger-full-access" as const,
+        agentCodexModel: "inherit" as const,
+        agentCodexReasoningEffort: "medium" as const,
+      },
+    },
+    threadProjections: {} as Record<string, { runs: { activeRunId: string | null } }>,
+    setSessionMeta: vi.fn(),
+    dispatch: vi.fn(),
     migrateThreadState: vi.fn(),
     stopThreadRun: vi.fn(async () => undefined),
   },
 }));
 
-vi.mock('@features/agent/store/chat-store', () => ({
+vi.mock('@features/agent/store/agent-session-test-facade', () => ({
   useChatStore: {
     getState: () => chatStoreMock.state,
+  },
+}));
+
+vi.mock('@features/agent/store/agent-session-store', () => ({
+  useAgentSessionStore: {
+    getState: () => sessionStoreMock.state,
   },
 }));
 
@@ -28,6 +56,8 @@ describe('external agent runtime service', () => {
     vi.clearAllMocks();
     chatStoreMock.state.externalSessionResolutions = {};
     chatStoreMock.state.threadStates = {};
+    sessionStoreMock.state.sessionMeta.activeThreadIds = {};
+    sessionStoreMock.state.threadProjections = {};
   });
 
   it('creates a stable local thread id per runtime handle', async () => {
@@ -44,7 +74,8 @@ describe('external agent runtime service', () => {
     expect(firstThreadId).toBe('codex-local-inst-1');
     expect(secondThreadId).toBe(firstThreadId);
     expect(getExternalAgentRuntimeThreadId(handleId, null)).toBe(firstThreadId);
-    expect(chatStoreMock.state.setActiveAgentThread).toHaveBeenCalledWith('codex', firstThreadId);
+    // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.activeThreadIds.
+    expect(sessionStoreMock.state.setSessionMeta).toHaveBeenCalled();
   });
 
   it('migrates local thread state when the external session is resolved', async () => {
@@ -65,7 +96,7 @@ describe('external agent runtime service', () => {
     );
 
     expect(didApply).toBe(true);
-    expect(chatStoreMock.state.migrateThreadState).toHaveBeenCalledWith(
+    expect(sessionStoreMock.state.migrateThreadState).toHaveBeenCalledWith(
       localThreadId,
       'codex-real-session',
       'codex'
@@ -96,10 +127,13 @@ describe('external agent runtime service', () => {
     } = await import('./external-agent-runtime-service');
     const handleId = createExternalAgentRuntimeHandle();
     const localThreadId = beginExternalAgentThreadCardRun(handleId, 'codex', null, 'inst-1');
-    chatStoreMock.state.threadStates[localThreadId] = { activeRunId: 'run-1' };
+    // Phase 4 (2026-08-02): activeRunId 真源是 session-store.threadProjections.
+    sessionStoreMock.state.threadProjections[localThreadId] = {
+      runs: { activeRunId: "run-1" },
+    };
 
     await stopExternalAgentThreadCardRun(handleId, null);
 
-    expect(chatStoreMock.state.stopThreadRun).toHaveBeenCalledWith(localThreadId, 'run-1');
+    expect(sessionStoreMock.state.stopThreadRun).toHaveBeenCalledWith(localThreadId, "run-1");
   });
 });

@@ -1,7 +1,7 @@
 import type { AgentTypeKey } from "@/types/agent";
 import type { ChatMessage } from "@/types";
 import type { AppLanguage, I18nKey } from "@/lib/i18n";
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import {
   MessageViewportController,
   type ConversationMessageStateSnapshot,

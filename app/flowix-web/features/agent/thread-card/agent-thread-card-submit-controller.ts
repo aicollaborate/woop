@@ -1,9 +1,8 @@
 import type { AgentTypeKey } from "@/types/agent";
-import type { AgentConversationSource } from "@features/agent/store/agent-conversation-store";
-import { useAgentConversationStore } from "@features/agent/store/agent-conversation-store";
+import type { AgentConversationSource } from "@features/agent/store/agent-conversation-types";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import { ensureConversationWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
-import { useChatStore } from "@features/agent/store/chat-store";
 import { ensureAgentThreadCardThread } from "@features/agent/thread-card/agent-thread-card-submit";
 import { upsertAgentThreadCardConversationInstance } from "@features/agent/thread-card/runtime/thread-card-conversation";
 
@@ -42,7 +41,7 @@ export async function submitAgentThreadCardConversation(
   let nextTypeKey = input.typeKey;
 
   if (!nextInstanceId) {
-    const instance = useAgentConversationStore.getState().createInstance({
+    const instance = useAgentSessionStore.getState().createInstance({
       agentType: nextTypeKey,
       title: nextTitle,
       threadId: nextThreadId,
@@ -71,7 +70,7 @@ export async function submitAgentThreadCardConversation(
       nextThreadId = ensured.threadId;
       nextTitle = ensured.title;
       nextTypeKey = ensured.typeKey;
-      useAgentConversationStore.getState().updateThread(nextInstanceId, {
+      useAgentSessionStore.getState().updateThread(nextInstanceId, {
         agentType: ensured.typeKey,
         threadId: ensured.threadId,
       });
@@ -100,7 +99,7 @@ export async function submitAgentThreadCardConversation(
       ? await input.loadAgentRoleBody(input.role.memoId)
       : null;
 
-  const sendPromise = useChatStore
+  const sendPromise = useAgentSessionStore
     .getState()
     .sendMessageToThread(nextThreadId, input.prompt, nextTypeKey, {
       instanceId: nextInstanceId,

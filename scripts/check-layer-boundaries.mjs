@@ -36,7 +36,7 @@ const FROM_RE = /\b(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]/g;
 // 动态 import('...')
 const DYN_RE = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
-const rel = (p) => relative(ROOT, p);
+const rel = (p) => relative(ROOT, p).replaceAll('\\', '/');
 const isTest = (p) => /\.(test|spec)\.(ts|tsx)$/.test(p);
 const isLowLayer = (layer) => layer === 'shared' || layer === 'lib' || layer === 'platform';
 const isMidLayer = (layer) => layer === 'features' || layer === 'shared' || layer === 'lib';
@@ -69,7 +69,58 @@ for (const file of files) {
     ) {
       violations.push(`${r}: 移动端引用桌面总 API  (须走 @platform/tauri/mobile-client)`);
     }
+
+    // Rule D: foundational Agent session services receive Store capabilities
+    // through ports. Importing the Zustand singleton here recreates a static
+    // cycle with the composition root.
+    if (
+      !isTest(file)
+      && [
+        'features/agent/store/stream-event-dispatcher.ts',
+        'features/agent/store/external-event-replay.ts',
+        'features/agent/store/session-meta-slice.ts',
+        'features/agent/store/projection-slice.ts',
+        'features/agent/store/conversation-slice.ts',
+        'features/agent/store/thread-history-slice.ts',
+        'features/agent/store/thread-lifecycle-slice.ts',
+      ].includes(r)
+      && spec.includes('agent-session-store')
+    ) {
+      violations.push(`${r}: Agent session 基础服务不得反向 import agent-session-store`);
+    }
   }
+}
+
+// AgentSessionStore is a composition root, not a place to accumulate slice
+// implementations again. Keep the limit slightly above the documented target
+// so formatting-only edits do not create noisy failures.
+const agentSessionStoreFile = files.find(
+  (file) => rel(file) === 'features/agent/store/agent-session-store.ts',
+);
+if (agentSessionStoreFile) {
+  const source = readFileSync(agentSessionStoreFile, 'utf8');
+  const lineCount = source.split(/\r?\n/).length;
+  if (lineCount > 650) {
+    violations.push(
+      `features/agent/store/agent-session-store.ts: ${lineCount} 行 > 650  (组合根不得重新膨胀)`,
+    );
+  }
+  const partializeBody = source.match(/partialize:\s*\(state\)[\s\S]*?\n\s*merge:/)?.[0] ?? '';
+  if (/threadProjections|conversationRegistry/.test(partializeBody)) {
+    violations.push(
+      'features/agent/store/agent-session-store.ts: partialize 不得持久化消息投影或 conversation registry',
+    );
+  }
+}
+
+const agentSessionStoreCreations = files.reduce((count, file) => {
+  if (isTest(file)) return count;
+  return count + (readFileSync(file, 'utf8').match(/create<AgentSessionStore>/g)?.length ?? 0);
+}, 0);
+if (agentSessionStoreCreations !== 1) {
+  violations.push(
+    `AgentSessionStore create 数量必须为 1，当前为 ${agentSessionStoreCreations}`,
+  );
 }
 
 if (violations.length) {

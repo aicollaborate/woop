@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import type { ThreadState } from '@features/agent/store/chat-store';
+﻿import { describe, expect, it } from 'vitest';
+import type { ThreadState } from '@features/agent/store/agent-session-test-facade';
 import {
   selectAgentThreadCardRunStatus,
   selectAgentThreadCardRuntimeView,

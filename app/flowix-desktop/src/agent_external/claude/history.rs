@@ -14,6 +14,7 @@ use super::{
 
 /// [history path] 列出 `~/.claude/projects/.../*.jsonl` 里的所�?session
 /// 摘�?。�?前�? IPC `list_agent_conversation_instances` 等调�?数据�?/// �?��久化 JSONL ── �?stream path 完全�?���?
+#[allow(dead_code)]
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_claude_sessions)
         .await
@@ -25,7 +26,15 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
 /// 数据源是 Claude Code 子进程的 stdout ── 两条 path 处理的是同一�?/// 对话的不同�?�?streaming �?��时切�? history �?��缩后的全�?�?
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let session_id = session_id.to_string();
-    tokio::task::spawn_blocking(move || read_claude_session_messages(&session_id))
+    tokio::task::spawn_blocking(move || {
+        let mut messages = read_claude_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
+        Ok(messages)
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -37,7 +46,12 @@ pub async fn get_session_page(
 ) -> Result<ThreadMessagesPage, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || {
-        let messages = read_claude_session_messages(&session_id)?;
+        let mut messages = read_claude_session_messages(&session_id)?;
+        crate::agent_external::canonicalize_imported_messages(
+            AGENT_TYPE,
+            &session_id,
+            &mut messages,
+        );
         Ok(paginate_claude_messages(messages, before_sequence, limit))
     })
     .await
@@ -84,6 +98,7 @@ pub fn is_claude_session_id(text: &str) -> bool {
     value.len() >= 32 && dash_count == 4
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct ClaudeSessionDraft {
     id: String,
@@ -92,6 +107,7 @@ struct ClaudeSessionDraft {
     updated_at: Option<i64>,
 }
 
+#[allow(dead_code)]
 fn list_claude_sessions() -> Result<Vec<ThreadInfo>, String> {
     let mut sessions: BTreeMap<String, ClaudeSessionDraft> = BTreeMap::new();
 
@@ -217,6 +233,7 @@ fn append_claude_history_message(messages: &mut Vec<ChatMessage>, message: ChatM
     }
 }
 
+#[allow(dead_code)]
 struct SessionMeta {
     id: String,
     title: Option<String>,

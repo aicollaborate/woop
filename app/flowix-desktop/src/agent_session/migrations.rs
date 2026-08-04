@@ -10,7 +10,7 @@ use rusqlite::{params, Connection};
 
 use super::error::ThreadError;
 
-const THREAD_DB_SCHEMA_VERSION: i64 = 2;
+const THREAD_DB_SCHEMA_VERSION: i64 = 3;
 
 impl super::store::ThreadManager {
     pub(super) fn run_migrations(conn: &mut Connection) -> Result<(), ThreadError> {
@@ -70,7 +70,6 @@ impl super::store::ThreadManager {
             CREATE TABLE IF NOT EXISTS agent_conversation_instances (
                 instance_id TEXT PRIMARY KEY,
                 agent_type TEXT NOT NULL,
-                title TEXT NOT NULL,
                 thread_id TEXT,
                 runtime_config TEXT,
                 frozen_cwd TEXT,
@@ -80,7 +79,8 @@ impl super::store::ThreadManager {
                 role_memo_id TEXT,
                 role_name TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_agent_conversation_thread
@@ -92,6 +92,7 @@ impl super::store::ThreadManager {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 runtime TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
+                event_key TEXT,
                 normalized_json TEXT NOT NULL,
                 raw_json TEXT,
                 created_at INTEGER NOT NULL,
@@ -108,67 +109,16 @@ impl super::store::ThreadManager {
         // thread store.
         Self::ensure_external_session_metadata_column(conn)?;
         Self::ensure_agent_conversation_frozen_cwd_column(conn)?;
+        Self::ensure_agent_conversation_schema(conn)?;
         Self::migrate_agent_external_events_table(conn)?;
+        Self::ensure_agent_external_event_key_column(conn)?;
         conn.execute_batch(
             "
             CREATE INDEX IF NOT EXISTS idx_agent_external_events_thread
                 ON agent_external_events(thread_id, id);
-            ",
-        )?;
-
-        // `threads.title` is the product title. Older builds kept a useful
-        // title only on the card instance while external threads were inserted
-        // as the literal "Codex Session" (including Claude rows). Repair that
-        // split-brain state idempotently, then align every bound card snapshot
-        // with the thread title.
-        conn.execute_batch(
-            "
-            UPDATE threads
-            SET title = (
-                SELECT i.title
-                FROM agent_conversation_instances i
-                WHERE i.thread_id = threads.thread_id
-                  AND trim(i.title) <> ''
-                  AND lower(trim(i.title)) NOT IN (
-                      'codex session',
-                      'claude code session',
-                      'hermes session'
-                  )
-                ORDER BY i.updated_at DESC
-                LIMIT 1
-            )
-            WHERE lower(trim(title)) IN (
-                'codex session',
-                'claude code session',
-                'hermes session'
-            )
-              AND EXISTS (
-                SELECT 1
-                FROM agent_conversation_instances i
-                WHERE i.thread_id = threads.thread_id
-                  AND trim(i.title) <> ''
-                  AND lower(trim(i.title)) NOT IN (
-                      'codex session',
-                      'claude code session',
-                      'hermes session'
-                  )
-              );
-
-            UPDATE agent_conversation_instances
-            SET title = (
-                    SELECT t.title FROM threads t
-                    WHERE t.thread_id = agent_conversation_instances.thread_id
-                ),
-                updated_at = max(updated_at, (
-                    SELECT t.updated_at FROM threads t
-                    WHERE t.thread_id = agent_conversation_instances.thread_id
-                ))
-            WHERE thread_id IS NOT NULL
-              AND EXISTS (
-                  SELECT 1 FROM threads t
-                  WHERE t.thread_id = agent_conversation_instances.thread_id
-                    AND t.title <> agent_conversation_instances.title
-              );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_external_events_idempotency
+                ON agent_external_events(runtime, thread_id, event_key)
+                WHERE event_key IS NOT NULL AND trim(event_key) <> '';
             ",
         )?;
 
@@ -268,6 +218,160 @@ impl super::store::ThreadManager {
         Ok(())
     }
 
+    fn ensure_agent_conversation_schema(conn: &mut Connection) -> Result<(), ThreadError> {
+        let mut columns_stmt = conn.prepare("PRAGMA table_info(agent_conversation_instances)")?;
+        let columns = columns_stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(columns_stmt);
+
+        let has_thread_foreign_key = {
+            let mut stmt = conn.prepare("PRAGMA foreign_key_list(agent_conversation_instances)")?;
+            let foreign_keys = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            foreign_keys.iter().any(|(table, from, to, on_delete)| {
+                table == "threads"
+                    && from == "thread_id"
+                    && to == "thread_id"
+                    && on_delete.eq_ignore_ascii_case("CASCADE")
+            })
+        };
+
+        if !columns.iter().any(|column| column == "title") && has_thread_foreign_key {
+            conn.execute_batch(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_conversation_thread_unique
+                 ON agent_conversation_instances(thread_id)
+                 WHERE thread_id IS NOT NULL;",
+            )?;
+            return Ok(());
+        }
+
+        // Migrate useful legacy card titles into the product thread before the
+        // duplicated instance title column is removed.
+        if columns.iter().any(|column| column == "title") {
+            conn.execute_batch(
+                "
+                UPDATE threads
+                SET title = (
+                    SELECT i.title
+                    FROM agent_conversation_instances i
+                    WHERE i.thread_id = threads.thread_id
+                      AND trim(i.title) <> ''
+                      AND lower(trim(i.title)) NOT IN (
+                          'codex session',
+                          'claude code session',
+                          'hermes session'
+                      )
+                    ORDER BY i.updated_at DESC
+                    LIMIT 1
+                )
+                WHERE lower(trim(title)) IN (
+                    'codex session',
+                    'claude code session',
+                    'hermes session'
+                )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM agent_conversation_instances i
+                    WHERE i.thread_id = threads.thread_id
+                      AND trim(i.title) <> ''
+                      AND lower(trim(i.title)) NOT IN (
+                          'codex session',
+                          'claude code session',
+                          'hermes session'
+                      )
+                  );
+                ",
+            )?;
+        }
+
+        // Legacy rows may point at a deleted product thread. The supported
+        // pre-conversation representation is a NULL binding, so detach them
+        // before rebuilding the table with the foreign key.
+        conn.execute_batch(
+            "
+            UPDATE agent_conversation_instances
+            SET thread_id = NULL
+            WHERE thread_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM threads t
+                  WHERE t.thread_id = agent_conversation_instances.thread_id
+              );
+
+            DELETE FROM agent_conversation_instances
+            WHERE thread_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM agent_conversation_instances newer
+                  WHERE newer.thread_id = agent_conversation_instances.thread_id
+                    AND (
+                        newer.updated_at > agent_conversation_instances.updated_at
+                        OR (
+                            newer.updated_at = agent_conversation_instances.updated_at
+                            AND newer.instance_id > agent_conversation_instances.instance_id
+                        )
+                    )
+              );
+            ",
+        )?;
+
+        let tx = conn.transaction()?;
+        tx.execute_batch(
+            "
+            DROP INDEX IF EXISTS idx_agent_conversation_thread;
+            DROP INDEX IF EXISTS idx_agent_conversation_thread_unique;
+
+            ALTER TABLE agent_conversation_instances
+                RENAME TO agent_conversation_instances_legacy;
+
+            CREATE TABLE agent_conversation_instances (
+                instance_id TEXT PRIMARY KEY,
+                agent_type TEXT NOT NULL,
+                thread_id TEXT,
+                runtime_config TEXT,
+                frozen_cwd TEXT,
+                source_kind TEXT NOT NULL DEFAULT 'thread-card',
+                source_document_path TEXT,
+                source_memo_id TEXT,
+                role_memo_id TEXT,
+                role_name TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+            );
+
+            INSERT INTO agent_conversation_instances (
+                instance_id, agent_type, thread_id, runtime_config, frozen_cwd,
+                source_kind, source_document_path, source_memo_id,
+                role_memo_id, role_name, created_at, updated_at
+            )
+            SELECT
+                instance_id, agent_type, thread_id, runtime_config, frozen_cwd,
+                source_kind, source_document_path, source_memo_id,
+                role_memo_id, role_name, created_at, updated_at
+            FROM agent_conversation_instances_legacy;
+
+            DROP TABLE agent_conversation_instances_legacy;
+
+            CREATE INDEX idx_agent_conversation_thread
+                ON agent_conversation_instances(thread_id);
+            CREATE UNIQUE INDEX idx_agent_conversation_thread_unique
+                ON agent_conversation_instances(thread_id)
+                WHERE thread_id IS NOT NULL;
+            ",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn migrate_agent_external_events_table(conn: &mut Connection) -> Result<(), ThreadError> {
         let mut stmt = conn.prepare("PRAGMA table_info(agent_external_events)")?;
         let columns = stmt
@@ -336,6 +440,7 @@ impl super::store::ThreadManager {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 runtime TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
+                event_key TEXT,
                 normalized_json TEXT NOT NULL,
                 raw_json TEXT,
                 created_at INTEGER NOT NULL,
@@ -343,12 +448,13 @@ impl super::store::ThreadManager {
             );
 
             INSERT INTO agent_external_events (
-                id, runtime, thread_id, normalized_json, raw_json, created_at
+                id, runtime, thread_id, event_key, normalized_json, raw_json, created_at
             )
             SELECT
                 {id_expr},
                 {runtime_expr},
                 {thread_id_expr},
+                NULL,
                 {normalized_json_expr},
                 {raw_json_expr},
                 {created_at_expr}
@@ -364,6 +470,24 @@ impl super::store::ThreadManager {
             ",
         ))?;
         tx.commit()?;
+        Ok(())
+    }
+
+    fn ensure_agent_external_event_key_column(conn: &Connection) -> Result<(), ThreadError> {
+        let has_column = conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('agent_external_events')
+                WHERE name = 'event_key'
+            )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_column {
+            conn.execute(
+                "ALTER TABLE agent_external_events ADD COLUMN event_key TEXT",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -462,13 +586,6 @@ impl super::store::ThreadManager {
                     WHERE a.external_session_id = agent_conversation_instances.thread_id
                     LIMIT 1
                 ),
-                title = COALESCE((
-                    SELECT t.title
-                    FROM external_session_aliases a
-                    JOIN threads t ON t.thread_id = a.local_thread_id
-                    WHERE a.external_session_id = agent_conversation_instances.thread_id
-                    LIMIT 1
-                ), title),
                 updated_at = max(updated_at, (
                     SELECT t.updated_at
                     FROM external_session_aliases a

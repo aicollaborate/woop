@@ -1,4 +1,4 @@
-import type { ThreadState } from "@features/agent/store/chat-store";
+import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import { stripSystemBlock } from "@features/agent/message";
 
 function getUserHistoryContent(

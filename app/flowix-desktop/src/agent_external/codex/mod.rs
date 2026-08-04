@@ -16,4 +16,4 @@ pub use crate::agent_external::MAX_STDOUT_LINE_BYTES;
 pub use cli::CodexCliManager;
 
 // History API —— 读取 ~/.codex/sessions/* 下的 jsonl，还原为 ChatMessage 流。
-pub use history::{get_session, get_session_page, is_codex_session_id, list_sessions};
+pub use history::{get_session, get_session_page, is_codex_session_id};
