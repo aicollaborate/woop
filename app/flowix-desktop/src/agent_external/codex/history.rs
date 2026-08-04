@@ -31,6 +31,7 @@ impl Deref for CodexRolloutEvent {
     }
 }
 
+#[allow(dead_code)]
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_codex_sessions)
         .await
@@ -143,6 +144,7 @@ pub fn is_codex_session_id(text: &str) -> bool {
     value.len() >= 32 && value.chars().filter(|c| *c == '-').count() == 4
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct CodexSessionDraft {
     id: String,
@@ -152,6 +154,7 @@ struct CodexSessionDraft {
     path: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 fn list_codex_sessions() -> Result<Vec<ThreadInfo>, String> {
     let mut sessions: BTreeMap<String, CodexSessionDraft> = BTreeMap::new();
 
@@ -418,12 +421,14 @@ fn paginate_codex_messages(
     }
 }
 
+#[allow(dead_code)]
 struct HistoryItem {
     session_id: String,
     text: String,
     ts: i64,
 }
 
+#[allow(dead_code)]
 fn read_codex_history_items() -> Result<Vec<HistoryItem>, String> {
     let Some(home) = dirs::home_dir() else {
         return Ok(Vec::new());
@@ -463,6 +468,7 @@ fn read_codex_history_items() -> Result<Vec<HistoryItem>, String> {
     Ok(items)
 }
 
+#[allow(dead_code)]
 struct SessionMeta {
     id: String,
     title: Option<String>,

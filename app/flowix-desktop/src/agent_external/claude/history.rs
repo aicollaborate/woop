@@ -14,6 +14,7 @@ use super::{
 
 /// [history path] 列出 `~/.claude/projects/.../*.jsonl` 里的所�?session
 /// 摘�?。�?前�? IPC `list_agent_conversation_instances` 等调�?数据�?/// �?��久化 JSONL ── �?stream path 完全�?���?
+#[allow(dead_code)]
 pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
     tokio::task::spawn_blocking(list_claude_sessions)
         .await
@@ -97,6 +98,7 @@ pub fn is_claude_session_id(text: &str) -> bool {
     value.len() >= 32 && dash_count == 4
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct ClaudeSessionDraft {
     id: String,
@@ -105,6 +107,7 @@ struct ClaudeSessionDraft {
     updated_at: Option<i64>,
 }
 
+#[allow(dead_code)]
 fn list_claude_sessions() -> Result<Vec<ThreadInfo>, String> {
     let mut sessions: BTreeMap<String, ClaudeSessionDraft> = BTreeMap::new();
 
@@ -230,6 +233,7 @@ fn append_claude_history_message(messages: &mut Vec<ChatMessage>, message: ChatM
     }
 }
 
+#[allow(dead_code)]
 struct SessionMeta {
     id: String,
     title: Option<String>,
