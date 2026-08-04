@@ -43,9 +43,20 @@ import {
   reduceProjection,
   type ThreadProjection,
 } from "@features/agent/store/session-reducer";
+import {
+  filterRenderableHistoryMessages,
+  getHistoryPage,
+  getInitialThreadHistory,
+  HISTORY_PAGE_SIZE,
+  mergeHistoricalMessages,
+  mergeLiveMessagesIntoRenderableMessages,
+  prependHistoricalMessages,
+  trySwapLastLiveMessage,
+} from "@features/agent/store/thread-history";
 import { STORAGE_KEYS } from "@/lib/constants";
 import {
   DEFAULT_AGENT_TYPE_KEY,
+  getAgentType,
   isAgentTypeSelectable,
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
@@ -256,22 +267,11 @@ function _normalizeBackendInstance(
 // 避免循环依赖. session-store 的委托 actions 通过此引用同步调用.
 // --------------------------------------------------------------------
 
-type ConvStoreGetState = () => import("@features/agent/store/agent-conversation-store").AgentConversationStore;
 type ChatStoreGetState = () => import("@features/agent/store/chat-store").ChatStore;
-let _convGetState: ConvStoreGetState | null = null;
 let _chatGetState: ChatStoreGetState | null = null;
-
-export function _bindConvStore(getState: ConvStoreGetState): void {
-  _convGetState = getState;
-}
 
 export function _bindChatStore(getState: ChatStoreGetState): void {
   _chatGetState = getState;
-}
-
-function convStore() {
-  if (_convGetState) return _convGetState();
-  throw new Error("AgentConversationStore not bound. Import agent-conversation-store.ts first.");
 }
 
 function chatStore() {
@@ -509,8 +509,16 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
         loadHermesThread: (tid) => chatStore().loadHermesThread(tid),
         loadAgentThread: (typeKey, tid) => chatStore().loadAgentThread(typeKey, tid),
         loadLocalAgentThreadList: (typeKey) => chatStore().loadLocalAgentThreadList(typeKey),
-        loadThreadCache: (tid) => chatStore().loadThreadCache(tid),
-        loadMoreHistory: (typeKey, tid) => chatStore().loadMoreHistory(typeKey, tid),
+        loadThreadCache: async (threadId) => {
+          try {
+            await get().loadMessages("flowix", threadId);
+          } catch (err) {
+            console.error("[AgentSession] Failed to load thread cache:", err);
+          }
+        },
+        loadMoreHistory: async (typeKey, threadId) => {
+          await get().loadMoreMessages(getAgentType(typeKey).key, threadId);
+        },
         deleteThread: (tid) => chatStore().deleteThread(tid),
         renameThread: (tid, title, typeKey) => chatStore().renameThread(tid, title, typeKey),
         renameAgentConversation: (input) => chatStore().renameAgentConversation(input),
@@ -719,26 +727,148 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             loadingMore: p.pagination.loadingMore,
           };
         },
-        mergeMessages: (agentType, threadId, messages) =>
-          convStore().mergeMessages(agentType, threadId, messages),
-        syncRenderableMessages: (agentType, threadId, messages) =>
-          convStore().syncRenderableMessages(agentType, threadId, messages),
-        syncLiveMessageState: (agentType, threadId, liveState) =>
-          convStore().syncLiveMessageState(agentType, threadId, liveState),
+        mergeMessages: (agentType, threadId, messages) => {
+          const renderable = filterRenderableHistoryMessages(messages);
+          if (renderable.length === 0) return;
+          set((state) => {
+            const current = state.threadProjections[threadId] ?? emptyProjection();
+            const merged = mergeHistoricalMessages(current.messages, renderable, agentType);
+            if (merged === current.messages) return state;
+            return {
+              threadProjections: {
+                ...state.threadProjections,
+                [threadId]: { ...current, messages: merged },
+              },
+            };
+          });
+        },
+        syncRenderableMessages: (agentType, threadId, messages) => {
+          const renderable = filterRenderableHistoryMessages(messages);
+          if (renderable.length === 0) return;
+          set((state) => {
+            const current = state.threadProjections[threadId] ?? emptyProjection();
+            const merged = mergeLiveMessagesIntoRenderableMessages(
+              current.messages,
+              renderable,
+              agentType,
+            );
+            if (merged === current.messages) return state;
+            return {
+              threadProjections: {
+                ...state.threadProjections,
+                [threadId]: { ...current, messages: merged },
+              },
+            };
+          });
+        },
+        syncLiveMessageState: (agentType, threadId, liveState) => {
+          const renderable = filterRenderableHistoryMessages(liveState.messages);
+          set((state) => {
+            const current = state.threadProjections[threadId] ?? emptyProjection();
+            const swapped = trySwapLastLiveMessage(current.messages, renderable);
+            const merged =
+              swapped ??
+              (renderable.length > 0
+                ? mergeLiveMessagesIntoRenderableMessages(
+                    current.messages,
+                    renderable,
+                    agentType,
+                  )
+                : current.messages);
+            if (
+              merged === current.messages &&
+              current.pending.assistantId === liveState.pendingAssistantId &&
+              current.pending.reasoningId === liveState.pendingReasoningId
+            ) {
+              return state;
+            }
+            return {
+              threadProjections: {
+                ...state.threadProjections,
+                [threadId]: {
+                  ...current,
+                  messages: merged,
+                  pending: {
+                    assistantId: liveState.pendingAssistantId,
+                    reasoningId: liveState.pendingReasoningId,
+                  },
+                },
+              },
+            };
+          });
+        },
         resetMessageStates: (threadIds) => {
           get().resetThreadProjections(threadIds);
         },
-        // Phase 5 (2026-08-03): conv-store.loadMessages / loadMoreMessages
-        // 已写真源 session-store.threadProjections (不再读 / 写
-        // conv-store.messageStates), 这里保持原 delegate 路径, 让
-        // useAgentSessionStore.loadMessages / loadMoreMessages 这个
-        // 公共 API 仍然 callable. 没有循环 ── 因为 conv-store.loadMessages
-        // 写真源时直接用 useAgentSessionStore.setThreadProjection,
-        // 不再调 session-store.loadMessages (避免 loop).
-        loadMessages: (agentType, threadId) =>
-          convStore().loadMessages(agentType, threadId),
-        loadMoreMessages: (agentType, threadId) =>
-          convStore().loadMoreMessages(agentType, threadId),
+        // Phase 5 阶段2: loadMessages / loadMoreMessages direct 写真源
+        // threadProjections, 不再 delegate 到 conv-store.
+        loadMessages: async (agentType, threadId) => {
+          if (get().threadProjections[threadId]?.pagination.loadingInitial) return;
+          get().setThreadProjection(threadId, (p) => ({
+            ...p,
+            pagination: { ...p.pagination, loadingInitial: true },
+          }));
+          try {
+            const page = await getInitialThreadHistory(agentType, threadId, HISTORY_PAGE_SIZE);
+            const messages = filterRenderableHistoryMessages(page.messages);
+            get().setThreadProjection(threadId, (p) => ({
+              ...p,
+              messages: mergeHistoricalMessages(p.messages, messages, agentType),
+              pagination: {
+                oldestSequence: page.oldestSequence,
+                hasMoreHistory: page.hasMore,
+                loadingInitial: false,
+                loadingMore: false,
+              },
+            }));
+          } catch (err) {
+            console.error("[AgentSession] Failed to load messages:", err);
+            get().setThreadProjection(threadId, (p) => ({
+              ...p,
+              pagination: { ...p.pagination, loadingInitial: false },
+            }));
+          }
+        },
+        loadMoreMessages: async (agentType, threadId) => {
+          const current = get().threadProjections[threadId];
+          if (
+            !current ||
+            current.pagination.loadingMore ||
+            !current.pagination.hasMoreHistory ||
+            current.pagination.oldestSequence === null
+          ) {
+            return;
+          }
+          get().setThreadProjection(threadId, (p) => ({
+            ...p,
+            pagination: { ...p.pagination, loadingMore: true },
+          }));
+          try {
+            const page = await getHistoryPage(
+              agentType,
+              threadId,
+              current.pagination.oldestSequence,
+              HISTORY_PAGE_SIZE,
+            );
+            const messages = filterRenderableHistoryMessages(page.messages);
+            get().setThreadProjection(threadId, (p) => ({
+              ...p,
+              messages: prependHistoricalMessages(p.messages, messages, agentType),
+              pagination: {
+                oldestSequence: page.oldestSequence ?? p.pagination.oldestSequence,
+                hasMoreHistory: page.hasMore,
+                loadingInitial: false,
+                loadingMore: false,
+              },
+            }));
+          } catch (err) {
+            console.error("[AgentSession] Failed to load more messages:", err);
+            get().setThreadProjection(threadId, (p) => ({
+              ...p,
+              pagination: { ...p.pagination, loadingMore: false },
+            }));
+          }
+        },
     }),
     {
       name: STORAGE_KEYS.AGENT_SESSION,

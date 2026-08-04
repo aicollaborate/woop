@@ -676,13 +676,6 @@ export const useAgentConversationStore = create<AgentConversationStore>()(
   ),
 );
 
-// Phase 4 (2026-08-02): 注册 conv-store getState 到 session-store, 让
-// session-store 的委托 actions (loadMessages / renameInstance / removeInstance
-// 等) 可以同步调用本 store. 避免循环依赖: session-store 不静态 import
-// 本模块, 而是通过 late binding 获取引用.
-import { _bindConvStore } from "@features/agent/store/agent-session-store";
-_bindConvStore(() => useAgentConversationStore.getState());
-
 export function selectAgentConversationRunStatus(
   instance: AgentConversationInstance | null | undefined,
   threadStates: ThreadsMap,

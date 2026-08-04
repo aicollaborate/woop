@@ -207,8 +207,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
   it("refreshes final history when listener recovery finds a locally running thread ended", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/chat-store");
-    const { useAgentConversationStore } = await import(
-      "@features/agent/store/agent-conversation-store"
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
     );
     const { reconcileAgentRunsAndRefreshEndedHistory } = await import(
       "@features/agent/hooks/use-agent-events"
@@ -224,7 +224,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
     vi.mocked(agent.runningThreads).mockResolvedValueOnce({});
     const loadMessages = vi
-      .spyOn(useAgentConversationStore.getState(), "loadMessages")
+      .spyOn(useAgentSessionStore.getState(), "loadMessages")
       .mockResolvedValueOnce();
 
     await reconcileAgentRunsAndRefreshEndedHistory();
