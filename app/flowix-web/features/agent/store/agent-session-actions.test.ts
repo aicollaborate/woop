@@ -179,9 +179,9 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const persistedTitles: string[] = [];
     vi.mocked(agent.upsertConversationInstance).mockImplementation(
       async (instance) => {
-        persistedTitles.push(instance.title);
+        persistedTitles.push(instance.initialTitle);
         if (persistedTitles.length === 1) await firstPending;
-        return instance;
+        return { ...instance, threadTitle: instance.initialTitle };
       },
     );
 
