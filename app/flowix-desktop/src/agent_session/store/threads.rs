@@ -206,6 +206,7 @@ impl ThreadManager {
         Ok(Some(Thread { info, messages }))
     }
 
+    #[allow(dead_code)]
     pub async fn get_thread_info(
         self: &Arc<Self>,
         thread_id: &str,

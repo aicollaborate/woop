@@ -42,6 +42,7 @@ mod platform {
 
         unsafe impl NSObjectProtocol for AppleAuthorizationDelegate {}
 
+        #[allow(non_snake_case)]
         unsafe impl ASAuthorizationControllerPresentationContextProviding for AppleAuthorizationDelegate {
             #[unsafe(method_id(presentationAnchorForAuthorizationController:))]
             unsafe fn presentationAnchorForAuthorizationController(
@@ -52,6 +53,7 @@ mod platform {
             }
         }
 
+        #[allow(non_snake_case)]
         unsafe impl ASAuthorizationControllerDelegate for AppleAuthorizationDelegate {
             #[unsafe(method(authorizationController:didCompleteWithAuthorization:))]
             unsafe fn authorizationController_didCompleteWithAuthorization(

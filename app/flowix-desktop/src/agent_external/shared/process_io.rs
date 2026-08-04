@@ -111,10 +111,12 @@ impl StreamingEmitBuffer {
         !self.reasoning.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn append_text(&mut self, text: &str) {
         self.append_text_with_metadata(text, AgentChunkMetadata::default());
     }
 
+    #[allow(dead_code)]
     pub fn append_reasoning(&mut self, text: &str) {
         self.append_reasoning_with_metadata(text, AgentChunkMetadata::default());
     }
@@ -146,6 +148,7 @@ impl StreamingEmitBuffer {
     }
 
     /// 取走缓冲文本, �?reasoning �?text, 各自拼成单条 `AgentChunk` 返回�?    /// 空缓冲返回空 vec (调用方无需判空)�?
+    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<AgentChunk> {
         self.flush_with_metadata()
             .into_iter()
