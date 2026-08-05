@@ -218,7 +218,11 @@ export function FormatSection({ settings, updateSettings }: FormatSectionProps) 
           max={DOCUMENT_WIDTH_MAX}
           step={DOCUMENT_WIDTH_STEP}
           onChange={(v) => updateSettings({ format: { documentWidth: v } })}
-          formatValue={(v) => `${v}px`}
+          formatValue={(v) =>
+            v > 1200
+              ? t('preferences.format.documentWidth.fullWidth')
+              : `${v}px`
+          }
         />
       </FieldRow>
 

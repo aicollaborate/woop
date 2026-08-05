@@ -137,6 +137,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.format.documentWidth.title": "Document width",
     "preferences.format.documentWidth.description":
       "Adjust the maximum editor width (px)",
+    "preferences.format.documentWidth.fullWidth": "100%",
     "preferences.format.fontSize.title": "Font size",
     "preferences.format.fontSize.description": "Adjust body text size (px)",
     "preferences.format.lineHeight.title": "Line height",

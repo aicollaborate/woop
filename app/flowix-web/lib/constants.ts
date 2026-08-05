@@ -224,9 +224,9 @@ export const LINE_HEIGHT_MIN = 1.0;
 export const LINE_HEIGHT_MAX = 2.4;
 export const LINE_HEIGHT_STEP = 0.05;
 
-/** 文档编辑区宽度范围 (px) */
+/** 文档编辑区宽度范围 (px) — >1200 在 UI 上展示为 "100%" */
 export const DOCUMENT_WIDTH_MIN = 500;
-export const DOCUMENT_WIDTH_MAX = 1100;
+export const DOCUMENT_WIDTH_MAX = 2000;
 export const DOCUMENT_WIDTH_STEP = 50;
 export const DOCUMENT_WIDTH_DEFAULT = 800;
 

@@ -129,6 +129,7 @@ const zhCN = {
     "preferences.format.documentWidth.title": "文档宽度",
     "preferences.format.documentWidth.description":
       "拖动调节文档编辑区的最大宽度 (px)",
+    "preferences.format.documentWidth.fullWidth": "100%",
     "preferences.format.fontSize.title": "字号",
     "preferences.format.fontSize.description": "拖动调节正文字号 (px)",
     "preferences.format.lineHeight.title": "行间距",
