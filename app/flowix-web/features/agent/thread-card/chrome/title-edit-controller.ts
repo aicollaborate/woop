@@ -1,4 +1,5 @@
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { deriveThreadTitleFromPrompt } from "@features/agent/store/thread-titles";
 import type { AgentTypeKey } from "@/types/agent";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { focusWithoutScroll } from "@features/agent/thread-card/agent-thread-card-dom";
@@ -12,6 +13,13 @@ export interface AgentThreadCardTitleEditControllerOptions {
   getInstanceId: () => string | null;
   getTypeKey: () => AgentTypeKey;
   updateAttrs: (attrs: Record<string, unknown>) => void;
+  /**
+   * 首条 user 消息原文 (已 strip 系统块), 用于孤儿卡片标题恢复。
+   * 无可用消息时返回 undefined。
+   */
+  getFirstUserMessageText: () => string | undefined;
+  /** 该 agent 类型的默认标题 (例如 "Claude Code 会话"), 永不空。 */
+  getDefaultTitle: () => string;
 }
 
 export class AgentThreadCardTitleEditController {
@@ -23,6 +31,8 @@ export class AgentThreadCardTitleEditController {
   private readonly getInstanceId: () => string | null;
   private readonly getTypeKey: () => AgentTypeKey;
   private readonly updateAttrs: (attrs: Record<string, unknown>) => void;
+  private readonly getFirstUserMessageText: () => string | undefined;
+  private readonly getDefaultTitle: () => string;
   private titleInput: HTMLInputElement | null = null;
   private titleBeforeEdit: string | null = null;
 
@@ -35,13 +45,22 @@ export class AgentThreadCardTitleEditController {
     this.getInstanceId = options.getInstanceId;
     this.getTypeKey = options.getTypeKey;
     this.updateAttrs = options.updateAttrs;
+    this.getFirstUserMessageText = options.getFirstUserMessageText;
+    this.getDefaultTitle = options.getDefaultTitle;
   }
 
   get activeInput(): HTMLInputElement | null {
     return this.titleInput;
   }
 
-  getTitle(): string {
+  /**
+   * 显式标题 ── 来自持久化真源 (threadLists / 活跃 thread / instance.title /
+   * node attr), 不含从首条 user 消息现取或默认标题的恢复回退。
+   *
+   * card 视图据此判断"标题是否仍需随消息加载而恢复", 避免对已有真实标题的
+   * 卡片在每条消息 tick 上重复 syncTitleText。
+   */
+  private explicitTitle(): string {
     const attrTitle = (this.getAttrTitle() ?? "").trim();
     const attrTypeKey = normalizeAgentTypeKey(this.getAttrTypeKey());
     const threadId = this.getThreadId();
@@ -58,6 +77,27 @@ export class AgentThreadCardTitleEditController {
     }
 
     return this.getInstanceTitle() || attrTitle;
+  }
+
+  hasExplicitTitle(): boolean {
+    return this.explicitTitle().trim().length > 0;
+  }
+
+  getTitle(): string {
+    const explicit = this.explicitTitle();
+    if (explicit) return explicit;
+
+    // 孤儿卡片恢复: 持久化真源查不到标题 (thread.db 无行 / 持久化失败 /
+    // 卡片 threadId 漂移成外部 session id) 时, 从已加载的首条 user 消息现取。
+    // 首条 user 消息是所有 agent 类型共有的标题信号, 跨 runtime 统一。
+    const firstUser = this.getFirstUserMessageText();
+    if (firstUser) {
+      const derived = deriveThreadTitleFromPrompt(firstUser);
+      if (derived) return derived;
+    }
+
+    // 兜底: 永不返回空串, 至少展示按类型的默认标题。
+    return this.getDefaultTitle();
   }
 
   syncTitleText(): void {

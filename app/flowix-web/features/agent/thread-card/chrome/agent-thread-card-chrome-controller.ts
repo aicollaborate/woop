@@ -23,6 +23,8 @@ export interface AgentThreadCardChromeControllerOptions {
   getAttrTitle: () => string | null;
   getAttrTypeKey: () => string | null;
   getInstanceTitle: () => string | undefined;
+  getFirstUserMessageText: () => string | undefined;
+  getDefaultTitle: () => string;
   getThreadId: () => string | null;
   getInstanceId: () => string | null;
   getTypeKey: () => AgentTypeKey;
@@ -53,6 +55,8 @@ export class AgentThreadCardChromeController {
       getAttrTitle: options.getAttrTitle,
       getAttrTypeKey: options.getAttrTypeKey,
       getInstanceTitle: options.getInstanceTitle,
+      getFirstUserMessageText: options.getFirstUserMessageText,
+      getDefaultTitle: options.getDefaultTitle,
       getThreadId: options.getThreadId,
       getInstanceId: options.getInstanceId,
       getTypeKey: options.getTypeKey,
@@ -76,6 +80,10 @@ export class AgentThreadCardChromeController {
 
   getTitle(): string {
     return this.title.getTitle();
+  }
+
+  hasExplicitTitle(): boolean {
+    return this.title.hasExplicitTitle();
   }
 
   attach(): void {

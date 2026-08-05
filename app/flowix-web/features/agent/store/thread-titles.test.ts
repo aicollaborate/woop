@@ -11,6 +11,7 @@ import {
   canPersistThreadTitle,
   defaultExternalThreadTitle,
   defaultThreadTitle,
+  deriveThreadTitleFromPrompt,
   getConversationTitleForThread,
   isExternalAgentType,
   normalizeThreadTitle,
@@ -56,6 +57,26 @@ describe("thread-titles helpers", () => {
     expect(defaultThreadTitle("hermes")).toBe("Hermes session");
     expect(defaultThreadTitle("codex")).toBe("Codex session");
     expect(defaultThreadTitle("claude")).toBe("Claude Code session");
+  });
+
+  it("deriveThreadTitleFromPrompt strips system block, collapses whitespace, truncates", () => {
+    // 系统块 (任意大小写) 被切掉, 只保留用户可见的首段。
+    expect(
+      deriveThreadTitleFromPrompt("检查可选清理\n<## CONTEXT PROMPT ##>\nignored"),
+    ).toBe("检查可选清理");
+    // 折叠换行 / 多空白为单空格。
+    expect(deriveThreadTitleFromPrompt("hello\n\n  world")).toBe("hello world");
+    // 截断到 28 字符。
+    const long = "a".repeat(50);
+    expect(deriveThreadTitleFromPrompt(long)).toBe("a".repeat(28));
+    // 空内容回退 fallback (默认空串)。
+    expect(deriveThreadTitleFromPrompt("")).toBe("");
+    expect(deriveThreadTitleFromPrompt("   ")).toBe("");
+    expect(deriveThreadTitleFromPrompt("", "fallback")).toBe("fallback");
+    // 只剩系统块时也算空。
+    expect(
+      deriveThreadTitleFromPrompt("<## context prompt ##>\nonly system", "fb"),
+    ).toBe("fb");
   });
 
   it("normalizeThreadTitle collapses whitespace and strips context marker", () => {

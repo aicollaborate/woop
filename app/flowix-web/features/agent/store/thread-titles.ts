@@ -37,6 +37,25 @@ function normalizeThreadTitle(title: string | null | undefined): string {
   return stripSystemBlock(title ?? "").replace(/\s+/g, " ").trim();
 }
 
+/** 标题字数上限 ── 与首条 user 消息派生标题时一致。 */
+const DERIVED_TITLE_MAX_CHARS = 28;
+
+/**
+ * 从一段 prompt 文本派生可显示标题: strip 系统块 → 折叠空白 → 截断。
+ * 空则回退 `fallback`。首条 user 消息是跨 agent (flowix / claude / codex /
+ * hermes / opencode) 唯一共有的标题信号, 故标题恢复统一走这条路径。
+ *
+ * `thread-card` 的 card 视图与 title-edit-controller 共用此实现, 避免截断
+ * 长度 / 清洗规则漂移。
+ */
+export function deriveThreadTitleFromPrompt(
+  prompt: string,
+  fallback = "",
+): string {
+  const title = stripSystemBlock(prompt).replace(/\s+/g, " ").trim();
+  return title ? title.slice(0, DERIVED_TITLE_MAX_CHARS) : fallback;
+}
+
 /**
  * 所有 conversation title 都持久化到产品 SQLite `threads.title`。
  * Codex / Claude 等 runtime 文件只提供消息历史，不能成为标题真源。

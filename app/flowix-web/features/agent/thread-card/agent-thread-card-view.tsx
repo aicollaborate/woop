@@ -17,7 +17,7 @@ import { selectRenderableThreadMessages } from "@features/agent/store/thread-ren
 import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
 import type { AgentTypeKey } from "@/types/agent";
 import type { QuickPhrase } from "@/lib/constants";
-import { stripSystemBlock } from "@features/agent/message";
+import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
 import { windows } from "@platform/tauri/client";
@@ -106,8 +106,7 @@ const AGENT_THREAD_CARD_INPUT_DRAFT_MAX_CHARS = 500;
 const AGENT_THREAD_CARD_DRAFT_PERSIST_DEBOUNCE_MS = 2000;
 
 function buildTitle(prompt: string, fallback: string = ""): string {
-  const title = stripSystemBlock(prompt).replace(/\s+/g, " ").trim();
-  return title ? title.slice(0, 28) : fallback;
+  return deriveThreadTitleFromPrompt(prompt, fallback);
 }
 
 const AGENT_THREAD_CARD_HEADER_DRAG_THRESHOLD_PX = 4;
@@ -302,6 +301,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getAttrTitle: () => this.node.attrs.title as string | null,
       getAttrTypeKey: () => this.node.attrs.typeKey as string | null,
       getInstanceTitle: () => this.instance?.title,
+      getFirstUserMessageText: () => this.firstUserMessageText(),
+      getDefaultTitle: () => defaultThreadTitle(this.typeKey),
       getThreadId: () => this.threadId,
       getInstanceId: () => this.instanceId,
       getTypeKey: () => this.typeKey,
@@ -1116,6 +1117,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     state: undefined,
   };
 
+  // 外部 session 历史 (由 thread-cache-controller 经 renderResolvedSessionMessages
+  // 直接渲染、未必进 projection) 的首条 user 消息快照 ── 供孤儿卡片标题恢复。
+  private resolvedFirstUserText: string | undefined;
+
   private currentThreadState(): ThreadState | undefined {
     const threadId = this.renderThreadId;
     if (!threadId) return undefined;
@@ -1261,6 +1266,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       isLoading: runtimeView.showLoadingIndicator,
       shouldRenderMessages,
     });
+
+    // 标题恢复: 没有显式标题 (孤儿卡片 / 持久化失败 / threadId 漂移) 时,
+    // 消息加载完成后从首条 user 消息现取标题。syncTitleText 在标题编辑态
+    // no-op, 已有真实标题的卡片 hasExplicitTitle 为 true 跳过, 零开销。
+    if (!this.chrome.hasExplicitTitle()) {
+      this.chrome.syncTitleText();
+    }
   }
 
   private renderResolvedSessionMessages(
@@ -1268,6 +1280,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   ): void {
     if (this.isDestroyed || !this.dom.isConnected) return;
     if (messages.length === 0) return;
+    // 缓存首条 user 消息, 供孤儿卡片标题恢复 (见 firstUserMessageText)。
+    const firstUser = getAgentThreadCardUserHistoryMessagesFromMessages(messages)[0];
+    this.resolvedFirstUserText = firstUser && firstUser.trim() ? firstUser : undefined;
     const shouldRenderMessages = !this.collapsed || this.isFullscreen;
     this.dom.classList.remove("agent-thread-card--thread-cache-loading");
     this.messages.render({
@@ -1275,6 +1290,11 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       isLoading: false,
       shouldRenderMessages,
     });
+    // 同 renderThreadState: 外部 session (如 claude jsonl) 消息异步到位后,
+    // 给孤儿卡片一次标题恢复机会。
+    if (!this.chrome.hasExplicitTitle()) {
+      this.chrome.syncTitleText();
+    }
   }
 
   private setError(message: string | null): void {
@@ -1291,6 +1311,23 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     return getAgentThreadCardUserHistoryMessagesFromMessages(
       this.currentMessages(),
     );
+  }
+
+  /**
+   * 首条 user 消息原文 (已 strip 系统块) ── 供孤儿卡片标题恢复使用。
+   * 复用 getUserHistoryMessages 的清洗逻辑, 取最早一条; 无则 undefined。
+   */
+  private firstUserMessageText(): string | undefined {
+    const first = this.getUserHistoryMessages()[0];
+    if (first && first.trim()) return first;
+    // 外部 session 的历史消息由 thread-cache-controller 经
+    // renderResolvedSessionMessages 直接渲染, 不一定进 projection ──
+    // 孤儿卡片 (无 DB 行) 的消息只走这条路径, 故此处回退到缓存的
+    // resolved 快照里的首条 user 消息。
+    if (this.resolvedFirstUserText && this.resolvedFirstUserText.trim()) {
+      return this.resolvedFirstUserText;
+    }
+    return undefined;
   }
 
   private async submit(): Promise<void> {
