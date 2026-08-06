@@ -91,9 +91,10 @@ export function NoteNavigationPanel({
 
           {/* 选中笔记本的可访问文件夹 (文件) ── 与标签同处一个滚动容器, 文件在标签
               下方。 展示该 notebook 自己的默认 folders (不 fallback 全局), 主空间行
-              标角标; 空时显示「添加资料」按钮。 编辑入口仍在 agent thread card 的
-              access popover, 勾选/设主空间回写到此 notebook 的默认, 此处随 store 刷新。 */}
-          <NotebookAccessFilesList notebookId={selectedNotebook?.id} />
+              标角标; 空时显示「添加资料」按钮。 编辑入口走右键菜单
+              (设为主空间 / 取消主空间 / 删除); 显式取消主空间后 effectiveWorkspace
+              fallback 到 notebook.path。 */}
+          <NotebookAccessFilesList notebook={selectedNotebook ?? undefined} />
         </OverlayScrollbar>
       </div>
     </div>

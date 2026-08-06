@@ -105,8 +105,13 @@ export interface AccessConfig {
 }
 
 export interface FilesConfig {
-  /** 旧版主工作目录；历史 instance 会一次性迁移到 workspaceSnapshot。 */
-  workspace?: string;
+  /**
+   * 主工作目录 (folder path)。`null` 表示用户**显式取消主空间**──
+   * 当前 notebook 的"资料"列表里没有 folder 充当主空间, runtime 应
+   * fallback 到 notebook 自身的 path (与 `undefined` 不区分, 都视作
+   * "无显式主空间")。老磁盘数据只会落 `string` 或缺失, JSON 兼容。
+   */
+  workspace?: string | null;
   /** 启用目录列表 (path 数组) */
   folders: string[];
   /** 笔记本路径列表 (path 数组, 与 agent-access-store 同语义) */

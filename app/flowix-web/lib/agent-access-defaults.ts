@@ -77,10 +77,24 @@ export function resolveAuthorizedDefaultFiles(
       .map((entry) => comparable(entry.path)),
   );
   const folders = files.folders.filter((path) => allowed.has(comparable(path)));
-  const workspace =
-    files.workspace && folders.some((path) => comparable(path) === comparable(files.workspace!))
-      ? files.workspace
+  // `null` 是显式取消主空间, 需保留 (UI 把 null 视作 fallback 到 notebook.path);
+  // `string` 必须仍命中合法 folders 才保留, 否则清掉让 UI 重新选。
+  const rawWorkspace = files.workspace;
+  let workspace: string | null | undefined;
+  if (rawWorkspace === null) {
+    // `null` 是显式取消主空间, 需保留 (UI 把 null 视作 fallback 到
+    // notebook.path)。
+    workspace = null;
+  } else if (typeof rawWorkspace === "string") {
+    // `string` 必须仍命中合法 folders 才保留, 否则清掉让 UI 重新选。
+    workspace = folders.some(
+      (path) => comparable(path) === comparable(rawWorkspace),
+    )
+      ? rawWorkspace
       : undefined;
+  } else {
+    workspace = undefined;
+  }
 
   return { workspace, folders, notebooks: [...files.notebooks] };
 }

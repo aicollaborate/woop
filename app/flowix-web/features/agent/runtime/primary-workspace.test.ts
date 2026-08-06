@@ -46,7 +46,32 @@ describe("resolvePrimaryWorkspace", () => {
     ).toEqual({ kind: "notebook", path: "D:\\当前笔记本" });
   });
 
-  it("5. 全空时返回 empty (dispatch 层据此判断是否拦截)", () => {
+  it("5. workspace === null (显式取消主空间) 跳过 folders[0], 退到当前笔记本", () => {
+    expect(
+      resolvePrimaryWorkspace({
+        defaultFiles: {
+          workspace: null,
+          folders: ["D:\\第一份资料", "D:\\第二份资料"],
+          notebooks: [],
+        },
+        notebookPath: "D:\\当前笔记本",
+      }),
+    ).toEqual({ kind: "notebook", path: "D:\\当前笔记本" });
+  });
+
+  it("6. workspace === null + 没 notebookPath 退到 empty", () => {
+    expect(
+      resolvePrimaryWorkspace({
+        defaultFiles: {
+          workspace: null,
+          folders: ["D:\\资料"],
+          notebooks: [],
+        },
+      }),
+    ).toEqual({ kind: "empty" });
+  });
+
+  it("7. 全空时返回 empty (dispatch 层据此判断是否拦截)", () => {
     expect(resolvePrimaryWorkspace({})).toEqual({ kind: "empty" });
   });
 

@@ -5,13 +5,17 @@
  * 决定；结果随后写入 instance.workspaceSnapshot，后续运行不再调用本函数:
  *
  *   1. defaultFiles.workspace   ─ 侧边栏资料列表里显式设的主空间 folder
- *   2. defaultFiles.folders[0]  ─ 有资料但没显式设主空间时, 取第一个
- *   3. notebookPath             ─ 没有资料时, 主空间 = 当前笔记本路径
- *   4. empty
+ *   2. (skip) defaultFiles.workspace === null → 跳过 folders[0], 直接退到
+ *      notebookPath: 用户**显式取消主空间** (右键菜单"取消主空间"),
+ *      folders 里所有 folder 都不是主空间, 当前笔记本自动 fallback 为主空间。
+ *   3. defaultFiles.workspace 未设置 (legacy undefined) + folders[0] ─
+ *      老数据没有 workspace 字段, 沿用 folders[0] 兜底以兼容历史 instance。
+ *   4. notebookPath             ─ 没 folders 时, 主空间 = 当前笔记本路径
+ *   5. empty
  *
  * 「资料列表」= `agent-access.defaults.files[<notebookId>]`, 由侧边栏
- * `NotebookAccessFilesList` 编辑 (添加 folder / 切主空间 / 删除 folder)。
- * `notebookPath` = instance.notebookId 对应的笔记本路径。
+ * `NotebookAccessFilesList` 编辑 (添加 folder / 切主空间 / 取消主空间 /
+ * 删除 folder)。`notebookPath` = instance.notebookId 对应的笔记本路径。
  */
 import type { FilesConfig } from "@/types/agent";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
@@ -44,7 +48,20 @@ export function resolvePrimaryWorkspace(
     return { kind: "default.workspace", path: defaultWorkspace };
   }
 
-  // 2. 资料列表第一个 folder ── 有资料但没显式设主空间时, 用第一个。
+  // 1b. 资料主空间被显式置 null (用户右键"取消主空间") ── 跳过
+  // folders[0] 兜底, 直接退到 notebookPath, 与 UI `effectiveWorkspace`
+  // (`workspace && folderPaths.includes(workspace) ? workspace : notebook.path`)
+  // 行为一致。folders 里的 folder 不再被隐式升级为主空间。
+  if (input.defaultFiles?.workspace === null) {
+    const notebookPath = normalize(input.notebookPath);
+    if (notebookPath) {
+      return { kind: "notebook", path: notebookPath };
+    }
+    return { kind: "empty" };
+  }
+
+  // 2. 资料列表第一个 folder ── 老数据 (workspace 未设置 = undefined)
+  // 兼容路径: 保留 folders[0] 兜底以避免老 instance 突然失去 cwd。
   const folders = input.defaultFiles?.folders ?? [];
   for (const raw of folders) {
     const first = normalize(raw);
