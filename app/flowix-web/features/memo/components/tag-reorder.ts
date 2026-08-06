@@ -244,13 +244,16 @@ function pinnedListEqual(a: readonly string[], b: readonly string[]): boolean {
  * - 列表里 `oldPath` 精确出现的 → 替换为 `newPath`。
  * - 列表里 `oldPath/<suffix>` 的子路径 → 替换为 `newPath/<suffix>`。
  * - 列表里的其他 tag → 保持不变。
- * - 整个 parentKey === oldParentKey 的列表 → 改记到 newParentKey 下（rename
- *   时 oldParentKey === newParentKey，相当于原地不动）。
+ * - parentKey === oldParentKey 的列表 → 改记到 newParentKey 下（rename 时
+ *   oldParentKey === newParentKey, 相当于原地不动）。
+ * - **parentKey === oldPath 的列表** → 改记到 newPath 下。覆盖「被改名的
+ *   tag 有 pinned 子节点」的情况：子节点的 parent = 旧 tag, rename 后 parent
+ *   = 新 tag, key 要跟着搬。reparent 同理（source 子树里有 pinned 子孙）。
  * - migrate 出去的旧 parentKey 不存在 pinned 条目时仍保留 key + 空数组，让
  *   持久化层写入时清空该 key（避免下次 load 又被读出来）。
  *
  * 返回**新对象**（不变异入参），当 oldPath === newPath 且 oldParentKey ===
- * newParentKey 时直接返回入参（无变化）。
+ * newParentKey 时直接返回入参的浅拷贝（无变化但保持调用方的 immutability 期望）。
  */
 export function migratePinnedByParentOnPathChange(
   pinnedByParent: Readonly<Record<string, string[]>>,
@@ -279,7 +282,22 @@ export function migratePinnedByParentOnPathChange(
       seen.add(next);
       mapped.push(next);
     }
-    const targetKey = parentKey === oldParentKey ? newParentKey : parentKey;
+    // 决定目标 parentKey:
+    // - parentKey === oldParentKey -> 旧父级, 改成 newParentKey（rename 时
+    //   二者相等, 相当于原地不动; reparent 时把 source 的 pinned 从旧父级
+    //   搬到新父级）。
+    // - parentKey === oldPath -> 旧 tag 本身作为父级（其 pinned 子节点的 parent
+    //   簿）, 改成 newPath（rename 后子节点的 parent 变成新 tag; reparent
+    //   后 source 子树里 pinned 子孙的 parent 跟着搬）。
+    // - 其他 -> 不变。
+    let targetKey: string;
+    if (parentKey === oldParentKey) {
+      targetKey = newParentKey;
+    } else if (parentKey === oldPath) {
+      targetKey = newPath;
+    } else {
+      targetKey = parentKey;
+    }
     if (targetKey in result) {
       // 极少见：同一次迁移中两个 key 合并到同一目标（rename 让两条父链
       // 重合）；按去重 + 原有顺序合并。

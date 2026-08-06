@@ -393,13 +393,17 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
           if (nextSelected !== useTagStore.getState().selectedTagId) {
             useTagStore.getState().setSelectedTagId(nextSelected);
           }
-          // pinned 簿同步迁移: 记下迁移结果, 让后续 metadata 重载看到的
-          // 系统.json 状态保持一致; 持久化失败不阻塞 UI, 仅 toast 提示。
+          // pinned 簿同步迁移: 必须先 await 持久化再 clearLibraryMetadata ──
+          // 否则 clear 触发的 metadata 重载会读到旧 (pre-migration) 的
+          // pinnedByParent, 把刚 set 的 migratedPinned 覆盖掉。
+          // moveTag 已经成功, 这里 pinned 写盘失败不应阻塞 UI, 仅 toast / log。
           setPinnedByParent(migratedPinned);
           setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
-          void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+          try {
+            await persistPinnedChanges(prevPinned, migratedPinned, notebookId);
+          } catch (err) {
             console.warn('[TagTree] Failed to persist pinned after rename:', err);
-          });
+          }
           clearLibraryMetadata();
           invalidateMentionTags();
         }
@@ -454,11 +458,15 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             setSelectedTagId(null);
             setActiveFilter('all');
           }
+          // 同 commitRename: 必须先 await pinned 持久化, 再 clearLibraryMetadata
+          // 否则后续 metadata 重载会用旧 pinnedByParent 覆盖刚 set 的值。
           setPinnedByParent(migratedPinned);
           setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
-          void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+          try {
+            await persistPinnedChanges(prevPinned, migratedPinned, notebookId);
+          } catch (err) {
             console.warn('[TagTree] Failed to persist pinned after delete:', err);
-          });
+          }
           clearLibraryMetadata();
           invalidateMentionTags();
           toast.success(t('memo.tag.deletedToast', { path: tag.fullPath } satisfies I18nParams));
@@ -551,10 +559,14 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             }
             setPinnedByParent(migratedPinned);
             setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
-            void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+            try {
+              await persistPinnedChanges(prevPinned, migratedPinned, notebookId);
+            } catch (err) {
               console.warn('[TagTree] Failed to persist pinned after reparent:', err);
-            });
+            }
             // 编辑器 `#` mention 缓存失效 + metadata 重拉 (列表/面板/下拉)。
+            // 必须放在 persist 之后, 避免 metadata 重载读到旧 pinnedByParent
+            // 把刚 set 的 migratedPinned 覆盖掉。
             clearLibraryMetadata();
             invalidateMentionTags();
           }

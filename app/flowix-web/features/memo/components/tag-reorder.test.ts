@@ -317,6 +317,55 @@ describe('migratePinnedByParentOnPathChange', () => {
     migratePinnedByParentOnPathChange(before, '中国/北京', '中国/京城', '中国', '中国');
     expect(JSON.stringify(before)).toEqual(snapshot);
   });
+
+  it('migrates pinned children under the renamed tag (parentKey === oldPath case)', () => {
+    // pinnedByParent['中国/北京'] = ['中国/北京/海淀'] 是「海淀 pinned 在 北京 下」
+    // rename 中国/北京 → 中国/京城 后, 海淀的 parent 变成 中国/京城, key 也要搬。
+    const before = {
+      '中国/北京': ['中国/北京/海淀', '中国/北京/朝阳'],
+      '中国': ['中国/北京'],
+    };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '中国/京城', '中国', '中国',
+    );
+    expect(result['中国/北京']).toBeUndefined();
+    expect(result['中国/京城']).toEqual(['中国/京城/海淀', '中国/京城/朝阳']);
+    expect(result['中国']).toEqual(['中国/京城']); // 自己的 entry path 也跟着改
+  });
+
+  it('migrates pinned grandchildren of a reparented subtree', () => {
+    // 拖入子树: source = 中国/北京, target = 美国, 里面有一个 pinned 孙 海淀。
+    // 海淀 pinned 在 source 下（parentKey = '中国/北京'）, 整体 reparent 后要搬去
+    // parentKey = '美国/北京'。
+    const before = {
+      '中国/北京': ['中国/北京/海淀'],
+      '中国': ['中国/北京'],
+    };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '美国/北京', '中国', '美国',
+    );
+    expect(result['中国/北京']).toBeUndefined();
+    expect(result['美国/北京']).toEqual(['美国/北京/海淀']);
+    expect(result['美国']).toEqual(['美国/北京']);
+  });
+
+  it('handles nested pinned subtree with multiple levels', () => {
+    // 三层: A/B/C 自身在 pinnedByParent['A/B'] 里, 它的子 A/B/C/D 在
+    // pinnedByParent['A/B/C'] 里。rename A/B/C → A/B/X 之后:
+    // - pinnedByParent['A/B'] 的 entry path 改名为 A/B/X（同 parent, path 替换）
+    // - pinnedByParent['A/B/C'] 的 entry 搬到 pinnedByParent['A/B/X']（parentKey
+    //   从旧 tag 改成新 tag, path 也替换）。
+    const before = {
+      'A/B': ['A/B/C'],
+      'A/B/C': ['A/B/C/D'],
+    };
+    const result = migratePinnedByParentOnPathChange(
+      before, 'A/B/C', 'A/B/X', 'A/B', 'A/B',
+    );
+    expect(result['A/B']).toEqual(['A/B/X']);
+    expect(result['A/B/C']).toBeUndefined();
+    expect(result['A/B/X']).toEqual(['A/B/X/D']);
+  });
 });
 
 describe('migratePinnedByParentOnDelete', () => {
