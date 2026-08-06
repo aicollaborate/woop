@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { HashIcon, PlusIcon } from '@phosphor-icons/react';
+import { SquareMinus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -117,6 +118,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   // 删除确认弹窗: `deletingTag` 命中时, 弹 Dialog 提示子树影响范围 + 确认。
   const [deletingTag, setDeletingTag] = useState<MemoTagTreeItem | null>(null);
+  // 批量管理模式: true 时标签末尾的数字变成删除按钮 (SquareMinus),
+  // 标题栏 + 图标变成 Done, 点击退出批量模式。
+  const [batchMode, setBatchMode] = useState(false);
 
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
 
@@ -188,6 +192,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       setHiddenTagIds([]);
       setPinnedByParent({});
       setCollapsedTagIds([]);
+      setBatchMode(false);
       onCountsChange({ total: 0, agent: 0, todo: 0 });
       clearLibraryMetadata();
       return;
@@ -634,16 +639,28 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         {/* 标签分类标题 ── 过滤器 (全部/对话/待办) 在上, 真正的标签树在此标题之下。 */}
         <div className="agent-thread-card__access-section-label flex items-center justify-between">
           <span>{t('memo.navigation.tags')}</span>
-          <button
-            type="button"
-            onClick={openCreateTagDialog}
-            disabled={!selectedNotebook}
-            className="-my-1 flex h-5 w-5 translate-x-1 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-40"
-            aria-label={t('memo.tag.create')}
-            title={t('memo.tag.create')}
-          >
-            <PlusIcon className="h-3.5 w-3.5" weight="light" />
-          </button>
+          {batchMode ? (
+            <button
+              type="button"
+              onClick={() => setBatchMode(false)}
+              className="-my-1 flex h-5 translate-x-1 items-center gap-1 rounded-md px-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              aria-label={t('memo.tag.batchDone')}
+              title={t('memo.tag.batchDone')}
+            >
+              <span>{t('memo.tag.batchDone')}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={openCreateTagDialog}
+              disabled={!selectedNotebook}
+              className="-my-1 flex h-5 w-5 translate-x-1 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-40"
+              aria-label={t('memo.tag.create')}
+              title={t('memo.tag.create')}
+            >
+              <PlusIcon className="h-3.5 w-3.5" weight="light" />
+            </button>
+          )}
         </div>
         {tagOptions.length > 0 && (
           <>
@@ -785,14 +802,31 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                     {tag.name}
                   </span>
                 )}
-                <span
-                  className={cn(
-                    'ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]',
-                    isSelected && 'text-[var(--foreground)]/70',
-                  )}
-                >
-                  {tag.count}
-                </span>
+                {batchMode ? (
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      event.preventDefault();
+                      void confirmDeleteTag(tag);
+                    }}
+                    className="ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+                    aria-label={t('memo.tag.batchDelete', { path: tag.fullPath } satisfies I18nParams)}
+                    title={t('memo.tag.batchDelete', { path: tag.fullPath } satisfies I18nParams)}
+                  >
+                    <SquareMinus className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <span
+                    className={cn(
+                      'ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]',
+                      isSelected && 'text-[var(--foreground)]/70',
+                    )}
+                  >
+                    {tag.count}
+                  </span>
+                )}
                 {isDropBefore && (
                   <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 rounded-full bg-[var(--brand)]" />
                 )}
@@ -801,16 +835,28 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 )}
               </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="w-[160px]">
-                <ContextMenuItem onClick={() => startRename(tag)}>
+              <ContextMenuContent className="w-[160px] space-y-1 px-1 py-1.5">
+                <ContextMenuItem
+                  onClick={() => startRename(tag)}
+                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                >
                   {t('memo.tag.rename')}
                 </ContextMenuItem>
-                <ContextMenuItem onClick={() => void pinTag(tag)}>
+                <ContextMenuItem
+                  onClick={() => void pinTag(tag)}
+                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                >
                   {t('memo.tag.pin')}
                 </ContextMenuItem>
                 <ContextMenuItem
+                  onClick={() => setBatchMode(true)}
+                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                >
+                  {t('memo.tag.batchManage')}
+                </ContextMenuItem>
+                <ContextMenuItem
                   onClick={() => setDeletingTag(tag)}
-                  className="hover:text-[var(--destructive)] focus:text-[var(--destructive)] hover:bg-[var(--destructive)]/10 focus:bg-[var(--destructive)]/10"
+                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
                 >
                   {t('memo.tag.delete')}
                 </ContextMenuItem>
