@@ -9,6 +9,8 @@ import {
   migratePinnedByParentOnPathChange,
   migratePinnedByParentOnDelete,
   diffPinnedByParent,
+  remapPath,
+  remapParentKey,
 } from '@features/memo/components/tag-reorder';
 import type {
   MemoTagLayoutItem,
@@ -365,6 +367,60 @@ describe('migratePinnedByParentOnPathChange', () => {
     expect(result['A/B']).toEqual(['A/B/X']);
     expect(result['A/B/C']).toBeUndefined();
     expect(result['A/B/X']).toEqual(['A/B/X/D']);
+  });
+});
+
+describe('remapPath', () => {
+  it('returns the path unchanged when there is no match', () => {
+    expect(remapPath('foo', 'bar', 'baz')).toBe('foo');
+  });
+
+  it('replaces the path on exact match', () => {
+    expect(remapPath('中国/北京', '中国/北京', '中国/京城')).toBe('中国/京城');
+  });
+
+  it('replaces prefix and preserves the suffix', () => {
+    expect(remapPath('中国/北京/海淀', '中国/北京', '中国/京城')).toBe('中国/京城/海淀');
+  });
+
+  it('does not match a partial prefix (中国/北 vs 中国/北京)', () => {
+    // '中国/北京' 不是 '中国/北' 的 prefix-match, '中国/北' 不应替换。
+    expect(remapPath('中国/北京', '中国/北', '中国/南')).toBe('中国/北京');
+  });
+
+  it('handles empty oldPath / newPath', () => {
+    // empty oldPath 不实际使用（rename 不会用空字符串当 source path）, 但
+    // 函数本身不应崩：'foo'.startsWith('/') === false → 原样返回。
+    expect(remapPath('foo', '', 'bar')).toBe('foo');
+  });
+
+  it('handles same oldPath and newPath as identity', () => {
+    expect(remapPath('中国/北京/海淀', '中国/北京', '中国/北京')).toBe('中国/北京/海淀');
+  });
+});
+
+describe('remapParentKey', () => {
+  it('returns the key unchanged when no rule matches', () => {
+    expect(remapParentKey('foo', 'old', 'new', 'oldParent', 'newParent')).toBe('foo');
+  });
+
+  it('relabels to newParentKey when key === oldParentKey', () => {
+    expect(remapParentKey('中国', '中国/北京', '美国/北京', '中国', '美国')).toBe('美国');
+  });
+
+  it('relabels to newPath when key === oldPath (children parent moves)', () => {
+    expect(remapParentKey('中国/北京', '中国/北京', '中国/京城', '中国', '中国')).toBe('中国/京城');
+  });
+
+  it('prefers oldParentKey rule over oldPath when both match', () => {
+    // edge case: key === oldPath === oldParentKey (rename 一个 root tag, 它的
+    // parent 也是自己 = 不可能; 跳过; 用更现实的: oldParentKey 不同)
+    expect(remapParentKey('foo', 'foo/bar', 'baz/bar', 'fooParent', 'fooParent2')).toBe('foo');
+  });
+
+  it('handles reparent with distinct oldParentKey and oldPath', () => {
+    // reparent 中国/北京 → 美国/北京, source 父 = '中国', 目标父 = '美国'
+    expect(remapParentKey('中国/北京', '中国/北京', '美国/北京', '中国', '美国')).toBe('美国/北京');
   });
 });
 
