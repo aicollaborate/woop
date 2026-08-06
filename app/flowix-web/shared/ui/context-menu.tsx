@@ -110,17 +110,22 @@ function ContextMenuContent({ children, className, style }: ContextMenuContentPr
 	}, [open, position]);
 
 	// Close on any pointerdown outside the menu content.
+	// 听 `pointerdown` 而不是 `mousedown`: tag / notebook 行上挂了
+	// `useDragReorder` 的 `onPointerDown`, 该 handler 会 `e.preventDefault()` ──
+	// 按 Pointer Events 规范, preventDefault on pointerdown 会取消对应的
+	// mousedown, 导致 mousedown 不冒泡到 document, 菜单收不掉。 改听
+	// pointerdown 可同时覆盖左键 / 触摸 / 笔, 且不被 preventDefault 阻断。
 	React.useEffect(() => {
 		if (!open) return;
 
-		const handlePointerDown = (e: MouseEvent) => {
+		const handlePointerDown = (e: PointerEvent) => {
 			const target = e.target as Node;
 			if (contentRef.current?.contains(target)) return;
 			setOpen(false);
 		};
 
-		document.addEventListener("mousedown", handlePointerDown);
-		return () => document.removeEventListener("mousedown", handlePointerDown);
+		document.addEventListener("pointerdown", handlePointerDown);
+		return () => document.removeEventListener("pointerdown", handlePointerDown);
 	}, [open, setOpen]);
 
 	// Close on Escape, scroll, or resize.
