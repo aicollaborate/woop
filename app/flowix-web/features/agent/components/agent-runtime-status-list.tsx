@@ -155,6 +155,7 @@ export function AgentRuntimeStatusList({
                     <img
                       src={type.icon}
                       alt={displayName(type)}
+                      data-agent-icon={type.key}
                       className={cn(
                         'h-full w-full object-contain',
                         unavailable && 'grayscale opacity-60'
@@ -273,6 +274,7 @@ export function AgentRuntimeStatusList({
               <img
                 src={type.icon}
                 alt=""
+                data-agent-icon={type.key}
                 className={cn(
                   'h-full w-full object-contain',
                   unavailable && 'grayscale opacity-60'

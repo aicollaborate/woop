@@ -353,6 +353,7 @@ export const SlashMenuDropdown = ({
                       <img
                         src={Icon}
                         alt=""
+                        data-agent-icon={item.id.slice('agent-thread-'.length)}
                         className="h-full w-full object-contain"
                         aria-hidden="true"
                       />
