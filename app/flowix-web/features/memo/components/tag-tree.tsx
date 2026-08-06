@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { HashIcon, PlusIcon, PushPin } from '@phosphor-icons/react';
+import { HashIcon, PlusIcon } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -371,8 +371,8 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       // 校验清成 null, await 后取到的已是 null, 无法前缀替换。
       const beforeSelected = useTagStore.getState().selectedTagId;
       // pinned 迁移: rename only 改 last segment, parent 不变; oldParentKey === newParentKey。
-      const lastSlash = newFullPath.lastIndexOf('/');
-      const newParentKey = lastSlash > 0 ? newFullPath.slice(0, lastSlash) : '';
+      const newLastSlash = newFullPath.lastIndexOf('/');
+      const newParentKey = newLastSlash > 0 ? newFullPath.slice(0, newLastSlash) : '';
       const oldParentKey = tag.parentId ?? '';
       const prevPinned = pinnedByParent;
       const migratedPinned = migratePinnedByParentOnPathChange(
@@ -640,9 +640,6 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             const isHidden = hiddenTagIdSet.has(tag.id);
             const isDragging = draggingTagId === tag.id;
             const hasChildren = childTagIdSet.has(tag.id);
-            const isPinned = (pinnedByParent[tag.parentId ?? ''] ?? []).includes(
-              tag.fullPath,
-            );
             const isDropBefore =
               dropTarget?.id === tag.id && dropTarget.position === 'before' && !isDragging;
             const isDropAfter =
@@ -769,18 +766,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 ) : (
                   <span
                     className={cn(
-                      'flex min-w-0 flex-1 items-center gap-1 truncate',
+                      'min-w-0 flex-1 truncate',
                       isHidden && !isSelected && 'text-[var(--muted-foreground)]',
                     )}
                   >
-                    {isPinned && (
-                      <PushPin
-                        weight="fill"
-                        aria-hidden
-                        className="h-3 w-3 shrink-0 text-[var(--primary)]"
-                      />
-                    )}
-                    <span className="truncate">{tag.name}</span>
+                    {tag.name}
                   </span>
                 )}
                 <span

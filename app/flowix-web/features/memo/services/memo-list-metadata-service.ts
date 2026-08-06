@@ -229,7 +229,7 @@ export async function loadMemoLibraryMetadata({
     }),
     system.getTagMetadata(notebook.id).catch((error) => {
       console.warn('[memo-list-metadata-service] Failed to load tag system metadata:', error);
-      return { hidden: [], order: [], layout: [] };
+      return { hidden: [], order: [], layout: [], pinnedByParent: {} };
     }),
     // 路径式 tag 树的前缀计数: 每个 prefix (e.g. `中国`) 对应"挂了
     // 以该 prefix 起始的 tag"的去重 memo 数。侧栏 tree 节点上显示
