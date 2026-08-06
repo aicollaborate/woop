@@ -104,6 +104,12 @@ export interface NotebookTagSystemMetadata {
   hidden: string[];
   order: string[];
   layout: SystemTagLayoutItem[];
+  /**
+   * 置顶标签簿: parent fullPath → MRU 顺序的子 fullPath 列表。
+   * 空 key (`""`) 表示 root 级别。Vec 索引 0 = 最近置顶 = 渲染最前。
+   * 旧版持久化可能没有这个字段, 加载时会默认空对象。
+   */
+  pinnedByParent: Record<string, string[]>;
 }
 
 // System metadata (backend ~/.flowix/boot/system.json).
@@ -112,6 +118,14 @@ export const system = {
     invoke<NotebookTagSystemMetadata>('get_tag_system_metadata', { notebookId }),
   setTagLayout: (notebookId: string, layout: SystemTagLayoutItem[]) =>
     invoke<void>('set_tag_system_layout', { notebookId, layout }),
+  /**
+   * 写回某 parent 下的 pinned 列表。
+   * - `parentId` 是空字符串时表 root。
+   * - `pinned` 数组顺序 = MRU（index 0 = 最近置顶）。
+   * - 空数组语义 = 该 parent 下不再有 pinned（持久化层会清空 key）。
+   */
+  setTagPinned: (notebookId: string, parentId: string, pinned: string[]) =>
+    invoke<void>('set_tag_system_pinned', { notebookId, parentId, pinned }),
 };
 
 // Memos

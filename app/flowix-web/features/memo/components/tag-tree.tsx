@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { HashIcon, PlusIcon } from '@phosphor-icons/react';
+import { HashIcon, PlusIcon, PushPin } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -38,9 +38,14 @@ import {
   getSubtreeIds,
   rebuildTagOptionsFromLayout,
   reorderTagLayout,
+  applyPinOrdering,
+  diffPinnedByParent,
+  migratePinnedByParentOnDelete,
+  migratePinnedByParentOnPathChange,
   type TagDropPosition,
 } from '@features/memo/components/tag-reorder';
 import { markTagsCollapsedByAncestor } from '@features/memo/components/tag-collapse';
+import { system } from '@platform/tauri/client';
 
 interface TagTreeProps {
   selectedNotebook: Notebook | null;
@@ -96,6 +101,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
   const [tagOptions, setTagOptions] = useState<MemoTagTreeItem[]>([]);
   const [tagLayout, setTagLayout] = useState<MemoTagLayoutItem[]>([]);
   const [hiddenTagIds, setHiddenTagIds] = useState<string[]>([]);
+  // 置顶簿: parent fullPath (root 用 '') → MRU 顺序 child fullPath 列表。
+  // 真源在 `system.json`；这里只用作乐观更新 + 渲染输入。tagOptions 已经在
+  // loadMemoLibraryMetadata 里 applyPinOrdering 过, 渲染拿到的就是已排好的
+  // 顺序, 这里另存一份是为迁移 / diff 持久化。
+  const [pinnedByParent, setPinnedByParent] = useState<Record<string, string[]>>({});
   const [collapsedTagIds, setCollapsedTagIds] = useState<string[]>([]);
   // 行内重命名编辑态: editingTagId 命中时标签名 span 替换为 input。
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
@@ -139,6 +149,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         setTagOptions(metadata.tagOptions);
         setTagLayout(metadata.tagLayout);
         setHiddenTagIds(metadata.hiddenTagIds);
+        setPinnedByParent(metadata.pinnedByParent);
         onCountsChange({
           total: metadata.totalMemoCount,
           agent: metadata.agentMemoCount,
@@ -164,6 +175,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
           setTagOptions([]);
           setTagLayout([]);
           setHiddenTagIds([]);
+          setPinnedByParent({});
           setCollapsedTagIds([]);
           onCountsChange({ total: 0, agent: 0, todo: 0 });
         }
@@ -174,6 +186,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       setTagOptions([]);
       setTagLayout([]);
       setHiddenTagIds([]);
+      setPinnedByParent({});
       setCollapsedTagIds([]);
       onCountsChange({ total: 0, agent: 0, todo: 0 });
       clearLibraryMetadata();
@@ -260,6 +273,71 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
     setEditingTagName(tag.name);
   }, []);
 
+  /**
+   * 持久化 pinnedByParent 的差异：diff before/after, 逐个 parentKey 调
+   * `system.setTagPinned`。空数组由 Rust 端清空 key。
+   *
+   * 任一调用失败时 record 最后一个错, 调用方统一处理回滚。错误不抛出
+   * 中断后续 parentKey 写入 ── 一次失败就停 chain 会让后端再次进入
+   * 不一致状态, 全调一遍 + 报最后一条错更可控。
+   */
+  const persistPinnedChanges = useCallback(
+    async (
+      before: Record<string, string[]>,
+      after: Record<string, string[]>,
+      notebookId: string,
+    ): Promise<void> => {
+      const changes = diffPinnedByParent(before, after);
+      let lastError: unknown = null;
+      for (const { parentKey, pinnedIds } of changes) {
+        try {
+          await system.setTagPinned(notebookId, parentKey, pinnedIds);
+        } catch (err) {
+          lastError = err;
+          console.warn('[TagTree] Failed to persist pinned for', parentKey, err);
+        }
+      }
+      if (lastError) throw lastError;
+    },
+    [],
+  );
+
+  /**
+   * 「置顶」菜单项: 把 tag 推到 parent 下兄弟组最前 (MRU 语义)。无提供取消
+   * 路径 ── pinned 只能通过 delete / rename / reparent 间接迁移或清空。
+   * 既有 pinned 重新置顶 = 把它从当前位置抽离并插到 head (让其他 pinned 后
+   * 退一格), 符合 "最近置顶排第一"。
+   */
+  const pinTag = useCallback(
+    async (tag: MemoTagTreeItem) => {
+      const notebookId = useMemoStore.getState().selectedNotebook?.id;
+      if (!notebookId) return;
+      const parentKey = tag.parentId ?? '';
+      const current = pinnedByParent[parentKey] ?? [];
+      const next: string[] = [
+        tag.fullPath,
+        ...current.filter((p) => p !== tag.fullPath),
+      ];
+      const prev = pinnedByParent;
+      const nextMap: Record<string, string[]> = {
+        ...pinnedByParent,
+        [parentKey]: next,
+      };
+      // 乐观更新
+      setPinnedByParent(nextMap);
+      setTagOptions(applyPinOrdering(tagOptions, nextMap));
+      try {
+        await system.setTagPinned(notebookId, parentKey, next);
+      } catch (err) {
+        // 回滚
+        setPinnedByParent(prev);
+        setTagOptions(applyPinOrdering(tagOptions, prev));
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pinnedByParent, tagOptions],
+  );
+
   // 行内重命名提交: 复用 moveTag (重命名 = 同父级 move 末段)。segment 字符
   // 与共享 tag path 校验一致; 冲突依赖后端 AlreadyExists 报错 toast,
   // 保持编辑态。成功后失效 mention 缓存 + 清 metadata, 并把 selectedTagId
@@ -292,6 +370,18 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       // MemoEvent::Updated 触发 metadata 重载, 会把旧路径 selectedTagId
       // 校验清成 null, await 后取到的已是 null, 无法前缀替换。
       const beforeSelected = useTagStore.getState().selectedTagId;
+      // pinned 迁移: rename only 改 last segment, parent 不变; oldParentKey === newParentKey。
+      const lastSlash = newFullPath.lastIndexOf('/');
+      const newParentKey = lastSlash > 0 ? newFullPath.slice(0, lastSlash) : '';
+      const oldParentKey = tag.parentId ?? '';
+      const prevPinned = pinnedByParent;
+      const migratedPinned = migratePinnedByParentOnPathChange(
+        pinnedByParent,
+        tag.fullPath,
+        newFullPath,
+        oldParentKey,
+        newParentKey,
+      );
       try {
         const report = await useTagStore
           .getState()
@@ -303,6 +393,13 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
           if (nextSelected !== useTagStore.getState().selectedTagId) {
             useTagStore.getState().setSelectedTagId(nextSelected);
           }
+          // pinned 簿同步迁移: 记下迁移结果, 让后续 metadata 重载看到的
+          // 系统.json 状态保持一致; 持久化失败不阻塞 UI, 仅 toast 提示。
+          setPinnedByParent(migratedPinned);
+          setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
+          void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+            console.warn('[TagTree] Failed to persist pinned after rename:', err);
+          });
           clearLibraryMetadata();
           invalidateMentionTags();
         }
@@ -311,7 +408,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         toast.error(err instanceof Error ? err.message : String(err));
       }
     },
-    [clearLibraryMetadata, t],
+    [clearLibraryMetadata, persistPinnedChanges, pinnedByParent, tagOptions, t],
   );
 
   /**
@@ -343,6 +440,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         beforeSelected !== null &&
         (beforeSelected === tag.fullPath ||
           beforeSelected.startsWith(`${tag.fullPath}/`));
+      // pinned 簿清理: 删除子树命中会带走 pinned 条目 (精确 + 子孙)。
+      const prevPinned = pinnedByParent;
+      const migratedPinned = migratePinnedByParentOnDelete(pinnedByParent, tag.fullPath);
       try {
         const report = await useTagStore.getState().deleteTag(notebookId, tag.fullPath);
         if (report) {
@@ -354,6 +454,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             setSelectedTagId(null);
             setActiveFilter('all');
           }
+          setPinnedByParent(migratedPinned);
+          setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
+          void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+            console.warn('[TagTree] Failed to persist pinned after delete:', err);
+          });
           clearLibraryMetadata();
           invalidateMentionTags();
           toast.success(t('memo.tag.deletedToast', { path: tag.fullPath } satisfies I18nParams));
@@ -364,7 +469,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         );
       }
     },
-    [clearLibraryMetadata, setActiveFilter, setSelectedTagId, t],
+    [clearLibraryMetadata, persistPinnedChanges, pinnedByParent, setActiveFilter, setSelectedTagId, tagOptions, t],
   );
 
   const handleTagCollapseToggle = useCallback((tagId: string) => {
@@ -422,6 +527,17 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         // moveTag 前记下选中态 ── await 期间 memo-event 触发的 metadata 重载
         // 会把旧路径 selectedTagId 校验清成 null, await 后取不到原值。
         const beforeSelected = useTagStore.getState().selectedTagId;
+        // pinned 迁移: reparent = parentKey 变化。source 的 parent 从
+        // sourceTag.parentId → target.fullPath; entry 要从旧 parentKey
+        // 列表搬到新 parentKey 列表。
+        const prevPinned = pinnedByParent;
+        const migratedPinned = migratePinnedByParentOnPathChange(
+          pinnedByParent,
+          sourceTag.fullPath,
+          newPath,
+          sourceTag.parentId ?? '',
+          target.fullPath,
+        );
         try {
           const report = await useTagStore
             .getState()
@@ -433,6 +549,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             if (nextSelected !== useTagStore.getState().selectedTagId) {
               useTagStore.getState().setSelectedTagId(nextSelected);
             }
+            setPinnedByParent(migratedPinned);
+            setTagOptions(applyPinOrdering(tagOptions, migratedPinned));
+            void persistPinnedChanges(prevPinned, migratedPinned, notebookId).catch((err) => {
+              console.warn('[TagTree] Failed to persist pinned after reparent:', err);
+            });
             // 编辑器 `#` mention 缓存失效 + metadata 重拉 (列表/面板/下拉)。
             clearLibraryMetadata();
             invalidateMentionTags();
@@ -463,7 +584,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       clearLibraryMetadata();
       invalidateMentionTags();
     },
-    [clearLibraryMetadata, tagLayout, tagOptions]
+    [clearLibraryMetadata, persistPinnedChanges, pinnedByParent, tagLayout, tagOptions]
   );
 
   const findDropTarget = useCallback(
@@ -519,6 +640,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
             const isHidden = hiddenTagIdSet.has(tag.id);
             const isDragging = draggingTagId === tag.id;
             const hasChildren = childTagIdSet.has(tag.id);
+            const isPinned = (pinnedByParent[tag.parentId ?? ''] ?? []).includes(
+              tag.fullPath,
+            );
             const isDropBefore =
               dropTarget?.id === tag.id && dropTarget.position === 'before' && !isDragging;
             const isDropAfter =
@@ -645,11 +769,18 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 ) : (
                   <span
                     className={cn(
-                      'min-w-0 flex-1 truncate',
+                      'flex min-w-0 flex-1 items-center gap-1 truncate',
                       isHidden && !isSelected && 'text-[var(--muted-foreground)]',
                     )}
                   >
-                    {tag.name}
+                    {isPinned && (
+                      <PushPin
+                        weight="fill"
+                        aria-hidden
+                        className="h-3 w-3 shrink-0 text-[var(--primary)]"
+                      />
+                    )}
+                    <span className="truncate">{tag.name}</span>
                   </span>
                 )}
                 <span
@@ -671,6 +802,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
               <ContextMenuContent className="w-[160px]">
                 <ContextMenuItem onClick={() => startRename(tag)}>
                   {t('memo.tag.rename')}
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => void pinTag(tag)}>
+                  {t('memo.tag.pin')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => setDeletingTag(tag)}

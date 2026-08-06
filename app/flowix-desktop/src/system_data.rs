@@ -37,6 +37,12 @@ pub struct NotebookTagSystemData {
     pub order: Vec<String>,
     #[serde(default)]
     pub layout: Vec<TagLayoutItem>,
+    /// 置顶标签簿: parent fullPath → MRU 顺序的子 fullPath 列表。
+    /// 空 key (`""`) 表示 root 级别。Vec 索引 0 = 最近置顶 = 渲染最前。
+    /// 单一调用方 (`set_pinned_tags`) 负责整组写回, 以便 rename / delete /
+    /// reparent 迁移时一次落盘。
+    #[serde(default)]
+    pub pinned_by_parent: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +158,30 @@ impl SystemData {
             .entry(notebook_id.to_string())
             .or_default();
         notebook.hidden = hidden;
+        self.flush(&data)
+    }
+
+    /// 写回某 parent 下的 pinned 列表（MRU 顺序）。
+    /// - `parent_id` 为 `None` 时使用 root 哨兵 `""`。
+    /// - `pinned` 为空 Vec 时直接 `remove` 该 key，保持 `pinned_by_parent` 干净。
+    pub fn set_pinned_tags(
+        &self,
+        notebook_id: &str,
+        parent_id: Option<&str>,
+        pinned: Vec<String>,
+    ) -> std::io::Result<()> {
+        let mut data = self.write_data();
+        let notebook = data
+            .tag
+            .notebooks
+            .entry(notebook_id.to_string())
+            .or_default();
+        let key = parent_id.unwrap_or("").to_string();
+        if pinned.is_empty() {
+            notebook.pinned_by_parent.remove(&key);
+        } else {
+            notebook.pinned_by_parent.insert(key, pinned);
+        }
         self.flush(&data)
     }
 }

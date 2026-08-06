@@ -1,11 +1,20 @@
 import type { Notebook } from '@features/memo';
 import { memos, system, tags } from '@platform/tauri/client';
+import { applyPinOrdering } from '@features/memo/components/tag-reorder';
 
 export interface MemoLibraryMetadata {
   tagMap: Record<string, string>;
   tagOptions: MemoTagTreeItem[];
   tagLayout: MemoTagLayoutItem[];
   hiddenTagIds: string[];
+  /**
+   * 置顶标签簿: parent fullPath → MRU 顺序的子 fullPath 列表。
+   * root 用 `""` 作 key。已经在 `loadMemoLibraryMetadata` 里
+   * `applyPinOrdering` 重排到 `tagOptions` 中, 调用方拿到 `tagOptions`
+   * 时顺序已生效, 这里只挪作持久化与重命名 / delete / reparent 迁移
+   * 的真源。
+   */
+  pinnedByParent: Record<string, string[]>;
   totalMemoCount: number;
   agentMemoCount: number;
   todoMemoCount: number;
@@ -252,7 +261,7 @@ export async function loadMemoLibraryMetadata({
   const tagById = new Map(
     allTagDefinitions.map((tag) => [tag.id, tag.name]),
   );
-  const tagOptions = buildTagTreeOptions({
+  const treeOptions = buildTagTreeOptions({
     layout: tagLayout,
     tagById,
     prefixCounts: prefixCountsResult,
@@ -261,11 +270,33 @@ export async function loadMemoLibraryMetadata({
   const savedHidden = normalizeSavedStringArray(tagSystemMetadata.hidden);
   const hiddenTagIds = savedHidden.filter((id) => allTagIdSet.has(id));
 
+  // 规范化 pinnedByParent: 后端可能没有这个字段 (旧版本), 默认为空。
+  // 同时清掉指向不存在 tag 的脏数据 ── applyPinOrdering 会静默跳过,
+  // 但仍要避免反复重发, 这里一次性落盘清。
+  const rawPinned = tagSystemMetadata.pinnedByParent ?? {};
+  const validPinnedByParent: Record<string, string[]> = {};
+  for (const [parentKey, pinnedList] of Object.entries(rawPinned)) {
+    if (!Array.isArray(pinnedList)) continue;
+    const seen = new Set<string>();
+    const filtered: string[] = [];
+    for (const id of pinnedList) {
+      if (typeof id !== 'string' || seen.has(id)) continue;
+      if (!allTagIdSet.has(id)) continue;
+      seen.add(id);
+      filtered.push(id);
+    }
+    if (filtered.length > 0) {
+      validPinnedByParent[parentKey] = filtered;
+    }
+  }
+  const tagOptions = applyPinOrdering(treeOptions, validPinnedByParent);
+
   return {
     tagMap,
     tagOptions,
     tagLayout,
     hiddenTagIds,
+    pinnedByParent: validPinnedByParent,
     totalMemoCount: usedTagIdsResult.totalMemoCount ?? 0,
     agentMemoCount: usedTagIdsResult.agentMemoCount ?? 0,
     todoMemoCount: usedTagIdsResult.todoMemoCount ?? 0,

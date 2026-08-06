@@ -162,3 +162,177 @@ export function reorderTagLayout(
     ...remaining.slice(insertIndex),
   ];
 }
+
+/**
+ * 应用 pinned 排序: 以 DFS 走树, 同一 parent 下的 pinned 列表 (MRU 顺序)
+ * 提到兄弟组最前, 其余兄弟按原 layout 顺序排在后面。
+ *
+ * 约定:
+ * - `pinnedByParent` 的 key = parent fullPath, root 用 `""` (空字符串)。
+ * - 调用方需保证 pinned 数组内 id 已去重; 本函数不主动去重, 但容错: 重复项
+ *   会被去重, 不会重复渲染。
+ * - pinned 列表里指向不存在 tag / 跨 parent 的 id 静默跳过 ── 用不到就丢
+ *   弃, 与 buildTagTreeOptions 的语义对齐。
+ * - 不修改 `tagOptions` 的 `parentId` / `depth` / `id`, 仅重排数组顺序。
+ * - 走 DFS 而非线性按 parentId 分组: 线性分组会把 root 兄弟组的后段 (e.g. C)
+ *   插到 B 的子树 (B/B1, B/B2) 之前, 破坏嵌套结构。
+ *
+ * 之所以把排序做成纯函数 (而非熏进 `buildTagTreeOptions`): buildTagTree 推导
+ * 父子关系靠 layout + fullPath 字面, 而 pinned 是另一维度; 拆开更易测, 也能
+ * 在 tagged rename / delete / reparent 迁移后不重走 layout 推导直接复用。
+ */
+export function applyPinOrdering(
+  tagOptions: MemoTagTreeItem[],
+  pinnedByParent: Readonly<Record<string, readonly string[]>>,
+): MemoTagTreeItem[] {
+  if (Object.keys(pinnedByParent).length === 0) return tagOptions;
+
+  const childrenByParent = new Map<string | null, MemoTagTreeItem[]>();
+  for (const tag of tagOptions) {
+    const arr = childrenByParent.get(tag.parentId) ?? [];
+    arr.push(tag);
+    childrenByParent.set(tag.parentId, arr);
+  }
+
+  const result: MemoTagTreeItem[] = [];
+  const visit = (parentId: string | null): void => {
+    const children = childrenByParent.get(parentId);
+    if (!children || children.length === 0) return;
+    const parentKey = parentId ?? '';
+    const pinned = pinnedByParent[parentKey];
+    const pinnedSet = pinned && pinned.length > 0 ? new Set(pinned) : null;
+    const emitted = new Set<string>();
+
+    // 1. pinned 按 MRU 顺序, 同时进入子节点递归 (递归里 pinned 仍生效)。
+    if (pinned) {
+      for (const fullPath of pinned) {
+        if (emitted.has(fullPath)) continue;
+        const seg = children.find((s) => s.fullPath === fullPath);
+        if (!seg) continue; // 跨 parent / 不存在 → 跳过
+        result.push(seg);
+        emitted.add(fullPath);
+        visit(seg.fullPath);
+      }
+    }
+    // 2. 非 pinned 保持原 layout 顺序; 同理递归进入子节点。
+    for (const seg of children) {
+      if (pinnedSet?.has(seg.fullPath)) continue;
+      result.push(seg);
+      visit(seg.fullPath);
+    }
+  };
+
+  visit(null);
+  return result;
+}
+
+/**
+ * 检查两个数组内容是否一致（顺序也要一致）。用于 diff pinned 列表变化。
+ */
+function pinnedListEqual(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * 在 tag 路径变化（rename / reparent）后迁移 pinnedByParent。
+ *
+ * 规则：
+ * - 列表里 `oldPath` 精确出现的 → 替换为 `newPath`。
+ * - 列表里 `oldPath/<suffix>` 的子路径 → 替换为 `newPath/<suffix>`。
+ * - 列表里的其他 tag → 保持不变。
+ * - 整个 parentKey === oldParentKey 的列表 → 改记到 newParentKey 下（rename
+ *   时 oldParentKey === newParentKey，相当于原地不动）。
+ * - migrate 出去的旧 parentKey 不存在 pinned 条目时仍保留 key + 空数组，让
+ *   持久化层写入时清空该 key（避免下次 load 又被读出来）。
+ *
+ * 返回**新对象**（不变异入参），当 oldPath === newPath 且 oldParentKey ===
+ * newParentKey 时直接返回入参（无变化）。
+ */
+export function migratePinnedByParentOnPathChange(
+  pinnedByParent: Readonly<Record<string, string[]>>,
+  oldPath: string,
+  newPath: string,
+  oldParentKey: string,
+  newParentKey: string,
+): Record<string, string[]> {
+  if (oldPath === newPath && oldParentKey === newParentKey) {
+    return { ...pinnedByParent };
+  }
+  const result: Record<string, string[]> = {};
+  for (const [parentKey, list] of Object.entries(pinnedByParent)) {
+    const seen = new Set<string>();
+    const mapped: string[] = [];
+    for (const item of list) {
+      let next: string;
+      if (item === oldPath) {
+        next = newPath;
+      } else if (item.startsWith(`${oldPath}/`)) {
+        next = `${newPath}${item.slice(oldPath.length)}`;
+      } else {
+        next = item;
+      }
+      if (seen.has(next)) continue;
+      seen.add(next);
+      mapped.push(next);
+    }
+    const targetKey = parentKey === oldParentKey ? newParentKey : parentKey;
+    if (targetKey in result) {
+      // 极少见：同一次迁移中两个 key 合并到同一目标（rename 让两条父链
+      // 重合）；按去重 + 原有顺序合并。
+      const merged: string[] = [];
+      const seenMerged = new Set<string>();
+      for (const item of [...result[targetKey], ...mapped]) {
+        if (seenMerged.has(item)) continue;
+        seenMerged.add(item);
+        merged.push(item);
+      }
+      result[targetKey] = merged;
+    } else {
+      result[targetKey] = mapped;
+    }
+  }
+  return result;
+}
+
+/**
+ * 在 tag 删除后清理 pinnedByParent：移除任何等于 tagPath 或以 tagPath/ 起
+ * 头的 pinned 条目。返回新对象；即便某 parentKey 列表清空也保留 key + 空
+ * 数组，让持久化层落盘时清理该 key。
+ */
+export function migratePinnedByParentOnDelete(
+  pinnedByParent: Readonly<Record<string, string[]>>,
+  tagPath: string,
+): Record<string, string[]> {
+  const prefix = `${tagPath}/`;
+  const result: Record<string, string[]> = {};
+  for (const [parentKey, list] of Object.entries(pinnedByParent)) {
+    result[parentKey] = list.filter(
+      (item) => item !== tagPath && !item.startsWith(prefix),
+    );
+  }
+  return result;
+}
+
+/**
+ * Diff 两份 pinnedByParent，给出需要持久化到后端的 parentKey 列表
+ * （含「清空」语义）。返回 [{ parentKey, pinnedIds }]，调用方挨个调
+ * `system.setTagPinned(notebookId, parentKey, pinnedIds)`。
+ */
+export function diffPinnedByParent(
+  before: Readonly<Record<string, string[]>>,
+  after: Readonly<Record<string, string[]>>,
+): Array<{ parentKey: string; pinnedIds: string[] }> {
+  const keys = new Set<string>([...Object.keys(before), ...Object.keys(after)]);
+  const changes: Array<{ parentKey: string; pinnedIds: string[] }> = [];
+  for (const key of keys) {
+    const beforeList = before[key] ?? [];
+    const afterList = after[key] ?? [];
+    if (pinnedListEqual(beforeList, afterList)) continue;
+    changes.push({ parentKey: key, pinnedIds: afterList });
+  }
+  return changes;
+}

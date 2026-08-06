@@ -5,6 +5,10 @@ import {
   getSubtreeIds,
   rebuildTagOptionsFromLayout,
   reorderTagLayout,
+  applyPinOrdering,
+  migratePinnedByParentOnPathChange,
+  migratePinnedByParentOnDelete,
+  diffPinnedByParent,
 } from '@features/memo/components/tag-reorder';
 import type {
   MemoTagLayoutItem,
@@ -172,6 +176,203 @@ describe('reorderTagLayout', () => {
     expect(layout).toEqual([
       { id: 'a', parentId: null },
       { id: 'd', parentId: null },
+    ]);
+  });
+});
+
+describe('applyPinOrdering', () => {
+  // A B C 的根级别, B 也是 (A,B) 的父亲; 还用根级别 ABC 演示按 MRU 排序。
+  // d 没有子, 单独 root 子节点。
+  const root: MemoTagTreeItem[] = [
+    tag('A', 1, 0, null),
+    tag('B', 1, 0, null),
+    tag('B/B1', 1, 1, 'B'),
+    tag('B/B2', 1, 1, 'B'),
+    tag('C', 1, 0, null),
+  ];
+
+  it('returns the input unchanged when pinnedByParent is empty', () => {
+    expect(applyPinOrdering(root, {})).toEqual(root);
+  });
+
+  it('lifts a single root pinned tag to the front (A B C -> C A B)', () => {
+    const result = applyPinOrdering(root, { '': ['C'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['C', 'A', 'B', 'B/B1', 'B/B2']);
+  });
+
+  it('honors MRU order: pin C then pin B -> B C A (B can be ahead of C)', () => {
+    // pinned = ['B', 'C']: 先 pin C, 再 pin B -> B 是最近置顶, 排第一;
+    // C 留前部第二, A 落在兄弟末尾; B 是 parent，DFS 会在 B 之后立刻进入
+    // B 子树（B/B1, B/B2），然后才回到 root 同级的 C / A。
+    const result = applyPinOrdering(root, { '': ['B', 'C'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['B', 'B/B1', 'B/B2', 'C', 'A']);
+  });
+
+  it('keeps non-pinned siblings right after their last pinned ancestor until the next root', () => {
+    // pin C 后, A 仍按 layout 顺序紧跟, B 跟它的子 D 一起, 子 D 跟在 B 之后。
+    const layout: MemoTagTreeItem[] = [
+      tag('A', 1, 0, null),
+      tag('B', 1, 0, null),
+      tag('B/D', 1, 1, 'B'),
+      tag('C', 1, 0, null),
+    ];
+    const result = applyPinOrdering(layout, { '': ['C'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['C', 'A', 'B', 'B/D']);
+  });
+
+  it('ignores pinned ids that are not in the tree (stale data)', () => {
+    const result = applyPinOrdering(root, { '': ['missing', 'C'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['C', 'A', 'B', 'B/B1', 'B/B2']);
+  });
+
+  it('ignores pinned ids that belong to a different parent (cross-level pinning is a no-op)', () => {
+    // B/B1 的 parentId 是 'B', 但 pinnedByParent 的 key 是 ''（root 哨兵）；
+    // 顶层分组找不到对应兄弟, 整条 pin 被忽略, DFS 顺序保持原样。
+    const result = applyPinOrdering(root, { '': ['B/B1'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['A', 'B', 'B/B1', 'B/B2', 'C']);
+  });
+
+  it('promotes a child pinned under its actual parent (B/B1 pinned under parentKey "B")', () => {
+    // 把 B/B1 pin 在 B 的子组里 -> B/B1 提到 B/B2 之前, B 仍按原 root 顺序。
+    const result = applyPinOrdering(root, { B: ['B/B1'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['A', 'B', 'B/B1', 'B/B2', 'C']);
+  });
+
+  it('skips duplicate ids in the pinned array without re-emitting', () => {
+    // pinned = ['C', 'C', 'B']: 去重后 ['C', 'B'] 按数组首次出现顺序
+    // (C 在 B 前), root 顺序是 C, B, A; DFS 在 B 之后立刻展开 B 子树。
+    const result = applyPinOrdering(root, { '': ['C', 'C', 'B'] });
+    expect(result.map((t) => t.fullPath)).toEqual(['C', 'B', 'B/B1', 'B/B2', 'A']);
+  });
+
+  it('does not mutate the input array', () => {
+    const before = root.map((t) => t.fullPath);
+    applyPinOrdering(root, { '': ['C'] });
+    expect(root.map((t) => t.fullPath)).toEqual(before);
+  });
+});
+
+describe('migratePinnedByParentOnPathChange', () => {
+  it('renames the exact entry (parent unchanged)', () => {
+    // 中国/北京 → 中国/京城, parent 仍是中国
+    const before = { '': ['中国/北京'], '中国': ['中国/北京'] };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '中国/京城', '中国', '中国',
+    );
+    expect(result).toEqual({ '': ['中国/京城'], '中国': ['中国/京城'] });
+  });
+
+  it('migrates subtree entries with prefix replace', () => {
+    // 中国/北京 → 中国/京城; 子路径 中国/北京/海淀 也要替换。
+    const before = { '中国': ['中国/北京', '中国/北京/海淀'] };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '中国/京城', '中国', '中国',
+    );
+    expect(result['中国']).toEqual(['中国/京城', '中国/京城/海淀']);
+  });
+
+  it('reparent: moves the entry from oldParentKey to newParentKey', () => {
+    // 中国/北京 → 美国/北京 (reparent): parent 从 中国 → 美国
+    const before = { '中国': ['中国/北京'] };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '美国/北京', '中国', '美国',
+    );
+    // 原 parentKey='中国' 的列表搬到 '美国' 下。
+    expect(result['中国']).toBeUndefined();
+    expect(result['美国']).toEqual(['美国/北京']);
+  });
+
+  it('reparent with subtree rename', () => {
+    // 中国/北京 → 美国/京城, parent 中国 → 美国
+    const before = { '中国': ['中国/北京', '中国/北京/海淀'] };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '美国/京城', '中国', '美国',
+    );
+    expect(result['美国']).toEqual(['美国/京城', '美国/京城/海淀']);
+  });
+
+  it('keeps unrelated pinned entries untouched', () => {
+    const before = { '': ['alpha', 'beta'], '中国': ['中国/北京'] };
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '中国/京城', '中国', '中国',
+    );
+    expect(result['']).toEqual(['alpha', 'beta']);
+    expect(result['中国']).toEqual(['中国/京城']);
+  });
+
+  it('dedups mapped entries when after rename they collide', () => {
+    // 极端 case: rename 后某条已存在的 entry 与新条目同名 → 去重。
+    const before = { '中国': ['中国/北京', '中国/京城'] };
+    // 重命名 北京 → 京城: rename 后 '中国/北京' 变成 '中国/京城', 与原 '中国/京城'
+    // 撞名, 应当去重保留首次出现的顺序。
+    const result = migratePinnedByParentOnPathChange(
+      before, '中国/北京', '中国/京城', '中国', '中国',
+    );
+    expect(result['中国']).toEqual(['中国/京城']);
+  });
+
+  it('does not mutate the input map', () => {
+    const before = { '': ['中国/北京'] };
+    const snapshot = JSON.stringify(before);
+    migratePinnedByParentOnPathChange(before, '中国/北京', '中国/京城', '中国', '中国');
+    expect(JSON.stringify(before)).toEqual(snapshot);
+  });
+});
+
+describe('migratePinnedByParentOnDelete', () => {
+  it('removes the exact entry and any subtree entries', () => {
+    const before = {
+      '': ['中国/北京', '中国/北京/海淀'],
+      '中国': ['中国/北京', '中国/北京/海淀'],
+    };
+    const result = migratePinnedByParentOnDelete(before, '中国/北京');
+    expect(result['']).toEqual([]);
+    expect(result['中国']).toEqual([]);
+  });
+
+  it('keeps unrelated entries intact', () => {
+    const before = { '': ['alpha', '中国/北京'], '中国': ['中国/上海'] };
+    const result = migratePinnedByParentOnDelete(before, '中国/北京');
+    expect(result['']).toEqual(['alpha']);
+    expect(result['中国']).toEqual(['中国/上海']);
+  });
+
+  it('does not mutate the input map', () => {
+    const before = { '': ['中国/北京'] };
+    const snapshot = JSON.stringify(before);
+    migratePinnedByParentOnDelete(before, '中国/北京');
+    expect(JSON.stringify(before)).toEqual(snapshot);
+  });
+});
+
+describe('diffPinnedByParent', () => {
+  it('returns empty when both maps are identical', () => {
+    const a = { '': ['X'], '中国': ['中国/北京'] };
+    const b = { '': ['X'], '中国': ['中国/北京'] };
+    expect(diffPinnedByParent(a, b)).toEqual([]);
+  });
+
+  it('returns one entry for a single parentKey change (including empty list)', () => {
+    const before = { '': ['X', 'Y'] };
+    const after = { '': ['X'] };
+    expect(diffPinnedByParent(before, after)).toEqual([
+      { parentKey: '', pinnedIds: ['X'] },
+    ]);
+  });
+
+  it('returns one entry per parentKey that changed', () => {
+    const before = { '': ['X'], '中国': ['中国/北京'] };
+    const after = { '': ['X'], '中国': ['中国/京城'] };
+    expect(diffPinnedByParent(before, after)).toEqual([
+      { parentKey: '中国', pinnedIds: ['中国/京城'] },
+    ]);
+  });
+
+  it('returns cleared entry when a key disappears from after', () => {
+    const before = { '': ['X'], '中国': ['中国/北京'] };
+    const after = { '': ['X'] };
+    expect(diffPinnedByParent(before, after)).toEqual([
+      { parentKey: '中国', pinnedIds: [] },
     ]);
   });
 });
