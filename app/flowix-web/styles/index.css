@@ -259,18 +259,22 @@
 		transition: color 120ms ease, opacity 120ms ease;
 	}
 	[data-tag-icon]:hover,
-	[data-tag-icon]:focus-visible {
+	[data-tag-icon]:focus-visible,
+	.tag-tree-list .group:hover [data-tag-icon],
+	.tag-tree-list .group:focus-visible [data-tag-icon] {
 		opacity: 1;
-		color: var(--tag-icon-hover, var(--primary));
+		color: var(--tag-icon-hover, color-mix(in oklch, var(--foreground) 55%, white));
 	}
-	/* dark 主题下 --primary(L0.816) 反而比 --foreground(L0.93) 暗,
-	   用 primary 做 hover 会把图标变暗而非提亮; dark 下唯一能"提亮"
-	   近白 foreground 的方向是纯白。其他主题 primary 都比 foreground
-	   亮, 走上面的 fallback (var(--primary))。用 CSS 变量而非额外
+	/* dark 主题下前景色已经接近白色, 直接用纯白获得清晰的提亮反馈。
+	   其他主题使用前景色与白色的混合色, 比原本的 muted 图标明显更亮。
+	   用 CSS 变量而非额外
 	   选择器, 避免 lightningcss 把两条 :hover/:focus-visible 选择器
 	   列表错误合并 (它会丢掉 [data-theme="dark"] 前缀)。 */
 	[data-theme="dark"] {
 		--tag-icon-hover: oklch(1 0 0);
+	}
+	[data-theme="dark"] .memo-list {
+		background: var(--memo-list-bg);
 	}
 	[data-tag-icon][aria-expanded="true"] .tag-expand-indicator,
 	[data-tag-icon]:hover .tag-expand-indicator,

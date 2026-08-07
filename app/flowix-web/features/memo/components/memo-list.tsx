@@ -813,7 +813,7 @@ export function MemoList() {
   };
 
   return (
-    <div className="relative flex h-full select-none flex-col bg-[var(--card)]">
+    <div className="memo-list relative flex h-full select-none flex-col bg-[var(--card)]">
       <>
       {/* Memo Tab */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
