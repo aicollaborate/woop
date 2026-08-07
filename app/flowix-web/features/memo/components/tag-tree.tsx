@@ -710,7 +710,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 className={cn(
                   'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
                   isSelected
-                    ? 'bg-[var(--muted)] text-[var(--foreground)]'
+                    ? 'bg-[var(--accent)] text-[var(--foreground)]'
                     : 'text-[var(--foreground)]',
                   isDragging && 'opacity-50',
                   isDropInside && 'tag-drop-target-inside',
