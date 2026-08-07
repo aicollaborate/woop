@@ -253,7 +253,7 @@
 		border-bottom-color: color-mix(in oklch, var(--muted-foreground) 72%, transparent);
 	}
 	[data-tag-icon] {
-		cursor: pointer;
+		cursor: default;
 		color: var(--foreground);
 		opacity: 0.9;
 		transition: color 120ms ease, opacity 120ms ease;

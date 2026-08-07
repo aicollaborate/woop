@@ -792,7 +792,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 ) : (
                   <span
                     className={cn(
-                      'min-w-0 flex-1 cursor-default truncate',
+                      'min-w-0 flex-1 truncate',
                       isHidden && !isSelected && 'text-[var(--muted-foreground)]',
                     )}
                   >
