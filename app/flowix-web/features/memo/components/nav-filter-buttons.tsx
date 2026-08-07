@@ -1,7 +1,7 @@
 'use client';
 
-import { StarFourIcon, StackIcon } from '@phosphor-icons/react';
-import { ListTodo } from 'lucide-react';
+import { StarFourIcon } from '@phosphor-icons/react';
+import { Layers, ListTodo } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { cn } from '@/lib/utils';
@@ -72,10 +72,7 @@ export function NavFilterButtons({
         aria-pressed={activeFilter === 'all'}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <StackIcon
-            className="h-3.5 w-3.5 text-[var(--foreground)]"
-            weight="bold"
-          />
+          <Layers className="h-3.5 w-3.5 text-[var(--foreground)]" />
         </span>
         <span className="min-w-0 flex-1 truncate">{t("memo.list.filterAll")}</span>
         <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
