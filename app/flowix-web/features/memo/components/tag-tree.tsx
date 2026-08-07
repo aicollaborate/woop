@@ -760,7 +760,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 >
                   <HashIcon
                     className="h-3.5 w-3.5"
-                    weight="fill"
+                    weight="duotone"
                   />
                   {hasChildren && (
                     <span
