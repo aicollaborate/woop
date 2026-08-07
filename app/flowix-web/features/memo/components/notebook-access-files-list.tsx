@@ -256,7 +256,7 @@ export function NotebookAccessFilesList({
               >
                 <span
                   aria-label={isWorkspace ? t('agent.access.workspaceBadge') : undefined}
-                  className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--muted-foreground)]"
+                  className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--foreground)] opacity-90"
                 >
                   {item.missing ? (
                     <NotebookIcon

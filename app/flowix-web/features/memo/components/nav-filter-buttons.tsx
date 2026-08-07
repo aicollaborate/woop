@@ -73,7 +73,7 @@ export function NavFilterButtons({
       >
         <span className="mr-2 shrink-0 opacity-90">
           <StackIcon
-            className="h-3.5 w-3.5 text-[var(--muted-foreground)]"
+            className="h-3.5 w-3.5 text-[var(--foreground)]"
             weight="bold"
           />
         </span>
@@ -103,7 +103,7 @@ export function NavFilterButtons({
       >
         <span className="mr-2 shrink-0 opacity-90">
           <StarFourIcon
-            className="h-3.5 w-3.5 text-[var(--muted-foreground)]"
+            className="h-3.5 w-3.5 text-[var(--foreground)]"
             weight="bold"
           />
         </span>
@@ -132,7 +132,7 @@ export function NavFilterButtons({
         aria-pressed={activeFilter === 'todos'}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+          <ListTodo className="h-3.5 w-3.5 text-[var(--foreground)]" />
         </span>
         <span className="min-w-0 flex-1 truncate">{t("memo.list.filterTasks")}</span>
         <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
