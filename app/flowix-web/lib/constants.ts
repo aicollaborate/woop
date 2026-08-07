@@ -228,7 +228,7 @@ export const LINE_HEIGHT_STEP = 0.05;
 export const DOCUMENT_WIDTH_MIN = 500;
 export const DOCUMENT_WIDTH_MAX = 2000;
 export const DOCUMENT_WIDTH_STEP = 50;
-export const DOCUMENT_WIDTH_DEFAULT = 800;
+export const DOCUMENT_WIDTH_DEFAULT = 1600;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   personalize: {
