@@ -255,7 +255,10 @@
 	[data-tag-icon]:hover,
 	[data-tag-icon]:focus-visible {
 		opacity: 1;
-		filter: brightness(1.25);
+		filter: brightness(1.5);
+	}
+	[data-tag-icon] {
+		transition: filter 120ms ease, opacity 120ms ease;
 	}
 	[data-tag-icon][aria-expanded="true"] .tag-expand-indicator,
 	[data-tag-icon]:hover .tag-expand-indicator,
