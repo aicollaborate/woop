@@ -261,7 +261,16 @@
 	[data-tag-icon]:hover,
 	[data-tag-icon]:focus-visible {
 		opacity: 1;
-		color: var(--primary);
+		color: var(--tag-icon-hover, var(--primary));
+	}
+	/* dark 主题下 --primary(L0.816) 反而比 --foreground(L0.93) 暗,
+	   用 primary 做 hover 会把图标变暗而非提亮; dark 下唯一能"提亮"
+	   近白 foreground 的方向是纯白。其他主题 primary 都比 foreground
+	   亮, 走上面的 fallback (var(--primary))。用 CSS 变量而非额外
+	   选择器, 避免 lightningcss 把两条 :hover/:focus-visible 选择器
+	   列表错误合并 (它会丢掉 [data-theme="dark"] 前缀)。 */
+	[data-theme="dark"] {
+		--tag-icon-hover: oklch(1 0 0);
 	}
 	[data-tag-icon][aria-expanded="true"] .tag-expand-indicator,
 	[data-tag-icon]:hover .tag-expand-indicator,
