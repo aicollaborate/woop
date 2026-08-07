@@ -206,10 +206,16 @@ function DropdownMenuContent({
 	}, [open, triggerRef, side, sideOffset, align]);
 
 	// Close on click outside
+	// 用 pointerdown + capture 是因为:
+	//   1) Tauri 2 在 macOS WKWebView 上对 data-tauri-drag-region 会注入 native
+	//      drag overlay, 偶发吃掉 mousedown, 让 menu 在标题栏/侧栏其他位置关不掉。
+	//      pointerdown 在 WebView2/webkit2gtk/WKWebView 触发时机更早, 命中率高。
+	//   2) capture 阶段先于 base-ui <Tooltip> Trigger 内部的 pointerdown 处理,
+	//      避免被 stopPropagation 短路。
 	React.useEffect(() => {
 		if (!open) return;
 
-		const handleClickOutside = (e: MouseEvent) => {
+		const handleClickOutside = (e: PointerEvent) => {
 			const target = e.target as Node;
 			if (
 				contentRef.current?.contains(target) ||
@@ -221,8 +227,8 @@ function DropdownMenuContent({
 			setOpen(false);
 		};
 
-		document.addEventListener("mousedown", handleClickOutside);
-		return () => document.removeEventListener("mousedown", handleClickOutside);
+		document.addEventListener("pointerdown", handleClickOutside, true);
+		return () => document.removeEventListener("pointerdown", handleClickOutside, true);
 	}, [open, setOpen, triggerRef]);
 
 	// Close on escape
