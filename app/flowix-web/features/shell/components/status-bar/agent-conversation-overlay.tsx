@@ -154,8 +154,8 @@ export function AgentConversationOverlay({
                   className={cn(
                     'flex h-7 w-7 items-center justify-center rounded-full border transition-all',
                     active
-                      ? 'border-[color-mix(in_oklch,var(--primary)_50%,transparent)] bg-[color-mix(in_oklch,var(--card)_84%,transparent)]'
-                      : 'border-transparent hover:bg-[color-mix(in_oklch,var(--card)_56%,transparent)]',
+                      ? 'border-[color-mix(in_oklch,var(--primary)_50%,transparent)]'
+                      : 'border-transparent',
                     comingSoon && 'cursor-not-allowed opacity-35',
                   )}
                 >

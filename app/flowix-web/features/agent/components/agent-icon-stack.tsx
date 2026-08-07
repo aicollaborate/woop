@@ -37,7 +37,7 @@ export function AgentIconStack({ className }: { className?: string }) {
         return (
           <span
             key={key}
-            className="absolute inline-flex items-center justify-center overflow-hidden rounded-full border bg-[var(--background)]"
+            className="absolute inline-flex items-center justify-center overflow-hidden rounded-full border"
             style={{
               left: index * ICON_OFFSET,
               width: ICON_SIZE,
