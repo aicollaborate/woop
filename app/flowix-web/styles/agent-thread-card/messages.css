@@ -299,4 +299,36 @@
   margin-right: 4px;
 }
 
+/* 流式末条消息淡入 ── 末条消息 (.agent-thread-card__message) 首次作为 :last-child
+ * 出现在 .agent-thread-card__messages 时, 跑一次 opacity + translateY fade in。
+ * - 走合成线程 (GPU): opacity/transform 不触发 layout/paint 重排, 不占主线程,
+ *   性能优于之前的 scroll-behavior: smooth (后者 WebKit 主线程 VSync tick + 闪烁)。
+ * - patch-last 重建的是 .agent-thread-card__message-content 子树, message 容器本身
+ *   不动 → CSS animation 不重启, 无每帧重触导致的闪烁; loading-indicator 与滚动
+ *   完全不参与。
+ * - 语义: "新消息渐入 + 内容自然撑高", 取代之前的 scroll-behavior: smooth 方案。
+ * - prefers-reduced-motion 下退回瞬现 (无障碍 + 性能兜底)。 */
+.agent-thread-card--running
+  .agent-thread-card__messages
+  > .agent-thread-card__message:last-child {
+  animation: agent-thread-card-streaming-fade-in 200ms ease-out;
+}
 
+@keyframes agent-thread-card-streaming-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-thread-card--running
+    .agent-thread-card__messages
+    > .agent-thread-card__message:last-child {
+    animation: none;
+  }
+}
