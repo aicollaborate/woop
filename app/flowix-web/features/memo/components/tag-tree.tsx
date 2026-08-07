@@ -722,7 +722,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
               >
                 <span
                   data-tag-icon=""
-                  className="relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 opacity-90"
+                  className="relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1"
                   // `#` 图标当作独立控件: 单击展开/折叠, 不触发行
                   // 选中也不进入拖拽。键盘 Enter/Space 同样可用。
                   // hover/focus 时 [data-tag-icon]:hover 规则加深展开三角
@@ -759,7 +759,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                   }}
                 >
                   <HashIcon
-                    className="h-3.5 w-3.5 text-[var(--foreground)]"
+                    className="h-3.5 w-3.5"
                     weight="bold"
                   />
                   {hasChildren && (
@@ -792,7 +792,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 ) : (
                   <span
                     className={cn(
-                      'min-w-0 flex-1 truncate',
+                      'min-w-0 flex-1 cursor-default truncate',
                       isHidden && !isSelected && 'text-[var(--muted-foreground)]',
                     )}
                   >

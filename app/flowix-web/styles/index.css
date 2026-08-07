@@ -252,14 +252,16 @@
 	.tag-expand-indicator {
 		border-bottom-color: color-mix(in oklch, var(--muted-foreground) 72%, transparent);
 	}
+	[data-tag-icon] {
+		cursor: pointer;
+		color: var(--foreground);
+		opacity: 0.9;
+		transition: color 120ms ease, opacity 120ms ease;
+	}
 	[data-tag-icon]:hover,
 	[data-tag-icon]:focus-visible {
 		opacity: 1;
-		filter: brightness(1.5) drop-shadow(0 0 1px color-mix(in oklch, var(--foreground) 60%, transparent));
-	}
-	[data-tag-icon] {
-		cursor: pointer;
-		transition: filter 120ms ease, opacity 120ms ease;
+		color: var(--primary);
 	}
 	[data-tag-icon][aria-expanded="true"] .tag-expand-indicator,
 	[data-tag-icon]:hover .tag-expand-indicator,
