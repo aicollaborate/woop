@@ -2,8 +2,8 @@
 
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import { displayTitleFromFilename } from '@/lib/utils';
-import { MoreHorizontal } from 'lucide-react';
-import { CheckSquareIcon, PushPin } from '@phosphor-icons/react';
+import { ListTodo, MoreHorizontal } from 'lucide-react';
+import { PushPin } from '@phosphor-icons/react';
 import { MEMO_COLOR_HEX, type MemoColor, type MemoItem } from '@features/memo';
 import { cn } from '@/lib/utils';
 import { getAgentType } from '@/lib/agent-types';
@@ -125,7 +125,7 @@ function AgentTodoIcons({
         </span>
       )}
       {hasTodos && (
-        <CheckSquareIcon className="h-3.5 w-3.5" weight="regular" />
+        <ListTodo className="h-3.5 w-3.5" />
       )}
     </span>
   );
@@ -289,10 +289,7 @@ function CompactMemoCardBody({
       </h3>
       <ColorDots colors={memo.colors} limit={1} className="mr-1" />
       {hasTodos && (
-        <CheckSquareIcon
-          className="mr-1 h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] transition-opacity group-hover:opacity-0"
-          weight="regular"
-        />
+        <ListTodo className="mr-1 h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] transition-opacity group-hover:opacity-0" />
       )}
     </div>
   );
@@ -350,10 +347,7 @@ function DetailedMemoCardBody({
                 <PushPin weight="fill" className="h-3.5 w-3.5 text-[var(--foreground)]" />
               )}
               {hasTodos && (
-                <CheckSquareIcon
-                  className="h-3.5 w-3.5 text-[var(--muted-foreground)]"
-                  weight="regular"
-                />
+                <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
               )}
             </span>
           )}

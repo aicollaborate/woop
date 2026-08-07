@@ -1,6 +1,7 @@
 'use client';
 
-import { StarFourIcon, CheckSquareIcon, StackIcon } from '@phosphor-icons/react';
+import { StarFourIcon, StackIcon } from '@phosphor-icons/react';
+import { ListTodo } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { cn } from '@/lib/utils';
@@ -131,10 +132,7 @@ export function NavFilterButtons({
         aria-pressed={activeFilter === 'todos'}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <CheckSquareIcon
-            className="h-3.5 w-3.5 text-[var(--muted-foreground)]"
-            weight="bold"
-          />
+          <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
         </span>
         <span className="min-w-0 flex-1 truncate">{t("memo.list.filterTasks")}</span>
         <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
