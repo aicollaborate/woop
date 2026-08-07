@@ -593,6 +593,10 @@
   line-height: 1;
 }
 
+.markdown-editor .agent-thread-card__loading-indicator[role="status"] {
+  min-width: 0;
+}
+
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__loading-indicator {
@@ -601,57 +605,105 @@
   margin-inline: auto;
 }
 
-.markdown-editor .agent-thread-card__loading-dot {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
+.markdown-editor .agent-thread-card__loading-cells {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 0.24rem);
+  grid-template-rows: repeat(2, 0.24rem);
+  gap: 1px;
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--muted-foreground);
-  animation:
-    agentThinkingDot 1.45s ease-in-out infinite,
-    agentThreadCardWorkingDot 1.45s linear infinite;
+}
+
+.markdown-editor .agent-thread-card__loading-cell {
+  display: inline-block;
+  width: 0.24rem;
+  height: 0.24rem;
+  border-radius: 1px;
+  /*
+   * 显式 background-color, 不用 background: 简写 — 关键帧里混用
+   * color-mix / var(--token) 时部分 WebKit 解析为不同 background-image
+   * 类型, 导致整条 @keyframes 被标 invalid 停在 0% (底色)。
+   * will-change: background-color 提示合成器把每个 cell 提到独立 GPU 层。
+   */
+  /* Keep a solid fallback for older embedded WebKit before color-mix. */
+  background-color: var(--muted-foreground);
+  background-color: color-mix(
+    in oklch,
+    var(--muted-foreground) 35%,
+    transparent
+  );
+  will-change: background-color;
+  animation: agentThreadCardLoadingCell 2.4s ease-in-out infinite;
+  /*
+   * 4 格按 DOM 顺序顺序点亮 (0..3)。 周期 2.4s ÷ 4 = 0.6s/格。
+   *
+   *   delay(N) = N × 0.6s − 0.36s
+   *
+   * 使 cell 0 在 t=0 恰好处于峰值相位 (delay=−0.36 意味着动画已运行
+   * 0.36s, 关键帧峰值即在 15% = 0.36s), 后续每个 cell 依次延迟 0.6s
+   * 启动, 各自在 t=N×0.6s 达到峰值。 所有 cell 的第一次峰值都落在
+   * 同一个 2.4s 周期内 (cell 3 在 t=1.8s, 距下一周期还有 0.6s 缓冲),
+   * 视觉上是 cell 0 → 1 → 2 → 3 → (循环) 的严格 DOM 顺序。
+   */
+  animation-delay: calc(var(--cell-step, 0) * 0.6s - 0.36s);
 }
 
 .markdown-editor .agent-thread-card__loading-text {
   line-height: 1.5;
-  color: transparent;
-  /* 单层扫光: 3 stop (暗→亮→暗) — 只一个亮度峰, 没有 white 核叠在 foreground 晕上 */
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklch, var(--muted-foreground) 55%, transparent) 0%,
-    var(--foreground) 50%,
-    color-mix(in oklch, var(--muted-foreground) 55%, transparent) 100%
-  );
-  background-size: 200% 100%;
-  background-position: 100% 50%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: agentThreadCardWorkingText 1.2s linear infinite;
+  /* 文本不再做扫光 ── 动效交给 2×2 格顺序点亮; 文字本身保持纯前景色,
+   * 视觉负担小, 也避免 WebKit 在 background-clip:text + background:
+   * 简写 + color-mix 关键帧上的解析坑。 */
+  color: var(--muted-foreground);
 }
 
-.markdown-editor .agent-thread-card__loading-dot[hidden],
+.markdown-editor .agent-thread-card__loading-cells[hidden],
 .markdown-editor .agent-thread-card__loading-text[hidden] {
   display: none;
 }
 
-@keyframes agentThreadCardWorkingText {
-  from {
-    background-position: 100% 50%;
+@keyframes agentThreadCardLoadingCell {
+  /*
+   * 4 格顺序点亮: 每格在自己的 0.6s 槽位里快速起亮→峰值→回底色,
+   * 亮峰窗口 (8%-22%) ≈ 14% 周期 = 0.336s, 让相邻
+   * 格在边界处轻微叠加淡出尾巴, 但每格的峰值时刻正好落在自己的槽位
+   * 中央 (15%), 视觉上是逐格亮起而非扫过。
+   *
+   * 显式写 background-color: 而非 background: 简写 — 关键帧里混用
+   * color-mix(in oklch, var(--…) …, transparent) 和 var(--foreground)
+   * 时, 部分 WebKit (Tauri desktop 嵌入的 WebKit / WebView2) 解析
+   * background 简写为不同 background-image 与 background-color 的组合,
+   * 整条动画被标记 invalid 而停在 0% 状态 (底色)。
+   */
+  0%,
+  100% {
+    background-color: color-mix(
+      in oklch,
+      var(--muted-foreground) 35%,
+      transparent
+    );
   }
-  to {
-    background-position: -100% 50%;
+  8% {
+    background-color: color-mix(
+      in oklch,
+      var(--muted-foreground) 100%,
+      transparent
+    );
+  }
+  15% {
+    background-color: var(--foreground);
+  }
+  22% {
+    background-color: color-mix(
+      in oklch,
+      var(--muted-foreground) 100%,
+      transparent
+    );
   }
 }
 
-@keyframes agentThreadCardWorkingDot {
-  0%,
-  100% {
-    background: var(--muted-foreground);
-  }
-  45%,
-  55% {
-    background: white;
+@media (prefers-reduced-motion: reduce) {
+  .markdown-editor .agent-thread-card__loading-cell {
+    animation: none;
+    background-color: var(--muted-foreground);
   }
 }
 
@@ -661,4 +713,3 @@
   .agent-thread-card__loading-indicator {
   display: none;
 }
-

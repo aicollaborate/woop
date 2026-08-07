@@ -110,6 +110,98 @@ describe('agent thread card selectors', () => {
     expect(runtime.sendButtonWantsStop).toBe(true);
   });
 
+  it('keeps streaming mode during the run-registry handoff', () => {
+    const runtime = selectAgentThreadCardRuntimeView({
+      state: threadState({
+        activeRunId: 'run-handoff',
+        runs: {},
+      }),
+      isCreating: false,
+      isLoading: true,
+      typeKey: 'codex',
+    });
+
+    expect(runtime.isRunning).toBe(true);
+    expect(runtime.isBusy).toBe(true);
+    expect(runtime.showLoadingIndicator).toBe(true);
+    expect(runtime.sendButtonWantsStop).toBe(true);
+  });
+
+  it('keeps the loading indicator on while a tool call is in flight', () => {
+    // Provider 通常在发出 tool_call 后立即 stream_end, 导致 run.status 变成
+    // "completed" 而 activeRunId 被清空 —— 此时 store 侧 run 上仍有
+    // currentTool (或还有 isLoading 的 tool 行), 表示 agent 仍在工作,
+    // 9 宫格应当继续显示而不是等到下一轮 stream_start。
+    const runtime = selectAgentThreadCardRuntimeView({
+      state: threadState({
+        activeRunId: null,
+        runs: {
+          'run-tool': {
+            runId: 'run-tool',
+            agentType: 'codex',
+            threadId: 'thread-1',
+            status: 'completed',
+            startedAt: 30,
+            currentTool: 'Bash',
+          },
+        },
+        messages: [
+          {
+            id: 'tool-1',
+            role: 'tool',
+            content: '',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            toolCallId: 'call-1',
+            toolName: 'Bash',
+            isLoading: true,
+          },
+        ],
+      }),
+      isCreating: false,
+      isLoading: false,
+      typeKey: 'codex',
+    });
+
+    expect(runtime.isRunning).toBe(false);
+    expect(runtime.showLoadingIndicator).toBe(true);
+    expect(runtime.sendButtonWantsStop).toBe(false);
+  });
+
+  it('hides the loading indicator when the run truly settled', () => {
+    const runtime = selectAgentThreadCardRuntimeView({
+      state: threadState({
+        activeRunId: null,
+        runs: {
+          'run-done': {
+            runId: 'run-done',
+            agentType: 'codex',
+            threadId: 'thread-1',
+            status: 'completed',
+            startedAt: 30,
+            endedAt: 31,
+          },
+        },
+        messages: [
+          {
+            id: 'tool-1',
+            role: 'tool',
+            content: 'output',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            toolCallId: 'call-1',
+            toolName: 'Bash',
+            isLoading: false,
+          },
+        ],
+      }),
+      isCreating: false,
+      isLoading: false,
+      typeKey: 'codex',
+    });
+
+    expect(runtime.isRunning).toBe(false);
+    expect(runtime.showLoadingIndicator).toBe(false);
+  });
+
   it('selects send button state from loading and input text', () => {
     expect(selectAgentThreadCardSendButtonState({
       wantStop: false,

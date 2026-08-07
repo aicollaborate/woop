@@ -43,8 +43,8 @@ export class ThreadCacheController {
   private loading = false;
   private loadedFor: string | null = null;
   private loadingFor: string | null = null;
-  private loadingStartedAt: number | null = null;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
+  private loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private idleId: number | null = null;
   private settling = false;
   private revealFrame: number | null = null;
@@ -69,17 +69,10 @@ export class ThreadCacheController {
   }
 
   isPresentationHidden(): boolean {
-    // 30s 后强制退出 loading, 防止外部 session 路径卡死导致 skeleton 永远显示.
-    // 此时投影可能仍空, 但 UI 至少能进入"空状态"分支, 用户可以操作重试 / 关闭.
-    if (
-      this.loading &&
-      this.loadingStartedAt !== null &&
-      Date.now() - this.loadingStartedAt > ThreadCacheController.LOADING_TIMEOUT_MS
-    ) {
-      this.loading = false;
-      this.loadingStartedAt = null;
-      this.loadingFor = null;
-    }
+    // Timeout state is transitioned by loadingTimeoutId, rather than during a
+    // read. This method is used while rendering, so mutating state here could
+    // leave the skeleton visible until an unrelated store event causes a new
+    // render.
     return (
       !!this.getThreadId() &&
       this.getMessageCount() === 0 &&
@@ -127,6 +120,7 @@ export class ThreadCacheController {
 
   dispose(): void {
     this.cancelScheduledLoad();
+    this.cancelLoadingTimeout();
     this.cancelRevealFrame();
     this.visibilityObserver?.disconnect();
     this.visibilityObserver = null;
@@ -139,7 +133,7 @@ export class ThreadCacheController {
 
     this.loadingFor = threadId;
     this.loading = true;
-    this.loadingStartedAt = Date.now();
+    this.scheduleLoadingTimeout(threadId);
     this.settling = false;
     this.cancelRevealFrame();
     this.render();
@@ -160,7 +154,7 @@ export class ThreadCacheController {
         if (this.loadingFor === threadId) {
           this.loadingFor = null;
           this.loading = false;
-          this.loadingStartedAt = null;
+          this.cancelLoadingTimeout();
         }
         if (!this.isDestroyed() && this.getThreadId() === threadId) {
           const hasLoadedMessages = this.getMessageCount() > 0;
@@ -209,12 +203,34 @@ export class ThreadCacheController {
       this.idleId = null;
     }
     if (hadScheduledLoad && this.loadingFor) {
+      this.cancelLoadingTimeout();
       this.loadingFor = null;
       this.loading = false;
-      this.loadingStartedAt = null;
       this.settling = false;
       this.render();
     }
+  }
+
+  private scheduleLoadingTimeout(threadId: string): void {
+    this.cancelLoadingTimeout();
+    this.loadingTimeoutId = globalThis.setTimeout(() => {
+      this.loadingTimeoutId = null;
+      if (this.loadingFor !== threadId || !this.loading) return;
+
+      // Keep loadingFor until the in-flight promise settles. This prevents a
+      // second cache request while allowing the UI to leave the skeleton state.
+      this.loading = false;
+      this.settling = false;
+      if (!this.isDestroyed() && this.getThreadId() === threadId) {
+        this.render();
+      }
+    }, ThreadCacheController.LOADING_TIMEOUT_MS);
+  }
+
+  private cancelLoadingTimeout(): void {
+    if (this.loadingTimeoutId === null) return;
+    globalThis.clearTimeout(this.loadingTimeoutId);
+    this.loadingTimeoutId = null;
   }
 
   private cancelRevealFrame(): void {

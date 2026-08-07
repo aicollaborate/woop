@@ -164,7 +164,11 @@ export class MessageViewportController {
 
   private restoreAfterHistoryPrepend(): boolean {
     const snapshot = this.pendingHistoryScrollRestore;
-    if (!snapshot || snapshot.threadId !== this.getRuntimeThreadId()) {
+    if (!snapshot) {
+      return false;
+    }
+    if (snapshot.threadId !== this.getRuntimeThreadId()) {
+      this.pendingHistoryScrollRestore = null;
       return false;
     }
 

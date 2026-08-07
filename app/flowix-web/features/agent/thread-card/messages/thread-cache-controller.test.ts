@@ -18,6 +18,46 @@ afterEach(() => {
 });
 
 describe("ThreadCacheController", () => {
+  it("leaves the skeleton state and renders when cache loading times out", () => {
+    vi.useFakeTimers();
+    let idleCallback: IdleRequestCallback | undefined;
+    vi.stubGlobal(
+      "requestIdleCallback",
+      vi.fn((callback: IdleRequestCallback) => {
+        idleCallback = callback;
+        return 1;
+      }),
+    );
+    vi.stubGlobal("cancelIdleCallback", vi.fn());
+    vi.mocked(loadAgentThreadCardCache).mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+
+    const render = vi.fn();
+    const controller = new ThreadCacheController({
+      element: document.createElement("div"),
+      isDestroyed: () => false,
+      getThreadId: () => "thread-1",
+      getTypeKey: () => "codex",
+      getMessageCount: () => 0,
+      shouldLoad: () => true,
+      render,
+      renderResolvedSessionMessages: vi.fn(),
+      applyResolvedSession: vi.fn(),
+    });
+
+    controller.requestIfNeeded();
+    idleCallback?.({ didTimeout: false, timeRemaining: () => 50 });
+    expect(controller.isLoading).toBe(true);
+    expect(render).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(controller.isLoading).toBe(false);
+    expect(render).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
   it("schedules visible history loading while idle", async () => {
     let idleCallback: IdleRequestCallback | undefined;
     const requestIdleCallback = vi.fn((callback: IdleRequestCallback) => {

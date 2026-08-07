@@ -15,6 +15,7 @@ import { acquireThreadInterest } from "@features/agent/store/thread-interest";
 import type { ThreadProjection } from "@features/agent/store/session-reducer";
 import { selectRenderableThreadMessages } from "@features/agent/store/thread-render-messages";
 import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
+import { createLogger } from "@/lib/logger";
 import type { AgentTypeKey } from "@/types/agent";
 import type { QuickPhrase } from "@/lib/constants";
 import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
@@ -49,6 +50,8 @@ import {
   AgentThreadCardMessagesController,
   createThreadCacheSkeleton,
 } from "@features/agent/thread-card/messages";
+
+const logger = createLogger("agent-thread-card");
 import {
   AgentThreadCardRuntimeController,
   getCurrentThreadCardSource,
@@ -161,6 +164,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private fullscreenRestoreGeneration = 0;
   private fullscreenRestorePending = false;
   private fullscreenRestoreFrame: number | null = null;
+  private badgePositionFrame: number | null = null;
   /** 偏好设置中 quickPhrases 数组引用变化时的 unsubscribe ── 弹窗打开时实时刷新。 */
   private unsubscribeQuickPhrases: (() => void) | null = null;
   private boundHandleBodyScroll = (): void => {
@@ -974,7 +978,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.chrome.renderBadgeHoverCard();
     // 下一帧同步 badge 位置 ── 布局(全屏 container 切换)在当帧不一定完成,
     // 立即 getBoundingClientRect 可能拿到旧值
-    window.requestAnimationFrame(() => this.chrome.syncBadgeHoverCardPosition());
+    if (this.badgePositionFrame !== null) {
+      window.cancelAnimationFrame(this.badgePositionFrame);
+    }
+    this.badgePositionFrame = window.requestAnimationFrame(() => {
+      this.badgePositionFrame = null;
+      if (!this.isDestroyed) this.chrome.syncBadgeHoverCardPosition();
+    });
 
     if (fullscreen) {
       this.enterFullscreenMode();
@@ -999,9 +1009,11 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       this.dom.classList.remove("ProseMirror-selectednode");
       this.dom.setAttribute("role", "dialog");
       this.dom.setAttribute("aria-modal", "true");
+      this.dom.setAttribute("aria-label", this.title);
     } else {
       this.dom.removeAttribute("role");
       this.dom.removeAttribute("aria-modal");
+      this.dom.removeAttribute("aria-label");
     }
     this.fullscreenButton.setAttribute(
       "aria-label",
@@ -1198,13 +1210,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     if (localPath) {
       if (isMarkdownFilePath(localPath)) {
         void windows.openMarkdownPathTab(localPath).catch((error) => {
-          console.error("Failed to open agent thread card Markdown:", error);
+          logger.error("Failed to open Markdown link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
         return;
       }
       void openPath(localPath).catch((error) => {
-        console.error("Failed to open agent thread card file:", error);
+        logger.error("Failed to open local file link", { error });
         toast.error(this.t("agent.link.openLocalFileFailed"));
       });
       return;
@@ -1216,7 +1228,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       return;
     }
     void openUrl(href).catch((error) => {
-      console.error("Failed to open agent thread card link:", error);
+      logger.error("Failed to open external link", { error });
     });
   }
 
@@ -1481,7 +1493,15 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // "刚打的字凭空消失"。
     this.flushPendingDraft();
     this.cancelPersistedFullscreenRestore();
+    if (this.badgePositionFrame !== null) {
+      window.cancelAnimationFrame(this.badgePositionFrame);
+      this.badgePositionFrame = null;
+    }
     this.setFullscreen(false, { persist: false, fromRestore: true });
+    if (this.badgePositionFrame !== null) {
+      window.cancelAnimationFrame(this.badgePositionFrame);
+      this.badgePositionFrame = null;
+    }
     window.removeEventListener(
       AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT,
       this.boundHandleRequestFullscreen,

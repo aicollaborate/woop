@@ -11,8 +11,21 @@ function createController(typeKey: AgentTypeKey) {
   const body = document.createElement("div");
   const loadingIndicator = document.createElement("div");
   loadingIndicator.className = "agent-thread-card__loading";
+  /*
+   * 4 个 cell 的内联 --cell-step 对应 DOM 顺序 0..3。若不写,
+   * var(--cell-step, 0) 回退到 0 → 4 个 cell 同步运行, 关键帧起始 0%
+   * 即底色,视觉上"停在底色无动画"; text 的扫光是 background-position 位
+   * 移,任何位置都是非底色,所以看起来正常。
+   */
   loadingIndicator.innerHTML =
-    '<span class="agent-thread-card__loading-text"></span><span class="agent-thread-card__loading-dot"></span>';
+    '<span class="agent-thread-card__loading-cells" aria-hidden="true">' +
+    '<span class="agent-thread-card__loading-cell" style="--cell-step:0"></span>' +
+    '<span class="agent-thread-card__loading-cell" style="--cell-step:1"></span>' +
+    '<span class="agent-thread-card__loading-cell" style="--cell-step:2"></span>' +
+    '<span class="agent-thread-card__loading-cell" style="--cell-step:3"></span>' +
+    '</span>' +
+    '<span class="agent-thread-card__loading-text"></span>';
+  body.append(loadingIndicator);
 
   const messageViewport = new MessageViewportController({
     body,
@@ -85,6 +98,55 @@ describe("ThreadMessageRenderController empty settings", () => {
     expect(
       body.querySelector(".agent-thread-card__empty--codex-settings"),
     ).not.toBeNull();
+  });
+
+  it("replaces the existing empty settings card on repeated empty renders", () => {
+    const { body, controller } = createController("codex");
+    const input = {
+      messages: [],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    };
+
+    controller.render(input);
+    controller.render(input);
+
+    expect(
+      body.querySelectorAll(".agent-thread-card__empty--codex-settings"),
+    ).toHaveLength(1);
+  });
+
+  it("removes the empty settings card when the first message renders", () => {
+    const { body, controller } = createController("codex");
+
+    controller.render({
+      messages: [],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+    controller.render({
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          content: "hello",
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+
+    expect(
+      body.querySelector(".agent-thread-card__empty--codex-settings"),
+    ).toBeNull();
+    expect(body.querySelector(".agent-thread-card__messages")).not.toBeNull();
   });
 
   it("does not render runtime settings while thread cache is loading", () => {

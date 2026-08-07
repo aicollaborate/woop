@@ -150,14 +150,31 @@ export function createAgentThreadCardDom(
 
   const loadingIndicator = document.createElement("div");
   loadingIndicator.className = "agent-thread-card__loading-indicator";
-  const loadingDot = document.createElement("span");
-  loadingDot.className = "agent-thread-card__loading-dot";
-  loadingDot.setAttribute("aria-hidden", "true");
+  loadingIndicator.setAttribute("role", "status");
+  loadingIndicator.setAttribute("aria-live", "polite");
+  const loadingCells = document.createElement("span");
+  loadingCells.className = "agent-thread-card__loading-cells";
+  loadingCells.setAttribute("aria-hidden", "true");
+  /*
+   * 4 格按 DOM 顺序顺序点亮: 0 → 1 → 2 → 3 → 0 → 1 → …—
+   * DOM 顺序对应 2×2 grid:
+   *   [0] [1]
+   *   [2] [3]
+   * 视觉序列: 左上 → 右上 → 左下 → 右下。每格的 --cell-step 给出在
+   * 4 步循环里的位置 (0..3), CSS 用它算 delay 让每格各差 2.4s/4 = 0.6s
+   * 起始 (cell 0 已在峰值相位, 后续各延迟 0.6s)。
+   */
+  for (let step = 0; step < 4; step += 1) {
+    const cell = document.createElement("span");
+    cell.className = "agent-thread-card__loading-cell";
+    cell.style.setProperty("--cell-step", String(step));
+    loadingCells.append(cell);
+  }
   const loadingText = document.createElement("span");
   loadingText.className = "agent-thread-card__loading-text";
   loadingText.textContent = options.t("editor.threadCard.thinking");
   loadingText.hidden = true;
-  loadingIndicator.append(loadingDot, loadingText);
+  loadingIndicator.append(loadingCells, loadingText);
 
   const errorEl = document.createElement("div");
   errorEl.className = "agent-thread-card__error";
@@ -222,6 +239,13 @@ export function createAgentThreadCardDom(
     sendButtonMount,
   );
   composer.addEventListener("mousedown", options.onComposerMouseDown);
+  /*
+   * loadingIndicator 作为 body 的最后一个持久子节点 (body.append 在此之前完成) —
+   * 后续 render 路径必须用 insertBefore / removeChild 操作消息列表, 而不能把
+   * indicator 作为 body.replaceChildren / body.append 的参数, 否则 WebKit 会
+   * 把它断开后重连, 重启 @keyframes 计时到 t=0, 高频 streaming 下亮峰永远到不了。
+   */
+  body.append(loadingIndicator);
   dom.append(container);
   container.append(header, body, errorEl, composer);
 

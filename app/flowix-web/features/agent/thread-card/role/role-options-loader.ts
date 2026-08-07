@@ -1,4 +1,5 @@
 import { memos as memosClient, type AgentRoleMemoItem } from "@platform/tauri/client";
+import { createLogger } from "@/lib/logger";
 import { useMemoStore } from "@features/memo";
 import { joinPath } from "@features/document/components/session/document-utils";
 import {
@@ -8,6 +9,7 @@ import {
 } from "@features/agent/thread-card/agent-thread-card-role";
 
 export const AGENT_ROLE_OPTIONS_LOAD_TIMEOUT_MS = 8000;
+const logger = createLogger("agent-thread-card-role-options");
 
 export function fallbackAgentRoleOptionsFromStore(): AgentRoleOption[] {
   const { memos, selectedMemo, selectedNotebook } = useMemoStore.getState();
@@ -91,7 +93,7 @@ export async function loadAgentRoleBodyFromMemo(options: {
     cache.set(memoId, body ?? null);
     return body ?? null;
   } catch (err) {
-    console.error("[AgentThreadCard] Failed to read agent-role memo body:", err);
+    logger.error("Failed to read agent-role memo body", { error: err });
     cache.set(memoId, null);
     return null;
   }

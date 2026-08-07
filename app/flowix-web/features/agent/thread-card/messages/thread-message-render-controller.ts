@@ -47,6 +47,7 @@ export class ThreadMessageRenderController {
   private readonly createThreadCacheSkeleton: () => HTMLDivElement;
   private readonly createExternalAgentEmptySettings: () => HTMLElement;
   private renderedMessagesList: HTMLDivElement | null = null;
+  private renderedEmptyState: HTMLElement | null = null;
   private renderedMessageRefs: ThreadState["messages"] = [];
   private reasoningCollapsedOverrides = new Map<string, boolean>();
   private displayExpandedOverrides = new Map<string, boolean>();
@@ -117,9 +118,24 @@ export class ThreadMessageRenderController {
     if (!input.shouldRenderMessages) {
       recordMessageRenderPlan("hidden", input.messages.length);
       this.body.replaceChildren();
+      /*
+       * body.replaceChildren() 会把 loadingIndicator 一起擦掉。下次切回可见
+       * (shouldRenderMessages=true) 时, 第一次 render 走 insertBefore(list,
+       * loadingIndicator) 要求 indicator 仍挂在 body 末尾, 否则 insertBefore
+       * 会抛 NotFoundError。 在 hidden 期间把 indicator 重新挂回 (断开重连
+       * 不可避免 — 这是一次状态切换, 视觉上用户刚展开卡片, 动画重新计时也合理)。
+       */
+      if (this.loadingIndicator.parentNode !== this.body) {
+        this.body.appendChild(this.loadingIndicator);
+      }
+      this.renderedEmptyState = null;
       this.resetRenderedMessageCache();
       this.messageViewport.resetForHiddenMessages();
       return;
+    }
+
+    if (input.messages.length > 0) {
+      this.removeRenderedEmptyState();
     }
 
     this.pruneReasoningCollapsedOverrides(input.messages);
@@ -161,9 +177,17 @@ export class ThreadMessageRenderController {
       return;
     }
 
-    this.body.replaceChildren();
-
     if (input.messages.length === 0) {
+      /*
+       * 不调用 body.replaceChildren() — loadingIndicator 由 factory 持久挂
+       * 在 body 末尾, replaceChildren 会把它也擦掉, 下次 render 还要重新挂,
+       * WebKit 重连节点会重启 @keyframes 计时。 这里只移除旧 list (若有),
+       * 走 renderEmptyState 用 insertBefore 放 empty 元素到 indicator 之前。
+       */
+      const prevList = this.renderedMessagesList;
+      if (prevList && prevList.parentNode === this.body) {
+        this.body.removeChild(prevList);
+      }
       this.renderEmptyState(input);
       return;
     }
@@ -174,7 +198,18 @@ export class ThreadMessageRenderController {
       this.createMessageRenderContext(input.messages, input.isLoading),
     );
 
-    this.body.append(list, this.loadingIndicator);
+    /*
+     * loadingIndicator 由 factory 一次性 append 到 body 末尾, 此后保持连接。
+     * 这里仅 removeChild 旧 list 并 insertBefore 新 list —— 不把 indicator
+     * 作为 replaceChildren / append 的参数, 避免 WebKit 重连节点导致
+     * @keyframes 计时回到 t=0 (关键帧 0%/100% 是底色, 高频 streaming 下亮峰
+     * 永远到不了)。
+     */
+    const prevList = this.renderedMessagesList;
+    if (prevList && prevList.parentNode === this.body) {
+      this.body.removeChild(prevList);
+    }
+    this.body.insertBefore(list, this.loadingIndicator);
     this.rememberRenderedMessages(list, rememberedMessages);
     this.applyBodyScrollAfterRender({
       isLoading: input.isLoading,
@@ -184,10 +219,13 @@ export class ThreadMessageRenderController {
 
   private renderEmptyState(input: ThreadMessageRenderInput): void {
     recordMessageRenderPlan("replace-empty", input.messages.length);
+    this.removeRenderedEmptyState();
     this.resetRenderedMessageCache();
 
     if (input.isThreadCachePresentationHidden) {
-      this.body.append(this.createThreadCacheSkeleton(), this.loadingIndicator);
+      const skeleton = this.createThreadCacheSkeleton();
+      this.renderedEmptyState = skeleton;
+      this.body.insertBefore(skeleton, this.loadingIndicator);
       this.messageViewport.resetForEmptyMessages();
       return;
     }
@@ -203,7 +241,8 @@ export class ThreadMessageRenderController {
         ? this.t("editor.threadCard.loadingThreadCache")
         : this.t("editor.threadCard.empty");
     }
-    this.body.append(empty, this.loadingIndicator);
+    this.renderedEmptyState = empty;
+    this.body.insertBefore(empty, this.loadingIndicator);
     this.messageViewport.resetForEmptyMessages();
   }
 
@@ -211,8 +250,8 @@ export class ThreadMessageRenderController {
     const loadingText = this.loadingIndicator.querySelector<HTMLSpanElement>(
       ".agent-thread-card__loading-text",
     );
-    const loadingDot = this.loadingIndicator.querySelector<HTMLSpanElement>(
-      ".agent-thread-card__loading-dot",
+    const loadingCells = this.loadingIndicator.querySelector<HTMLSpanElement>(
+      ".agent-thread-card__loading-cells",
     );
     if (loadingText) {
       loadingText.textContent = getAgentType(this.getTypeKey()).capabilities
@@ -221,7 +260,15 @@ export class ThreadMessageRenderController {
         : this.t("editor.threadCard.running");
       loadingText.hidden = !isLoading;
     }
-    if (loadingDot) loadingDot.hidden = !isLoading;
+    if (loadingCells) loadingCells.hidden = !isLoading;
+  }
+
+  private removeRenderedEmptyState(): void {
+    const emptyState = this.renderedEmptyState;
+    this.renderedEmptyState = null;
+    if (emptyState?.parentNode === this.body) {
+      this.body.removeChild(emptyState);
+    }
   }
 
   private resetRenderedMessageCache(): void {

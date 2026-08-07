@@ -23,6 +23,9 @@ import {
 } from "@features/agent/thread-card/anchored-popover-controller";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
 import type { QuickPhrase } from "@/lib/constants";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger("agent-thread-card-role-picker");
 
 const ROLE_POPOVER_OFFSET_ABOVE_PX = 15;
 const ROLE_POPOVER_OFFSET_BELOW_PX = 2;
@@ -239,10 +242,7 @@ export class AgentRolePickerController {
         }));
       })
       .catch((error) => {
-        console.error(
-          "[AgentThreadCard] Failed to load agent-role memos:",
-          error,
-        );
+        logger.error("Failed to load agent-role memos", { error });
         if (
           !this.isDestroyed() &&
           requestSeq === this.roleOptionsRequestSeq

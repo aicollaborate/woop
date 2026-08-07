@@ -57,13 +57,33 @@ export function selectAgentThreadCardRuntimeView(input: {
   typeKey: AgentTypeKey;
 }): AgentThreadCardRuntimeView {
   const statusView = selectAgentThreadCardRunStatus(input);
-  const isRunning = statusView.status === 'running';
+  const activeRun = statusView.activeRun;
+  // `state.isLoading` is the canonical lifecycle signal. During the short
+  // window between stream_start and the run registry update, activeRunId can
+  // already be set while `activeRun` is still unavailable. Dropping this
+  // fallback makes the renderer leave its rAF streaming path and can rebuild
+  // the whole message list through an intermediate empty projection.
+  const isRunning = input.isLoading || activeRun?.status === 'running';
   const isBusy = input.isCreating || isRunning;
+  /*
+   * 工具调用阶段的 loader:
+   * run 状态为 "running" 时(纯文本/推理流)显然要显示; 但 provider 通常
+   * 在发出 tool_call 后立刻 stream_end,导致 run 状态变成 "completed" 而
+   * tool 仍在外部执行。此时 store 侧仍有 activeRunId / currentTool /
+   * 处于 isLoading 的 tool 行 — 任何一条成立都说明 agent 还在工作,应该
+   * 把 loading-indicator 继续显示,而不是隐藏到下一轮 stream_start。
+   */
+  const hasInFlightTool = !!activeRun?.currentTool;
+  const hasLoadingToolRow = (input.state?.messages ?? []).some(
+    (m) => m.role === 'tool' && m.isLoading,
+  );
+  const showLoadingIndicator =
+    isRunning || hasInFlightTool || hasLoadingToolRow;
   return {
     ...statusView,
     isRunning,
     isBusy,
-    showLoadingIndicator: isRunning,
+    showLoadingIndicator,
     sendButtonWantsStop: isRunning,
   };
 }

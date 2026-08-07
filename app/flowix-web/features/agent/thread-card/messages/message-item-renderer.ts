@@ -1,4 +1,5 @@
 import { translate, type AppLanguage } from "@/lib/i18n";
+import { createLogger } from "@/lib/logger";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import {
   createAgentMessageViewModel,
@@ -75,6 +76,7 @@ interface BlockIncrementalState {
 }
 
 const blockIncrementalState = new WeakMap<HTMLElement, BlockIncrementalState>();
+const logger = createLogger("agent-thread-card-message");
 
 /**
  * 找出 text 中"最后一个完整块结尾"的位置, 之后的是正在写入的未完成块(tail)。
@@ -297,7 +299,11 @@ export function createAgentThreadCardMessageElement(options: {
     item = document.createElement("div");
     item.className = `agent-thread-card__message agent-thread-card__message--${message.role}`;
   } catch (err) {
-    console.error("Failed to prepare AgentThreadCard message:", err, message);
+    logger.error("Failed to prepare message", {
+      error: err,
+      messageId: message.id,
+      role: message.role,
+    });
     return {
       element: createAgentThreadCardMessageFallback(message, language),
       shouldRemember: true,
@@ -431,7 +437,11 @@ export function createAgentThreadCardMessageElement(options: {
 
     return { element: item, shouldRemember: true };
   } catch (err) {
-    console.error("Failed to render AgentThreadCard message:", err, message);
+    logger.error("Failed to render message", {
+      error: err,
+      messageId: message.id,
+      role: message.role,
+    });
     return {
       element: createAgentThreadCardMessageFallback(message, language),
       shouldRemember: true,
