@@ -149,7 +149,7 @@ function MemoCardColorRow({ colors, onChange }: MemoCardColorRowProps) {
           event.stopPropagation();
         }}
         className={cn(
-          'relative h-4 w-7 rounded-md border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]',
+          'relative h-3.5 w-7 rounded-md border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]',
           colors.length === 0
             ? 'border-[var(--muted-foreground)]'
             : 'border-[var(--border)] hover:border-[var(--muted-foreground)]',
@@ -168,7 +168,7 @@ function MemoCardColorRow({ colors, onChange }: MemoCardColorRowProps) {
               event.preventDefault();
               event.stopPropagation();
             }}
-            className="relative h-4 w-7 rounded-md transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+            className="relative h-3.5 w-7 rounded-md transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
             style={{ backgroundColor: MEMO_COLOR_HEX[c] }}
           >
             {isSelected && (
