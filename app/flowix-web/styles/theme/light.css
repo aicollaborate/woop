@@ -55,7 +55,11 @@
 	 * "深灰描边"; 与 rock 一致后, ΔL vs bg = 0.040, 读作"浅纸痕". */
 	--border: oklch(0.946 0.006 var(--neutral-hue));
 	--input: var(--border);
-	--divider: color-mix(in oklch, var(--background) 50%, var(--border));
+	/* 分割线: 越过 --border 一档 ── 直接 oklch 直定义, L=0.932
+	 * (比 --border 0.946 再深 0.014), ΔL vs bg ≈ 0.056 (比 baseline
+	 * 0.040 提升约 40%). 1px 边线在近白底上读作"明确分隔", 但比
+	 * --border 克制, 撑起面板/状态栏/侧栏之间的结构性边界, 不抢焦点. */
+	--divider: oklch(0.932 0.006 var(--neutral-hue));
 	/* Keyboard focus ring follows the theme primary color. */
 	--ring: var(--primary);
 

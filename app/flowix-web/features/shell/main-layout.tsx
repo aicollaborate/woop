@@ -514,7 +514,7 @@ export function MainLayout() {
             aria-hidden={!noteNavigationVisible}
           >
             <div
-              className="flex flex-col overflow-hidden h-full bg-[var(--agent-bg)] border-[var(--border)] border-r"
+              className="flex flex-col overflow-hidden h-full bg-[var(--agent-bg)] border-[var(--divider)] border-r"
               style={{ width: noteNavigationPanelWidth }}
             >
               {noteNavigationVisible && (
@@ -552,7 +552,7 @@ export function MainLayout() {
               className={`flex h-full flex-col ${
                 memoListPreviewVisible
                   ? 'overflow-visible'
-                  : 'overflow-hidden bg-[var(--card)] border-[var(--border)] border-r'
+                  : 'overflow-hidden bg-[var(--card)] border-[var(--divider)] border-r'
               }`}
               style={{ width: memoListPreviewVisible ? 0 : memoColWidth }}
             >

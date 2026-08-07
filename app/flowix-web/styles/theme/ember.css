@@ -73,7 +73,11 @@
 	 * 在白底上读作"几乎透明的纸痕", 仅元素相邻时感知。 */
 	--border: oklch(0.945 0.005 var(--neutral-hue));
 	--input: var(--border);
-	--divider: color-mix(in oklch, var(--background) 50%, var(--border));
+	/* 分割线: 与 light / mist / rock 同档 (L=0.932, 比 --border 深
+	 * 0.013) ── 跨主题切换时分割线权重一致, 在近白暖纸面上 ΔL vs bg
+	 * ≈ 0.056, 撑起面板分隔, 又不抢珊瑚橙焦点。 chroma 跟 --border
+	 * 走 0.005 而非 0.006, 维持 ember 暖色谱一致. */
+	--divider: oklch(0.932 0.005 var(--neutral-hue));
 	/* Keyboard focus ring follows the theme primary color. */
 	--ring: var(--primary);
 
