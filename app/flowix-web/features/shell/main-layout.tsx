@@ -604,7 +604,7 @@ export function MainLayout() {
             </div>
           )}
           {/* Memo detail */}
-            <div className="h-full min-w-0 relative flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
+            <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
             {/* Fixed top navigation bar */}
             {isWindowsPlatform() ? (
               <DocumentTitlebarWin {...documentTitlebarProps} />
