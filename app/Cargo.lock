@@ -2291,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-cli"
-version = "1.1.13"
+version = "1.1.14"
 dependencies = [
  "chrono",
  "clap",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-core"
-version = "1.1.13"
+version = "1.1.14"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-desktop"
-version = "1.1.13"
+version = "1.1.14"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-mobile"
-version = "1.1.13"
+version = "1.1.14"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2399,7 +2399,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-sync"
-version = "1.1.13"
+version = "1.1.14"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
