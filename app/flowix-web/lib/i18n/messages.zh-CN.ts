@@ -471,7 +471,7 @@ const zhCN = {
     "notebook.delete.title": "确认是否删除",
     "notebook.delete.description": "删除时不会移除存储文件夹",
 
-    "editor.placeholder": "按 / 插入, @ 引用",
+    "editor.placeholder": "按 / 插入或 @ 引用",
     "editor.block.paragraph": "正文",
     "editor.block.bulletList": "无序列表",
     "editor.block.orderedList": "有序列表",
