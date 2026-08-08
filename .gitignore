@@ -55,3 +55,8 @@ app/flowix-desktop/tauri*.production.local.json
 flowix_devid.key
 .app-store-connect/
 developerID_application.*
+# iOS TestFlight pipeline additions (Apple Distribution cert,
+# App Store Connect API key, App Store provisioning profile)
+*.p8
+*.mobileprovision
+appstoreconnect/
