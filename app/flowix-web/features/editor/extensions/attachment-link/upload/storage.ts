@@ -3,7 +3,12 @@ import type { StoredAsset } from '@features/editor/extensions/attachment-link/up
 import { assetUrl, safeFileName } from '@features/editor/extensions/attachment-link/utils';
 import { fileNameFromPath, getFileKind, getFileKindFromName, mimeTypeFromName } from '@features/editor/extensions/attachment-link/upload/file-source';
 
-export async function createAttachmentUpload(files: File[]): Promise<{ assets: StoredAsset[] }> {
+export type AttachmentContentSaver = (params: { content: string; fileName: string }) => Promise<string | null>;
+
+export async function createAttachmentUpload(
+    files: File[],
+    saveContent?: AttachmentContentSaver,
+): Promise<{ assets: StoredAsset[] }> {
     const assets: StoredAsset[] = [];
 
     for (const file of files) {
@@ -23,11 +28,13 @@ export async function createAttachmentUpload(files: File[]): Promise<{ assets: S
 
         let storageKey: string | null = null;
         try {
-            storageKey = await invoke<string | null>('save_attachment_content', {
-                content: base64Content,
-                fileName,
-                notebookId: null,
-            });
+            storageKey = saveContent
+                ? await saveContent({ content: base64Content, fileName })
+                : await invoke<string | null>('save_attachment_content', {
+                    content: base64Content,
+                    fileName,
+                    notebookId: null,
+                });
         } catch (err) {
             console.error('[FileUpload] Failed to save attachment:', err);
         }

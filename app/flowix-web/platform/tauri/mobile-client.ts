@@ -1,4 +1,10 @@
-import { cloud, listenToCloudStateChanges, type CloudState } from './client/cloud';
+import {
+  cloud,
+  listenToCloudStateChanges,
+  listenToCloudSyncStatusChanges,
+  type CloudState,
+  type CloudSyncStatus,
+} from './client/cloud';
 import {
   memos,
   notebooks,
@@ -6,6 +12,7 @@ import {
   type NotebookRecord,
   type OpenMemoSession,
 } from './client/memos';
+import { invoke } from '@tauri-apps/api/core';
 import { mobile } from './client/mobile';
 
 /**
@@ -19,14 +26,19 @@ export const mobileClient = {
   initialize: mobile.initialize,
   bootstrapCloud: mobile.bootstrapCloud,
   listenToCloudStateChanges,
+  listenToCloudSyncStatusChanges,
   cloud: {
     getState: cloud.getState,
     login: cloud.login,
     logout: cloud.logout,
+    resetBinding: mobile.resetCloudBinding,
     refreshMembership: cloud.refreshMembership,
   },
   notebooks: {
     getAll: notebooks.getAll,
+    create: (name: string) => invoke<NotebookRecord>('mobile_create_notebook', { name }),
+    rename: (id: string, name: string) =>
+      invoke<NotebookRecord>('mobile_rename_notebook', { id, name }),
   },
   tags: {
     getAll: tags.getAll,
@@ -35,8 +47,15 @@ export const mobileClient = {
     getMemos: memos.getMemos,
     openMemoSession: memos.openMemoSession,
     writeDocument: memos.writeDocument,
+    deleteMemo: memos.deleteMemo,
+    favoriteMemo: memos.favoriteMemo,
+    unfavoriteMemo: memos.unfavoriteMemo,
     addDocument: memos.addDocument,
+  },
+  attachments: {
+    saveContent: (params: { content: string; fileName: string; memoId: string }) =>
+      invoke<string>('mobile_save_attachment_content', params),
   },
 } as const;
 
-export type { CloudState, NotebookRecord, OpenMemoSession };
+export type { CloudState, CloudSyncStatus, NotebookRecord, OpenMemoSession };

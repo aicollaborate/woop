@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,8 @@ const generatedAppleDir = resolve(root, 'app/flowix-mobile/gen/apple');
 const target = resolve(generatedSourceDir, 'keyboard-accessory-suppressor.m');
 const mobileConfigPath = resolve(root, 'app/flowix-mobile/tauri.conf.json');
 const projectPath = resolve(generatedAppleDir, 'project.yml');
+const appIconDir = resolve(generatedAppleDir, 'Assets.xcassets/AppIcon.appiconset');
+const flattenAppIconsScript = resolve(root, 'scripts/flatten-ios-app-icons.swift');
 
 // Entitlements source-of-truth lives in app/flowix-mobile/ios/; `tauri ios init`
 // (which patch runs after) regenerates gen/apple/ and resets the entitlements
@@ -124,6 +126,20 @@ if (existsSync(entitlementsSource)) {
   console.log(`iOS entitlements patch applied: ${entitlementsTarget}`);
 } else {
   console.warn(`[warn] entitlements source missing: ${entitlementsSource} - create it before the next build (TestFlight upload will fail without keychain-access-groups).`);
+}
+
+// Apple's App Store validation (ITMS-90717) rejects any iOS AppIcon that
+// contains alpha. Tauri regenerates this asset catalog on every `ios init`,
+// so flatten all generated icon sizes after initialization instead of editing
+// the disposable gen/apple files by hand.
+if (existsSync(appIconDir) && existsSync(flattenAppIconsScript)) {
+  const appIcons = readdirSync(appIconDir)
+    .filter((name) => name.endsWith('.png'))
+    .map((name) => resolve(appIconDir, name));
+  if (appIcons.length > 0) {
+    execFileSync('swift', [flattenAppIconsScript, ...appIcons], { stdio: 'inherit' });
+    console.log(`iOS AppIcon alpha flattened: ${appIcons.length} generated image(s)`);
+  }
 }
 
 // Fix-up: `tauri ios build` (when run with IOS_CERTIFICATE /

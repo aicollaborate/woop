@@ -10,7 +10,7 @@ use flowix_core::memo_file::{
 };
 use flowix_sync::{
     v2_content_hash, CloudCheckout, CloudMembership, CloudNotebook, CloudProduct, CloudState,
-    SyncError, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply, V2SyncedNotebook,
+    collect_v2_attachments, SyncError, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply, V2SyncedNotebook,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
@@ -115,11 +115,16 @@ fn v2_account_snapshot(
             let path = PathBuf::from(&config.path).join(&memo.filename);
             let content = std::fs::read(&path)
                 .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?;
+            let attachments = collect_v2_attachments(
+                &PathBuf::from(&config.path).join("attachments"),
+                &content,
+            )?;
             notes.push(V2LocalNote {
                 id: memo.id,
                 notebook_id: config.id.clone(),
                 filename: memo.filename,
                 content,
+                attachments,
             });
         }
         notebooks.push(V2LocalNotebook {
@@ -140,6 +145,23 @@ fn safe_cloud_note_path(base: &Path, filename: &str) -> Result<PathBuf, String> 
         return Err("INVALID_CLOUD_FILENAME".to_string());
     }
     Ok(base.join(filename))
+}
+
+fn write_cloud_attachments(base: &Path, attachments: &[flowix_sync::V2RemoteAttachment]) -> Result<(), String> {
+    let directory = base.join("attachments");
+    std::fs::create_dir_all(&directory).map_err(sync_error)?;
+    for attachment in attachments {
+        let filename = &attachment.metadata.filename;
+        if Path::new(filename).file_name().and_then(|value| value.to_str()) != Some(filename)
+            || attachment.metadata.size_bytes != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
+            || v2_content_hash(&attachment.content) != attachment.metadata.content_hash
+        {
+            return Err(format!("CLOUD_ATTACHMENT_INVALID: {filename}"));
+        }
+        let path = directory.join(filename);
+        atomic_write_bytes(&path, &attachment.content).map_err(sync_error)?;
+    }
+    Ok(())
 }
 
 fn apply_v2_note_changes(
@@ -166,6 +188,7 @@ fn apply_v2_note_changes(
             content_hash,
             content,
             deleted,
+            attachments,
             ..
         } = change
         else {
@@ -207,6 +230,7 @@ fn apply_v2_note_changes(
             }
             let markdown = std::str::from_utf8(bytes)
                 .map_err(|_| format!("CLOUD_NOTE_NOT_UTF8: {note_id}"))?;
+            write_cloud_attachments(&base, attachments)?;
             let current_memo = memo_file.read_memo_for_notebook_id(notebook_id, note_id);
             if current_memo.is_none() {
                 if let Some(location) = memo_file

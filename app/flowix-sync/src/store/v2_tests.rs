@@ -128,6 +128,7 @@ fn v2_note_state_tracks_server_revision_not_client_time() {
         filename: "abc12345.md".into(),
         deleted: false,
         last_seq: 12,
+        attachments: Vec::new(),
     };
     store.save_v2_note_state(&state).unwrap();
     assert_eq!(store.v2_note_state("abc12345").unwrap(), Some(state));
@@ -157,6 +158,7 @@ fn v2_report_commits_heads_bootstrap_and_cursor_atomically() {
             revision: "rev_2".into(),
             sync_seq: 2,
             deleted: false,
+            attachments: Vec::new(),
         },
     ];
     store

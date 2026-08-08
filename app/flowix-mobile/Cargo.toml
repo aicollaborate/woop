@@ -16,13 +16,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 flowix-core = { workspace = true }
 flowix-sync = { workspace = true }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-keyring-store = { version = "0.2.0", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 tokio = { version = "1", features = ["sync", "time"] }
 uuid = { workspace = true }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = { workspace = true }

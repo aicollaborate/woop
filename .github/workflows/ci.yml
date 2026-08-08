@@ -38,6 +38,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Mobile web production build
+        run: npm run build:mobile
+
+      - name: Mobile import boundaries
+        run: npm run check:mobile-boundaries
+
       - name: Layer boundaries
         run: npm run check:layers
 

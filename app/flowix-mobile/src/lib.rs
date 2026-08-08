@@ -21,9 +21,12 @@ pub fn run() {
             commands::cloud_get_state,
             commands::cloud_login,
             commands::cloud_logout,
+            commands::mobile_reset_cloud_binding,
             commands::cloud_refresh_membership,
             commands::cloud_sync_now,
             commands::get_notebooks,
+            commands::mobile_create_notebook,
+            commands::mobile_rename_notebook,
             commands::set_current_notebook,
             commands::get_all_tags,
             commands::get_memos,
@@ -33,6 +36,10 @@ pub fn run() {
             commands::read_document,
             commands::write_document,
             commands::add_document,
+            commands::delete_memo,
+            commands::favorite_memo,
+            commands::unfavorite_memo,
+            commands::mobile_save_attachment_content,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Flowix Mobile");

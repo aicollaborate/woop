@@ -35,6 +35,7 @@ impl SyncStore {
                 notebook_id TEXT NOT NULL,
                 revision TEXT NOT NULL,
                 content_hash TEXT,
+                attachments_json TEXT NOT NULL DEFAULT '[]',
                 filename TEXT NOT NULL,
                 deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
                 last_seq INTEGER NOT NULL CHECK(last_seq >= 0),
@@ -91,6 +92,20 @@ impl SyncStore {
         if !has_fingerprint {
             connection.execute(
                 "ALTER TABLE v2_dirty_entities ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        let has_attachments = connection
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('v2_note_states') WHERE name = 'attachments_json'",
+                [],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if !has_attachments {
+            connection.execute(
+                "ALTER TABLE v2_note_states ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'",
                 [],
             )?;
         }
@@ -529,6 +544,7 @@ impl SyncStore {
                     revision,
                     sync_seq,
                     deleted,
+                    attachments,
                     ..
                 } => Self::write_v2_note_state(
                     &transaction,
@@ -540,6 +556,7 @@ impl SyncStore {
                         filename: filename.clone(),
                         deleted: *deleted,
                         last_seq: *sync_seq,
+                        attachments: if *deleted { Vec::new() } else { attachments.iter().map(|item| item.metadata.clone()).collect() },
                     },
                 )?,
             }
@@ -624,15 +641,18 @@ impl SyncStore {
     }
 
     fn write_v2_note_state(connection: &Connection, state: &V2NoteState) -> Result<(), SyncError> {
+        let attachments_json = serde_json::to_string(&state.attachments)
+            .map_err(|error| SyncError::InvalidState(format!("serialize v2 attachments: {error}")))?;
         connection.execute(
             r#"INSERT INTO v2_note_states
-                 (note_id, notebook_id, revision, content_hash, filename, deleted, last_seq, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 (note_id, notebook_id, revision, content_hash, attachments_json, filename, deleted, last_seq, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                ON CONFLICT(note_id) DO UPDATE SET notebook_id = excluded.notebook_id,
                  revision = excluded.revision, content_hash = excluded.content_hash,
-                 filename = excluded.filename, deleted = excluded.deleted,
+                 attachments_json = excluded.attachments_json, filename = excluded.filename, deleted = excluded.deleted,
                  last_seq = excluded.last_seq, updated_at = excluded.updated_at"#,
             params![state.note_id, state.notebook_id, state.revision, state.content_hash,
+                attachments_json,
                 state.filename, state.deleted, state.last_seq,
                 chrono::Utc::now().timestamp_millis()],
         )?;
@@ -691,7 +711,7 @@ impl SyncStore {
     ) -> Result<Option<V2NoteState>, SyncError> {
         connection
             .query_row(
-                r#"SELECT note_id, notebook_id, revision, content_hash, filename, deleted, last_seq
+                r#"SELECT note_id, notebook_id, revision, content_hash, attachments_json, filename, deleted, last_seq
                  FROM v2_note_states WHERE note_id = ?1"#,
                 [note_id],
                 |row| {
@@ -700,9 +720,11 @@ impl SyncStore {
                         notebook_id: row.get(1)?,
                         revision: row.get(2)?,
                         content_hash: row.get(3)?,
-                        filename: row.get(4)?,
-                        deleted: row.get(5)?,
-                        last_seq: row.get(6)?,
+                        attachments: serde_json::from_str(&row.get::<_, String>(4)?)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        filename: row.get(5)?,
+                        deleted: row.get(6)?,
+                        last_seq: row.get(7)?,
                     })
                 },
             )

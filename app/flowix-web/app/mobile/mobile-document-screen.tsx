@@ -1,7 +1,7 @@
 import { ArrowLeft, Check, CloudAlert, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { MobileMarkdownEditor } from '@features/editor/mobile/mobile-markdown-editor';
+import { MobileRichMarkdownEditor } from '@features/editor/mobile/mobile-rich-markdown-editor';
 import {
   joinMobileDocumentContent,
   splitMobileDocumentContent,
@@ -16,30 +16,91 @@ interface MobileDocumentScreenProps {
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'conflict' | 'error';
+type SaveResult = 'saved' | 'conflict' | 'error';
 
-function displayTitle(filename: string): string {
-  return filename.replace(/\.(?:md|markdown)$/i, '') || '未命名笔记';
+interface MobileDocumentDraft {
+  baseContent: string;
+  content: string;
+}
+
+function draftKey(memoId: string): string {
+  return `flowix:mobile-draft:${memoId}`;
+}
+
+function recoverDraft(memoId: string, diskContent: string): string {
+  try {
+    const raw = window.localStorage.getItem(draftKey(memoId));
+    if (!raw) return diskContent;
+    const draft = JSON.parse(raw) as Partial<MobileDocumentDraft>;
+    return draft.baseContent === diskContent && typeof draft.content === 'string'
+      ? draft.content
+      : diskContent;
+  } catch {
+    return diskContent;
+  }
+}
+
+function persistDraft(memoId: string, baseContent: string, content: string): void {
+  try {
+    window.localStorage.setItem(draftKey(memoId), JSON.stringify({ baseContent, content }));
+  } catch {
+    // Saving to the Rust backend remains authoritative when Web Storage is unavailable.
+  }
+}
+
+function clearDraft(memoId: string): void {
+  try {
+    window.localStorage.removeItem(draftKey(memoId));
+  } catch {
+    // Ignore unavailable Web Storage.
+  }
 }
 
 export function MobileDocumentScreen({
   memoId,
-  filename,
   content,
   onBack,
 }: MobileDocumentScreenProps) {
-  const initialParts = useMemo(() => splitMobileDocumentContent(content), [content]);
+  const initialContent = useMemo(() => recoverDraft(memoId, content), [content, memoId]);
+  const initialParts = useMemo(() => splitMobileDocumentContent(initialContent), [initialContent]);
   const [body, setBody] = useState(initialParts.body);
-  const [saveState, setSaveState] = useState<SaveState>('saved');
-  const latestContentRef = useRef(content);
+  const [saveState, setSaveState] = useState<SaveState>(initialContent === content ? 'saved' : 'dirty');
+  const latestContentRef = useRef(initialContent);
   const savedContentRef = useRef(content);
-  const savingRef = useRef(false);
+  const savePromiseRef = useRef<Promise<SaveResult> | null>(null);
+  const leavingRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
-  const saveLatest = useCallback(async () => {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    try {
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) return;
+
+    const updateViewport = () => {
+      const keyboardHeight = Math.max(
+        0,
+        window.innerHeight - visualViewport.height - visualViewport.offsetTop,
+      );
+      const screen = document.querySelector<HTMLElement>('.mobile-document-screen');
+      if (!screen) return;
+      screen.style.setProperty('--mobile-visual-viewport-height', `${visualViewport.height}px`);
+      screen.style.setProperty('--mobile-keyboard-height', `${keyboardHeight}px`);
+    };
+
+    updateViewport();
+    visualViewport.addEventListener('resize', updateViewport);
+    visualViewport.addEventListener('scroll', updateViewport);
+    window.addEventListener('resize', updateViewport);
+    return () => {
+      visualViewport.removeEventListener('resize', updateViewport);
+      visualViewport.removeEventListener('scroll', updateViewport);
+      window.removeEventListener('resize', updateViewport);
+    };
+  }, []);
+
+  const saveLatest = useCallback(async (): Promise<SaveResult> => {
+    if (savePromiseRef.current) return savePromiseRef.current;
+    const operation = (async (): Promise<SaveResult> => {
       while (savedContentRef.current !== latestContentRef.current) {
         const candidate = latestContentRef.current;
         const expected = savedContentRef.current;
@@ -52,20 +113,28 @@ export function MobileDocumentScreen({
           });
           if (!result) {
             if (mountedRef.current) setSaveState('conflict');
-            return;
+            return 'conflict';
           }
           savedContentRef.current = result.content;
           if (latestContentRef.current === candidate) {
             latestContentRef.current = result.content;
+          } else {
+            persistDraft(memoId, result.content, latestContentRef.current);
           }
         } catch {
           if (mountedRef.current) setSaveState('error');
-          return;
+          return 'error';
         }
       }
+      clearDraft(memoId);
       if (mountedRef.current) setSaveState('saved');
+      return 'saved';
+    })();
+    savePromiseRef.current = operation;
+    try {
+      return await operation;
     } finally {
-      savingRef.current = false;
+      if (savePromiseRef.current === operation) savePromiseRef.current = null;
     }
   }, [memoId]);
 
@@ -83,17 +152,33 @@ export function MobileDocumentScreen({
       frontmatter: initialParts.frontmatter,
       body: nextBody,
     });
+    persistDraft(memoId, savedContentRef.current, latestContentRef.current);
     setSaveState('dirty');
     scheduleSave();
-  }, [initialParts.frontmatter, scheduleSave]);
+  }, [initialParts.frontmatter, memoId, scheduleSave]);
+
+  useEffect(() => {
+    if (latestContentRef.current !== savedContentRef.current) scheduleSave();
+  }, [scheduleSave]);
 
   const handleBack = useCallback(async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    await saveLatest();
-    onBack();
+    const result = await saveLatest();
+    if (result === 'saved') {
+      onBack();
+      return;
+    }
+    leavingRef.current = false;
+    // history.back() has already consumed the document entry. Keep the user on
+    // the editor after a failed/conflicting save and re-arm system Back.
+    if (mountedRef.current) {
+      window.history.pushState({ flowixMobileLayer: 'document' }, '');
+    }
   }, [onBack, saveLatest]);
   const handleBackRef = useRef(handleBack);
   handleBackRef.current = handleBack;
@@ -138,13 +223,10 @@ export function MobileDocumentScreen({
         <button type="button" className="mobile-icon-button" aria-label="返回列表" onClick={() => window.history.back()}>
           <ArrowLeft size={21} />
         </button>
-        <div className="mobile-document-heading">
-          <strong>{displayTitle(filename)}</strong>
-          <span className={`mobile-save-status mobile-save-status--${saveState}`}>{status}</span>
-        </div>
-        <span className="mobile-topbar-spacer" />
+        <span />
+        <span className={`mobile-save-status mobile-save-status--${saveState}`}>{status}</span>
       </header>
-      <MobileMarkdownEditor key={memoId} content={body} onChange={handleBodyChange} />
+      <MobileRichMarkdownEditor key={memoId} memoId={memoId} content={body} onChange={handleBodyChange} />
     </main>
   );
 }

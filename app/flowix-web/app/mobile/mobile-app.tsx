@@ -1,5 +1,7 @@
-import { CloudOff, Menu, RefreshCw, SquarePen } from 'lucide-react';
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { CloudOff, LoaderCircle, Menu, RefreshCw, SquarePen } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
+
+import appIcon from '@/assets/app-icon-source.png';
 
 import { MobileMemoList } from './mobile-memo-list';
 import { MobileNavigationDrawer } from './mobile-navigation-drawer';
@@ -16,10 +18,30 @@ const MobileAccountPanel = lazy(() =>
   import('./mobile-account-panel').then((module) => ({ default: module.MobileAccountPanel })),
 );
 
+function MobileBootScreen({ message }: { message: string }) {
+  return (
+    <main className="mobile-boot-screen" aria-busy="true">
+      <img className="mobile-boot-icon" src={appIcon} alt="Flowix" width={96} height={96} />
+      <p>{message}</p>
+    </main>
+  );
+}
+
+function MobileDocumentLoadingScreen() {
+  return (
+    <main className="mobile-boot-screen" aria-busy="true">
+      <LoaderCircle className="mobile-loading-spinner is-spinning" size={30} aria-hidden="true" />
+      <p>正在打开笔记…</p>
+    </main>
+  );
+}
+
 export function MobileApp() {
   const library = useMobileLibrary();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [openMemoActionsId, setOpenMemoActionsId] = useState<string | null>(null);
+  const edgeGestureRef = useRef({ startX: -1, startY: 0, swiping: false });
 
   const openDrawer = useCallback(() => {
     window.history.pushState({ flowixMobileLayer: 'drawer' }, '');
@@ -53,13 +75,11 @@ export function MobileApp() {
 
   useEffect(() => {
     const syncAfterResume = () => {
-      if (library.canSync && !document.hidden) void refresh();
+      if (library.canSync) void refresh();
     };
     window.addEventListener('online', syncAfterResume);
-    document.addEventListener('visibilitychange', syncAfterResume);
     return () => {
       window.removeEventListener('online', syncAfterResume);
-      document.removeEventListener('visibilitychange', syncAfterResume);
     };
   }, [library.canSync, refresh]);
 
@@ -74,19 +94,52 @@ export function MobileApp() {
   };
 
   const logout = async () => {
-    await library.logout();
+    if (!await library.logout()) return;
     setDrawerOpen(false);
     setAccountOpen(false);
     closeMobileLayer();
   };
 
+  const deleteMemo = (id: string) => {
+    setOpenMemoActionsId(null);
+    void library.deleteMemo(id);
+  };
+
+  const handleEdgePointerDown = (event: PointerEvent<HTMLElement>) => {
+    if (drawerOpen || accountOpen || event.pointerType === 'mouse' || event.clientX > 28) return;
+    edgeGestureRef.current = { startX: event.clientX, startY: event.clientY, swiping: false };
+  };
+
+  const handleEdgePointerMove = (event: PointerEvent<HTMLElement>) => {
+    const gesture = edgeGestureRef.current;
+    if (gesture.startX < 0 || drawerOpen || accountOpen) return;
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    if (Math.abs(dy) > Math.abs(dx) * 1.2) {
+      gesture.startX = -1;
+      return;
+    }
+    if (dx > 12) gesture.swiping = true;
+  };
+
+  const handleEdgePointerUp = (event: PointerEvent<HTMLElement>) => {
+    const gesture = edgeGestureRef.current;
+    if (gesture.startX < 0) return;
+    const dx = event.clientX - gesture.startX;
+    if (gesture.swiping && dx > 52) {
+      event.preventDefault();
+      openDrawer();
+    }
+    edgeGestureRef.current = { startX: -1, startY: 0, swiping: false };
+  };
+
   if (library.booting) {
-    return <main className="mobile-boot-screen"><span className="mobile-pulse-mark">F</span><p>正在准备笔记…</p></main>;
+    return <MobileBootScreen message="正在准备笔记…" />;
   }
 
   if (library.activeDocument) {
     return (
-      <Suspense fallback={<main className="mobile-boot-screen"><span className="mobile-pulse-mark">F</span><p>正在打开笔记…</p></main>}>
+      <Suspense fallback={<MobileDocumentLoadingScreen />}>
         <MobileDocumentScreen
           memoId={library.activeDocument.memo.id}
           filename={library.activeDocument.memo.filename}
@@ -98,14 +151,22 @@ export function MobileApp() {
   }
 
   return (
-    <main className="mobile-shell">
-      <header className="mobile-topbar">
+    <main
+      className={`mobile-shell${drawerOpen ? ' mobile-shell--drawer-open' : ''}`}
+      onPointerDown={handleEdgePointerDown}
+      onPointerMove={handleEdgePointerMove}
+      onPointerUp={handleEdgePointerUp}
+      onPointerCancel={() => { edgeGestureRef.current = { startX: -1, startY: 0, swiping: false }; }}
+    >
+      <header className="mobile-topbar mobile-list-topbar">
         <button type="button" className="mobile-icon-button" aria-label="打开导航" onClick={openDrawer}>
           <Menu size={21} strokeWidth={1.8} />
         </button>
         <div className="mobile-list-heading">
-          <div><span className="mobile-heading-mark" aria-hidden="true" /><strong>{library.selectedTag?.name || library.selectedNotebook?.name || '笔记'}</strong></div>
-          <span>{library.selectedTag ? '标签' : '笔记本'} · {library.memoItems.length} 篇</span>
+          <div>
+            <strong>{library.selectedTag?.name || library.selectedNotebook?.name || '笔记'}</strong>
+            <span className="mobile-list-count">{library.memoItems.length}</span>
+          </div>
         </div>
         <button type="button" className="mobile-icon-button" aria-label={library.canSync ? '同步' : '账号与云同步'} disabled={library.syncing} onClick={() => void refresh()}>
           {library.canSync
@@ -120,6 +181,10 @@ export function MobileApp() {
         items={library.memoItems}
         loading={library.loadingList}
         onOpen={(id) => void library.openMemo(id)}
+        openMemoId={openMemoActionsId}
+        onToggleActions={(id) => setOpenMemoActionsId((current) => current === id ? null : id)}
+        onDelete={deleteMemo}
+        onTogglePin={(memo) => { setOpenMemoActionsId(null); void library.toggleMemoFavorite(memo); }}
       />
 
       <button type="button" className="mobile-fab" aria-label="新建笔记" disabled={!library.selectedNotebookId} onClick={() => void library.createMemo()}>
@@ -128,7 +193,6 @@ export function MobileApp() {
 
       {drawerOpen && (
         <MobileNavigationDrawer
-          canSync={library.canSync}
           cloudState={library.cloudState}
           notebooks={library.notebooks}
           selectedNotebookId={library.selectedNotebookId}
@@ -139,6 +203,8 @@ export function MobileApp() {
           onLogout={() => void logout()}
           onSelectNotebook={selectNotebook}
           onSelectTag={selectTag}
+          onCreateNotebook={library.createNotebook}
+          onRenameNotebook={library.renameNotebook}
         />
       )}
 
@@ -146,6 +212,7 @@ export function MobileApp() {
         <Suspense fallback={<div className="mobile-account-layer"><div className="mobile-drawer-backdrop" /></div>}>
           <MobileAccountPanel
             state={library.cloudState}
+            syncStatus={library.syncStatus}
             onClose={closeMobileLayer}
             onStateChange={library.updateCloudState}
           />

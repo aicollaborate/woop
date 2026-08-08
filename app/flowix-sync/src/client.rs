@@ -302,6 +302,7 @@ impl CloudClient {
         access_token: &str,
         content_hash: &str,
         size_bytes: i64,
+        blob_kind: &str,
     ) -> Result<V2BlobReservationEnvelope, SyncError> {
         self.send::<V2BlobReservationEnvelope>(
             Method::POST,
@@ -311,6 +312,7 @@ impl CloudClient {
                 "protocolEpoch": PROTOCOL_EPOCH,
                 "contentHash": content_hash,
                 "sizeBytes": size_bytes,
+                "blobKind": blob_kind,
             })),
         )
         .await

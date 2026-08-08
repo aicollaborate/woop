@@ -16,6 +16,18 @@
 @import '../theme/mist.css';
 @import '../theme/ember.css';
 
+/* Desktop 编辑器的完整块样式链：移动端复用同一套视觉规则，再由
+ * mobile/editor.css 覆盖尺寸、键盘和触屏布局。 */
+@import '../editor.css';
+@import '../editor-frontmatter.css';
+@import '../editor-agent-thread-card.css';
+@import '../editor-note-reference.css';
+@import '../editor-code-block.css';
+@import '../editor-mermaid.css';
+@import '../editor-link-tooltip.css';
+@import '../editor-bubble-menus.css';
+@import '../editor-attachment-link.css';
+
 @import './base.css';
 @import './list.css';
 @import './drawer.css';
@@ -26,6 +38,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --flowix-hand-check-mask: url("data:image/svg+xml,%3Csvg viewBox='-1 -1 16 13' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M1.15 5.9c.16-.22.44-.28.72-.16 1.32.56 2.42 1.2 3.36 2.06C6.72 5.38 9.12 2.86 12.35.88c.32-.2.72-.16.9.09.18.24.05.6-.26.84-3.45 2.76-5.56 5.4-7.1 8.23-.14.25-.41.4-.71.4-.28 0-.53-.13-.68-.35-.88-1.18-1.95-2.12-3.19-3.12-.29-.23-.38-.75-.16-1.07Z'/%3E%3C/svg%3E");
+}
+
 @media (min-width: 700px) {
   .mobile-memo-list { width: min(100%, 720px); margin: 0 auto; }
   .mobile-account-sheet { right: max(0px, calc((100vw - 560px) / 2)); left: max(0px, calc((100vw - 560px) / 2)); border-radius: 24px 24px 0 0; }
@@ -34,6 +50,5 @@
 @media (prefers-reduced-motion: reduce) {
   .mobile-drawer,
   .mobile-account-sheet,
-  .mobile-pulse-mark,
   .is-spinning { animation-duration: 1ms; animation-iteration-count: 1; }
 }

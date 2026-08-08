@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use flowix_core::memo_file::{MemoFile, NotebookConfig};
+use flowix_core::memo_file::{atomic_write_bytes, MemoFile, NotebookConfig};
 use flowix_core::secret::SecretStore;
 use flowix_sync::CloudState;
 #[cfg(target_os = "ios")]
@@ -17,8 +17,11 @@ pub struct MobileState {
     pub cloud_sync: Arc<flowix_sync::SyncManager>,
     credentials: KeyringStore,
     legacy_secrets: SecretStore,
+    cloud_owner_path: PathBuf,
+    cloud_owner_user_id: RwLock<Option<String>>,
     pub initialize_lock: tokio::sync::Mutex<()>,
     pub sync_lock: tokio::sync::Mutex<()>,
+    mutation_lock: std::sync::Mutex<()>,
 }
 
 impl MobileState {
@@ -26,6 +29,14 @@ impl MobileState {
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
         let config_dir = data_dir.join("config");
         std::fs::create_dir_all(&config_dir).map_err(|error| error.to_string())?;
+        let cloud_owner_path = config_dir.join("mobile-cloud-owner.json");
+        let cloud_owner_user_id = match std::fs::read_to_string(&cloud_owner_path) {
+            Ok(value) => {
+                Some(serde_json::from_str::<String>(&value).map_err(|error| error.to_string())?)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
         let cloud_sync = flowix_sync::SyncManager::new(
             flowix_sync::DEFAULT_CLOUD_API_BASE,
             config_dir.join("sync.db"),
@@ -38,8 +49,11 @@ impl MobileState {
             cloud_sync: Arc::new(cloud_sync),
             credentials: mobile_keyring(),
             legacy_secrets: SecretStore::new(config_dir.join("default.db")),
+            cloud_owner_path,
+            cloud_owner_user_id: RwLock::new(cloud_owner_user_id),
             initialize_lock: tokio::sync::Mutex::new(()),
             sync_lock: tokio::sync::Mutex::new(()),
+            mutation_lock: std::sync::Mutex::new(()),
         })
     }
 
@@ -128,6 +142,55 @@ impl MobileState {
         }
         Ok(())
     }
+
+    pub fn ensure_cloud_owner(&self, user_id: &str) -> Result<(), String> {
+        let mut current = self
+            .cloud_owner_user_id
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.as_deref().is_some_and(|owner| owner != user_id) {
+            return Err("MOBILE_CLOUD_ACCOUNT_MISMATCH".to_string());
+        }
+        if current.is_some() {
+            return Ok(());
+        }
+        let encoded = serde_json::to_vec(user_id).map_err(|error| error.to_string())?;
+        atomic_write_bytes(&self.cloud_owner_path, &encoded).map_err(|error| error.to_string())?;
+        *current = Some(user_id.to_string());
+        Ok(())
+    }
+
+    /// Removes only the mobile data directory's cloud-account affinity.
+    /// Local notebooks remain untouched. Callers must first end the current
+    /// cloud session so a deliberate next login can bootstrap those notebooks
+    /// into the selected account.
+    pub fn clear_cloud_owner(&self) -> Result<(), String> {
+        let mut current = self
+            .cloud_owner_user_id
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match std::fs::remove_file(&self.cloud_owner_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        *current = None;
+        Ok(())
+    }
+
+    pub fn lock_mutations(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mutation_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(test)]
+    fn cloud_owner_user_id(&self) -> Option<String> {
+        self.cloud_owner_user_id
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
 }
 
 fn mobile_keyring() -> KeyringStore {
@@ -204,5 +267,35 @@ mod tests {
         let mut logged_out = cloud_state(true, false);
         logged_out.authenticated = false;
         assert!(!cloud_sync_allowed(&logged_out));
+    }
+
+    #[test]
+    fn pins_cloud_data_to_the_first_account_on_the_device() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let state = MobileState::new(directory.path().to_path_buf()).expect("mobile state");
+
+        state.ensure_cloud_owner("user-a").expect("claim owner");
+        state.ensure_cloud_owner("user-a").expect("same owner");
+        assert_eq!(state.cloud_owner_user_id().as_deref(), Some("user-a"));
+        assert_eq!(
+            state.ensure_cloud_owner("user-b").unwrap_err(),
+            "MOBILE_CLOUD_ACCOUNT_MISMATCH"
+        );
+
+        let restored = MobileState::new(directory.path().to_path_buf()).expect("restored state");
+        assert_eq!(restored.cloud_owner_user_id().as_deref(), Some("user-a"));
+    }
+
+    #[test]
+    fn can_explicitly_clear_the_cloud_owner_without_touching_local_data() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let state = MobileState::new(directory.path().to_path_buf()).expect("mobile state");
+        state.ensure_local_notebook().expect("local notebook");
+        state.ensure_cloud_owner("user-a").expect("claim owner");
+
+        state.clear_cloud_owner().expect("clear owner");
+        assert_eq!(state.cloud_owner_user_id(), None);
+        assert!(directory.path().join("notebooks").is_dir());
+        state.ensure_cloud_owner("user-b").expect("claim new owner");
     }
 }

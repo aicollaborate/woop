@@ -4,7 +4,7 @@
 #
 # Mirrors scripts/apple-signing/sign-and-notarize.sh for macOS DMG, but
 # adapted for iOS:
-#   • tauri ios build --export-method release-testing does the archive +
+#   • xcodebuild archive + export with the App Store method does the archive +
 #     xcodebuild -exportArchive + .ipa assembly (Tauri CLI 2.x natively
 #     reads IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD / IOS_MOBILE_PROVISION
 #     / APPLE_API_KEY / APPLE_API_KEY_PATH / APPLE_API_ISSUER env vars to
@@ -152,36 +152,88 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   cp "$IOS_MOBILE_PROVISION_PATH" "$PROFILES_DIR/$PROV_UUID.mobileprovision"
   echo "==> [build] staged provision: $PROFILES_DIR/$PROV_UUID.mobileprovision"
 
-  # Import .p12 into Keychain so codesign/xcodebuild can find the identity.
-  # macOS may import it with CSSMERR_TP_NOT_TRUSTED, which makes
-  # `find-identity -v -p codesigning` filter it out. We DON'T try to set
-  # custom trust (xcodebuild rejects "Invalid trust settings" if we do) —
-  # instead we use the cert's SHA-1 fingerprint directly when calling
-  # codesign / xcodebuild, which bypasses the trust lookup entirely.
-  CER_FROM_P12="$(mktemp -t flowix.cer).cer"
-  openssl pkcs12 -legacy -in "$IOS_CERT_P12_PATH" -nokeys -clcerts -passin "pass:$IOS_CERT_P12_PASSWORD" -out "$CER_FROM_P12" 2>/dev/null
-  security import "$IOS_CERT_P12_PATH" -P "$IOS_CERT_P12_PASSWORD" -T /usr/bin/codesign -A -k ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-  rm -f "$CER_FROM_P12"
+  # Use a fresh, isolated keychain for the distribution identity.  A stale or
+  # conflicting copy in the login keychain can make codesign fail with
+  # errSecInternalComponent even though `security find-identity` reports the
+  # certificate as valid. The temporary keychain is removed at exit and never
+  # changes the user's login keychain ACL.
+  SIGNING_KEYCHAIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/flowix-ios-signing.XXXXXX")"
+  KEYCHAIN_PATH="$SIGNING_KEYCHAIN_DIR/ios-signing.keychain-db"
+  cleanup_signing_keychain() {
+    security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+    rmdir "$SIGNING_KEYCHAIN_DIR" >/dev/null 2>&1 || true
+  }
+  trap cleanup_signing_keychain EXIT INT TERM
 
-  # Unlock the login keychain so codesign can use the imported identity.
-  # Without this, codesign fails with errSecInternalComponent / -67062.
-  if security unlock-keychain -p "$IOS_CERT_P12_PASSWORD" ~/Library/Keychains/login.keychain-db 2>/dev/null; then
-    echo "==> [build] login keychain unlocked"
-  else
-    echo "WARN: could not unlock login keychain with .p12 password; codesign may fail"
+  echo "==> [build] creating isolated signing keychain"
+  security create-keychain -p "$IOS_CERT_P12_PASSWORD" "$KEYCHAIN_PATH"
+  security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+  security unlock-keychain -p "$IOS_CERT_P12_PASSWORD" "$KEYCHAIN_PATH"
+  security import "$IOS_CERT_P12_PATH" -P "$IOS_CERT_P12_PASSWORD" \
+    -T /usr/bin/codesign -A -k "$KEYCHAIN_PATH"
+
+  # `security import` may omit the intermediate bundled in a PKCS#12. Because
+  # codesign below is explicitly scoped to this keychain, add the current
+  # WWDR G3 intermediate as well so it can build the Apple Distribution chain.
+  WWDR_CANDIDATES_PEM="$SIGNING_KEYCHAIN_DIR/WWDRCandidates.pem"
+  security find-certificate -a -c "Apple Worldwide Developer Relations" -p \
+    /Library/Keychains/System.keychain > "$WWDR_CANDIDATES_PEM"
+  awk -v dir="$SIGNING_KEYCHAIN_DIR" \
+    '/BEGIN CERTIFICATE/ { n++ } n { print > (dir "/wwdr-" n ".pem") }' \
+    "$WWDR_CANDIDATES_PEM"
+  WWDRCA_PEM=""
+  for wwdr_candidate in "$SIGNING_KEYCHAIN_DIR"/wwdr-*.pem; do
+    if openssl x509 -in "$wwdr_candidate" -noout -subject | grep -q 'OU=G3'; then
+      WWDRCA_PEM="$wwdr_candidate"
+      break
+    fi
+  done
+  if [ -z "$WWDRCA_PEM" ]; then
+    echo "ERROR: Apple WWDR G3 intermediate not found in the system keychain." >&2
+    exit 1
   fi
+  if ! security find-certificate -c "Apple Worldwide Developer Relations" -p \
+    "$KEYCHAIN_PATH" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | grep -q 'OU=G3'; then
+    security import "$WWDRCA_PEM" -k "$KEYCHAIN_PATH"
+  else
+    echo "==> [build] WWDR G3 intermediate already present in isolated keychain"
+  fi
+
+  # WWDR G3 chains to the original "Apple Root CA" (not "Apple Root CA - G3").
+  # Trust that exact root for code signing inside this temporary keychain so a
+  # user-level trust override in login.keychain cannot affect this build.
+  APPLE_ROOTS_PEM="$SIGNING_KEYCHAIN_DIR/AppleRoots.pem"
+  security find-certificate -a -c "Apple Root CA" -p \
+    /System/Library/Keychains/SystemRootCertificates.keychain > "$APPLE_ROOTS_PEM"
+  awk -v dir="$SIGNING_KEYCHAIN_DIR" \
+    '/BEGIN CERTIFICATE/ { n++ } n { print > (dir "/apple-root-" n ".pem") }' \
+    "$APPLE_ROOTS_PEM"
+  APPLE_ROOT_PEM=""
+  for root_candidate in "$SIGNING_KEYCHAIN_DIR"/apple-root-*.pem; do
+    if openssl x509 -in "$root_candidate" -noout -subject | grep -q 'CN=Apple Root CA$'; then
+      APPLE_ROOT_PEM="$root_candidate"
+      break
+    fi
+  done
+  if [ -z "$APPLE_ROOT_PEM" ]; then
+    echo "ERROR: original Apple Root CA not found in the system root store." >&2
+    exit 1
+  fi
+  security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN_PATH" "$APPLE_ROOT_PEM"
+  security set-key-partition-list -S apple-tool:,apple: -s \
+    -k "$IOS_CERT_P12_PASSWORD" "$KEYCHAIN_PATH"
 
   # Resolve the cert's SHA-1 fingerprint to use as a trust-bypass code-sign
   # identity. xcodebuild and codesign both accept this format:
   #   "<SHA-1 fingerprint> = Apple Distribution: Yin Liao (9FJ9ZD86C2)"
-  CERT_SHA1="$(security find-certificate -a -c 'Apple Distribution' -Z login.keychain-db 2>/dev/null | awk '/SHA-1 hash/ {print $3}' | head -1)"
+  CERT_SHA1="$(security find-certificate -a -c 'Apple Distribution' -Z "$KEYCHAIN_PATH" 2>/dev/null | awk '/SHA-1 hash/ {print $3}' | head -1)"
   if [ -z "$CERT_SHA1" ]; then
     echo "ERROR: cannot locate Apple Distribution cert in keychain after .p12 import." >&2
     exit 1
   fi
   IDENTITY="${CERT_SHA1}"
   echo "==> [build] identity fingerprint: ${CERT_SHA1} (Apple Distribution: Yin Liao (9FJ9ZD86C2))"
-  echo "          (using fingerprint instead of friendly name to bypass CSSMERR_TP_NOT_TRUSTED trust filter)"
+  echo "          (using the isolated signing keychain)"
 
   # Build the Rust cdylib that the .app links against. We do this directly
   # (not through Tauri CLI's xcode-script which expects a live dev server
@@ -230,7 +282,7 @@ if [ -z "${SKIP_BUILD:-}" ]; then
     exit 1
   fi
   mv "$DESKTOP_CONF" "$DESKTOP_CONF.bak"
-  trap 'mv -f "$DESKTOP_CONF.bak" "$DESKTOP_CONF" 2>/dev/null || true' EXIT INT TERM
+  trap 'mv -f "$DESKTOP_CONF.bak" "$DESKTOP_CONF" 2>/dev/null || true; cleanup_signing_keychain' EXIT INT TERM
   cd "$MOBILE_DIR/gen/apple"
   xcodebuild \
     -workspace flowix-mobile.xcodeproj/project.xcworkspace \
@@ -263,6 +315,7 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   fi
   echo "==> [sign] codesign --force --sign $IDENTITY $APP_DIR_IN_ARCHIVE"
   codesign --force --sign "$IDENTITY" \
+    --keychain "$KEYCHAIN_PATH" \
     --entitlements "$MOBILE_DIR/gen/apple/flowix-mobile_iOS/flowix-mobile_iOS.entitlements" \
     --generate-entitlement-der \
     "$APP_DIR_IN_ARCHIVE" 2>&1 | tail -5
@@ -282,11 +335,16 @@ if [ -z "${SKIP_BUILD:-}" ]; then
 <plist version="1.0">
 <dict>
   <key>method</key>
-  <string>release-testing</string>
+  <string>app-store-connect</string>
   <key>teamID</key>
   <string>$APPLE_TEAM_ID</string>
   <key>signingStyle</key>
   <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.flowix.app.mobile</key>
+    <string>$PROV_UUID</string>
+  </dict>
   <key>uploadSymbols</key>
   <true/>
   <key>uploadBitcode</key>
@@ -313,12 +371,14 @@ else
 fi
 
 # ---- 2. Locate the .ipa ----
-# Tauri CLI drops the archive under gen/apple/build/...; the .ipa lands beside
-# the .app after xcodebuild -exportArchive. Search broadly so we tolerate
-# minor version differences in the exact subdir name.
-IPA_PATH="$(find app/flowix-mobile/gen/apple/build -name '*.ipa' -type f 2>/dev/null | head -1 || true)"
+# A normal build already found the IPA in $EXPORT_DIR.  When SKIP_BUILD=1,
+# search both the current export location and Tauri's historical location.
+if [ -z "${IPA_PATH:-}" ] || [ ! -f "$IPA_PATH" ]; then
+  IPA_PATH="$(find "$REPO_ROOT/.build/ios-export" "$MOBILE_DIR/gen/apple/build" \
+    -name '*.ipa' -type f 2>/dev/null | head -1 || true)"
+fi
 if [ -z "$IPA_PATH" ] || [ ! -f "$IPA_PATH" ]; then
-  echo "ERROR: .ipa not found under app/flowix-mobile/gen/apple/build/." >&2
+  echo "ERROR: .ipa not found under .build/ios-export or app/flowix-mobile/gen/apple/build/." >&2
   echo "       Check the build log above for xcodebuild/archive errors." >&2
   exit 1
 fi
@@ -334,8 +394,14 @@ fi
 
 # ---- 4. Upload to TestFlight ----
 if [ -z "${SKIP_UPLOAD:-}" ]; then
-  echo "==> [upload] xcrun altool --upload-app --type ios ($UPLOAD_AUTH)"
-  xcrun altool --upload-app \
+  XCODE_CONTENTS_DIR="$(dirname "$(xcode-select -p)")"
+  ALTOOL_BIN="$XCODE_CONTENTS_DIR/SharedFrameworks/ContentDelivery.framework/Resources/altool"
+  if [ ! -x "$ALTOOL_BIN" ]; then
+    echo "ERROR: Xcode ContentDelivery altool not found at $ALTOOL_BIN" >&2
+    exit 1
+  fi
+  echo "==> [upload] altool --upload-app --type ios ($UPLOAD_AUTH)"
+  API_PRIVATE_KEYS_DIR="$(dirname "$APPLE_ASC_API_KEY_PATH")" "$ALTOOL_BIN" --upload-app \
     --type ios \
     "${UPLOAD_AUTH_FLAGS[@]}" \
     -f "$IPA_PATH" \

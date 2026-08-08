@@ -1,68 +1,138 @@
-/* 移动端笔记列表: 列表容器、笔记卡片行、空状态、悬浮新建按钮 (FAB)。 */
+/* 移动端笔记列表: 无卡片边框的列表行、空状态、悬浮新建按钮 (FAB)。 */
 
 .mobile-memo-list {
   display: flex;
   height: calc(100dvh - 58px - env(safe-area-inset-top));
   flex-direction: column;
-  gap: 9px;
+  gap: 0;
   overflow-y: auto;
-  padding: 12px 12px calc(94px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(94px + env(safe-area-inset-bottom));
   overscroll-behavior-y: contain;
   scrollbar-width: none;
 }
 
 .mobile-memo-list::-webkit-scrollbar { display: none; }
 
+.mobile-memo-row-shell {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border-radius: 9px;
+  border-bottom: 1px solid var(--mobile-hairline);
+}
+
+.mobile-memo-row-shell .mobile-memo-row {
+  position: relative;
+  z-index: 1;
+  border-bottom: 0;
+  background: var(--background);
+  transition: transform 180ms ease;
+}
+.mobile-memo-row-shell.is-actions-open .mobile-memo-row { transform: translateX(-108px); }
+
+.mobile-memo-row-actions {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 0;
+  display: flex;
+  width: 108px;
+  gap: 4px;
+  padding: 6px 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 0s linear 180ms;
+}
+
+.mobile-memo-row-shell.is-actions-open .mobile-memo-row-actions {
+  z-index: 2;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.mobile-memo-row-action {
+  display: flex;
+  width: 52px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: white;
+  font-size: 10px;
+  font-weight: 650;
+}
+.mobile-memo-row-action--pin { background: var(--primary); }
+.mobile-memo-row-action--delete { background: var(--destructive); }
+.mobile-memo-row-action:active { filter: brightness(.9); }
+
 .mobile-memo-row {
-  display: block;
+  display: flex;
+  min-height: 104px;
+  align-items: stretch;
+  gap: 14px;
   width: 100%;
   flex: none;
-  padding: 16px 15px 14px;
-  border: 1px solid var(--mobile-hairline);
-  border-radius: 16px;
-  box-shadow: var(--mobile-paper-shadow);
-  background: var(--card);
+  padding: 15px 0;
+  border: 0;
+  border-bottom: 0;
+  background: transparent;
   color: inherit;
   text-align: start;
-  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+  transition: background 120ms ease;
 }
 
 .mobile-memo-row:active {
-  border-color: color-mix(in oklch, var(--brand) 20%, var(--border));
-  background: color-mix(in oklch, var(--card) 96%, var(--muted));
-  transform: scale(.988);
+  background: color-mix(in oklch, var(--muted) 42%, transparent);
 }
 
-.mobile-memo-row__title {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
+.mobile-memo-row__content { min-width: 0; flex: 1; }
+
+.mobile-memo-row__thumbnail {
+  width: 92px;
+  height: 70px;
+  flex: none;
+  align-self: center;
+  border-radius: 9px;
+  background: var(--muted);
+  object-fit: cover;
 }
+
+.mobile-memo-row__title { display: flex; align-items: baseline; min-width: 0; }
 
 .mobile-memo-row__title strong {
   overflow: hidden;
   color: var(--foreground);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 720;
   letter-spacing: -.012em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mobile-memo-row__title time {
+.mobile-memo-row__created-at {
   flex: none;
   color: color-mix(in oklch, var(--muted-foreground) 82%, transparent);
-  font-size: 10px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.mobile-memo-row__pinned-icon {
+  display: block;
+  flex: none;
+  color: var(--brand);
 }
 
 .mobile-memo-row p {
   display: -webkit-box;
   overflow: hidden;
-  margin: 7px 0 0;
+  margin: 6px 0 0;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1.58;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -70,9 +140,10 @@
 
 .mobile-memo-row__meta {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 11px;
+  margin-top: 9px;
 }
 
 .mobile-memo-row__meta span {
@@ -95,11 +166,6 @@
   background: color-mix(in oklch, var(--brand) 7%, var(--card));
   color: color-mix(in oklch, var(--brand) 78%, var(--foreground));
 }
-.mobile-memo-row__meta .is-todo {
-  background: color-mix(in oklch, var(--success) 10%, var(--card));
-  color: color-mix(in oklch, var(--success) 62%, var(--foreground));
-}
-
 .mobile-empty-state {
   display: flex;
   height: 64vh;
@@ -157,3 +223,8 @@
 
 .mobile-fab:active { transform: scale(.94); }
 .mobile-fab:disabled { opacity: .38; }
+.mobile-shell--drawer-open .mobile-fab {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(.9);
+}

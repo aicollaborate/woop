@@ -78,6 +78,10 @@ body:has(.mobile-boot-screen) {
   -webkit-tap-highlight-color: transparent;
 }
 
+body:has(.mobile-document-screen) {
+  touch-action: auto;
+}
+
 .mobile-shell,
 .mobile-document-screen,
 .mobile-auth-screen,
@@ -86,6 +90,16 @@ body:has(.mobile-boot-screen) {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+.mobile-shell {
+  width: 100%;
+  transition: margin-left 200ms cubic-bezier(.2,.8,.2,1);
+  touch-action: pan-y;
+}
+
+.mobile-shell--drawer-open {
+  margin-left: min(84vw, 336px);
 }
 
 .mobile-topbar {
@@ -101,6 +115,8 @@ body:has(.mobile-boot-screen) {
   background: color-mix(in oklch, var(--background) 88%, transparent);
   backdrop-filter: blur(20px) saturate(1.08);
 }
+
+.mobile-list-topbar { border-bottom: 0; }
 
 .mobile-icon-button {
   display: inline-grid;
@@ -131,6 +147,13 @@ body:has(.mobile-boot-screen) {
   max-width: 100%;
   align-items: center;
   gap: 7px;
+}
+
+.mobile-list-count {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .mobile-heading-mark {

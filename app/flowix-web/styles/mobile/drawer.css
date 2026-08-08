@@ -1,12 +1,13 @@
 /* 移动端导航抽屉: 左侧滑出层、品牌标识、笔记本/标签导航、底部账号入口。 */
 
-.mobile-drawer-layer { position: fixed; z-index: 80; inset: 0; }
-.mobile-drawer-backdrop {
-  position: absolute;
-  border: 0;
-  background: color-mix(in oklch, var(--foreground) 32%, transparent);
-  backdrop-filter: blur(2px);
-  inset: 0;
+.mobile-drawer-layer {
+  --mobile-drawer-width: min(84vw, 336px);
+  position: fixed;
+  z-index: 80;
+  inset: 0 auto 0 0;
+  width: var(--mobile-drawer-width);
+  background: color-mix(in oklch, var(--card) 95%, var(--background));
+  pointer-events: none;
 }
 
 .mobile-drawer {
@@ -15,64 +16,26 @@
   bottom: 0;
   left: 0;
   display: flex;
-  width: min(84vw, 336px);
+  width: 100%;
   flex-direction: column;
   padding: env(safe-area-inset-top) 9px env(safe-area-inset-bottom);
   border-right: 1px solid var(--mobile-hairline);
   box-shadow: 18px 0 54px color-mix(in oklch, var(--foreground) 18%, transparent);
   background: color-mix(in oklch, var(--card) 95%, var(--background));
   animation: mobile-drawer-in 200ms cubic-bezier(.2,.8,.2,1);
+  pointer-events: auto;
+  touch-action: pan-y;
 }
 
 @keyframes mobile-drawer-in { from { transform: translateX(-100%); } }
 
 .mobile-drawer-header {
   display: flex;
-  min-height: 72px;
+  min-height: 58px;
   align-items: center;
-  justify-content: space-between;
-  padding: 7px 5px 7px 9px;
+  justify-content: flex-end;
+  padding: 0 5px;
 }
-
-.mobile-drawer-brand { display: flex; min-width: 0; align-items: center; gap: 11px; }
-.mobile-drawer-brand > div { display: flex; min-width: 0; flex-direction: column; }
-.mobile-drawer-brand strong { font-size: 18px; font-weight: 760; letter-spacing: -.025em; }
-.mobile-drawer-brand > div > span {
-  overflow: hidden;
-  margin-top: 3px;
-  color: var(--muted-foreground);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mobile-brand-mark {
-  position: relative;
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: none;
-  place-items: center;
-  border-radius: 13px;
-  box-shadow: inset 0 1px 0 color-mix(in oklch, white 12%, transparent);
-  background: var(--primary);
-}
-
-.mobile-brand-mark::before,
-.mobile-brand-mark::after,
-.mobile-brand-mark > span {
-  position: absolute;
-  left: 11px;
-  width: 16px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--primary-foreground);
-  content: '';
-}
-
-.mobile-brand-mark::before { top: 12px; }
-.mobile-brand-mark > span { top: 18px; opacity: .78; }
-.mobile-brand-mark::after { top: 24px; width: 10px; background: var(--brand); }
 
 .mobile-drawer-content {
   flex: 1;
@@ -86,14 +49,36 @@
 .mobile-drawer-content h2 {
   display: flex;
   align-items: center;
-  gap: 7px;
   margin: 0 10px 8px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 750;
-  letter-spacing: .11em;
+  letter-spacing: .02em;
   text-transform: uppercase;
 }
+
+.mobile-drawer-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mobile-drawer-section-title h2 { margin-bottom: 8px; }
+.mobile-drawer-content .mobile-drawer-add,
+.mobile-drawer-content .mobile-notebook-edit {
+  display: grid;
+  width: auto;
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  flex: none;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.mobile-drawer-content .mobile-drawer-add { width: 38px; height: 38px; margin-inline-end: 4px; border-radius: 10px; }
+.mobile-drawer-add:active,
+.mobile-notebook-edit:active { background: var(--muted); color: var(--foreground); }
 
 .mobile-drawer-content button,
 .mobile-logout-button {
@@ -108,7 +93,7 @@
   border-radius: 12px;
   background: transparent;
   color: var(--secondary-foreground);
-  font-size: 13px;
+  font-size: 14px;
   text-align: start;
 }
 
@@ -118,33 +103,36 @@
   color: var(--foreground);
   font-weight: 720;
 }
-.mobile-drawer-content button.is-selected::before {
-  position: absolute;
-  top: 13px;
-  bottom: 13px;
-  left: 4px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--brand);
-  content: '';
-}
-
+.mobile-notebook-row { display: flex; min-width: 0; align-items: center; border-radius: 12px; }
+.mobile-notebook-row.is-selected { background: var(--muted); }
+.mobile-notebook-select { min-width: 0; flex: 1; }
+.mobile-notebook-row.is-selected .mobile-notebook-select { color: var(--foreground); font-weight: 720; }
+.mobile-notebook-row.is-selected .mobile-notebook-icon { background: color-mix(in oklch, var(--brand) 14%, var(--card)); color: var(--brand); }
+.mobile-drawer-content .mobile-notebook-edit { width: 40px; height: 40px; margin-inline-end: 4px; border-radius: 10px; opacity: .78; }
 .mobile-notebook-icon,
 .mobile-nav-icon {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   flex: none;
   place-items: center;
+  border-radius: 9px;
+  background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 750;
 }
 .mobile-drawer-content button.is-selected .mobile-notebook-icon,
-.mobile-drawer-content button.is-selected .mobile-nav-icon { color: var(--brand); }
+.mobile-drawer-content button.is-selected .mobile-nav-icon {
+  background: color-mix(in oklch, var(--brand) 14%, var(--card));
+  color: var(--brand);
+}
 .mobile-nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .mobile-drawer-account {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: none;
   padding: 10px 5px 3px;
   border-top: 1px solid var(--mobile-hairline);
@@ -152,7 +140,6 @@
 
 .mobile-drawer-account > button {
   display: flex;
-  width: 100%;
   min-height: 48px;
   align-items: center;
   gap: 10px;
@@ -164,23 +151,20 @@
   text-align: start;
 }
 
+.mobile-drawer-account > button:first-child { min-width: 0; flex: 1; }
 .mobile-drawer-account > button:active { background: var(--muted); }
-.mobile-drawer-account > button > span:not(.mobile-cloud-status) { display: flex; min-width: 0; flex-direction: column; }
-.mobile-drawer-account > button strong { font-size: 12px; font-weight: 720; }
-.mobile-drawer-account > button small { margin-top: 3px; color: var(--muted-foreground); font-size: 9px; }
-.mobile-drawer-account .mobile-logout-button { min-height: 36px; color: var(--muted-foreground); font-size: 11px; }
+.mobile-drawer-account > button > span { display: flex; min-width: 0; flex-direction: column; }
+.mobile-drawer-account > button strong { font-size: 14px; font-weight: 720; }
+.mobile-drawer-account > button small { overflow: hidden; margin-top: 3px; color: var(--muted-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-drawer-account .mobile-logout-button { width: auto; min-height: 36px; flex: none; color: var(--muted-foreground); font-size: 12px; }
 
-.mobile-cloud-status {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  place-items: center;
-  border-radius: 11px;
-  background: var(--muted);
-  color: var(--muted-foreground);
-}
-.mobile-cloud-status.is-online {
-  background: color-mix(in oklch, var(--success) 13%, var(--card));
-  color: color-mix(in oklch, var(--success) 68%, var(--foreground));
-}
+.mobile-notebook-dialog-layer { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 20px; }
+.mobile-notebook-dialog-backdrop { position: absolute; inset: 0; border: 0; background: color-mix(in srgb, #000 40%, transparent); }
+.mobile-notebook-dialog { position: relative; width: min(100%, 310px); padding: 20px; border: 1px solid var(--mobile-hairline); border-radius: 18px; background: var(--card); box-shadow: 0 18px 52px color-mix(in srgb, #000 30%, transparent); }
+.mobile-notebook-dialog h2 { margin: 0 0 16px; color: var(--foreground); font-size: 17px; text-transform: none; }
+.mobile-notebook-dialog input { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--mobile-hairline); border-radius: 10px; outline: none; background: var(--background); color: var(--foreground); }
+.mobile-notebook-dialog input:focus { border-color: var(--brand); }
+.mobile-notebook-dialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.mobile-notebook-dialog > div button { min-height: 36px; width: auto; padding: 0 13px; border: 0; border-radius: 9px; background: var(--muted); color: var(--foreground); font-size: 14px; }
+.mobile-notebook-dialog > div button[type='submit'] { background: var(--brand); color: #fff; }
+.mobile-notebook-dialog > div button:disabled { opacity: .55; }

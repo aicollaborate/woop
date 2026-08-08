@@ -2,19 +2,24 @@ import { CloudOff, LogIn, RefreshCw, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { cloudSyncAvailable } from './mobile-model';
-import { mobileClient, type CloudState } from '@platform/tauri/mobile-client';
+import { mobileClient, type CloudState, type CloudSyncStatus } from '@platform/tauri/mobile-client';
 
 interface MobileAccountPanelProps {
   state: CloudState | null;
+  syncStatus: CloudSyncStatus | null;
   onClose: () => void;
   onStateChange: (state: CloudState) => Promise<void>;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('MOBILE_CLOUD_ACCOUNT_MISMATCH')) {
+    return '为防止不同云账号的笔记混用，此设备已绑定其他 Flowix Cloud 账号。当前版本暂不支持直接切换账号。';
+  }
+  return message;
 }
 
-export function MobileAccountPanel({ state, onClose, onStateChange }: MobileAccountPanelProps) {
+export function MobileAccountPanel({ state, syncStatus, onClose, onStateChange }: MobileAccountPanelProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -62,6 +67,22 @@ export function MobileAccountPanel({ state, onClose, onStateChange }: MobileAcco
     }
   };
 
+  const resetBinding = async () => {
+    const confirmed = window.confirm(
+      '解除设备云账号绑定不会删除本地笔记。下次登录其他账号后，现有本地笔记会同步到该账号。是否继续？',
+    );
+    if (!confirmed) return;
+    setLoading(true);
+    setError('');
+    try {
+      await mobileClient.cloud.resetBinding();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="mobile-account-layer" role="presentation">
       <button type="button" className="mobile-drawer-backdrop" aria-label="关闭账号面板" onClick={onClose} />
@@ -91,6 +112,9 @@ export function MobileAccountPanel({ state, onClose, onStateChange }: MobileAcco
                 <LogIn size={17} />{loading ? '登录中…' : '登录已有账号'}
               </button>
             </form>
+            <button type="button" className="mobile-account-reset" disabled={loading} onClick={() => void resetBinding()}>
+              解除设备云账号绑定
+            </button>
           </>
         ) : (
           <div className="mobile-membership-card">
@@ -108,6 +132,15 @@ export function MobileAccountPanel({ state, onClose, onStateChange }: MobileAcco
               <p>当前账号尚未开通有效订阅。可在桌面端“设置 → 云同步”中选择方案，开通前仍可继续本地使用。</p>
             )}
             {error && <div className="mobile-auth-error">{error}</div>}
+            {syncStatus && (
+              <p className={`mobile-sync-status mobile-sync-status--${syncStatus.state}`}>
+                {syncStatus.state === 'error'
+                  ? `同步未完成：${syncStatus.lastError || '将在网络恢复后重试'}`
+                  : syncStatus.state === 'success'
+                    ? `最近同步完成：上传 ${syncStatus.uploaded}，下载 ${syncStatus.downloaded}`
+                    : '正在同步笔记…'}
+              </p>
+            )}
             <button type="button" disabled={loading} onClick={() => void refreshMembership()}>
               <RefreshCw size={17} className={loading ? 'is-spinning' : undefined} />
               {loading ? '检查中…' : '重新检查订阅状态'}

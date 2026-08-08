@@ -2383,6 +2383,7 @@ dependencies = [
 name = "flowix-mobile"
 version = "1.1.13"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "flowix-core",
  "flowix-sync",

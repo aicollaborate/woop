@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 pub const PROTOCOL_EPOCH: i64 = 2;
 
@@ -62,6 +64,7 @@ pub struct V2NoteState {
     pub filename: String,
     pub deleted: bool,
     pub last_seq: i64,
+    pub attachments: Vec<V2Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,6 +91,119 @@ pub struct V2LocalNote {
     pub notebook_id: String,
     pub filename: String,
     pub content: Vec<u8>,
+    pub attachments: Vec<V2LocalAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct V2Attachment {
+    pub filename: String,
+    pub content_hash: String,
+    pub size_bytes: i64,
+    pub mime_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2LocalAttachment {
+    pub metadata: V2Attachment,
+    pub content: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2RemoteAttachment {
+    pub metadata: V2Attachment,
+    pub content: Vec<u8>,
+}
+
+/// Collects only files referenced by this document's `asset://` links.
+/// `attachments/` is notebook-scoped storage, while cloud manifests must be
+/// document-scoped to avoid unrelated files causing sync churn.
+pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V2LocalAttachment>, String> {
+    if !directory.exists() { return Ok(Vec::new()); }
+    let directory = std::fs::canonicalize(directory).map_err(|error| error.to_string())?;
+    let mut attachments = Vec::new();
+    for path in referenced_attachment_paths(&directory, markdown) {
+        let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_string();
+        if filename.is_empty() || filename.contains(['/', '\\']) { continue; }
+        let content = std::fs::read(path).map_err(|error| error.to_string())?;
+        attachments.push(V2LocalAttachment {
+            metadata: V2Attachment {
+                mime_type: attachment_mime_type(&filename).to_string(),
+                filename,
+                content_hash: v2_content_hash(&content),
+                size_bytes: i64::try_from(content.len()).map_err(|_| "attachment exceeds i64".to_string())?,
+            },
+            content,
+        });
+    }
+    attachments.sort_by(|left, right| left.metadata.filename.cmp(&right.metadata.filename));
+    Ok(attachments)
+}
+
+fn referenced_attachment_paths(directory: &Path, markdown: &[u8]) -> BTreeSet<PathBuf> {
+    const PREFIXES: [&str; 3] = ["asset://localhost/", "http://asset.localhost/", "https://asset.localhost/"];
+    let source = String::from_utf8_lossy(markdown);
+    let mut paths = BTreeSet::new();
+    for prefix in PREFIXES {
+        let mut remaining = source.as_ref();
+        while let Some(index) = remaining.find(prefix) {
+            let encoded = &remaining[index + prefix.len()..];
+            let end = encoded.find(|value: char| value.is_whitespace() || matches!(value, ')' | '"' | '\'' | '<' | '>'))
+                .unwrap_or(encoded.len());
+            if let Some(decoded) = percent_decode(&encoded[..end]) {
+                if let Ok(path) = std::fs::canonicalize(PathBuf::from(decoded)) {
+                    if path.starts_with(directory) && path.is_file() {
+                        paths.insert(path);
+                    }
+                }
+            }
+            remaining = &encoded[end..];
+            if remaining.is_empty() { break; }
+        }
+    }
+    paths
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            decoded.push((hex_value(*bytes.get(index + 1)?)? << 4) | hex_value(*bytes.get(index + 2)?)?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn attachment_mime_type(filename: &str) -> &'static str {
+    match Path::new(filename).extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +226,7 @@ pub enum V2RemoteApply {
         revision: String,
         sync_seq: i64,
         deleted: bool,
+        attachments: Vec<V2RemoteAttachment>,
     },
 }
 
@@ -240,6 +357,8 @@ pub struct V2Change {
     #[serde(default)]
     pub size_bytes: Option<i64>,
     pub deleted: bool,
+    #[serde(default)]
+    pub attachments: Vec<V2Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +409,8 @@ pub struct V2BootstrapNote {
     pub sync_seq: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default)]
+    pub attachments: Vec<V2Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +493,8 @@ pub struct V2NotePut {
     pub filename: String,
     pub content_hash: String,
     pub size_bytes: i64,
+    #[serde(default)]
+    pub attachments: Vec<V2Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,7 +543,7 @@ pub struct V2PushResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_v2_operation_id, v2_content_hash, V2NotePut, V2PushOperation};
+    use super::{collect_v2_attachments, new_v2_operation_id, v2_content_hash, V2NotePut, V2PushOperation};
 
     #[test]
     fn content_hash_matches_web_crypto_base64_url_without_padding() {
@@ -453,6 +576,7 @@ mod tests {
                 filename: "abc12345.md".into(),
                 content_hash: "A".repeat(43),
                 size_bytes: 12,
+                attachments: Vec::new(),
             },
         })
         .unwrap();
@@ -465,5 +589,36 @@ mod tests {
         );
         assert_eq!(value["note"]["sizeBytes"], 12);
         assert!(value.get("operation_id").is_none());
+    }
+
+    #[test]
+    fn attachment_manifest_contains_only_document_asset_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("attachments");
+        std::fs::create_dir(&directory).unwrap();
+        let used = directory.join("used image.png");
+        std::fs::write(&used, b"used").unwrap();
+        std::fs::write(directory.join("unrelated.mp4"), b"unrelated").unwrap();
+        let encoded = used.to_string_lossy().replace('/', "%2F").replace(' ', "%20");
+        let markdown = format!("![image](asset://localhost/{encoded})");
+
+        let attachments = collect_v2_attachments(&directory, markdown.as_bytes()).unwrap();
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].metadata.filename, "used image.png");
+        assert_eq!(attachments[0].metadata.mime_type, "image/png");
+    }
+
+    #[test]
+    fn attachment_manifest_rejects_paths_outside_the_notebook_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("attachments");
+        std::fs::create_dir(&directory).unwrap();
+        let outside = temp.path().join("private.pdf");
+        std::fs::write(&outside, b"private").unwrap();
+        let encoded = outside.to_string_lossy().replace('/', "%2F");
+        let markdown = format!("[file](asset://localhost/{encoded})");
+
+        assert!(collect_v2_attachments(&directory, markdown.as_bytes()).unwrap().is_empty());
     }
 }

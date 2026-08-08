@@ -2,7 +2,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CloudState, NotebookRecord, OpenMemoSession } from '@platform/tauri/mobile-client';
+import type { CloudState, CloudSyncStatus, NotebookRecord, OpenMemoSession } from '@platform/tauri/mobile-client';
 import type { MemoItem } from '@/types/memo-item';
 
 // 共享 mock 状态: vi.hoisted 保证在 vi.mock 工厂执行时已就绪。
@@ -10,6 +10,7 @@ import type { MemoItem } from '@/types/memo-item';
 // 模拟后端推送云状态变更 (触发 notebook 重载)。
 const mocks = vi.hoisted(() => ({
   cloudListener: null as ((state: CloudState) => void) | null,
+  syncStatusListener: null as ((status: CloudSyncStatus) => void) | null,
   unlisten: vi.fn(),
   initialize: vi.fn(),
   bootstrapCloud: vi.fn(),
@@ -18,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   memosGetMemos: vi.fn(),
   openMemoSession: vi.fn(),
   addDocument: vi.fn(),
+  deleteMemo: vi.fn(),
+  favoriteMemo: vi.fn(),
+  unfavoriteMemo: vi.fn(),
   writeDocument: vi.fn(),
   cloudGetState: vi.fn(),
   cloudLogin: vi.fn(),
@@ -33,6 +37,10 @@ vi.mock('@platform/tauri/mobile-client', () => ({
       mocks.cloudListener = handler;
       return mocks.unlisten;
     },
+    listenToCloudSyncStatusChanges: (handler: (status: CloudSyncStatus) => void) => {
+      mocks.syncStatusListener = handler;
+      return mocks.unlisten;
+    },
     cloud: {
       getState: mocks.cloudGetState,
       login: mocks.cloudLogin,
@@ -46,6 +54,9 @@ vi.mock('@platform/tauri/mobile-client', () => ({
       openMemoSession: mocks.openMemoSession,
       writeDocument: mocks.writeDocument,
       addDocument: mocks.addDocument,
+      deleteMemo: mocks.deleteMemo,
+      favoriteMemo: mocks.favoriteMemo,
+      unfavoriteMemo: mocks.unfavoriteMemo,
     },
   },
 }));
@@ -140,6 +151,7 @@ describe('useMobileLibrary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.cloudListener = null;
+    mocks.syncStatusListener = null;
 
     // 默认: 本地未登录, 两个笔记本, nb1 有 1 篇 / nb2 有 2 篇。
     mocks.initialize.mockResolvedValue(cloudState());
@@ -160,6 +172,9 @@ describe('useMobileLibrary', () => {
     mocks.cloudLogout.mockResolvedValue(cloudState());
     mocks.openMemoSession.mockResolvedValue(null);
     mocks.addDocument.mockResolvedValue(makeMemo('m-new'));
+    mocks.deleteMemo.mockResolvedValue(true);
+    mocks.favoriteMemo.mockResolvedValue(true);
+    mocks.unfavoriteMemo.mockResolvedValue(true);
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -283,6 +298,30 @@ describe('useMobileLibrary', () => {
     expect(latestLibrary?.syncing).toBe(false);
   });
 
+  it('coalesces concurrent sync requests into one backend run', async () => {
+    let finishSync: (() => void) | null = null;
+    mocks.bootstrapCloud.mockImplementation(() => new Promise((resolve) => {
+      finishSync = () => resolve({
+        notebooks: 2, uploaded: 0, deleted: 0, downloaded: 0, conflicts: 0,
+      });
+    }));
+    mocks.cloudGetState.mockResolvedValue(syncableCloudState());
+    await renderAndWait();
+    await act(async () => { mocks.cloudListener?.(syncableCloudState()); await flush(); });
+
+    await act(async () => {
+      const first = latestLibrary?.syncNow();
+      const second = latestLibrary?.syncNow();
+      expect(mocks.bootstrapCloud).toHaveBeenCalledOnce();
+      finishSync?.();
+      await Promise.all([first, second]);
+      await flush();
+    });
+
+    expect(mocks.bootstrapCloud).toHaveBeenCalledOnce();
+    expect(latestLibrary?.syncing).toBe(false);
+  });
+
   it('logs out via cloud.logout and refreshes cloud state', async () => {
     mocks.cloudLogout.mockResolvedValue(cloudState({ authenticated: false }));
     await renderAndWait();
@@ -313,6 +352,31 @@ describe('useMobileLibrary', () => {
     expect(latestLibrary?.cloudState?.authenticated).toBe(true);
   });
 
+  it('exposes backend sync progress and failure details to the mobile UI', async () => {
+    await renderAndWait();
+
+    await act(async () => {
+      mocks.syncStatusListener?.({
+        notebookId: 'all', runId: 'run-1', state: 'syncing', phase: 'transfer',
+        uploaded: 0, deleted: 0, downloaded: 0, startedAt: 1,
+      });
+      await flush();
+    });
+    expect(latestLibrary?.syncing).toBe(true);
+    expect(latestLibrary?.syncStatus?.phase).toBe('transfer');
+
+    await act(async () => {
+      mocks.syncStatusListener?.({
+        notebookId: 'all', runId: 'run-1', state: 'error', phase: 'retrying',
+        uploaded: 0, deleted: 0, downloaded: 0, startedAt: 1, finishedAt: 2,
+        lastError: '网络暂不可用',
+      });
+      await flush();
+    });
+    expect(latestLibrary?.syncing).toBe(false);
+    expect(latestLibrary?.message).toBe('网络暂不可用');
+  });
+
   it('opens a memo into an active document session', async () => {
     const session: OpenMemoSession = {
       memo: makeMemo('m1', { filename: 'm1.md' }),
@@ -331,5 +395,113 @@ describe('useMobileLibrary', () => {
 
     expect(mocks.openMemoSession).toHaveBeenCalledWith('m1');
     expect(latestLibrary?.activeDocument).toBe(session);
+  });
+
+  it('leaves boot mode and reports an initialization failure', async () => {
+    mocks.initialize.mockRejectedValue(new Error('本地数据无法读取'));
+
+    await renderAndWait();
+
+    expect(latestLibrary?.booting).toBe(false);
+    expect(latestLibrary?.message).toBe('本地数据无法读取');
+    expect(mocks.notebooksGetAll).not.toHaveBeenCalled();
+  });
+
+  it('reports missing and failed memo opens without replacing the current view', async () => {
+    await renderAndWait();
+    mocks.openMemoSession.mockResolvedValueOnce(null);
+
+    await act(async () => {
+      await latestLibrary?.openMemo('gone');
+      await flush();
+    });
+    expect(latestLibrary?.activeDocument).toBeNull();
+    expect(latestLibrary?.message).toContain('已不存在');
+
+    mocks.openMemoSession.mockRejectedValueOnce(new Error('文件权限已撤销'));
+    await act(async () => {
+      await latestLibrary?.openMemo('m1');
+      await flush();
+    });
+    expect(latestLibrary?.activeDocument).toBeNull();
+    expect(latestLibrary?.message).toBe('文件权限已撤销');
+  });
+
+  it('creates a memo and opens the newly returned session', async () => {
+    const session: OpenMemoSession = {
+      memo: makeMemo('m-new'),
+      notebookId: 'nb1',
+      notebookPath: '/n/nb1/',
+      path: '/n/nb1/m-new.md',
+      content: '',
+    };
+    mocks.openMemoSession.mockResolvedValue(session);
+    await renderAndWait();
+
+    await act(async () => {
+      await latestLibrary?.createMemo();
+      await flush();
+    });
+
+    expect(mocks.addDocument).toHaveBeenCalledWith(undefined, 'nb1');
+    expect(mocks.openMemoSession).toHaveBeenCalledWith('m-new');
+    expect(latestLibrary?.activeDocument).toBe(session);
+  });
+
+  it('keeps the list consistent after a delete and reports a rejected delete', async () => {
+    await renderAndWait();
+    expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['m1']);
+
+    await act(async () => {
+      await latestLibrary?.deleteMemo('m1');
+      await flush();
+    });
+    expect(mocks.deleteMemo).toHaveBeenCalledWith('m1');
+    expect(latestLibrary?.memoItems).toEqual([]);
+
+    mocks.deleteMemo.mockResolvedValueOnce(false);
+    await act(async () => {
+      await latestLibrary?.deleteMemo('m2');
+      await flush();
+    });
+    expect(latestLibrary?.message).toBe('删除笔记失败');
+  });
+
+  it('calls the matching favorite action and surfaces favorite failures', async () => {
+    await renderAndWait();
+    const regular = makeMemo('m1');
+    const pinned = makeMemo('m2', { favorited: true });
+
+    await act(async () => {
+      await latestLibrary?.toggleMemoFavorite(regular);
+      await flush();
+      await latestLibrary?.toggleMemoFavorite(pinned);
+      await flush();
+    });
+    expect(mocks.favoriteMemo).toHaveBeenCalledWith('m1');
+    expect(mocks.unfavoriteMemo).toHaveBeenCalledWith('m2');
+
+    mocks.favoriteMemo.mockResolvedValueOnce(false);
+    await act(async () => {
+      await latestLibrary?.toggleMemoFavorite(regular);
+      await flush();
+    });
+    expect(latestLibrary?.message).toBe('置顶操作失败');
+  });
+
+  it('keeps the cloud account state when logout fails', async () => {
+    mocks.cloudLogout.mockRejectedValue(new Error('注销请求失败'));
+    await renderAndWait();
+    await act(async () => { mocks.cloudListener?.(syncableCloudState()); await flush(); });
+
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await latestLibrary?.logout();
+      await flush();
+    });
+
+    expect(result).toBe(false);
+    expect(latestLibrary?.cloudState?.authenticated).toBe(true);
+    expect(latestLibrary?.message).toBe('注销请求失败');
   });
 });

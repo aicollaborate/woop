@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Flowix</title>
     <style>
       html, body, #root {
@@ -23,6 +23,8 @@
 
   <body>
     <div id="root"></div>
-    <script type="module" src="/app/main.tsx"></script>
+    <!-- Vite resolves this bootstrap module to the desktop or mobile entry at
+         build time. The target bundle therefore has a single application root. -->
+    <script type="module" src="/entrypoints/main.ts"></script>
   </body>
 </html>

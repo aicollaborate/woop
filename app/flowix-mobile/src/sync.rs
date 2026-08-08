@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use flowix_core::memo_file::{
@@ -8,7 +8,7 @@ use flowix_core::memo_file::{
     IsMd, MergeOverrides, NotebookConfig,
 };
 use flowix_sync::{
-    v2_content_hash, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply,
+    collect_v2_attachments, v2_content_hash, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -51,6 +51,22 @@ fn safe_cloud_note_path(base: &Path, filename: &str) -> Result<PathBuf, String> 
         return Err("INVALID_CLOUD_FILENAME".to_string());
     }
     Ok(base.join(filename))
+}
+
+fn write_cloud_attachments(base: &Path, attachments: &[flowix_sync::V2RemoteAttachment]) -> Result<(), String> {
+    let directory = base.join("attachments");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    for attachment in attachments {
+        let filename = &attachment.metadata.filename;
+        if Path::new(filename).file_name().and_then(|value| value.to_str()) != Some(filename)
+            || attachment.metadata.size_bytes != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
+            || v2_content_hash(&attachment.content) != attachment.metadata.content_hash
+        {
+            return Err(format!("CLOUD_ATTACHMENT_INVALID: {filename}"));
+        }
+        atomic_write_bytes(&directory.join(filename), &attachment.content).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 async fn ensure_remote_notebooks(state: &MobileState) -> Result<usize, String> {
@@ -145,12 +161,18 @@ fn account_snapshot(
     {
         for memo in memo_file.read_all_memos_for_notebook_id(Some(&config.id)) {
             let path = PathBuf::from(&config.path).join(&memo.filename);
+            let content = std::fs::read(&path)
+                .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?;
+            let attachments = collect_v2_attachments(
+                &PathBuf::from(&config.path).join("attachments"),
+                &content,
+            )?;
             notes.push(V2LocalNote {
                 id: memo.id,
                 notebook_id: config.id.clone(),
                 filename: memo.filename,
-                content: std::fs::read(&path)
-                    .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?,
+                content,
+                attachments,
             });
         }
         notebooks.push(V2LocalNotebook {
@@ -187,11 +209,23 @@ fn apply_note_changes(
             content_hash,
             content,
             deleted,
+            attachments,
             ..
         } = change
         else {
             continue;
         };
+
+        // A local edit may land while the network request is in flight. Its
+        // dirty generation must win; applying the pulled server revision here
+        // would silently overwrite the newer local file.
+        if state
+            .cloud_sync
+            .has_pending_v2_note_change(note_id)
+            .map_err(|error| error.to_string())?
+        {
+            continue;
+        }
 
         if *deleted {
             memo_file
@@ -211,6 +245,7 @@ fn apply_note_changes(
         }
         let markdown =
             std::str::from_utf8(bytes).map_err(|_| format!("CLOUD_NOTE_NOT_UTF8: {note_id}"))?;
+        write_cloud_attachments(&base, attachments)?;
         let current = memo_file.read_memo_for_notebook_id(notebook_id, note_id);
         if current.is_none() {
             if let Some(location) = memo_file
@@ -339,17 +374,19 @@ fn apply_report(state: &MobileState, report: &V2AccountSyncReport) -> Result<(),
 pub async fn sync_account(state: &MobileState) -> Result<V2AccountSyncReport, String> {
     let _guard = state.sync_lock.lock().await;
     let (notebooks, notes) = account_snapshot(state)?;
-    let report = state
-        .cloud_sync
-        .sync_v2_account(notebooks, notes)
-        .await
-        .map_err(|error| error.to_string())?;
+    let report_result = state.cloud_sync.sync_v2_account(notebooks, notes).await;
+    // Refresh token rotation can happen before a later network or apply error.
+    // Persist it on both paths so the next app launch never revives a stale
+    // token that the server has already invalidated.
     state.persist_rotated_refresh_token()?;
+    let report = report_result.map_err(|error| error.to_string())?;
+    let mutation_guard = state.lock_mutations();
     apply_report(state, &report)?;
     state
         .cloud_sync
         .complete_v2_account_sync(&report)
         .map_err(|error| error.to_string())?;
+    drop(mutation_guard);
     Ok(report)
 }
 
@@ -363,23 +400,70 @@ pub async fn bootstrap_and_sync(
 }
 
 static SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
+static RETRY_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 
 pub fn schedule_sync(app: AppHandle) {
+    schedule_sync_after(app, Duration::from_millis(1_200));
+}
+
+fn schedule_sync_after(app: AppHandle, delay: Duration) {
     let generation = SYNC_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        tokio::time::sleep(delay).await;
         if SYNC_GENERATION.load(Ordering::SeqCst) != generation {
             return;
         }
         let state = app.state::<MobileState>();
         let cloud = state.cloud_sync.state();
         if cloud.is_ok_and(|value| value.enabled && crate::state::cloud_sync_allowed(&value)) {
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let started_at = chrono::Utc::now().timestamp_millis();
+            crate::commands::emit_sync_status(
+                &app, &run_id, "syncing", "transfer", started_at, None, None,
+            );
             if let Err(error) = sync_account(state.inner()).await {
                 eprintln!("mobile background sync failed: {error}");
+                crate::commands::emit_sync_status(
+                    &app,
+                    &run_id,
+                    "error",
+                    "retrying",
+                    started_at,
+                    None,
+                    Some(error.clone()),
+                );
+                schedule_retry_after_failure(app.clone(), &error);
+            } else {
+                RETRY_ATTEMPTS.store(0, Ordering::SeqCst);
+                crate::commands::emit_sync_status(
+                    &app, &run_id, "success", "complete", started_at, None, None,
+                );
             }
             if let Ok(next) = state.cloud_sync.state() {
                 let _ = app.emit("cloud-state-changed", next);
             }
         }
     });
+}
+
+/// Retry failures while the app remains active. The shared sync engine may
+/// supply a server-aware retry deadline; otherwise use capped exponential
+/// backoff so transient connectivity failures eventually converge without a
+/// busy loop.
+pub fn schedule_retry_after_failure(app: AppHandle, _error: &str) {
+    let state = app.state::<MobileState>();
+    let cloud = state.cloud_sync.state();
+    if !cloud.is_ok_and(|value| value.enabled && crate::state::cloud_sync_allowed(&value)) {
+        return;
+    }
+    let attempt = RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst).min(4);
+    let fallback_ms = 15_000_i64.saturating_mul(1_i64 << attempt);
+    let delay_ms = state
+        .cloud_sync
+        .v2_retry_delay(chrono::Utc::now().timestamp_millis())
+        .ok()
+        .flatten()
+        .unwrap_or(fallback_ms)
+        .clamp(1_000, 5 * 60_000);
+    schedule_sync_after(app, Duration::from_millis(delay_ms as u64));
 }

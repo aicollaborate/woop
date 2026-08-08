@@ -14,6 +14,14 @@ fn verify_v2_blob(
     Ok(content)
 }
 
+fn v2_note_fingerprint(note: &crate::v2::V2LocalNote) -> Result<String, SyncError> {
+    let mut attachments: Vec<_> = note.attachments.iter().map(|item| item.metadata.clone()).collect();
+    attachments.sort();
+    let canonical = serde_json::to_vec(&(crate::v2::v2_content_hash(&note.content), attachments))
+        .map_err(|error| SyncError::InvalidState(format!("serialize attachment manifest: {error}")))?;
+    Ok(crate::v2::v2_content_hash(&canonical))
+}
+
 impl SyncManager {
     pub fn v2_notebook(
         &self,
@@ -96,6 +104,14 @@ impl SyncManager {
             Utc::now().timestamp_millis(),
         )?;
         Ok(())
+    }
+
+    pub fn has_pending_v2_note_change(&self, note_id: &str) -> Result<bool, SyncError> {
+        Ok(self
+            .store
+            .v2_dirty_entities()?
+            .into_iter()
+            .any(|dirty| dirty.entity_type == V2EntityType::Note && dirty.entity_id == note_id))
     }
 
     pub fn set_v2_notebook_enabled(
@@ -303,13 +319,15 @@ impl SyncManager {
             .iter()
             .filter(|note| enabled_ids.contains(note.notebook_id.as_str()))
         {
-            let fingerprint = crate::v2::v2_content_hash(&note.content);
+            let fingerprint = v2_note_fingerprint(note)?;
+            let content_hash = crate::v2::v2_content_hash(&note.content);
             let current = self.store.v2_note_state(&note.id)?;
             if current.as_ref().is_none_or(|state| {
                 state.deleted
                     || state.notebook_id != note.notebook_id
                     || state.filename != note.filename
-                    || state.content_hash.as_deref() != Some(fingerprint.as_str())
+                    || state.content_hash.as_deref() != Some(content_hash.as_str())
+                    || state.attachments != note.attachments.iter().map(|item| item.metadata.clone()).collect::<Vec<_>>()
             }) {
                 self.store.mark_v2_dirty(
                     V2EntityType::Note,
@@ -391,6 +409,7 @@ impl SyncManager {
                             i64::try_from(note.content.len()).map_err(|_| {
                                 SyncError::InvalidState("memo content length exceeds i64".into())
                             })?,
+                            "note",
                         )
                         .await?;
                     self.client
@@ -400,6 +419,19 @@ impl SyncManager {
                             note.content.clone(),
                         )
                         .await?;
+                    for attachment in &note.attachments {
+                        let reservation = self.client.v2_reserve_blob(
+                            access_token,
+                            &attachment.metadata.content_hash,
+                            attachment.metadata.size_bytes,
+                            "attachment",
+                        ).await?;
+                        self.client.v2_upload_blob(
+                            access_token,
+                            &reservation.upload.path,
+                            attachment.content.clone(),
+                        ).await?;
+                    }
                     V2PushOperation::NotePut {
                         operation_id: operation_id.clone(),
                         base_revision: base_revision.clone(),
@@ -411,6 +443,7 @@ impl SyncManager {
                             size_bytes: i64::try_from(note.content.len()).map_err(|_| {
                                 SyncError::InvalidState("memo content length exceeds i64".into())
                             })?,
+                            attachments: note.attachments.iter().map(|item| item.metadata.clone()).collect(),
                         },
                     }
                 }
@@ -585,6 +618,16 @@ impl SyncManager {
                     ),
                     _ => None,
                 };
+                let attachments = if change.deleted { Vec::new() } else {
+                    let mut values = Vec::new();
+                    for attachment in &change.attachments {
+                        values.push(crate::v2::V2RemoteAttachment {
+                            content: self.download_verified_v2_blob(access_token, &change.entity_id, &attachment.content_hash).await?,
+                            metadata: attachment.clone(),
+                        });
+                    }
+                    values
+                };
                 remote.push(V2RemoteApply::Note {
                     note_id: change.entity_id,
                     notebook_id,
@@ -594,6 +637,7 @@ impl SyncManager {
                     revision: change.revision,
                     sync_seq: change.sync_seq,
                     deleted: change.deleted,
+                    attachments,
                 });
             } else {
                 return Err(SyncError::InvalidState(format!(
@@ -636,6 +680,15 @@ impl SyncManager {
                 ),
                 _ => None,
             };
+            let mut attachments = Vec::new();
+            if !note.deleted {
+                for attachment in &note.attachments {
+                    attachments.push(crate::v2::V2RemoteAttachment {
+                        content: self.download_verified_v2_blob(access_token, &note.id, &attachment.content_hash).await?,
+                        metadata: attachment.clone(),
+                    });
+                }
+            }
             remote.push(V2RemoteApply::Note {
                 note_id: note.id.clone(),
                 notebook_id: note.notebook_id.clone(),
@@ -645,6 +698,7 @@ impl SyncManager {
                 revision: note.revision.clone(),
                 sync_seq: note.sync_seq,
                 deleted: note.deleted,
+                attachments,
             });
         }
         remote.sort_by_key(|change| match change {
@@ -690,6 +744,7 @@ mod tests {
             notebook_id: notebook.id.clone(),
             filename: "abc12345.md".into(),
             content: b"first".to_vec(),
+            attachments: Vec::new(),
         };
         let enabled = HashSet::from([notebook.id.as_str()]);
         manager
@@ -752,6 +807,7 @@ mod tests {
                 filename: "abc12345.md".into(),
                 deleted: false,
                 last_seq: 2,
+                attachments: Vec::new(),
             })
             .unwrap();
         let enabled = HashSet::from([notebook.id.as_str()]);
@@ -804,12 +860,14 @@ mod tests {
                 notebook_id: "nb_a".into(),
                 filename: "a.md".into(),
                 content: b"a".to_vec(),
+                attachments: Vec::new(),
             },
             V2LocalNote {
                 id: "memo_b".into(),
                 notebook_id: "nb_b".into(),
                 filename: "b.md".into(),
                 content: b"b".to_vec(),
+                attachments: Vec::new(),
             },
         ];
         let enabled = HashSet::from(["nb_a", "nb_b"]);

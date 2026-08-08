@@ -86,15 +86,16 @@ if ! security cms -D -i "$EMB_PROVISION" -o "$PROVISION_PLIST" 2>/dev/null; then
   exit 1
 fi
 
-PROFILE_TEAM="$(plutil -extract TeamIdentifier raw "$PROVISION_PLIST")"
+PROFILE_TEAM="$(plutil -extract TeamIdentifier.0 raw "$PROVISION_PLIST")"
 if [ "$PROFILE_TEAM" != "$APPLE_TEAM_ID" ]; then
   echo "ERROR: profile TeamIdentifier mismatch: expected $APPLE_TEAM_ID, got $PROFILE_TEAM" >&2
   exit 1
 fi
 
-# Profile BundleIdentifier can be either exact (e.g. "com.flowix.app.mobile")
-# or wildcard ("*") for App Store distribution profiles — match either.
-PROFILE_BUNDLE="$(plutil -extract BundleIdentifier raw "$PROVISION_PLIST" 2>/dev/null || echo "")"
+# The profile's bundle id is carried in the application-identifier entitlement
+# as "<team-id>.<bundle-id>" rather than a top-level BundleIdentifier key.
+PROFILE_APPLICATION_ID="$(plutil -extract Entitlements.application-identifier raw "$PROVISION_PLIST" 2>/dev/null || echo "")"
+PROFILE_BUNDLE="${PROFILE_APPLICATION_ID#"$PROFILE_TEAM".}"
 case "$PROFILE_BUNDLE" in
   "$EXPECTED_BUNDLE_ID"|"*") ;;
   *)

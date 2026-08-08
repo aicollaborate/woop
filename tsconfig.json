@@ -14,7 +14,8 @@
       "@app/*": ["app/flowix-web/app/*"],
       "@features/*": ["app/flowix-web/features/*"],
       "@platform/*": ["app/flowix-web/platform/*"],
-      "@shared/*": ["app/flowix-web/shared/*"]
+      "@shared/*": ["app/flowix-web/shared/*"],
+      "@flowix-target-entry": ["app/flowix-web/entrypoints/desktop.tsx"]
     },
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,

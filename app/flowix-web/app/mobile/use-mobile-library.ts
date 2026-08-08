@@ -4,6 +4,7 @@ import { cloudSyncAvailable, type MobileTag } from './mobile-model';
 import {
   mobileClient,
   type CloudState,
+  type CloudSyncStatus,
   type NotebookRecord,
   type OpenMemoSession,
 } from '@platform/tauri/mobile-client';
@@ -23,11 +24,13 @@ export function useMobileLibrary() {
   const [memoItems, setMemoItems] = useState<MemoItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<CloudSyncStatus | null>(null);
   const [activeDocument, setActiveDocument] = useState<OpenMemoSession | null>(null);
   const [message, setMessage] = useState('');
   const notebookIdRef = useRef<string | null>(null);
   const tagIdRef = useRef<string | null>(null);
   const listGenerationRef = useRef(0);
+  const syncPromiseRef = useRef<Promise<boolean> | null>(null);
   const canSync = cloudSyncAvailable(cloudState);
 
   const selectedNotebook = useMemo(
@@ -113,21 +116,36 @@ export function useMobileLibrary() {
     })();
   }), [loadNotebook, loadNotebooks]);
 
+  useEffect(() => mobileClient.listenToCloudSyncStatusChanges((next) => {
+    setSyncStatus(next);
+    setSyncing(next.state === 'queued' || next.state === 'checking' || next.state === 'syncing' || next.state === 'finalizing');
+    if (next.state === 'error' && next.lastError) setMessage(next.lastError);
+  }), []);
+
   const syncNow = useCallback(async (): Promise<boolean> => {
     if (!canSync) return false;
-    setSyncing(true);
-    setMessage('');
+    if (syncPromiseRef.current) return syncPromiseRef.current;
+    const operation = (async () => {
+      setSyncing(true);
+      setMessage('');
+      try {
+        await mobileClient.bootstrapCloud();
+        const notebookId = await loadNotebooks();
+        await loadNotebook(notebookId, tagIdRef.current);
+        setCloudState(await mobileClient.cloud.getState());
+        return true;
+      } catch (error) {
+        setMessage(errorMessage(error));
+        return true;
+      } finally {
+        setSyncing(false);
+      }
+    })();
+    syncPromiseRef.current = operation;
     try {
-      await mobileClient.bootstrapCloud();
-      const notebookId = await loadNotebooks();
-      await loadNotebook(notebookId, tagIdRef.current);
-      setCloudState(await mobileClient.cloud.getState());
-      return true;
-    } catch (error) {
-      setMessage(errorMessage(error));
-      return true;
+      return await operation;
     } finally {
-      setSyncing(false);
+      if (syncPromiseRef.current === operation) syncPromiseRef.current = null;
     }
   }, [canSync, loadNotebook, loadNotebooks]);
 
@@ -149,16 +167,52 @@ export function useMobileLibrary() {
     setSelectedTagId(id);
   }, []);
 
+  const createNotebook = useCallback(async (name: string): Promise<NotebookRecord | null> => {
+    try {
+      const created = await mobileClient.notebooks.create(name);
+      notebookIdRef.current = created.id;
+      tagIdRef.current = null;
+      setNotebooks((current) => [...current, created]);
+      setSelectedNotebookId(created.id);
+      setSelectedTagId(null);
+      await loadNotebook(created.id, null);
+      return created;
+    } catch (error) {
+      setMessage(errorMessage(error));
+      return null;
+    }
+  }, [loadNotebook]);
+
+  const renameNotebook = useCallback(async (id: string, name: string): Promise<boolean> => {
+    try {
+      const updated = await mobileClient.notebooks.rename(id, name);
+      setNotebooks((current) => current.map((notebook) => notebook.id === id ? updated : notebook));
+      return true;
+    } catch (error) {
+      setMessage(errorMessage(error));
+      return false;
+    }
+  }, []);
+
   const openMemo = useCallback(async (id: string) => {
-    const session = await mobileClient.memos.openMemoSession(id);
-    if (session) setActiveDocument(session);
+    try {
+      const session = await mobileClient.memos.openMemoSession(id);
+      if (session) setActiveDocument(session);
+      else setMessage('这篇笔记已不存在，请刷新列表后重试。');
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
   }, []);
 
   const createMemo = useCallback(async () => {
     const notebookId = notebookIdRef.current;
     if (!notebookId) return;
-    const memo = await mobileClient.memos.addDocument(tagIdRef.current || undefined, notebookId);
-    if (memo.id) await openMemo(memo.id);
+    try {
+      const memo = await mobileClient.memos.addDocument(tagIdRef.current || undefined, notebookId);
+      if (memo.id) await openMemo(memo.id);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
   }, [openMemo]);
 
   const closeDocument = useCallback(() => {
@@ -166,8 +220,35 @@ export function useMobileLibrary() {
     void loadNotebook();
   }, [loadNotebook]);
 
+  const deleteMemo = useCallback(async (id: string) => {
+    try {
+      if (!await mobileClient.memos.deleteMemo(id)) throw new Error('删除笔记失败');
+      setMemoItems((current) => current.filter((memo) => memo.id !== id));
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  }, []);
+
+  const toggleMemoFavorite = useCallback(async (memo: MemoItem) => {
+    try {
+      const ok = memo.favorited
+        ? await mobileClient.memos.unfavoriteMemo(memo.id)
+        : await mobileClient.memos.favoriteMemo(memo.id);
+      if (!ok) throw new Error('置顶操作失败');
+      await loadNotebook();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  }, [loadNotebook]);
+
   const logout = useCallback(async () => {
-    setCloudState(await mobileClient.cloud.logout());
+    try {
+      setCloudState(await mobileClient.cloud.logout());
+      return true;
+    } catch (error) {
+      setMessage(errorMessage(error));
+      return false;
+    }
   }, []);
 
   return {
@@ -184,15 +265,20 @@ export function useMobileLibrary() {
     selectedTag,
     selectedTagId,
     syncing,
+    syncStatus,
     tags,
     closeDocument,
+    createNotebook,
     createMemo,
+    deleteMemo,
     dismissMessage: () => setMessage(''),
     logout,
     openMemo,
     selectNotebook,
     selectTag,
+    renameNotebook,
     syncNow,
+    toggleMemoFavorite,
     updateCloudState,
   };
 }
