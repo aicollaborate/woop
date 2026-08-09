@@ -52,8 +52,9 @@ for path in CommandLine.arguments.dropFirst() {
   // Some Tauri-generated PNGs carry transparent pixels with white RGB data.
   // AppKit preserves those RGB bytes while composing, so normalize the white
   // matte to the intended cream background before dropping the alpha channel.
+  let compositingBytesPerRow = compositingBitmap.bytesPerRow
   if let pixels = compositingBitmap.bitmapData {
-    let bytesPerRow = compositingBitmap.bytesPerRow
+    let bytesPerRow = compositingBytesPerRow
     for y in 0..<height {
       for x in 0..<width {
         let offset = y * bytesPerRow + x * 4
@@ -77,7 +78,7 @@ for path in CommandLine.arguments.dropFirst() {
           height: height,
           bitsPerComponent: 8,
           bitsPerPixel: 32,
-          bytesPerRow: width * 4,
+          bytesPerRow: compositingBytesPerRow,
           space: colorSpace,
           bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
           provider: provider,

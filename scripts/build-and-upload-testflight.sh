@@ -127,18 +127,31 @@ fi
 
 cd "$REPO_ROOT"
 
+# Keep the marketing version at 1.1.15 while giving every TestFlight upload a
+# monotonically new CFBundleVersion. Override this when reproducing a build.
+IOS_BUILD_NUMBER="${IOS_BUILD_NUMBER:-$(date +%s)}"
+if [[ ! "$IOS_BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  echo "ERROR: IOS_BUILD_NUMBER must contain one to three numeric components, got: $IOS_BUILD_NUMBER" >&2
+  exit 2
+fi
+export IOS_BUILD_NUMBER
+echo "==> iOS marketing version: $(node -p 'require("./app/flowix-mobile/tauri.conf.json").version') (build $IOS_BUILD_NUMBER)"
+
 # ---- 1. Build ----
 if [ -z "${SKIP_BUILD:-}" ]; then
-  echo "==> [build] Refreshing iOS Xcode project + native patches"
-  cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init --ci --skip-targets-install
-  cd "$REPO_ROOT"
-  node scripts/patch-ios-native.mjs
-
   echo "==> [build] running tauri ios init + patch (project setup only; we skip tauri ios build because it corrupts pbxproj in 2.11.x)"
   cd "$MOBILE_DIR"
   PATH="$REPO_ROOT/node_modules/.bin:$PATH" ../../node_modules/.bin/tauri ios init --ci --skip-targets-install
   cd "$REPO_ROOT"
   node scripts/patch-ios-native.mjs
+
+  # This pipeline deliberately skips `tauri ios build` because the current
+  # Tauri CLI version corrupts the generated pbxproj on this monorepo layout.
+  # That also means its beforeBuildCommand is not run for us. Build the mobile
+  # frontend explicitly before cargo embeds frontendDist into the release
+  # binary; otherwise a stale desktop bundle (or no bundle) can be published.
+  echo "==> [build] npm run build:mobile"
+  npm run build:mobile
 
   # Stage the .mobileprovision into the system profiles dir under its inner-UUID
   # filename — that's what xcodebuild looks up at archive time.
@@ -243,13 +256,15 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   # swift-rs (Tauri's iOS build dep) build.rs does `git clone
   # github.com/Brendonovich/swift-rs`; local git HTTP/2 intermittently fails
   # with "Error in the HTTP2 framing layer". Force HTTP/1.1 for that clone.
-  echo "==> [build] cargo build --release --target aarch64-apple-ios (aarch64 device)"
+  echo "==> [build] cargo build --release --target aarch64-apple-ios --features custom-protocol (aarch64 device)"
   cd "$MOBILE_DIR"
+  IOS_MINIMUM_SYSTEM_VERSION="$(node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("app/flowix-mobile/tauri.ios.conf.json", "utf8")); console.log(config.bundle.iOS.minimumSystemVersion)')"
+  IPHONEOS_DEPLOYMENT_TARGET="$IOS_MINIMUM_SYSTEM_VERSION" \
   CARGO_TARGET_DIR="$REPO_ROOT/.build/cargo-target" \
   GIT_CONFIG_COUNT=1 \
   GIT_CONFIG_KEY_0=http.version \
   GIT_CONFIG_VALUE_0=HTTP/1.1 \
-    cargo build --release --target aarch64-apple-ios --no-default-features 2>&1 | tail -10
+    cargo build --release --target aarch64-apple-ios --no-default-features --features custom-protocol 2>&1 | tail -10
   cd "$REPO_ROOT"
 
   # The Xcode project expects libapp.a at gen/apple/Externals/<arch>/<config>/libapp.a

@@ -1,7 +1,7 @@
 {
   "name": "flowix",
   "private": true,
-  "version": "1.1.14",
+  "version": "1.1.15",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,8 +28,8 @@
     "tauri:android:dev": "cd app/flowix-mobile && ../../node_modules/.bin/tauri android dev",
     "tauri:android:build": "cd app/flowix-mobile && ../../node_modules/.bin/tauri android build",
     "tauri:ios:init": "cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init",
-    "tauri:ios:dev": "cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init --ci --skip-targets-install && cd ../.. && node scripts/patch-ios-native.mjs && cd app/flowix-mobile && ../../node_modules/.bin/tauri ios dev",
-    "tauri:ios:build": "cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init --ci --skip-targets-install && cd ../.. && node scripts/patch-ios-native.mjs && cd app/flowix-mobile && ../../node_modules/.bin/tauri ios build",
+    "tauri:ios:dev": "cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init --ci --skip-targets-install && cd ../.. && node scripts/patch-ios-native.mjs && bash scripts/build-ios-simulator-lib.sh && cd app/flowix-mobile && ../../node_modules/.bin/tauri ios dev",
+    "tauri:ios:build": "IOS_BUILD_NUMBER=\"${IOS_BUILD_NUMBER:-$(date +%s)}\"; export IOS_BUILD_NUMBER; cd app/flowix-mobile && ../../node_modules/.bin/tauri ios init --ci --skip-targets-install && cd ../.. && node scripts/patch-ios-native.mjs && cd app/flowix-mobile && ../../node_modules/.bin/tauri ios build --features custom-protocol",
     "tauri:ios:build:testflight": "bash scripts/build-and-upload-testflight.sh",
     "tauri:build": "tauri build",
     "tauri:build:win": "node scripts/build-tauri-production.mjs --platform win32",

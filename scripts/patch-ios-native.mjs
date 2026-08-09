@@ -1,17 +1,20 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const source = resolve(root, 'app/flowix-mobile/ios/keyboard-accessory-suppressor.m');
 const generatedSourceDir = resolve(root, 'app/flowix-mobile/gen/apple/Sources/flowix-mobile');
 const generatedAppleDir = resolve(root, 'app/flowix-mobile/gen/apple');
-const target = resolve(generatedSourceDir, 'keyboard-accessory-suppressor.m');
+const nativeSourceDir = resolve(root, 'app/flowix-mobile/ios');
 const mobileConfigPath = resolve(root, 'app/flowix-mobile/tauri.conf.json');
 const projectPath = resolve(generatedAppleDir, 'project.yml');
 const appIconDir = resolve(generatedAppleDir, 'Assets.xcassets/AppIcon.appiconset');
 const flattenAppIconsScript = resolve(root, 'scripts/flatten-ios-app-icons.swift');
+const portraitOrientations = `        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait`;
 
 // Entitlements source-of-truth lives in app/flowix-mobile/ios/; `tauri ios init`
 // (which patch runs after) regenerates gen/apple/ and resets the entitlements
@@ -55,21 +58,41 @@ if (teamId && provisionPath && existsSync(projectPath)) {
   }
 }
 
-if (!existsSync(source)) throw new Error(`Missing iOS native source: ${source}`);
 if (!existsSync(generatedSourceDir)) {
   throw new Error('iOS project is not initialized. Run tauri ios init first.');
 }
 
 mkdirSync(generatedSourceDir, { recursive: true });
-cpSync(source, target);
+const nativeSources = readdirSync(nativeSourceDir)
+  .filter((name) => name.endsWith('.m'));
+if (!nativeSources.length) {
+  throw new Error(`Missing iOS native Objective-C sources: ${nativeSourceDir}`);
+}
+// Generated Apple sources are disposable. Copy every maintained bridge file
+// so the build never accidentally retains an old, removed native bridge.
+for (const legacyName of ['keyboard-accessory-suppressor.m']) {
+  rmSync(resolve(generatedSourceDir, legacyName), { force: true });
+}
+for (const sourceName of nativeSources) {
+  cpSync(resolve(nativeSourceDir, sourceName), resolve(generatedSourceDir, sourceName));
+}
+console.log(`iOS native bridge synced: ${nativeSources.join(', ')}`);
 if (existsSync(projectPath)) {
   const mobileVersion = JSON.parse(readFileSync(mobileConfigPath, 'utf8')).version;
+  const mobileBuildNumber = process.env.IOS_BUILD_NUMBER || mobileVersion;
   if (typeof mobileVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(mobileVersion)) {
     throw new Error(`Invalid mobile version in tauri.conf.json: ${mobileVersion}`);
   }
+  if (typeof mobileBuildNumber !== 'string' || !/^\d+(\.\d+){0,2}$/.test(mobileBuildNumber)) {
+    throw new Error(`Invalid IOS_BUILD_NUMBER: ${mobileBuildNumber}`);
+  }
   let project = readFileSync(projectPath, 'utf8')
+    .replace(
+      /        UISupportedInterfaceOrientations:\n(?:          - [^\n]+\n)+        UISupportedInterfaceOrientations~ipad:\n(?:          - [^\n]+\n)+/,
+      `${portraitOrientations}\n`,
+    )
     .replace(/CFBundleShortVersionString:\s*[^\n]+/, `CFBundleShortVersionString: ${mobileVersion}`)
-    .replace(/CFBundleVersion:\s*[^\n]+/, `CFBundleVersion: "${mobileVersion}"`);
+    .replace(/CFBundleVersion:\s*[^\n]+/, `CFBundleVersion: "${mobileBuildNumber}"`);
 
   // Remove the "Build Rust Code" preBuildScript. Tauri CLI's `tauri ios
   // xcode-script` connects to a dev server over WebSocket — useful for
@@ -78,8 +101,12 @@ if (existsSync(projectPath)) {
   // this, xcodebuild's archive step fails with
   //   "failed to read CLI options: ... Connection refused"
   project = project.replace(
-    /\n    preBuildScripts:\n(?:      - script:[^\n]*\n(?:        [^\n]*\n){0,8})+/,
-    '\n    # preBuildScripts removed by patch-ios-native.mjs (cargo runs the Rust build directly)'
+    /\n    preBuildScripts:\n(?: {6,}[^\n]*\n)*/,
+    '\n    # preBuildScripts removed by patch-ios-native.mjs (cargo runs the Rust build directly)\n'
+  );
+  project = project.replace(
+    /\n    # preBuildScripts removed by patch-ios-native\.mjs \(cargo runs the Rust build directly\)(?: {6,}[^\n]*)?\n/,
+    '\n    # preBuildScripts removed by patch-ios-native.mjs (cargo runs the Rust build directly)\n',
   );
 
   writeFileSync(projectPath, project);
@@ -95,27 +122,41 @@ if (existsSync(projectPath)) {
   const pbxprojPath = resolve(generatedAppleDir, 'flowix-mobile.xcodeproj/project.pbxproj');
   if (existsSync(pbxprojPath)) {
     let pbxproj = readFileSync(pbxprojPath, 'utf8');
-    // Drop BuildFile entries that reference libapp.a as a Resource
     const before = pbxproj.length;
+
+    // Drop BuildFile entries that reference libapp.a as a Resource.
     pbxproj = pbxproj.replace(
-      /^\t\t[0-9A-F]{24} \/\* libapp\.a in Resources \*\/ = \{isa = PBXBuildFile;[^}]+\};\n/gm,
+      /^\s*[0-9A-F]{24} \/\* libapp\.a in Resources \*\/ = \{isa = PBXBuildFile;[^}]+\};\n/gm,
       ''
     );
-    // Also drop duplicate libapp.a file references (keep only one — the first)
-    const fileRefLines = [...pbxproj.matchAll(/^\t\t([0-9A-F]{24}) \/\* libapp\.a \*\/ = \{isa = PBXFileReference;[^}]+\};\n/gm)];
-    if (fileRefLines.length > 1) {
-      // Keep the first reference, drop the rest
-      const dropIds = fileRefLines.slice(1).map(m => m[1]);
-      for (const id of dropIds) {
-        pbxproj = pbxproj.replace(
-          new RegExp(`\\b${id}\\b`, 'g'),
-          '__DROPPED__'
-        );
-      }
+    pbxproj = pbxproj.replace(
+      /^\s*[0-9A-F]{24} \/\* libapp\.a in Resources \*\/,\n/gm,
+      '',
+    );
+
+    // Keep the file reference used by the Frameworks build file and remove
+    // every duplicate reference from PBXFileReference and PBXGroup sections.
+    // Replacing IDs with a marker leaves an invalid pbxproj; remove the full
+    // declaration and group membership lines instead.
+    const frameworkRef = pbxproj.match(
+      /\/\* libapp\.a in Frameworks \*\/ = \{isa = PBXBuildFile; fileRef = ([0-9A-F]{24}) \/\* libapp\.a \*\//,
+    )?.[1];
+    const fileRefIds = [...pbxproj.matchAll(
+      /^\s*([0-9A-F]{24}) \/\* libapp\.a \*\/ = \{isa = PBXFileReference;[^}]+\};\n/gm,
+    )].map((match) => match[1]);
+    for (const id of fileRefIds.filter((value) => value !== frameworkRef)) {
+      pbxproj = pbxproj.replace(
+        new RegExp(`^\\s*${id} \\/\\* libapp\\.a \\*\\/ = \\{isa = PBXFileReference;[^}]+\\};\\n`, 'gm'),
+        '',
+      );
+      pbxproj = pbxproj.replace(
+        new RegExp(`^\\s*${id} \\/\\* libapp\\.a \\*\\/,\\n`, 'gm'),
+        '',
+      );
     }
     if (pbxproj.length !== before) {
       writeFileSync(pbxprojPath, pbxproj);
-      console.log(`iOS pbxproj repair: stripped libapp.a Resources entry + duplicate file refs (Tauri's xcodegen template bug)`);
+      console.log(`iOS pbxproj repair: removed libapp.a Resources entries + duplicate file refs (Tauri's xcodegen template bug)`);
     }
   }
 }
@@ -128,17 +169,32 @@ if (existsSync(entitlementsSource)) {
   console.warn(`[warn] entitlements source missing: ${entitlementsSource} - create it before the next build (TestFlight upload will fail without keychain-access-groups).`);
 }
 
-// Apple's App Store validation (ITMS-90717) rejects any iOS AppIcon that
-// contains alpha. Tauri regenerates this asset catalog on every `ios init`,
-// so flatten all generated icon sizes after initialization instead of editing
-// the disposable gen/apple files by hand.
+// Keep iOS aligned with the dedicated mobile icon source. Tauri regenerates
+// this asset catalog on every `ios init`, so replace every generated size from
+// the mobile source instead of editing the disposable gen/apple files by hand.
+const mobileIconSource = resolve(root, 'app/flowix-web/assets/app-icon-mobile.png');
 if (existsSync(appIconDir) && existsSync(flattenAppIconsScript)) {
-  const appIcons = readdirSync(appIconDir)
-    .filter((name) => name.endsWith('.png'))
-    .map((name) => resolve(appIconDir, name));
+  const appIconContentsPath = resolve(appIconDir, 'Contents.json');
+  if (!existsSync(mobileIconSource)) {
+    throw new Error(`Missing mobile icon source: ${mobileIconSource}`);
+  }
+  if (!existsSync(appIconContentsPath)) {
+    throw new Error(`Missing iOS AppIcon contents: ${appIconContentsPath}`);
+  }
+
+  const appIconContents = JSON.parse(readFileSync(appIconContentsPath, 'utf8'));
+  const appIcons = appIconContents.images
+    .filter(({ filename }) => typeof filename === 'string' && filename.endsWith('.png'))
+    .map(({ filename, size, scale }) => {
+      const logicalSize = Number.parseFloat(size.split('x')[0]);
+      const pixelSize = Math.round(logicalSize * Number.parseFloat(scale));
+      const target = resolve(appIconDir, filename);
+      execFileSync('sips', ['-z', String(pixelSize), String(pixelSize), mobileIconSource, '--out', target], { stdio: 'ignore' });
+      return target;
+    });
   if (appIcons.length > 0) {
     execFileSync('swift', [flattenAppIconsScript, ...appIcons], { stdio: 'inherit' });
-    console.log(`iOS AppIcon alpha flattened: ${appIcons.length} generated image(s)`);
+    console.log(`iOS AppIcon synced with mobile source and alpha flattened: ${appIcons.length} image(s)`);
   }
 }
 
@@ -204,4 +260,4 @@ if (existsSync(projectPath)) {
   }
 }
 
-console.log(`iOS native patch applied: ${target}`);
+console.log('iOS native patch complete');
