@@ -50,6 +50,7 @@ interface NotebookDialogsProps {
   editNotebookCloudSync: boolean;
   onEditNotebookCloudSyncChange: (enabled: boolean) => void;
   onEditNotebookCloudSyncUnavailable: () => void;
+  editSaving: boolean;
   editNotebookCloudSyncChanged: boolean;
   onConfirmEdit: () => void;
   onCancelEdit: () => void;
@@ -59,10 +60,12 @@ function NotebookIconPicker({
   value,
   notebookName,
   onChange,
+  disabled = false,
 }: {
   value: string | null;
   notebookName: string;
   onChange: (icon: string | null) => void;
+  disabled?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -72,12 +75,14 @@ function NotebookIconPicker({
         <div className="grid grid-cols-8 gap-1.5">
           <button
             type="button"
+            disabled={disabled}
             onClick={() => onChange(null)}
             className={cn(
               'flex h-9 w-9 items-center justify-center rounded-md border transition-colors',
               value === null
                 ? 'border-[var(--primary)] bg-[var(--accent)]'
-                : 'border-[var(--border)] hover:bg-[var(--muted)]'
+                : 'border-[var(--border)] hover:bg-[var(--muted)]',
+              disabled && 'cursor-not-allowed opacity-60',
             )}
             aria-label={t("memo.notebook.letterIcon")}
             title={t("memo.notebook.letterIcon")}
@@ -91,12 +96,14 @@ function NotebookIconPicker({
             <button
               key={option.id}
               type="button"
+              disabled={disabled}
               onClick={() => onChange(option.id)}
               className={cn(
                 'flex h-9 w-9 items-center justify-center rounded-md border transition-colors',
                 value === option.id
                   ? 'border-[var(--primary)] bg-[var(--accent)]'
-                  : 'border-[var(--border)] hover:bg-[var(--muted)]'
+                  : 'border-[var(--border)] hover:bg-[var(--muted)]',
+                disabled && 'cursor-not-allowed opacity-60',
               )}
               aria-label={option.label}
               title={option.label}
@@ -126,11 +133,13 @@ function normalizeNotebookIconId(icon: string | null | undefined): string | null
 function NotebookCloudSyncToggle({
   checked,
   available,
+  disabled = false,
   onChange,
   onUnavailableClick,
 }: {
   checked: boolean;
   available: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
   onUnavailableClick?: () => void;
 }) {
@@ -161,7 +170,7 @@ function NotebookCloudSyncToggle({
           role="switch"
           aria-checked={checked}
           aria-label={t('notebook.cloudSync.title')}
-          disabled={!available}
+          disabled={!available || disabled}
           onClick={() => onChange(!checked)}
           className={cn(
             'relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50',
@@ -210,6 +219,7 @@ export function NotebookDialogs({
   editNotebookCloudSync,
   onEditNotebookCloudSyncChange,
   onEditNotebookCloudSyncUnavailable,
+  editSaving,
   editNotebookCloudSyncChanged,
   onConfirmEdit,
   onCancelEdit,
@@ -367,7 +377,7 @@ export function NotebookDialogs({
       </Dialog>
 
       <Dialog open={editOpen} onOpenChange={onEditOpenChange}>
-        <DialogContent className="w-[400px]">
+        <DialogContent className="w-[400px]" aria-busy={editSaving}>
           <DialogHeader>
             <DialogTitle>{t("notebook.edit.title")}</DialogTitle>
           </DialogHeader>
@@ -375,6 +385,7 @@ export function NotebookDialogs({
             <Input
               placeholder={t("notebook.edit.namePlaceholder")}
               value={editNotebookName}
+              disabled={editSaving}
               onChange={(event) => onEditNotebookNameChange(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') onConfirmEdit();
@@ -385,6 +396,7 @@ export function NotebookDialogs({
               value={editNotebookIcon}
               notebookName={editNotebookName}
               onChange={onEditNotebookIconChange}
+              disabled={editSaving}
             />
             <div className="space-y-2">
               <div className="text-xs font-medium text-[var(--muted-foreground)]">
@@ -401,6 +413,7 @@ export function NotebookDialogs({
               <NotebookCloudSyncToggle
                 checked={editNotebookCloudSync}
                 available={cloudSyncAvailable}
+                disabled={editSaving}
                 onChange={onEditNotebookCloudSyncChange}
                 onUnavailableClick={onEditNotebookCloudSyncUnavailable}
               />
@@ -410,6 +423,7 @@ export function NotebookDialogs({
             {editingNotebook ? (
               <button
                 type="button"
+                disabled={editSaving}
                 onClick={() => {
                   if (!editingNotebook) return;
                   const target = editingNotebook;
@@ -431,7 +445,8 @@ export function NotebookDialogs({
               <button
                 type="button"
                 onClick={onCancelEdit}
-                className="h-8 px-3 text-sm rounded-lg hover:bg-[var(--muted)]"
+                disabled={editSaving}
+                className="h-8 px-3 text-sm rounded-lg hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t("notebook.edit.cancel")}
               </button>
@@ -440,13 +455,15 @@ export function NotebookDialogs({
                 onClick={onConfirmEdit}
                 className="h-8 px-3 text-sm rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
                 disabled={
+                  editSaving ||
                   !editNotebookName.trim() ||
                   (editNotebookName.trim() === editingNotebook?.name &&
                     (editNotebookIcon ?? '') === (normalizeNotebookIconId(editingNotebook?.icon) ?? '') &&
                     !editNotebookCloudSyncChanged)
                 }
               >
-                {t("notebook.edit.confirm")}
+                {editSaving && <Loader2 className="mr-1.5 inline-block h-3.5 w-3.5 animate-spin" />}
+                {editSaving ? t("notebook.edit.saving") : t("notebook.edit.confirm")}
               </button>
             </div>
           </div>

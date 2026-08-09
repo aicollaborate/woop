@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, CircleAlert, Cloud, LoaderCircle, Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -17,6 +17,7 @@ import {
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
 import { cloudSyncErrorMessage } from '@platform/tauri/errors';
 import { useDragReorder, type DragDropTarget } from '@features/memo/hooks/use-drag-reorder';
+import { CloudStatusIcon } from '@shared/icons/cloud-status-icon';
 import {
   computeNotebookDropPosition,
   reorderNotebookIds,
@@ -252,7 +253,7 @@ export function NotebookList({
       <OverlayScrollbar
         className={cn(
           "min-h-0 flex-1 overflow-hidden transition-[max-height] duration-100",
-          notebookListCollapsed ? "max-h-[44px]" : "max-h-[320px]",
+          notebookListCollapsed ? "max-h-[52px]" : "max-h-[320px]",
         )}
         scrollerClassName="h-full overflow-y-auto px-2"
         scrollerRef={notebookScrollerRef}
@@ -302,10 +303,14 @@ export function NotebookList({
                     }
                   }}
                   className={cn(
-                    'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors',
-                    isCloudSynced && isActive
-                      ? 'pr-14'
-                      : (isCloudSynced || isActive) && 'pr-8',
+                    'group relative flex w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors',
+                    isActive ? 'h-12 items-start py-1' : 'h-8',
+                    isActive && 'rounded-lg',
+                    isActive && 'overflow-hidden',
+                    isActive && 'pr-3',
+                    isCloudSynced && !isActive && 'pr-8',
+                    isActive &&
+                      'ring-1 ring-inset ring-[color-mix(in_oklch,var(--foreground)_7%,transparent)]',
                     isNotebookDragging
                       ? 'cursor-grabbing opacity-40'
                       : notebookListCollapsed
@@ -314,7 +319,16 @@ export function NotebookList({
                     !isNotebookDragging && 'text-[var(--foreground)]',
                     isMissing && 'opacity-70',
                   )}
-                  style={{ touchAction: 'none' }}
+                  style={{
+                    touchAction: 'none',
+                    ...(isActive
+                      ? {
+                          backgroundColor: 'var(--agent-bg)',
+                          backgroundImage:
+                            'radial-gradient(ellipse 90% 145% at 100% 0%, color-mix(in oklch, var(--primary) 18%, transparent), transparent 58%)',
+                        }
+                      : {}),
+                  }}
                   title={notebook.name}
                   aria-pressed={isActive}
                   aria-grabbed={isNotebookDragging}
@@ -331,8 +345,15 @@ export function NotebookList({
                     className="h-6 w-6 rounded-md bg-[var(--muted)] text-[11px] font-semibold text-[var(--secondary-foreground)]"
                     imageClassName="h-[72%] w-[72%]"
                   />
-                  <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                    <span className="min-w-0 truncate">
+                  <div
+                    className={cn(
+                      'min-w-0 flex-1',
+                      isActive
+                        ? 'flex flex-col justify-start gap-0'
+                        : 'flex items-center gap-1.5',
+                    )}
+                  >
+                    <span className="min-w-0 truncate leading-6">
                       <span className={isMissing ? 'text-[var(--muted-foreground)]' : ''}>
                         {notebook.name}
                       </span>
@@ -345,58 +366,61 @@ export function NotebookList({
                         </>
                       )}
                     </span>
-                  </div>
-                  {/* 选中对勾 ── 折叠态下列表只剩选中行这一条, 对勾已无标识
-                      意义, 故折叠时不渲染。展开态多行并存时才显示。 */}
-                  {(isCloudSynced || (isActive && !notebookListCollapsed)) && (
-                    <div className="pointer-events-none absolute right-1.5 top-1/2 z-10 flex -translate-y-1/2 items-center transition-opacity group-hover:opacity-0">
-                      {isCloudSynced && (
+                    {isActive && (
+                      <div className="flex min-w-0 max-w-full items-center gap-1">
+                        {isCloudSynced && (
+                          <span
+                            className="flex h-4 w-4 shrink-0 items-center justify-center"
+                            title={
+                              cloudSyncStatus?.lastError
+                                ? cloudSyncErrorMessage(cloudSyncStatus.lastError, t)
+                                : cloudSyncInProgress
+                                  ? t('notebook.cloudSync.syncing')
+                                  : cloudSyncStatus?.state === 'success'
+                                    ? t('notebook.cloudSync.complete')
+                                    : t('notebook.cloudSync.title')
+                            }
+                          >
+                            {cloudSyncInProgress ? (
+                              <CloudStatusIcon
+                                status="connecting"
+                                size={12}
+                                className="text-[var(--secondary-foreground)]"
+                              />
+                            ) : cloudSyncStatus?.state === 'error' ? (
+                              <CloudStatusIcon
+                                status="unlinked"
+                                size={12}
+                                className="text-[var(--destructive)]"
+                              />
+                            ) : (
+                              <CloudStatusIcon
+                                status="connected"
+                                size={12}
+                                className="text-[var(--secondary-foreground)]"
+                              />
+                            )}
+                          </span>
+                        )}
                         <span
-                          className="flex h-6 w-6 items-center justify-center"
-                          title={
-                            cloudSyncStatus?.lastError
-                              ? cloudSyncErrorMessage(cloudSyncStatus.lastError, t)
-                              : cloudSyncInProgress
-                                ? t('notebook.cloudSync.syncing')
-                                : cloudSyncStatus?.state === 'success'
-                                  ? t('notebook.cloudSync.complete')
-                                  : t('notebook.cloudSync.title')
-                          }
+                          className="min-w-0 flex-1 truncate text-[11px] leading-4 text-[var(--muted-foreground)]"
+                          style={{ direction: 'rtl', textAlign: 'left' }}
+                          title={notebook.path}
                         >
-                          {cloudSyncInProgress ? (
-                            <LoaderCircle
-                              className="h-3.5 w-3.5 animate-spin text-[var(--primary)]"
-                              aria-label={t('notebook.cloudSync.syncing')}
-                            />
-                          ) : cloudSyncStatus?.state === 'error' ? (
-                            <CircleAlert
-                              className="h-3.5 w-3.5 text-[var(--destructive)]"
-                              aria-label={t('notebook.cloudSync.syncFailed')}
-                            />
-                          ) : cloudSyncStatus?.state === 'success' ? (
-                            <Check
-                              className="h-3.5 w-3.5 text-[var(--primary)]"
-                              aria-label={t('notebook.cloudSync.complete')}
-                            />
-                          ) : (
-                            <Cloud
-                              className="h-3.5 w-3.5 text-[var(--primary)]"
-                              aria-label={t('notebook.cloudSync.title')}
-                            />
-                          )}
+                          {notebook.path}
                         </span>
-                      )}
-                      {isActive && !notebookListCollapsed && (
-                        <span className="flex h-6 w-6 items-center justify-center">
-                          <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
-                        </span>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    )}
+                  </div>
                   {/* 编辑 ── 与 NotebookSwitcher 行内操作保持一致,
                       absolute 定位 + group-hover 渐显。删除入口已迁到
                       编辑弹窗的「移除」按钮, 列表行不再提供。 */}
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div
+                    className={cn(
+                      'absolute right-1 flex items-center opacity-0 group-hover:opacity-100 transition-opacity',
+                      isActive ? 'top-1 translate-y-0' : 'top-1/2 -translate-y-1/2',
+                    )}
+                  >
                     <span
                       role="button"
                       tabIndex={-1}
@@ -405,7 +429,10 @@ export function NotebookList({
                         event.stopPropagation();
                         onEditNotebook(notebook);
                       }}
-                      className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--agent-bg)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
+                      className={cn(
+                        'flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer',
+                        isActive ? 'bg-transparent' : 'bg-[var(--agent-bg)]',
+                      )}
                       aria-label={t('status.editNotebook')}
                     >
                       <Pencil className="h-3 w-3" />

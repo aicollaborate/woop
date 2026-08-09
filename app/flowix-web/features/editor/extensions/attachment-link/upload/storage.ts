@@ -4,10 +4,12 @@ import { assetUrl, safeFileName } from '@features/editor/extensions/attachment-l
 import { fileNameFromPath, getFileKind, getFileKindFromName, mimeTypeFromName } from '@features/editor/extensions/attachment-link/upload/file-source';
 
 export type AttachmentContentSaver = (params: { content: string; fileName: string }) => Promise<string | null>;
+export type AttachmentFileSaver = (params: { file: File; fileName: string }) => Promise<string | null>;
 
 export async function createAttachmentUpload(
     files: File[],
     saveContent?: AttachmentContentSaver,
+    saveFile?: AttachmentFileSaver,
 ): Promise<{ assets: StoredAsset[] }> {
     const assets: StoredAsset[] = [];
 
@@ -15,26 +17,29 @@ export async function createAttachmentUpload(
         const kind = getFileKind(file);
         const fileName = safeFileName(file.name);
 
-        const base64Content = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-                const result = String(reader.result || '');
-                const base64 = result.includes(',') ? result.split(',')[1] : result;
-                resolve(base64);
-            };
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(file);
-        });
-
         let storageKey: string | null = null;
         try {
-            storageKey = saveContent
-                ? await saveContent({ content: base64Content, fileName })
-                : await invoke<string | null>('save_attachment_content', {
-                    content: base64Content,
-                    fileName,
-                    notebookId: null,
+            if (saveFile) {
+                storageKey = await saveFile({ file, fileName });
+            } else {
+                const base64Content = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const result = String(reader.result || '');
+                        const base64 = result.includes(',') ? result.split(',')[1] : result;
+                        resolve(base64);
+                    };
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(file);
                 });
+                storageKey = saveContent
+                    ? await saveContent({ content: base64Content, fileName })
+                    : await invoke<string | null>('save_attachment_content', {
+                        content: base64Content,
+                        fileName,
+                        notebookId: null,
+                    });
+            }
         } catch (err) {
             console.error('[FileUpload] Failed to save attachment:', err);
         }

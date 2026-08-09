@@ -2,6 +2,8 @@ import { Node, mergeAttributes, type MarkdownToken } from '@tiptap/core';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 
+import { getAgentType } from '@/lib/agent-types';
+
 const CUSTOM_BLOCK_RE = /^::([a-z][a-z0-9-]*)(\{[^\n]*\})?[ \t]*(?:\r?\n|$)/i;
 const ATTR_RE = /([A-Za-z][\w]*)="((?:\\"|\\\\|[^"])*)"/g;
 
@@ -54,7 +56,27 @@ function renderStaticCard(dom: HTMLElement, kind: string, attrsSource: string) {
 
   const eyebrow = document.createElement('span');
   eyebrow.className = 'mobile-static-block__eyebrow';
-  eyebrow.textContent = kind === 'agent-thread-card' ? 'Agent Thread' : 'Flowix Block';
+  eyebrow.textContent = 'Flowix Block';
+
+  if (kind === 'agent-thread-card') {
+    const agentType = getAgentType(attrs.agentType);
+    const agent = document.createElement('div');
+    agent.className = 'mobile-static-block__agent';
+
+    const agentIcon = document.createElement('img');
+    agentIcon.className = 'mobile-static-block__agent-icon';
+    agentIcon.src = agentType.icon;
+    agentIcon.alt = '';
+    agentIcon.draggable = false;
+
+    const agentName = document.createElement('span');
+    agentName.className = 'mobile-static-block__agent-name';
+    agentName.textContent = agentType.name;
+    agent.append(agentIcon, agentName);
+    dom.append(agent);
+  } else {
+    dom.append(eyebrow);
+  }
 
   const title = document.createElement('strong');
   title.className = 'mobile-static-block__title';
@@ -63,10 +85,10 @@ function renderStaticCard(dom: HTMLElement, kind: string, attrsSource: string) {
   const meta = document.createElement('span');
   meta.className = 'mobile-static-block__meta';
   meta.textContent = kind === 'agent-thread-card'
-    ? [attrs.agentType, attrs.agentRoleName].filter(Boolean).join(' · ') || '只读内容'
+    ? '对话卡片，请在桌面版本使用'
     : '此内容仅可在桌面端编辑';
 
-  dom.append(eyebrow, title, meta);
+  dom.append(title, meta);
 }
 
 export const StaticCustomBlock = Node.create({

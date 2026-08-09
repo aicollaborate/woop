@@ -130,9 +130,11 @@ describe('AgentRolePickerController · 统一搜索 + 双分组', () => {
     const c = createController({});
     const direct = Array.from(c.popoverElement.children);
     expect(direct.length).toBeGreaterThan(0);
-    // 第一层: search + groups container
+    // 第一层: search ── 分隔线 ── groups container
+    // (分隔线改用真 <hr> 元素, 跟文档 "…more" 下拉菜单同源)
     expect(direct[0].className).toContain('quick-phrase-search');
-    expect(direct[1].className).toContain('quick-phrase-list');
+    expect(direct[1].className).toContain('quick-phrase-divider');
+    expect(direct[2].className).toContain('quick-phrase-list');
   });
 
   it('无常用语时, 弹窗里出现「添加常用语」入口项', () => {

@@ -273,11 +273,15 @@ export class AgentRolePickerController {
    *  - 搜索 active 时同时过滤两组 (按 title.toLowerCase().includes(filter))
    *  - 两组互不干扰: 没匹配的组连 header 一起隐藏
    *  - 全无命中时显示统一的未找到占位
-   *  - 视觉继续复用 .agent-thread-card__composer-role-item* ── 不另写样式 */
+   *  - 视觉继续复用 .agent-thread-card__composer-role-item* ── 不另写样式
+   *  - 分隔线 ── 搜索框与第一组之间、组与组之间, 一律用真 <hr> 元素,
+   *    样式跟文档标题栏 "…more" 下拉菜单里的 <hr> 同源 (border-top
+   *    1px var(--border) + opacity 0.5), 不再在 input / header 上画
+   *    border。 */
   private renderUnifiedSection(): DocumentFragment {
     const frag = document.createDocumentFragment();
 
-    // ── 搜索框 ── 无图标, 无边框, 无背景; 仅保留底部 1px divider 与 popover 节奏一致
+    // ── 搜索框 ── 无图标, 无边框, 无背景
     const search = document.createElement("input");
     search.type = "text";
     search.className =
@@ -313,15 +317,17 @@ export class AgentRolePickerController {
         ? roleEntries.filter((r) => r.name.toLowerCase().includes(filter))
         : roleEntries;
 
+      // 收集要渲染的分组 ── 多个分组时, 渲染时在组间插 <hr>
+      const groupFragments: DocumentFragment[] = [];
       let hasAny = false;
 
       // ── 常用语分组 ──
       if (phrases.length === 0 && !filter) {
         // 完全未配置: 显示「添加常用语」入口项, 视觉等同菜单项
-        groupsContainer.append(this.renderQuickPhrasesGroup([], filter));
+        groupFragments.push(this.renderQuickPhrasesGroup([], filter));
         hasAny = true;
       } else if (matchedPhrases.length > 0) {
-        groupsContainer.append(
+        groupFragments.push(
           this.renderQuickPhrasesGroup(matchedPhrases, filter),
         );
         hasAny = true;
@@ -329,7 +335,7 @@ export class AgentRolePickerController {
 
       // ── 选择角色分组 ──
       if (matchedRoles.length > 0) {
-        groupsContainer.append(this.renderRoleGroup(matchedRoles));
+        groupFragments.push(this.renderRoleGroup(matchedRoles));
         hasAny = true;
       }
 
@@ -342,6 +348,16 @@ export class AgentRolePickerController {
             "",
           ),
         );
+        return;
+      }
+
+      // 渲染分组 ── 仅在多组之间插 <hr> 分隔线; 单组时不需要组内分隔
+      // (搜索框与第一组之间的 <hr> 在 renderUnifiedSection 末尾统一追加)。
+      for (let i = 0; i < groupFragments.length; i++) {
+        if (i > 0) {
+          groupsContainer.append(this.createQuickPhraseDivider());
+        }
+        groupsContainer.append(groupFragments[i]);
       }
     };
 
@@ -376,13 +392,27 @@ export class AgentRolePickerController {
     });
 
     rerenderGroups();
-    frag.append(search, groupsContainer);
+    // 拼接: 搜索框 ── 分隔线 ── 列表容器 ── 列表容器内部已有组间分隔线
+    frag.append(search);
+    frag.append(this.createQuickPhraseDivider());
+    frag.append(groupsContainer);
 
     // 打开弹窗时自动聚焦搜索框
     requestAnimationFrame(() => {
       if (this.open && !this.popover.hidden) search.focus();
     });
     return frag;
+  }
+
+  /** 创建分隔线 ── 跟文档标题栏 "…more" 下拉菜单里的 <hr> 同源:
+   *  `border-t border-[var(--border)] opacity-50`
+   *  (document-titlebar-shared.tsx); CSS class 写在 role-picker.css
+   *  的 .agent-thread-card__composer-quick-phrase-divider 里。 */
+  private createQuickPhraseDivider(): HTMLHRElement {
+    const hr = document.createElement("hr");
+    hr.className =
+      "agent-thread-card__composer-quick-phrase-divider";
+    return hr;
   }
 
   /** 常用语分组: header + 列表项 (含未配置时的「添加常用语」入口) */

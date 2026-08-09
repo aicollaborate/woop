@@ -250,6 +250,7 @@ export function MemoList() {
   const [editNotebookIcon, setEditNotebookIcon] = useState<string | null>(null);
   const [editNotebookCloudSync, setEditNotebookCloudSync] = useState(false);
   const [originalEditNotebookCloudSync, setOriginalEditNotebookCloudSync] = useState(false);
+  const [editNotebookSaving, setEditNotebookSaving] = useState(false);
   const [cloudSyncAvailable, setCloudSyncAvailable] = useState(false);
   const [tagMap, setTagMap] = useState<Record<string, string>>({});
   const [isMemoListLoading, setIsMemoListLoading] = useState(false);
@@ -311,6 +312,7 @@ export function MemoList() {
       const ce = event as CustomEvent<Notebook>;
       const notebook = ce.detail;
       if (!notebook) return;
+      setEditNotebookSaving(false);
       setEditingNotebook(notebook);
       setEditNotebookName(notebook.name);
       setEditNotebookIcon(normalizeNotebookIconId(notebook.icon));
@@ -761,7 +763,7 @@ export function MemoList() {
   };
 
   const handleConfirmEditNotebook = async () => {
-    if (!editingNotebook) return;
+    if (!editingNotebook || editNotebookSaving) return;
     const trimmed = editNotebookName.trim();
     const nextIcon = editNotebookIcon || null;
     const currentIcon = normalizeNotebookIconId(editingNotebook.icon);
@@ -778,15 +780,14 @@ export function MemoList() {
       return;
     }
     try {
+      setEditNotebookSaving(true);
       const updated = notebookMetadataChanged
         ? await notebookRepository.update(editingNotebook.id, trimmed, nextIcon ?? '')
         : editingNotebook;
       if (updated) {
+        const shouldStartCloudSync = cloudSyncChanged && editNotebookCloudSync;
         if (cloudSyncChanged) {
           await cloud.setNotebookEnabled(editingNotebook.id, editNotebookCloudSync);
-          if (editNotebookCloudSync) {
-            await cloud.syncNow(editingNotebook.id);
-          }
         }
         toast.success(t('memo.list.updated'));
         // 同步更新列表
@@ -803,12 +804,21 @@ export function MemoList() {
         setEditNotebookIcon(null);
         setEditNotebookCloudSync(false);
         setOriginalEditNotebookCloudSync(false);
+        setEditNotebookSaving(false);
+        if (shouldStartCloudSync) {
+          void cloud.syncNow(editingNotebook.id).catch((error) => {
+            logger.warn('background notebook cloud sync failed', { error });
+            toast.error(cloudSyncErrorMessage(error, t));
+          });
+        }
       } else {
         toast.error(t('memo.list.updateFailed'));
+        setEditNotebookSaving(false);
       }
     } catch (error) {
       logger.warn('update notebook failed', { error });
       toast.error(cloudSyncErrorMessage(error, t));
+      setEditNotebookSaving(false);
     }
   };
 
@@ -1123,12 +1133,14 @@ export function MemoList() {
             }}
             editOpen={editNotebookOpen}
             onEditOpenChange={(open) => {
+              if (!open && editNotebookSaving) return;
               if (!open) {
                 setEditingNotebook(null);
                 setEditNotebookName('');
                 setEditNotebookIcon(null);
                 setEditNotebookCloudSync(false);
                 setOriginalEditNotebookCloudSync(false);
+                setEditNotebookSaving(false);
               }
               setEditNotebookOpen(open);
             }}
@@ -1144,17 +1156,20 @@ export function MemoList() {
                 toast.error(`${t('notebook.cloudSync.failed')}: ${String(error)}`);
               });
             }}
+            editSaving={editNotebookSaving}
             editNotebookCloudSyncChanged={
               editNotebookCloudSync !== originalEditNotebookCloudSync
             }
             onConfirmEdit={handleConfirmEditNotebook}
             onCancelEdit={() => {
+              if (editNotebookSaving) return;
               setEditNotebookOpen(false);
               setEditingNotebook(null);
               setEditNotebookName('');
               setEditNotebookIcon(null);
               setEditNotebookCloudSync(false);
               setOriginalEditNotebookCloudSync(false);
+              setEditNotebookSaving(false);
             }}
           />
         </Suspense>

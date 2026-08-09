@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { AttachmentLink } from '@features/editor/extensions/attachment-link';
 import { buildUploadContent } from '@features/editor/extensions/attachment-link/upload/build-content';
@@ -32,6 +33,10 @@ import { TablePlugin } from '@features/editor/extensions/table/table-plugin';
 import { Tag } from '@features/editor/extensions/tag';
 import { WebCard } from '@features/editor/extensions/web-card';
 import { mobileClient } from '@platform/tauri/mobile-client';
+import {
+  MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT,
+  scrollMobileEditorSelectionIntoView,
+} from './mobile-editor-viewport';
 import { StaticCustomBlock } from './static-custom-block';
 
 interface MobileRichMarkdownEditorProps {
@@ -45,6 +50,47 @@ interface ToolbarAction {
   title: string;
   run: (editor: Editor) => void;
   active?: (editor: Editor) => boolean;
+}
+
+const MOBILE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const MOBILE_ATTACHMENT_MAX_BATCH_BYTES = 100 * 1024 * 1024;
+const MOBILE_ATTACHMENT_CHUNK_BYTES = 512 * 1024;
+
+function readBlobAsBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || '');
+      resolve(value.includes(',') ? value.slice(value.indexOf(',') + 1) : value);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('无法读取附件'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function saveMobileAttachment(file: File, fileName: string, memoId: string): Promise<string> {
+  if (file.size <= 0 || file.size > MOBILE_ATTACHMENT_MAX_BYTES) {
+    throw new Error('单个附件不能超过 25 MB。');
+  }
+  const started = await mobileClient.attachments.beginUpload({
+    fileName,
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: file.size,
+    memoId,
+  });
+  try {
+    for (let offset = 0; offset < file.size; offset += MOBILE_ATTACHMENT_CHUNK_BYTES) {
+      const chunk = file.slice(offset, Math.min(offset + MOBILE_ATTACHMENT_CHUNK_BYTES, file.size));
+      await mobileClient.attachments.writeChunk({
+        uploadId: started.uploadId,
+        content: await readBlobAsBase64(chunk),
+      });
+    }
+    return await mobileClient.attachments.finishUpload(started.uploadId);
+  } catch (error) {
+    void mobileClient.attachments.cancelUpload(started.uploadId);
+    throw error;
+  }
 }
 
 const TOOLBAR_ACTIONS: ToolbarAction[] = [
@@ -150,7 +196,7 @@ export function createMobileRichExtensions() {
     TextStyle, Color, Highlight.configure({ multicolor: true }), TablePlugin,
     TaskList, PreservedTaskItem.configure({ nested: true }),
     Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
-    Placeholder.configure({ placeholder: '开始记录…', showOnlyCurrent: true }),
+    Placeholder.configure({ placeholder: '记录想法...', showOnlyCurrent: true }),
     Tag, ManagedPasteRules, MarkdownPaste, DateTimeWidget, Frontmatter,
     NoteReference, NoteMention, StaticCustomBlock,
   ];
@@ -177,8 +223,9 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
         // ProseMirror normally only keeps the caret inside the visual viewport.
         // The formatting toolbar overlays the bottom of that viewport, so leave
         // one toolbar-height of breathing room when Enter moves the caret down.
-        scrollThreshold: { top: 16, right: 0, bottom: 64, left: 0 },
-        scrollMargin: { top: 16, right: 0, bottom: 64, left: 0 },
+        scrollThreshold: { top: 16, right: 0, bottom: 78, left: 0 },
+        scrollMargin: { top: 16, right: 0, bottom: 78, left: 0 },
+        handleScrollToSelection: scrollMobileEditorSelectionIntoView,
       },
       onUpdate: ({ editor: current }) => { onChangeRef.current(normalizeTables(current.getMarkdown())); setToolbarVersion((v) => v + 1); },
       onSelectionUpdate: () => setToolbarVersion((v) => v + 1),
@@ -195,7 +242,18 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
     };
     editorDom.addEventListener('focusin', handleFocusIn);
     editorDom.addEventListener('focusout', handleFocusOut);
+    let viewportFrame = 0;
+    const handleViewportChange = () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
+      viewportFrame = window.requestAnimationFrame(() => {
+        viewportFrame = 0;
+        if (instance.isFocused) scrollMobileEditorSelectionIntoView(instance.view);
+      });
+    };
+    window.addEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
     return () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
+      window.removeEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
       editorDom.removeEventListener('focusin', handleFocusIn);
       editorDom.removeEventListener('focusout', handleFocusOut);
       instance.destroy();
@@ -225,9 +283,14 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
       const files = Array.from(input.files || []);
       input.remove();
       if (files.length === 0) return;
+      const batchBytes = files.reduce((total, file) => total + file.size, 0);
+      if (batchBytes > MOBILE_ATTACHMENT_MAX_BATCH_BYTES) {
+        console.error('[MobileAttachment] Attachment batch exceeds the 100 MB limit');
+        return;
+      }
       void (async () => {
-        const result = await createAttachmentUpload(files, ({ content: fileContent, fileName }) =>
-          mobileClient.attachments.saveContent({ content: fileContent, fileName, memoId }),
+        const result = await createAttachmentUpload(files, undefined, ({ file, fileName }) =>
+          saveMobileAttachment(file, fileName, memoId),
         );
         const assets = result.assets.filter((asset) => asset.storageKey);
         result.assets.forEach((asset) => {
@@ -242,31 +305,35 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
     input.click();
   };
 
+  const toolbar = (
+    <div className={`mobile-editor-toolbar${showToolbar ? ' is-visible' : ''}`} role="toolbar" aria-label="Markdown 格式" aria-hidden={!showToolbar}>
+      <div className="mobile-editor-toolbar__scroll">
+        {TOOLBAR_ACTIONS.map((action, index) => {
+          const Icon = action.icon;
+          return <button key={action.title} type="button" title={action.title} aria-label={action.title}
+            className={`${editor && action.active?.(editor) ? 'is-active' : ''}${index === 2 || index === 4 || index === 7 ? ' starts-group' : ''}`.trim() || undefined}
+            disabled={!editor} onPointerDown={(event) => event.preventDefault()} onClick={() => editor && action.run(editor)}>
+            <Icon size={18} strokeWidth={1.8} />
+          </button>;
+        })}
+        <button type="button" title="添加附件" aria-label="添加附件" disabled={!editor}
+          onPointerDown={(event) => event.preventDefault()} onClick={addAttachment}>
+          <Paperclip size={18} strokeWidth={1.8} />
+        </button>
+      </div>
+      <div className="mobile-editor-toolbar__fixed">
+        <button type="button" className="mobile-editor-toolbar__dismiss" title="收起键盘" aria-label="收起键盘"
+          disabled={!editor} onPointerDown={(event) => event.preventDefault()} onClick={dismissKeyboard}>
+          <KeyboardOff size={19} strokeWidth={1.8} />
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="mobile-markdown-editor markdown-editor">
       <div ref={mountRef} className="mobile-markdown-editor__content editor-content" />
-      <div className={`mobile-editor-toolbar${showToolbar ? ' is-visible' : ''}`} role="toolbar" aria-label="Markdown 格式" aria-hidden={!showToolbar}>
-        <div className="mobile-editor-toolbar__scroll">
-          {TOOLBAR_ACTIONS.map((action, index) => {
-            const Icon = action.icon;
-            return <button key={action.title} type="button" title={action.title} aria-label={action.title}
-              className={`${editor && action.active?.(editor) ? 'is-active' : ''}${index === 2 || index === 4 || index === 7 ? ' starts-group' : ''}`.trim() || undefined}
-              disabled={!editor} onPointerDown={(event) => event.preventDefault()} onClick={() => editor && action.run(editor)}>
-              <Icon size={18} strokeWidth={1.8} />
-            </button>;
-          })}
-          <button type="button" title="添加附件" aria-label="添加附件" disabled={!editor}
-            onPointerDown={(event) => event.preventDefault()} onClick={addAttachment}>
-            <Paperclip size={18} strokeWidth={1.8} />
-          </button>
-        </div>
-        <div className="mobile-editor-toolbar__fixed">
-          <button type="button" className="mobile-editor-toolbar__dismiss" title="收起键盘" aria-label="收起键盘"
-            disabled={!editor} onPointerDown={(event) => event.preventDefault()} onClick={dismissKeyboard}>
-            <KeyboardOff size={19} strokeWidth={1.8} />
-          </button>
-        </div>
-      </div>
+      {createPortal(toolbar, document.body)}
     </div>
   );
 }

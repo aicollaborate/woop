@@ -340,19 +340,9 @@ function DetailedMemoCardBody({
         </p>
       </div>
       <div className="flex w-full items-center justify-between gap-2 pt-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-          {(memo.favorited || hasTodos) && (
-            <span className="inline-flex shrink-0 items-center gap-1">
-              {memo.favorited && (
-                <PushPin weight="fill" className="h-3.5 w-3.5 text-[var(--foreground)]" />
-              )}
-              {hasTodos && (
-                <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
-              )}
-            </span>
-          )}
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
           {memo.tags && memo.tags.length > 0 && (
-            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            <>
               {memo.tags.slice(0, 2).map((tagId) => {
                 const tagLabel = tagMap[tagId] || tagId;
 
@@ -371,7 +361,17 @@ function DetailedMemoCardBody({
                   +{memo.tags.length - 2}
                 </span>
               )}
-            </div>
+            </>
+          )}
+          {(memo.favorited || hasTodos) && (
+            <span className="inline-flex shrink-0 items-center gap-1">
+              {memo.favorited && (
+                <PushPin weight="fill" className="h-3.5 w-3.5 text-[var(--foreground)]" />
+              )}
+              {hasTodos && (
+                <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+              )}
+            </span>
           )}
         </div>
         <span className="shrink-0 text-xs tabular-nums text-[var(--muted-foreground)]">
