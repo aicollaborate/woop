@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use flowix_core::memo_file::{
@@ -12,7 +12,7 @@ use flowix_sync::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::state::{read_memo_file, MobileState};
+use crate::state::{invalidate_search, read_memo_file, MobileState};
 
 fn enable_local_notebooks(state: &MobileState) -> Result<(), String> {
     let configs = read_memo_file(state)
@@ -87,6 +87,11 @@ async fn ensure_remote_notebooks(state: &MobileState) -> Result<usize, String> {
         let path = state.notebook_dir(&notebook.id);
         std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
         if let Some(config) = configs.iter_mut().find(|config| config.id == notebook.id) {
+            let expected_path = format!("{}/", path.display());
+            if config.path != expected_path {
+                config.path = expected_path;
+                changed = true;
+            }
             if config.name != notebook.name
                 || config.icon != notebook.icon
                 || config.sort != notebook.sort_order
@@ -141,6 +146,10 @@ async fn ensure_remote_notebooks(state: &MobileState) -> Result<usize, String> {
 fn account_snapshot(
     state: &MobileState,
 ) -> Result<(Vec<V2LocalNotebook>, Vec<V2LocalNote>), String> {
+    // Keep the index and its files stable while taking the local snapshot.
+    // Every mobile mutation acquires this lock before reading the memo store,
+    // so taking it first also avoids lock-order inversions.
+    let mutation_guard = state.lock_mutations();
     let enabled: HashSet<String> = state
         .cloud_sync
         .v2_enabled_notebooks()
@@ -154,17 +163,37 @@ fn account_snapshot(
         .map_err(|error| error.to_string())?;
     let mut notebooks = Vec::new();
     let mut notes = Vec::new();
+    let mut missing_local_notes = Vec::new();
 
     for config in configs
         .into_iter()
         .filter(|config| enabled.contains(&config.id))
     {
         for memo in memo_file.read_all_memos_for_notebook_id(Some(&config.id)) {
-            let path = PathBuf::from(&config.path).join(&memo.filename);
-            let content = std::fs::read(&path)
-                .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?;
+            let path = state.notebook_dir(&config.id).join(&memo.filename);
+            let content = match std::fs::read(&path) {
+                Ok(content) => content,
+                // The memo index can outlive a markdown file removed outside
+                // the app (or after an interrupted file operation). It is not
+                // a sync conflict: remove this stale entry, then let the cloud
+                // snapshot restore a remote copy if one exists.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!(
+                        "mobile sync: recovering missing local note from cloud: {}",
+                        path.display()
+                    );
+                    memo_file
+                        .delete_memo_result_for_notebook_id(&config.id, &memo.id)
+                        .map_err(|error| format!("REMOVE_MISSING_NOTE_FAILED: {error}"))?;
+                    missing_local_notes.push((config.id.clone(), memo.id));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(format!("READ_NOTE_FAILED {}: {error}", path.display()));
+                }
+            };
             let attachments = collect_v2_attachments(
-                &PathBuf::from(&config.path).join("attachments"),
+                &state.notebook_dir(&config.id).join("attachments"),
                 &content,
             )?;
             notes.push(V2LocalNote {
@@ -182,6 +211,14 @@ fn account_snapshot(
             sort_order: config.sort,
         });
     }
+    drop(memo_file);
+    for (notebook_id, note_id) in missing_local_notes {
+        state
+            .cloud_sync
+            .recover_missing_v2_note(&notebook_id, &note_id)
+            .map_err(|error| error.to_string())?;
+    }
+    drop(mutation_guard);
     Ok((notebooks, notes))
 }
 
@@ -191,10 +228,10 @@ fn apply_note_changes(
     changes: &[&V2RemoteApply],
 ) -> Result<(), String> {
     let memo_file = read_memo_file(state);
-    let notebook = memo_file
+    let _notebook = memo_file
         .get_notebook_config_by_id(notebook_id)
         .ok_or_else(|| "NOTEBOOK_NOT_FOUND".to_string())?;
-    let base = PathBuf::from(&notebook.path);
+    let base = state.notebook_dir(notebook_id);
     std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
     let mut occupied: Vec<String> = memo_file
         .read_all_memos_for_notebook_id(Some(notebook_id))
@@ -373,6 +410,7 @@ fn apply_report(state: &MobileState, report: &V2AccountSyncReport) -> Result<(),
 
 pub async fn sync_account(state: &MobileState) -> Result<V2AccountSyncReport, String> {
     let _guard = state.sync_lock.lock().await;
+    state.ensure_local_notebook()?;
     let (notebooks, notes) = account_snapshot(state)?;
     let report_result = state.cloud_sync.sync_v2_account(notebooks, notes).await;
     // Refresh token rotation can happen before a later network or apply error.
@@ -386,6 +424,9 @@ pub async fn sync_account(state: &MobileState) -> Result<V2AccountSyncReport, St
         .cloud_sync
         .complete_v2_account_sync(&report)
         .map_err(|error| error.to_string())?;
+    if !report.remote.is_empty() {
+        invalidate_search(state);
+    }
     drop(mutation_guard);
     Ok(report)
 }
@@ -393,6 +434,7 @@ pub async fn sync_account(state: &MobileState) -> Result<V2AccountSyncReport, St
 pub async fn bootstrap_and_sync(
     state: &MobileState,
 ) -> Result<(usize, V2AccountSyncReport), String> {
+    state.ensure_local_notebook()?;
     enable_local_notebooks(state)?;
     let notebooks = ensure_remote_notebooks(state).await?;
     let report = sync_account(state).await?;
@@ -401,8 +443,29 @@ pub async fn bootstrap_and_sync(
 
 static SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
 static RETRY_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+static AUTO_SYNC_CIRCUIT_OPEN: AtomicBool = AtomicBool::new(false);
+
+fn is_rate_limited_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("upload_rate_limited")
+        || normalized.contains("cloud api error 429")
+        || normalized.contains("status 429")
+}
+
+fn should_retry_automatically(error: &str) -> bool {
+    !is_rate_limited_error(error)
+}
+
+pub fn reset_auto_sync_circuit() {
+    AUTO_SYNC_CIRCUIT_OPEN.store(false, Ordering::SeqCst);
+    RETRY_ATTEMPTS.store(0, Ordering::SeqCst);
+    SYNC_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
 
 pub fn schedule_sync(app: AppHandle) {
+    if AUTO_SYNC_CIRCUIT_OPEN.load(Ordering::SeqCst) {
+        return;
+    }
     schedule_sync_after(app, Duration::from_millis(1_200));
 }
 
@@ -411,6 +474,9 @@ fn schedule_sync_after(app: AppHandle, delay: Duration) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(delay).await;
         if SYNC_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if AUTO_SYNC_CIRCUIT_OPEN.load(Ordering::SeqCst) {
             return;
         }
         let state = app.state::<MobileState>();
@@ -427,12 +493,15 @@ fn schedule_sync_after(app: AppHandle, delay: Duration) {
                     &app,
                     &run_id,
                     "error",
-                    "retrying",
+                    if crate::sync::schedule_retry_after_failure(app.clone(), &error) {
+                        "retrying"
+                    } else {
+                        "paused"
+                    },
                     started_at,
                     None,
                     Some(error.clone()),
                 );
-                schedule_retry_after_failure(app.clone(), &error);
             } else {
                 RETRY_ATTEMPTS.store(0, Ordering::SeqCst);
                 crate::commands::emit_sync_status(
@@ -446,15 +515,19 @@ fn schedule_sync_after(app: AppHandle, delay: Duration) {
     });
 }
 
-/// Retry failures while the app remains active. The shared sync engine may
-/// supply a server-aware retry deadline; otherwise use capped exponential
-/// backoff so transient connectivity failures eventually converge without a
-/// busy loop.
-pub fn schedule_retry_after_failure(app: AppHandle, _error: &str) {
+/// Retry transient failures while the app remains active. Rate-limit errors
+/// open a circuit instead, so the client waits for an explicit user retry.
+pub fn schedule_retry_after_failure(app: AppHandle, error: &str) -> bool {
+    if !should_retry_automatically(error) {
+        AUTO_SYNC_CIRCUIT_OPEN.store(true, Ordering::SeqCst);
+        SYNC_GENERATION.fetch_add(1, Ordering::SeqCst);
+        eprintln!("mobile background sync paused after rate limit: {error}");
+        return false;
+    }
     let state = app.state::<MobileState>();
     let cloud = state.cloud_sync.state();
     if !cloud.is_ok_and(|value| value.enabled && crate::state::cloud_sync_allowed(&value)) {
-        return;
+        return false;
     }
     let attempt = RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst).min(4);
     let fallback_ms = 15_000_i64.saturating_mul(1_i64 << attempt);
@@ -466,4 +539,87 @@ pub fn schedule_retry_after_failure(app: AppHandle, _error: &str) {
         .unwrap_or(fallback_ms)
         .clamp(1_000, 5 * 60_000);
     schedule_sync_after(app, Duration::from_millis(delay_ms as u64));
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use flowix_core::MemoService;
+
+    use super::{
+        account_snapshot, is_rate_limited_error, read_memo_file, should_retry_automatically,
+        MobileState, V2LocalNotebook,
+    };
+
+    #[test]
+    fn missing_local_note_is_pruned_and_scheduled_for_cloud_recovery() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let state = MobileState::new(directory.path().to_path_buf()).expect("mobile state");
+        state.ensure_local_notebook().expect("local notebook");
+
+        let (notebook, created) = {
+            let memo_file = read_memo_file(&state);
+            let notebook = memo_file
+                .read_notebook_configs()
+                .expect("notebook config")
+                .into_iter()
+                .next()
+                .expect("default notebook");
+            let mut service = MemoService::new(&memo_file);
+            let created = service
+                .create_memo_named(Some(&notebook.id), "Cloud copy", "body")
+                .expect("memo");
+            (notebook, created)
+        };
+        state
+            .cloud_sync
+            .set_v2_notebook_enabled(
+                &V2LocalNotebook {
+                    id: notebook.id.clone(),
+                    name: notebook.name.clone(),
+                    icon: notebook.icon.clone(),
+                    sort_order: notebook.sort,
+                },
+                true,
+            )
+            .expect("enable notebook sync");
+        state
+            .cloud_sync
+            .record_v2_local_change(
+                &notebook.id,
+                &created.memo.id,
+                flowix_sync::LocalChangeKind::Put,
+                "stale-local-content",
+            )
+            .expect("queue local upload");
+        std::fs::remove_file(&created.path).expect("remove local markdown file");
+
+        let (_notebooks, notes) = account_snapshot(&state).expect("recover snapshot");
+
+        assert!(notes.is_empty());
+        assert!(read_memo_file(&state).read_memo(&created.memo.id).is_none());
+        assert!(
+            !state
+                .cloud_sync
+                .has_pending_v2_note_change(&created.memo.id)
+                .expect("pending change state")
+        );
+        assert!(state
+            .cloud_sync
+            .v2_notebook(&notebook.id)
+            .expect("notebook sync state")
+            .expect("enabled notebook")
+            .bootstrap_required);
+    }
+
+    #[test]
+    fn rate_limited_sync_errors_are_not_retried_automatically() {
+        assert!(is_rate_limited_error(
+            "cloud API error 429 UPLOAD_RATE_LIMITED: Too many upload reservations"
+        ));
+        assert!(is_rate_limited_error("request failed with status 429"));
+        assert!(!should_retry_automatically("cloud API error 429 UPLOAD_RATE_LIMITED"));
+        assert!(should_retry_automatically("cloud API error 503 SERVER_ERROR"));
+        assert!(!is_rate_limited_error("cloud API error 500 SERVER_ERROR: failed"));
+    }
 }

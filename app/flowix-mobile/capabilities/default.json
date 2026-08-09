@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "Flowix mobile main window capability",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
 }

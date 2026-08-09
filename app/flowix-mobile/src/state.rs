@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use flowix_core::memo_file::{atomic_write_bytes, MemoFile, NotebookConfig};
+use flowix_core::search::{BigramTokenizer, MemoIndex};
 use flowix_core::secret::SecretStore;
 use flowix_sync::CloudState;
 #[cfg(target_os = "ios")]
@@ -11,9 +13,25 @@ use tauri_plugin_keyring_store::{KeyringAvailability, KeyringStore};
 const CLOUD_REFRESH_TOKEN_KEY: &str = "flowix_cloud::refresh_token";
 const MOBILE_KEYRING_SERVICE: &str = "com.flowix.app.mobile.credentials";
 
+/// Keep individual browser-to-native transfers bounded. The frontend streams
+/// in smaller chunks, but this is the authoritative limit for a compromised
+/// or stale WebView too.
+pub const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+pub const MAX_ATTACHMENT_STORAGE_BYTES: u64 = 512 * 1024 * 1024;
+
+pub struct PendingAttachmentUpload {
+    pub temporary_path: PathBuf,
+    pub destination_path: PathBuf,
+    pub expected_bytes: u64,
+    pub written_bytes: u64,
+}
+
 pub struct MobileState {
     pub data_dir: PathBuf,
     pub memo_file: Arc<RwLock<MemoFile>>,
+    /// The selected notebook's in-memory full-text index. It is rebuilt lazily
+    /// on the first search after a notebook switch or cloud reconciliation.
+    pub search: RwLock<MemoIndex>,
     pub cloud_sync: Arc<flowix_sync::SyncManager>,
     credentials: KeyringStore,
     legacy_secrets: SecretStore,
@@ -22,6 +40,10 @@ pub struct MobileState {
     pub initialize_lock: tokio::sync::Mutex<()>,
     pub sync_lock: tokio::sync::Mutex<()>,
     mutation_lock: std::sync::Mutex<()>,
+    /// Incomplete uploads only ever live under an app-private `.uploads`
+    /// directory. Keeping their reservations in state prevents concurrent
+    /// browser requests from exceeding the app attachment quota.
+    pub attachment_uploads: Mutex<HashMap<String, PendingAttachmentUpload>>,
 }
 
 impl MobileState {
@@ -43,9 +65,18 @@ impl MobileState {
         )
         .map_err(|error| error.to_string())?;
 
-        Ok(Self {
+        // An upload cannot survive a process restart: its browser-side stream
+        // has gone away, so reclaim only our private temporary files. Final
+        // attachments are never touched here.
+        let uploads_dir = data_dir.join(".uploads");
+        if uploads_dir.exists() {
+            std::fs::remove_dir_all(&uploads_dir).map_err(|error| error.to_string())?;
+        }
+
+        let state = Self {
             data_dir,
             memo_file: Arc::new(RwLock::new(MemoFile::new(config_dir.clone()))),
+            search: RwLock::new(MemoIndex::new(Arc::new(BigramTokenizer))),
             cloud_sync: Arc::new(cloud_sync),
             credentials: mobile_keyring(),
             legacy_secrets: SecretStore::new(config_dir.join("default.db")),
@@ -54,11 +85,40 @@ impl MobileState {
             initialize_lock: tokio::sync::Mutex::new(()),
             sync_lock: tokio::sync::Mutex::new(()),
             mutation_lock: std::sync::Mutex::new(()),
-        })
+            attachment_uploads: Mutex::new(HashMap::new()),
+        };
+        // `NotebookConfig.path` is required by the shared core store, but on
+        // mobile it is only a runtime cache. Never let a path from a previous
+        // iOS app container become the source of truth.
+        state.reconcile_notebook_paths()?;
+        Ok(state)
     }
 
     pub fn notebook_dir(&self, notebook_id: &str) -> PathBuf {
         self.data_dir.join("notebooks").join(notebook_id)
+    }
+
+    pub fn reconcile_notebook_paths(&self) -> Result<(), String> {
+        let memo_file = read_memo_file(self);
+        let mut configs = memo_file
+            .read_notebook_configs()
+            .map_err(|error| error.to_string())?;
+        let mut changed = false;
+        for config in &mut configs {
+            let path = self.notebook_dir(&config.id);
+            std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            let expected = format!("{}/", path.display());
+            if config.path != expected {
+                config.path = expected;
+                changed = true;
+            }
+        }
+        if changed {
+            memo_file
+                .write_notebook_configs(&configs)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn ensure_local_notebook(&self) -> Result<(), String> {
@@ -67,7 +127,8 @@ impl MobileState {
             .read_notebook_configs()
             .map_err(|error| error.to_string())?;
         if !configs.is_empty() {
-            return Ok(());
+            drop(memo_file);
+            return self.reconcile_notebook_paths();
         }
 
         let id = format!("nb_{}", uuid::Uuid::now_v7());
@@ -215,6 +276,14 @@ pub fn read_memo_file(state: &MobileState) -> std::sync::RwLockReadGuard<'_, Mem
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+pub fn invalidate_search(state: &MobileState) {
+    state
+        .search
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .mark_unloaded();
+}
+
 #[cfg(test)]
 mod tests {
     use flowix_sync::{CloudMembership, CloudState};
@@ -256,6 +325,33 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "我的笔记");
         assert!(std::path::Path::new(&configs[0].path).is_dir());
+    }
+
+    #[test]
+    fn repairs_notebook_paths_after_an_app_container_change() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let state = MobileState::new(directory.path().to_path_buf()).expect("mobile state");
+        state.ensure_local_notebook().expect("local notebook");
+
+        let memo_file = super::read_memo_file(&state);
+        let mut configs = memo_file.read_notebook_configs().expect("notebook configs");
+        configs[0].path = "/private/var/mobile/old-container/notebook/".to_string();
+        memo_file
+            .write_notebook_configs(&configs)
+            .expect("stale notebook path");
+        drop(memo_file);
+
+        drop(state);
+        let restored = MobileState::new(directory.path().to_path_buf()).expect("restored state");
+
+        let repaired = super::read_memo_file(&restored)
+            .read_notebook_configs()
+            .expect("repaired notebook configs");
+        assert_eq!(
+            repaired[0].path,
+            format!("{}/", restored.notebook_dir(&repaired[0].id).display())
+        );
+        assert!(std::path::Path::new(&repaired[0].path).is_dir());
     }
 
     #[test]

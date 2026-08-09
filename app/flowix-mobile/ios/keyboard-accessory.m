@@ -4,10 +4,10 @@
 // Flowix provides its own formatting toolbar above the keyboard. Remove the
 // system input assistant groups from WKWebView so iOS does not show a second
 // accessory bar above it.
-@interface FlowixKeyboardAccessorySuppressor : NSObject
+@interface FlowixKeyboardAccessory : NSObject
 @end
 
-@implementation FlowixKeyboardAccessorySuppressor
+@implementation FlowixKeyboardAccessory
 
 + (void)load {
   [[NSNotificationCenter defaultCenter]
@@ -55,3 +55,14 @@
 }
 
 @end
+
+// Exposed to the Rust mobile command so the web list can use the iOS Taptic
+// Engine even though WKWebView does not reliably implement navigator.vibrate.
+void flowix_trigger_light_haptic(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIImpactFeedbackGenerator *generator =
+        [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [generator prepare];
+    [generator impactOccurred];
+  });
+}
