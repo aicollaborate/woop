@@ -8,7 +8,7 @@ const frontendRoot = resolve(__dirname, 'app/flowix-web');
 export default defineConfig({
   test: {
     environment: 'jsdom',
-    include: ['app/flowix-web/**/*.test.ts'],
+    include: ['app/flowix-web/**/*.test.{ts,tsx}'],
     setupFiles: ['app/flowix-web/vitest.setup.ts'],
   },
   resolve: {

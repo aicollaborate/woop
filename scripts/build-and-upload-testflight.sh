@@ -258,7 +258,7 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   # with "Error in the HTTP2 framing layer". Force HTTP/1.1 for that clone.
   echo "==> [build] cargo build --release --target aarch64-apple-ios --features custom-protocol (aarch64 device)"
   cd "$MOBILE_DIR"
-  IOS_MINIMUM_SYSTEM_VERSION="$(node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("app/flowix-mobile/tauri.ios.conf.json", "utf8")); console.log(config.bundle.iOS.minimumSystemVersion)')"
+  IOS_MINIMUM_SYSTEM_VERSION="$(node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("tauri.ios.conf.json", "utf8")); console.log(config.bundle.iOS.minimumSystemVersion)')"
   IPHONEOS_DEPLOYMENT_TARGET="$IOS_MINIMUM_SYSTEM_VERSION" \
   CARGO_TARGET_DIR="$REPO_ROOT/.build/cargo-target" \
   GIT_CONFIG_COUNT=1 \
