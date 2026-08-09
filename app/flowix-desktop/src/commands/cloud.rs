@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use chrono::Utc;
 use flowix_core::memo_file::{
     atomic_write_bytes, extract_frontmatter_key, merge_frontmatter, resolve_filename_conflict,
     sanitize_filename_component, IsMd, MergeOverrides,
@@ -93,8 +94,38 @@ fn persist_rotated_token(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+const FULL_LOCAL_SNAPSHOT_INTERVAL_MS: i64 = 5 * 60 * 1_000;
+static LAST_FULL_LOCAL_SNAPSHOT_AT: AtomicI64 = AtomicI64::new(0);
+
+fn should_run_full_local_snapshot(
+    state: &AppState,
+    notebook_scope: Option<&str>,
+) -> Result<bool, String> {
+    let enabled = state
+        .cloud_sync
+        .v2_enabled_notebooks()
+        .map_err(sync_error)?;
+    if let Some(scope) = notebook_scope {
+        return Ok(enabled
+            .iter()
+            .find(|notebook| notebook.notebook_id == scope)
+            .is_some_and(|notebook| notebook.bootstrap_required));
+    }
+    if enabled.is_empty() {
+        return Ok(false);
+    }
+    if enabled.iter().any(|notebook| notebook.bootstrap_required) {
+        return Ok(true);
+    }
+    let now = Utc::now().timestamp_millis();
+    let last = LAST_FULL_LOCAL_SNAPSHOT_AT.load(Ordering::SeqCst);
+    Ok(last == 0 || now.saturating_sub(last) >= FULL_LOCAL_SNAPSHOT_INTERVAL_MS)
+}
+
 fn v2_account_snapshot(
     state: &AppState,
+    full_scan: bool,
+    notebook_scope: Option<&str>,
 ) -> Result<(Vec<V2LocalNotebook>, Vec<V2LocalNote>), String> {
     let enabled: std::collections::HashSet<String> = state
         .cloud_sync
@@ -103,6 +134,11 @@ fn v2_account_snapshot(
         .into_iter()
         .map(|notebook| notebook.notebook_id)
         .collect();
+    let dirty_note_ids = if full_scan {
+        None
+    } else {
+        Some(state.cloud_sync.v2_dirty_note_ids().map_err(sync_error)?)
+    };
     let memo_file = read_lock(&state.memo_file, "memo_file");
     let configs = memo_file.read_notebook_configs().map_err(sync_error)?;
     let mut notebooks = Vec::new();
@@ -110,8 +146,15 @@ fn v2_account_snapshot(
     for config in configs
         .into_iter()
         .filter(|config| enabled.contains(&config.id))
+        .filter(|config| notebook_scope.is_none_or(|scope| config.id == scope))
     {
         for memo in memo_file.read_all_memos_for_notebook_id(Some(&config.id)) {
+            if dirty_note_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&memo.id))
+            {
+                continue;
+            }
             let path = PathBuf::from(&config.path).join(&memo.filename);
             let content = std::fs::read(&path)
                 .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?;
@@ -435,14 +478,24 @@ fn account_sync_lock() -> Arc<tokio::sync::Mutex<()>> {
         .clone()
 }
 
-async fn sync_v2_account(state: &AppState, app: &AppHandle) -> Result<V2AccountSyncReport, String> {
+async fn sync_v2_account(
+    state: &AppState,
+    app: &AppHandle,
+    notebook_scope: Option<&str>,
+) -> Result<V2AccountSyncReport, String> {
+    let full_local_snapshot = should_run_full_local_snapshot(state, notebook_scope)?;
     let sync_lock = account_sync_lock();
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = chrono::Utc::now().timestamp_millis();
-    let enabled = state
+    let enabled: Vec<_> = state
         .cloud_sync
         .v2_enabled_notebooks()
-        .map_err(sync_error)?;
+        .map_err(sync_error)?
+        .into_iter()
+        .filter(|notebook| {
+            notebook_scope.is_none_or(|scope| notebook.notebook_id == scope)
+        })
+        .collect();
     if sync_lock.try_lock().is_err() {
         for notebook in &enabled {
             emit_sync_status(
@@ -476,7 +529,8 @@ async fn sync_v2_account(state: &AppState, app: &AppHandle) -> Result<V2AccountS
             canonicalize_local_keys(state, app, &notebook.notebook_id)?;
         }
     }
-    let (notebooks, notes) = v2_account_snapshot(state)?;
+    let (notebooks, notes) =
+        v2_account_snapshot(state, full_local_snapshot, notebook_scope)?;
     for notebook in &enabled {
         emit_sync_status(
             app,
@@ -489,7 +543,13 @@ async fn sync_v2_account(state: &AppState, app: &AppHandle) -> Result<V2AccountS
             ),
         );
     }
-    let report_result = state.cloud_sync.sync_v2_account(notebooks, notes).await;
+    let report_result = match notebook_scope {
+        Some(notebook_id) => state
+            .cloud_sync
+            .sync_v2_notebook(notebook_id, notebooks, notes)
+            .await,
+        None => state.cloud_sync.sync_v2_account(notebooks, notes).await,
+    };
     persist_rotated_token(state)?;
     let report = match report_result {
         Ok(report) => report,
@@ -523,10 +583,19 @@ async fn sync_v2_account(state: &AppState, app: &AppHandle) -> Result<V2AccountS
         );
     }
     apply_v2_report(state, app, &report)?;
-    state
-        .cloud_sync
-        .complete_v2_account_sync(&report)
-        .map_err(sync_error)?;
+    match notebook_scope {
+        Some(notebook_id) => state
+            .cloud_sync
+            .complete_v2_notebook_sync(notebook_id, &report)
+            .map_err(sync_error)?,
+        None => state
+            .cloud_sync
+            .complete_v2_account_sync(&report)
+            .map_err(sync_error)?,
+    }
+    if full_local_snapshot && notebook_scope.is_none() {
+        LAST_FULL_LOCAL_SNAPSHOT_AT.store(Utc::now().timestamp_millis(), Ordering::SeqCst);
+    }
     for notebook in &enabled {
         let mut status = CloudSyncStatus::new(
             &notebook.notebook_id,
@@ -558,8 +627,8 @@ fn schedule_notebook_sync_after(app: AppHandle, notebook_id: String, delay: Dura
         let mut values = generations
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let next = values.get("account").copied().unwrap_or(0) + 1;
-        values.insert("account".to_string(), next);
+        let next = values.get(&notebook_id).copied().unwrap_or(0) + 1;
+        values.insert(notebook_id.clone(), next);
         next
     };
     tauri::async_runtime::spawn(async move {
@@ -567,7 +636,7 @@ fn schedule_notebook_sync_after(app: AppHandle, notebook_id: String, delay: Dura
         let is_latest = SYNC_GENERATIONS
             .get()
             .and_then(|generations| generations.lock().ok())
-            .and_then(|values| values.get("account").copied())
+            .and_then(|values| values.get(&notebook_id).copied())
             == Some(generation);
         if !is_latest {
             return;
@@ -585,7 +654,7 @@ fn schedule_notebook_sync_after(app: AppHandle, notebook_id: String, delay: Dura
                 .flatten()
                 .is_some_and(|notebook| notebook.enabled);
         if should_sync {
-            if let Err(error) = sync_v2_account(state.inner(), &app).await {
+            if let Err(error) = sync_v2_account(state.inner(), &app, Some(&notebook_id)).await {
                 tracing::warn!("automatic cloud sync failed for {notebook_id}: {error}");
                 schedule_retry_after_failure(&app, &notebook_id);
             }
@@ -642,7 +711,7 @@ pub(crate) fn start_cloud_sync_polling(app: AppHandle) {
             };
             if let Some(notebook_id) = notebook_ids.first() {
                 let state = app.state::<AppState>();
-                if let Err(error) = sync_v2_account(state.inner(), &app).await {
+                if let Err(error) = sync_v2_account(state.inner(), &app, None).await {
                     tracing::warn!("periodic cloud sync failed: {error}");
                     schedule_retry_after_failure(&app, notebook_id);
                 }
@@ -880,16 +949,20 @@ pub async fn cloud_create_checkout(
 
 #[tauri::command]
 pub async fn cloud_sync_now(
-    _notebook_id: Option<String>,
+    notebook_id: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<CloudSyncResult, String> {
-    let notebook_count = state
-        .cloud_sync
-        .v2_enabled_notebooks()
-        .map_err(sync_error)?
-        .len();
-    let report = sync_v2_account(state.inner(), &app).await?;
+    let notebook_count = if notebook_id.is_some() {
+        1
+    } else {
+        state
+            .cloud_sync
+            .v2_enabled_notebooks()
+            .map_err(sync_error)?
+            .len()
+    };
+    let report = sync_v2_account(state.inner(), &app, notebook_id.as_deref()).await?;
     Ok(CloudSyncResult {
         notebooks: notebook_count,
         uploaded: report.uploaded,

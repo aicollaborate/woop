@@ -120,12 +120,25 @@ pub struct V2RemoteAttachment {
 /// document-scoped to avoid unrelated files causing sync churn.
 pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V2LocalAttachment>, String> {
     if !directory.exists() { return Ok(Vec::new()); }
-    let directory = std::fs::canonicalize(directory).map_err(|error| error.to_string())?;
+    let directory = match std::fs::canonicalize(directory) {
+        Ok(directory) => directory,
+        // The attachments directory may be removed between `exists` and
+        // canonicalization. Treat that the same as an empty directory.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
     let mut attachments = Vec::new();
     for path in referenced_attachment_paths(&directory, markdown) {
         let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_string();
         if filename.is_empty() || filename.contains(['/', '\\']) { continue; }
-        let content = std::fs::read(path).map_err(|error| error.to_string())?;
+        let content = match std::fs::read(&path) {
+            Ok(content) => content,
+            // An attachment can disappear after the markdown scan. It should
+            // not make the entire note/account sync fail; the next sync can
+            // upload it again if it is recreated locally.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
         attachments.push(V2LocalAttachment {
             metadata: V2Attachment {
                 mime_type: attachment_mime_type(&filename).to_string(),

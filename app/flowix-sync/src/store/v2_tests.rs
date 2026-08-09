@@ -47,6 +47,32 @@ fn v2_state_uses_one_account_cursor_and_same_notebook_id() {
 }
 
 #[test]
+fn scoped_notebook_cursors_do_not_advance_each_other() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SyncStore::new(temp.path().join("sync.db")).unwrap();
+    store.set_v2_notebook("nb_a", true).unwrap();
+    store.set_v2_notebook("nb_b", true).unwrap();
+
+    store
+        .commit_v2_notebook_sync_report("nb_a", &[], 10, &["nb_a".into()], 100)
+        .unwrap();
+    assert_eq!(store.v2_notebook_cursor("nb_a").unwrap(), 10);
+    assert_eq!(store.v2_notebook_cursor("nb_b").unwrap(), 0);
+    assert_eq!(store.v2_cursor().unwrap(), 0);
+
+    store
+        .commit_v2_notebook_sync_report("nb_b", &[], 20, &["nb_b".into()], 200)
+        .unwrap();
+    assert_eq!(store.v2_notebook_cursor("nb_a").unwrap(), 10);
+    assert_eq!(store.v2_notebook_cursor("nb_b").unwrap(), 20);
+
+    store.commit_v2_sync_report(&[], 30, &[], 300).unwrap();
+    assert_eq!(store.v2_cursor().unwrap(), 30);
+    assert_eq!(store.v2_notebook_cursor("nb_a").unwrap(), 30);
+    assert_eq!(store.v2_notebook_cursor("nb_b").unwrap(), 30);
+}
+
+#[test]
 fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
     let temp = tempfile::tempdir().unwrap();
     let store = SyncStore::new(temp.path().join("sync.db")).unwrap();

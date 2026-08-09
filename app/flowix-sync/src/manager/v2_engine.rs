@@ -38,6 +38,21 @@ impl SyncManager {
         self.store.v2_notebooks(true)
     }
 
+    /// Return note ids that have local changes waiting to be uploaded.
+    ///
+    /// The desktop adapter uses this set to build an incremental local
+    /// snapshot. The dirty queue remains the source of truth for upload
+    /// operations; this method only avoids rereading unchanged Markdown.
+    pub fn v2_dirty_note_ids(&self) -> Result<HashSet<String>, SyncError> {
+        Ok(self
+            .store
+            .v2_dirty_entities()?
+            .into_iter()
+            .filter(|dirty| dirty.entity_type == V2EntityType::Note)
+            .map(|dirty| dirty.entity_id)
+            .collect())
+    }
+
     pub fn v2_retry_delay(&self, now: i64) -> Result<Option<i64>, SyncError> {
         Ok(self
             .store
@@ -56,6 +71,16 @@ impl SyncManager {
         } else {
             first?
         };
+        let mut used_bytes_by_notebook = HashMap::new();
+        for note in bootstrap.notes.iter().filter(|note| !note.deleted) {
+            let attachment_bytes = note
+                .attachments
+                .iter()
+                .fold(0_i64, |total, attachment| total.saturating_add(attachment.size_bytes.max(0)));
+            let note_bytes = note.size_bytes.max(0).saturating_add(attachment_bytes);
+            let total = used_bytes_by_notebook.entry(note.notebook_id.clone()).or_insert(0_i64);
+            *total = total.saturating_add(note_bytes);
+        }
         let enabled: HashSet<String> = self
             .store
             .v2_notebooks(true)?
@@ -66,14 +91,18 @@ impl SyncManager {
             .notebooks
             .into_iter()
             .filter(|notebook| !notebook.deleted)
-            .map(|notebook| crate::models::CloudNotebook {
-                synced: enabled.contains(&notebook.id),
-                id: notebook.id,
-                name: notebook.name,
-                icon: notebook.icon,
-                sort_order: notebook.sort_order,
-                created_at: notebook.created_at,
-                updated_at: notebook.updated_at,
+            .map(|notebook| {
+                let used_bytes = used_bytes_by_notebook.get(&notebook.id).copied().unwrap_or(0);
+                crate::models::CloudNotebook {
+                    synced: enabled.contains(&notebook.id),
+                    id: notebook.id,
+                    name: notebook.name,
+                    icon: notebook.icon,
+                    sort_order: notebook.sort_order,
+                    created_at: notebook.created_at,
+                    updated_at: notebook.updated_at,
+                    used_bytes,
+                }
             })
             .collect())
     }
@@ -114,6 +143,18 @@ impl SyncManager {
             .any(|dirty| dirty.entity_type == V2EntityType::Note && dirty.entity_id == note_id))
     }
 
+    /// Recover a missing local Markdown file from Flowix Cloud on the next
+    /// account sync. This discards only the stale local operation for the
+    /// missing file and requests a full bootstrap of its notebook; it never
+    /// creates a cloud delete.
+    pub fn recover_missing_v2_note(
+        &self,
+        notebook_id: &str,
+        note_id: &str,
+    ) -> Result<(), SyncError> {
+        self.store.recover_missing_v2_note(notebook_id, note_id)
+    }
+
     pub fn set_v2_notebook_enabled(
         &self,
         notebook: &V2LocalNotebook,
@@ -145,6 +186,8 @@ impl SyncManager {
         if !notebook.enabled {
             return Ok(());
         }
+        self.store
+            .discard_v2_note_operations_for_notebook(notebook_id)?;
         self.store.mark_v2_dirty(
             V2EntityType::Notebook,
             notebook_id,
@@ -183,6 +226,30 @@ impl SyncManager {
         notebooks: Vec<V2LocalNotebook>,
         notes: Vec<V2LocalNote>,
     ) -> Result<V2AccountSyncReport, SyncError> {
+        self.sync_v2_scope(None, notebooks, notes).await
+    }
+
+    /// Synchronize only one enabled notebook.
+    ///
+    /// The cloud changes endpoint is account-wide, so this uses a cursor per
+    /// notebook and advances it over the complete account stream while only
+    /// materializing changes belonging to this notebook.
+    pub async fn sync_v2_notebook(
+        &self,
+        notebook_id: &str,
+        notebooks: Vec<V2LocalNotebook>,
+        notes: Vec<V2LocalNote>,
+    ) -> Result<V2AccountSyncReport, SyncError> {
+        self.sync_v2_scope(Some(notebook_id), notebooks, notes)
+            .await
+    }
+
+    async fn sync_v2_scope(
+        &self,
+        notebook_scope: Option<&str>,
+        notebooks: Vec<V2LocalNotebook>,
+        notes: Vec<V2LocalNote>,
+    ) -> Result<V2AccountSyncReport, SyncError> {
         let _guard = self.account_sync_lock.lock().await;
         if !self.store.enabled()? {
             return Err(SyncError::Disabled);
@@ -192,12 +259,12 @@ impl SyncManager {
             .ok_or(SyncError::NotAuthenticated)?;
         let first_token = self.access_token().await?;
         let first = self
-            .sync_v2_account_once(&first_token, &notebooks, &notes)
+            .sync_v2_account_once(&first_token, &notebooks, &notes, notebook_scope)
             .await;
         if first.as_ref().is_err_and(SyncError::is_unauthorized) {
             let refreshed = self.force_refresh_access_token().await?;
             return self
-                .sync_v2_account_once(&refreshed, &notebooks, &notes)
+                .sync_v2_account_once(&refreshed, &notebooks, &notes, notebook_scope)
                 .await;
         }
         first
@@ -212,29 +279,66 @@ impl SyncManager {
         )
     }
 
+    pub fn complete_v2_notebook_sync(
+        &self,
+        notebook_id: &str,
+        report: &V2AccountSyncReport,
+    ) -> Result<(), SyncError> {
+        self.store.commit_v2_notebook_sync_report(
+            notebook_id,
+            &report.remote,
+            report.cursor,
+            &report.bootstrapped_notebooks,
+            Utc::now().timestamp_millis(),
+        )
+    }
+
     async fn sync_v2_account_once(
         &self,
         access_token: &str,
         notebooks: &[V2LocalNotebook],
         notes: &[V2LocalNote],
+        notebook_scope: Option<&str>,
     ) -> Result<V2AccountSyncReport, SyncError> {
         let started_at = Utc::now().timestamp_millis();
-        let enabled_notebooks = self.store.v2_notebooks(true)?;
+        let enabled_notebooks: Vec<_> = self
+            .store
+            .v2_notebooks(true)?
+            .into_iter()
+            .filter(|notebook| {
+                notebook_scope.is_none_or(|scope| notebook.notebook_id == scope)
+            })
+            .collect();
+        if let Some(scope) = notebook_scope {
+            if enabled_notebooks.is_empty() {
+                return Err(SyncError::InvalidState(format!(
+                    "notebook {scope} is not enabled for cloud sync"
+                )));
+            }
+        }
         let enabled_ids: HashSet<&str> = enabled_notebooks
             .iter()
             .map(|notebook| notebook.notebook_id.as_str())
             .collect();
         self.reconcile_v2_snapshot(&enabled_ids, notebooks, notes)?;
-        self.freeze_new_v2_operations(access_token, notebooks, notes)
+        self.freeze_new_v2_operations(access_token, notebooks, notes, notebook_scope)
             .await?;
 
-        let due = self.store.v2_inflight_due(Utc::now().timestamp_millis())?;
+        let due = match notebook_scope {
+            Some(scope) => self
+                .store
+                .v2_inflight_due_for_notebook(Utc::now().timestamp_millis(), scope)?,
+            None => self.store.v2_inflight_due(Utc::now().timestamp_millis())?,
+        };
         let (uploaded, deleted) = self.push_v2_inflight(access_token, &due).await?;
 
         let bootstrap_required = enabled_notebooks
             .iter()
             .any(|notebook| notebook.bootstrap_required);
-        let cursor = self.store.v2_cursor()?;
+        let cursor = match notebook_scope {
+            Some(scope) => self.store.v2_notebook_cursor(scope)?,
+            None => self.store.v2_cursor()?,
+        };
         let (remote, next_cursor, head_cursor, bootstrapped_notebooks) = if bootstrap_required {
             let bootstrap = self.client.v2_bootstrap(access_token).await?;
             let remote = self
@@ -250,7 +354,10 @@ impl SyncManager {
                     .collect(),
             )
         } else {
-            match self.pull_v2_changes(access_token, cursor).await {
+            match self
+                .pull_v2_changes(access_token, cursor, &enabled_ids, notebook_scope)
+                .await
+            {
                 Ok(result) => (result.0, result.1, result.2, Vec::new()),
                 Err(SyncError::Api {
                     status: 410, code, ..
@@ -347,6 +454,7 @@ impl SyncManager {
         access_token: &str,
         notebooks: &[V2LocalNotebook],
         notes: &[V2LocalNote],
+        notebook_scope: Option<&str>,
     ) -> Result<(), SyncError> {
         let notebooks_by_id: HashMap<&str, &V2LocalNotebook> = notebooks
             .iter()
@@ -355,6 +463,15 @@ impl SyncManager {
         let notes_by_id: HashMap<&str, &V2LocalNote> =
             notes.iter().map(|item| (item.id.as_str(), item)).collect();
         for dirty in self.store.v2_dirty_entities()? {
+            if let Some(scope) = notebook_scope {
+                let belongs_to_scope = match dirty.entity_type {
+                    V2EntityType::Notebook => dirty.entity_id == scope,
+                    V2EntityType::Note => dirty.notebook_id.as_deref() == Some(scope),
+                };
+                if !belongs_to_scope {
+                    continue;
+                }
+            }
             if self
                 .store
                 .v2_inflight_for_generation(dirty.entity_type, &dirty.entity_id, dirty.generation)?
@@ -549,13 +666,9 @@ impl SyncManager {
         &self,
         access_token: &str,
         cursor: i64,
+        enabled: &HashSet<&str>,
+        notebook_scope: Option<&str>,
     ) -> Result<(Vec<V2RemoteApply>, i64, i64), SyncError> {
-        let enabled: HashSet<String> = self
-            .store
-            .v2_notebooks(true)?
-            .into_iter()
-            .map(|notebook| notebook.notebook_id)
-            .collect();
         let mut next_cursor = cursor;
         let mut latest = HashMap::<(String, String), V2Change>::new();
         let head_cursor = loop {
@@ -587,7 +700,10 @@ impl SyncManager {
         let mut remote = Vec::new();
         for change in changes {
             if change.entity_type == "notebook" {
-                if !enabled.contains(&change.entity_id) {
+                if notebook_scope.is_some_and(|scope| scope != change.entity_id) {
+                    continue;
+                }
+                if !enabled.contains(change.entity_id.as_str()) {
                     continue;
                 }
                 remote.push(V2RemoteApply::Notebook {
@@ -605,7 +721,10 @@ impl SyncManager {
                         "cloud note change has no notebook".into(),
                     ));
                 };
-                if !enabled.contains(&notebook_id) {
+                if notebook_scope.is_some_and(|scope| scope != notebook_id) {
+                    continue;
+                }
+                if !enabled.contains(notebook_id.as_str()) {
                     continue;
                 }
                 let filename = change.filename.ok_or_else(|| {
@@ -755,6 +874,10 @@ mod tests {
             )
             .unwrap();
         let first = manager.store.v2_dirty_entities().unwrap();
+        assert_eq!(
+            manager.v2_dirty_note_ids().unwrap(),
+            HashSet::from(["abc12345".to_string()])
+        );
         manager
             .reconcile_v2_snapshot(
                 &enabled,
@@ -786,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_local_file_does_not_infer_a_cloud_delete() {
+    fn missing_local_file_discards_stale_upload_and_requires_cloud_recovery() {
         let temp = tempfile::tempdir().unwrap();
         let manager =
             SyncManager::new("https://cloud.example.test", temp.path().join("sync.db")).unwrap();
@@ -797,6 +920,10 @@ mod tests {
             sort_order: 0,
         };
         manager.set_v2_notebook_enabled(&notebook, true).unwrap();
+        manager
+            .store
+            .complete_v2_notebook_bootstrap(&notebook.id)
+            .unwrap();
         manager
             .store
             .save_v2_note_state(&crate::v2::V2NoteState {
@@ -816,6 +943,38 @@ mod tests {
             .reconcile_v2_snapshot(&enabled, std::slice::from_ref(&notebook), &[])
             .unwrap();
 
+        manager
+            .record_v2_local_change(
+                &notebook.id,
+                "abc12345",
+                LocalChangeKind::Put,
+                "stale-local-content",
+            )
+            .unwrap();
+        let dirty = manager
+            .store
+            .v2_dirty_entities()
+            .unwrap()
+            .into_iter()
+            .find(|dirty| dirty.entity_type == V2EntityType::Note)
+            .unwrap();
+        manager
+            .store
+            .freeze_v2_operation(V2FreezeOperation {
+                operation_id: "op_stale_local_note",
+                entity_type: dirty.entity_type,
+                entity_id: &dirty.entity_id,
+                generation: dirty.generation,
+                operation_kind: dirty.operation_kind,
+                base_revision: Some("rev_2"),
+                payload_json: "{}",
+            })
+            .unwrap();
+
+        manager
+            .recover_missing_v2_note(&notebook.id, "abc12345")
+            .unwrap();
+
         assert!(manager
             .store
             .v2_dirty_entities()
@@ -830,6 +989,12 @@ mod tests {
                 .unwrap()
                 .deleted
         );
+        assert!(manager.store.v2_inflight_due(i64::MAX).unwrap().is_empty());
+        assert!(manager
+            .v2_notebook(&notebook.id)
+            .unwrap()
+            .unwrap()
+            .bootstrap_required);
     }
 
     #[test]
@@ -905,7 +1070,22 @@ mod tests {
             sort_order: 0,
         };
         manager.set_v2_notebook_enabled(&notebook, true).unwrap();
+        manager
+            .record_v2_local_change(
+                &notebook.id,
+                "memo_in_deleted_notebook",
+                LocalChangeKind::Put,
+                "content",
+            )
+            .unwrap();
         manager.record_v2_notebook_delete(&notebook.id).unwrap();
+
+        assert!(manager
+            .store
+            .v2_dirty_entities()
+            .unwrap()
+            .iter()
+            .all(|item| item.entity_type != V2EntityType::Note));
 
         let dirty = manager
             .store

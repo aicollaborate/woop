@@ -11,6 +11,21 @@ use flowix_core::memo_file::types::{DeleteTagReport, MoveTagReport};
 
 use crate::app::state::AppState;
 
+fn mark_tagged_memos_cloud_dirty(state: &AppState, notebook_id: &str, memo_ids: &[String]) {
+    for memo_id in memo_ids {
+        if let Err(error) = state.cloud_sync.record_v2_local_change(
+            notebook_id,
+            memo_id,
+            flowix_sync::LocalChangeKind::Put,
+            "unobserved",
+        ) {
+            tracing::warn!(
+                "failed to persist cloud dirty tag change for {notebook_id}/{memo_id}: {error}"
+            );
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct GetAllTagsResponse {
     pub tags: Vec<TagWithId>,
@@ -93,6 +108,14 @@ pub fn move_memo_tag(
     for id in &affected_memo_ids {
         try_index_upsert(state.inner(), id);
     }
+    let sync_notebook_id = notebook_id.as_deref().unwrap_or("nb_default");
+    mark_tagged_memos_cloud_dirty(state.inner(), sync_notebook_id, &affected_memo_ids);
+    if !affected_memo_ids.is_empty() {
+        crate::commands::cloud::schedule_notebook_sync(
+            app.clone(),
+            sync_notebook_id.to_string(),
+        );
+    }
     memo_events::emit(
         &app,
         MemoEvent::TagsRenamed {
@@ -136,6 +159,14 @@ pub fn delete_memo_tag(
     //    search index must follow -- otherwise stale hits leak through).
     for id in &affected_memo_ids {
         try_index_upsert(state.inner(), id);
+    }
+    let sync_notebook_id = notebook_id.as_deref().unwrap_or("nb_default");
+    mark_tagged_memos_cloud_dirty(state.inner(), sync_notebook_id, &affected_memo_ids);
+    if !affected_memo_ids.is_empty() {
+        crate::commands::cloud::schedule_notebook_sync(
+            app.clone(),
+            sync_notebook_id.to_string(),
+        );
     }
     // 2) one-shot emit TagsDeleted to the frontend.
     memo_events::emit(

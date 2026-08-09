@@ -20,6 +20,8 @@ pub struct CloudNotebook {
     pub updated_at: i64,
     #[serde(default)]
     pub synced: bool,
+    #[serde(default)]
+    pub used_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

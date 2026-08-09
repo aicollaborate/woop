@@ -23,6 +23,12 @@ impl SyncStore {
             );
             INSERT OR IGNORE INTO v2_sync_state(singleton, cursor, updated_at)
             VALUES (1, 0, 0);
+            CREATE TABLE IF NOT EXISTS v2_notebook_sync_state (
+                notebook_id TEXT PRIMARY KEY,
+                cursor INTEGER NOT NULL DEFAULT 0 CHECK(cursor >= 0),
+                last_success_at INTEGER,
+                updated_at INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS v2_synced_notebooks (
                 notebook_id TEXT PRIMARY KEY,
                 enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
@@ -140,6 +146,7 @@ impl SyncStore {
                 DELETE FROM v2_dirty_entities;
                 DELETE FROM v2_note_states;
                 DELETE FROM v2_notebook_states;
+                DELETE FROM v2_notebook_sync_state;
                 DELETE FROM v2_synced_notebooks;
                 UPDATE v2_sync_state SET cursor = 0, last_success_at = NULL, updated_at = 0
                  WHERE singleton = 1;
@@ -170,6 +177,7 @@ impl SyncStore {
             DELETE FROM v2_dirty_entities;
             DELETE FROM v2_note_states;
             DELETE FROM v2_notebook_states;
+            DELETE FROM v2_notebook_sync_state;
             DELETE FROM v2_synced_notebooks;
             DELETE FROM v2_cloud_account;
             UPDATE v2_sync_state SET cursor = 0, last_success_at = NULL, updated_at = 0
@@ -206,6 +214,21 @@ impl SyncStore {
             .map_err(SyncError::from)
     }
 
+    pub fn v2_notebook_cursor(&self, notebook_id: &str) -> Result<i64, SyncError> {
+        let connection = self.open()?;
+        connection.execute(
+            "INSERT OR IGNORE INTO v2_notebook_sync_state(notebook_id, cursor, updated_at) VALUES (?1, 0, ?2)",
+            params![notebook_id, chrono::Utc::now().timestamp_millis()],
+        )?;
+        connection
+            .query_row(
+                "SELECT cursor FROM v2_notebook_sync_state WHERE notebook_id = ?1",
+                [notebook_id],
+                |row| row.get(0),
+            )
+            .map_err(SyncError::from)
+    }
+
     pub fn set_v2_notebook(
         &self,
         notebook_id: &str,
@@ -225,6 +248,10 @@ impl SyncStore {
                  END,
                  updated_at = excluded.updated_at"#,
             params![notebook_id, enabled, now],
+        )?;
+        connection.execute(
+            "INSERT OR IGNORE INTO v2_notebook_sync_state(notebook_id, cursor, updated_at) VALUES (?1, 0, ?2)",
+            params![notebook_id, now],
         )?;
         Self::read_v2_notebook(&connection, notebook_id)?.ok_or_else(|| {
             SyncError::InvalidState("v2 notebook state disappeared after write".into())
@@ -417,6 +444,93 @@ impl SyncStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(SyncError::from)
     }
 
+    pub fn v2_inflight_due_for_notebook(
+        &self,
+        now: i64,
+        notebook_id: &str,
+    ) -> Result<Vec<V2InflightOperation>, SyncError> {
+        let connection = self.open()?;
+        let mut statement = connection.prepare(
+            r#"SELECT o.operation_id, o.entity_type, o.entity_id, o.generation,
+                      o.operation_kind, o.base_revision, o.payload_json,
+                      r.attempts, r.next_retry_at
+                 FROM v2_inflight_operations o
+                 JOIN v2_retry_state r ON r.operation_id = o.operation_id
+                WHERE r.next_retry_at <= ?1
+                  AND ((o.entity_type = 'notebook' AND o.entity_id = ?2)
+                    OR (o.entity_type = 'note' AND o.entity_id IN (
+                      SELECT entity_id FROM v2_dirty_entities
+                       WHERE entity_type = 'note' AND notebook_id = ?2
+                    )))
+                ORDER BY o.created_at"#,
+        )?;
+        let rows = statement.query_map(params![now, notebook_id], Self::map_v2_inflight)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(SyncError::from)
+    }
+
+    /// A Markdown file can disappear locally while its memo-index row and a
+    /// previously queued upload still exist.  The caller has elected to use
+    /// the cloud copy as the recovery source, so the stale local operation
+    /// must not win over the forthcoming bootstrap response.
+    ///
+    /// Keep the server-side note state intact: this is deliberately *not* a
+    /// delete.  Requiring a notebook bootstrap makes the current cloud copy
+    /// available to the local adapter again.
+    pub fn recover_missing_v2_note(
+        &self,
+        notebook_id: &str,
+        note_id: &str,
+    ) -> Result<(), SyncError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            r#"DELETE FROM v2_inflight_operations
+                WHERE entity_type = ?1 AND entity_id = ?2"#,
+            params![V2EntityType::Note.as_str(), note_id],
+        )?;
+        transaction.execute(
+            r#"DELETE FROM v2_dirty_entities
+                WHERE entity_type = ?1 AND entity_id = ?2"#,
+            params![V2EntityType::Note.as_str(), note_id],
+        )?;
+        transaction.execute(
+            r#"UPDATE v2_synced_notebooks
+                   SET bootstrap_required = 1, updated_at = ?2
+                 WHERE notebook_id = ?1 AND enabled = 1"#,
+            params![notebook_id, now],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// A notebook delete supersedes every queued note operation below it.
+    /// Leaving a stale note put behind could otherwise recreate a note after
+    /// the parent notebook has been deleted remotely.
+    pub fn discard_v2_note_operations_for_notebook(
+        &self,
+        notebook_id: &str,
+    ) -> Result<(), SyncError> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            r#"DELETE FROM v2_inflight_operations
+                WHERE entity_type = ?1
+                  AND entity_id IN (
+                    SELECT entity_id FROM v2_dirty_entities
+                     WHERE entity_type = ?1 AND notebook_id = ?2
+                  )"#,
+            params![V2EntityType::Note.as_str(), notebook_id],
+        )?;
+        transaction.execute(
+            r#"DELETE FROM v2_dirty_entities
+                WHERE entity_type = ?1 AND notebook_id = ?2"#,
+            params![V2EntityType::Note.as_str(), notebook_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn v2_next_retry_at(&self) -> Result<Option<i64>, SyncError> {
         self.open()?
             .query_row("SELECT MIN(next_retry_at) FROM v2_retry_state", [], |row| {
@@ -491,13 +605,59 @@ impl SyncStore {
         bootstrapped_notebooks: &[String],
         applied_at: i64,
     ) -> Result<(), SyncError> {
+        self.commit_v2_sync_report_scoped(
+            remote,
+            cursor,
+            bootstrapped_notebooks,
+            applied_at,
+            None,
+        )
+    }
+
+    pub fn commit_v2_notebook_sync_report(
+        &self,
+        notebook_id: &str,
+        remote: &[V2RemoteApply],
+        cursor: i64,
+        bootstrapped_notebooks: &[String],
+        applied_at: i64,
+    ) -> Result<(), SyncError> {
+        self.commit_v2_sync_report_scoped(
+            remote,
+            cursor,
+            bootstrapped_notebooks,
+            applied_at,
+            Some(notebook_id),
+        )
+    }
+
+    fn commit_v2_sync_report_scoped(
+        &self,
+        remote: &[V2RemoteApply],
+        cursor: i64,
+        bootstrapped_notebooks: &[String],
+        applied_at: i64,
+        notebook_scope: Option<&str>,
+    ) -> Result<(), SyncError> {
         let mut connection = self.open()?;
         let transaction = connection.transaction()?;
-        let current_cursor = transaction.query_row(
-            "SELECT cursor FROM v2_sync_state WHERE singleton = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )?;
+        let current_cursor = if let Some(notebook_id) = notebook_scope {
+            transaction.execute(
+                "INSERT OR IGNORE INTO v2_notebook_sync_state(notebook_id, cursor, updated_at) VALUES (?1, 0, ?2)",
+                params![notebook_id, applied_at],
+            )?;
+            transaction.query_row(
+                "SELECT cursor FROM v2_notebook_sync_state WHERE notebook_id = ?1",
+                [notebook_id],
+                |row| row.get::<_, i64>(0),
+            )?
+        } else {
+            transaction.query_row(
+                "SELECT cursor FROM v2_sync_state WHERE singleton = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?
+        };
         if cursor < current_cursor {
             return Err(SyncError::InvalidState(
                 "refused to move the v2 cursor backwards".into(),
@@ -567,10 +727,21 @@ impl SyncStore {
                 params![notebook_id, applied_at],
             )?;
         }
-        transaction.execute(
-            "UPDATE v2_sync_state SET cursor = ?1, last_success_at = ?2, updated_at = ?2 WHERE singleton = 1",
-            params![cursor, applied_at],
-        )?;
+        if let Some(notebook_id) = notebook_scope {
+            transaction.execute(
+                "UPDATE v2_notebook_sync_state SET cursor = ?1, last_success_at = ?2, updated_at = ?2 WHERE notebook_id = ?3",
+                params![cursor, applied_at, notebook_id],
+            )?;
+        } else {
+            transaction.execute(
+                "UPDATE v2_sync_state SET cursor = ?1, last_success_at = ?2, updated_at = ?2 WHERE singleton = 1",
+                params![cursor, applied_at],
+            )?;
+            transaction.execute(
+                "UPDATE v2_notebook_sync_state SET cursor = ?1, last_success_at = ?2, updated_at = ?2",
+                params![cursor, applied_at],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
