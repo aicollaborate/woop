@@ -255,6 +255,16 @@ impl MemoIndex {
                     }
                 }
             }
+            for tag in &old.tags {
+                for tok in self.tokenizer.tokens(tag) {
+                    if let Some(set) = self.postings.get_mut(&tok) {
+                        set.remove(id);
+                        if set.is_empty() {
+                            self.postings.remove(&tok);
+                        }
+                    }
+                }
+            }
             for tok in self.tokenizer.tokens(&old.body_lower) {
                 if let Some(set) = self.postings.get_mut(&tok) {
                     set.remove(id);
@@ -394,14 +404,18 @@ impl MemoIndex {
             title_lower: title_lower.clone(),
             body_lower: body_lower.clone(),
         };
-        self.entries.insert(id.clone(), idx_entry);
-
         for tok in self.tokenizer.tokens(&title_lower) {
             self.postings.entry(tok).or_default().insert(id.clone());
+        }
+        for tag in &idx_entry.tags {
+            for tok in self.tokenizer.tokens(tag) {
+                self.postings.entry(tok).or_default().insert(id.clone());
+            }
         }
         for tok in self.tokenizer.tokens(&body_lower) {
             self.postings.entry(tok).or_default().insert(id.clone());
         }
+        self.entries.insert(id, idx_entry);
     }
 }
 /// 抽 snippet. title/tag 命中用 preview 替代; body 命中在 body_lower 里找首次出现位置,
@@ -691,6 +705,15 @@ mod tests {
         assert_eq!(hits[0].id, "m_003");
         assert_eq!(hits[0].matched_in, MatchField::Title);
         assert!(hits[0].score >= 10.0);
+    }
+
+    #[test]
+    fn search_tag_only_match_returns_the_memo() {
+        let idx = fixture_index();
+        let hits = idx.search("reading", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "m_003");
+        assert_eq!(hits[0].matched_in, MatchField::Tag);
     }
 
     #[test]
