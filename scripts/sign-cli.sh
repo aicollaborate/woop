@@ -77,7 +77,25 @@ sign_macos() {
   fi
 
   echo "[sign] codesign --options runtime --timestamp --entitlements $ENTITLEMENTS --sign $identity $bin"
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$identity" "$bin"
+  # Apple 的 RFC 3161 timestamp 服务 (`http://timestamp.apple.com/ts01` 等)
+  # 会间歇性返回 "A timestamp was expected but was not found" — 这是 Apple
+  # 后端的已知抖动, 不是证书或命令错。重试 N 次 + 短暂 backoff 通常可恢复
+  # (memory `flowix-release-build-detached-timestamp-retry`)。
+  local attempt=1
+  local max_attempts=5
+  while (( attempt <= max_attempts )); do
+    if codesign --force --options runtime --timestamp \
+         --entitlements "$ENTITLEMENTS" --sign "$identity" "$bin"; then
+      break
+    fi
+    if (( attempt == max_attempts )); then
+      echo "[sign] codesign --timestamp failed after $max_attempts attempts" >&2
+      return 1
+    fi
+    echo "[sign] codesign --timestamp attempt $attempt/$max_attempts failed, retrying in $((attempt * 5))s..." >&2
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
 
   # A raw Mach-O executable is not a distributable container that stapler can
   # attach a ticket to. The containing DMG is submitted and stapled by

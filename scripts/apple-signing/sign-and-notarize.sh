@@ -109,7 +109,11 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   if [ ! -d node_modules ]; then
     npm ci --no-audit --no-fund
   fi
-  npm run tauri:build:production
+  # Apple's RFC 3161 timestamp service is intermittently unavailable, and Tauri's
+  # internal codesign step uses it. Wrap the build in a retry loop so a transient
+  # timestamp hiccup doesn't kill the whole release (memory
+  # `flowix-release-build-detached-timestamp-retry`).
+  bash "$SCRIPT_DIR/with-timestamp-retry.sh" -- npm run tauri:build:production
 else
   echo "==> [build] Skipping build (SKIP_BUILD=1)"
 fi
