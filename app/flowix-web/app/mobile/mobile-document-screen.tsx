@@ -6,13 +6,19 @@ import {
   joinMobileDocumentContent,
   splitMobileDocumentContent,
 } from '@features/editor/mobile/mobile-document-content';
+import {
+  calculateMobileViewportMetrics,
+  MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT,
+} from '@features/editor/mobile/mobile-editor-viewport';
 import { mobileClient } from '@platform/tauri/mobile-client';
 
 interface MobileDocumentScreenProps {
   memoId: string;
   filename: string;
   content: string;
+  manageHistory?: boolean;
   onBack: () => void;
+  onBackRejected?: () => void;
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'conflict' | 'error';
@@ -59,7 +65,9 @@ function clearDraft(memoId: string): void {
 export function MobileDocumentScreen({
   memoId,
   content,
+  manageHistory = true,
   onBack,
+  onBackRejected,
 }: MobileDocumentScreenProps) {
   const initialContent = useMemo(() => recoverDraft(memoId, content), [content, memoId]);
   const initialParts = useMemo(() => splitMobileDocumentContent(initialContent), [initialContent]);
@@ -74,27 +82,87 @@ export function MobileDocumentScreen({
 
   useEffect(() => {
     const visualViewport = window.visualViewport;
-    if (!visualViewport) return;
+    const root = document.documentElement;
+    let animationFrame = 0;
+    let resetLayoutBaseline = false;
+    let layoutViewportWidth = Math.max(root.clientWidth, window.innerWidth);
+    let layoutViewportHeight = Math.max(
+      root.clientHeight,
+      window.innerHeight,
+      visualViewport?.height ?? 0,
+    );
 
-    const updateViewport = () => {
-      const keyboardHeight = Math.max(
-        0,
-        window.innerHeight - visualViewport.height - visualViewport.offsetTop,
+    const applyViewport = () => {
+      animationFrame = 0;
+      const currentLayoutWidth = Math.max(root.clientWidth, window.innerWidth);
+      const currentLayoutHeight = Math.max(
+        root.clientHeight,
+        window.innerHeight,
+        (visualViewport?.offsetTop ?? 0) + (visualViewport?.height ?? 0),
       );
-      const screen = document.querySelector<HTMLElement>('.mobile-document-screen');
-      if (!screen) return;
-      screen.style.setProperty('--mobile-visual-viewport-height', `${visualViewport.height}px`);
-      screen.style.setProperty('--mobile-keyboard-height', `${keyboardHeight}px`);
+      if (resetLayoutBaseline || Math.abs(currentLayoutWidth - layoutViewportWidth) > 48) {
+        layoutViewportHeight = currentLayoutHeight;
+        layoutViewportWidth = currentLayoutWidth;
+        resetLayoutBaseline = false;
+      } else {
+        layoutViewportHeight = Math.max(layoutViewportHeight, currentLayoutHeight);
+      }
+
+      const activeElement = document.activeElement;
+      const editorFocused = activeElement instanceof Element
+        && activeElement.closest('.mobile-markdown-editor__content') !== null;
+      const metrics = calculateMobileViewportMetrics({
+        layoutViewportHeight,
+        visualViewportHeight: visualViewport?.height ?? window.innerHeight,
+        visualViewportOffsetTop: visualViewport?.offsetTop ?? 0,
+        editorFocused,
+      });
+
+      // Keep the document layout on the stable layout viewport. Only the
+      // portalled keyboard toolbar follows this visual-viewport rectangle.
+      // iOS pans offsetTop when focusing near the end of a long document, so
+      // height without top/bottom is not a complete viewport description.
+      root.style.setProperty('--mobile-visual-viewport-top', `${metrics.top}px`);
+      root.style.setProperty('--mobile-visual-viewport-height', `${metrics.height}px`);
+      root.style.setProperty('--mobile-visual-viewport-bottom', `${metrics.bottom}px`);
+      root.style.setProperty('--mobile-keyboard-occlusion', `${metrics.keyboardOcclusion}px`);
+      root.style.setProperty(
+        '--mobile-editor-toolbar-safe-offset',
+        metrics.keyboardOcclusion > 0 ? '0px' : 'env(safe-area-inset-bottom)',
+      );
+      window.dispatchEvent(new Event(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT));
     };
 
-    updateViewport();
-    visualViewport.addEventListener('resize', updateViewport);
-    visualViewport.addEventListener('scroll', updateViewport);
-    window.addEventListener('resize', updateViewport);
+    const scheduleViewportUpdate = (resetBaseline = false) => {
+      resetLayoutBaseline ||= resetBaseline;
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(applyViewport);
+    };
+
+    const handleOrientationChange = () => scheduleViewportUpdate(true);
+    const handleViewportChange = () => scheduleViewportUpdate();
+    const handleFocusChange = () => scheduleViewportUpdate();
+
+    applyViewport();
+    visualViewport?.addEventListener('resize', handleViewportChange);
+    visualViewport?.addEventListener('scroll', handleViewportChange);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleOrientationChange);
+    document.addEventListener('focusin', handleFocusChange);
+    document.addEventListener('focusout', handleFocusChange);
     return () => {
-      visualViewport.removeEventListener('resize', updateViewport);
-      visualViewport.removeEventListener('scroll', updateViewport);
-      window.removeEventListener('resize', updateViewport);
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+      visualViewport?.removeEventListener('resize', handleViewportChange);
+      visualViewport?.removeEventListener('scroll', handleViewportChange);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      document.removeEventListener('focusin', handleFocusChange);
+      document.removeEventListener('focusout', handleFocusChange);
+      root.style.removeProperty('--mobile-visual-viewport-top');
+      root.style.removeProperty('--mobile-visual-viewport-height');
+      root.style.removeProperty('--mobile-visual-viewport-bottom');
+      root.style.removeProperty('--mobile-keyboard-occlusion');
+      root.style.removeProperty('--mobile-editor-toolbar-safe-offset');
     };
   }, []);
 
@@ -178,17 +246,18 @@ export function MobileDocumentScreen({
     // the editor after a failed/conflicting save and re-arm system Back.
     if (mountedRef.current) {
       window.history.pushState({ flowixMobileLayer: 'document' }, '');
+      onBackRejected?.();
     }
-  }, [onBack, saveLatest]);
+  }, [onBack, onBackRejected, saveLatest]);
   const handleBackRef = useRef(handleBack);
   handleBackRef.current = handleBack;
 
   useEffect(() => {
-    window.history.pushState({ flowixMobileLayer: 'document' }, '');
     const handleSystemBack = () => void handleBackRef.current();
+    if (manageHistory) window.history.pushState({ flowixMobileLayer: 'document' }, '');
     window.addEventListener('popstate', handleSystemBack);
     return () => window.removeEventListener('popstate', handleSystemBack);
-  }, []);
+  }, [manageHistory]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -208,19 +277,19 @@ export function MobileDocumentScreen({
   }, [saveLatest]);
 
   const status = saveState === 'saving'
-    ? <><LoaderCircle className="is-spinning" size={14} /> 保存中</>
+    ? <><LoaderCircle className="is-spinning" size={16} /> 保存中</>
     : saveState === 'saved'
-      ? <><Check size={14} /> 已保存</>
+      ? <><Check size={16} /> 已保存</>
       : saveState === 'conflict'
-        ? <><CloudAlert size={14} /> 发现同步冲突</>
+        ? <><CloudAlert size={16} /> 发现同步冲突</>
         : saveState === 'error'
-          ? <><CloudAlert size={14} /> 保存失败</>
+          ? <><CloudAlert size={16} /> 保存失败</>
           : '未保存';
 
   return (
     <main className="mobile-document-screen">
       <header className="mobile-topbar mobile-document-topbar">
-        <button type="button" className="mobile-icon-button" aria-label="返回列表" onClick={() => window.history.back()}>
+        <button type="button" className="mobile-icon-button mobile-menu-button" aria-label="返回列表" onClick={() => window.history.back()}>
           <ArrowLeft size={21} />
         </button>
         <span />

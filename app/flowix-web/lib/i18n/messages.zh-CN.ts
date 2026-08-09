@@ -722,6 +722,7 @@ const zhCN = {
     "notebook.edit.pathLabel": "存储路径",
     "notebook.edit.cancel": "取消",
     "notebook.edit.confirm": "保存",
+    "notebook.edit.saving": "保存中...",
     "notebook.edit.remove": "移除",
 
     // document

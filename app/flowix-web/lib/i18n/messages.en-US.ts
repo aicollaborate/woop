@@ -747,6 +747,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "notebook.edit.pathLabel": "Storage path",
     "notebook.edit.cancel": "Cancel",
     "notebook.edit.confirm": "Save",
+    "notebook.edit.saving": "Saving...",
     "notebook.edit.remove": "Remove",
 
     // document

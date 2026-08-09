@@ -14,9 +14,12 @@ const mocks = vi.hoisted(() => ({
   unlisten: vi.fn(),
   initialize: vi.fn(),
   bootstrapCloud: vi.fn(),
+  librarySnapshot: vi.fn(),
   notebooksGetAll: vi.fn(),
+  deleteNotebook: vi.fn(),
   tagsGetAll: vi.fn(),
   memosGetMemos: vi.fn(),
+  memosSearch: vi.fn(),
   openMemoSession: vi.fn(),
   addDocument: vi.fn(),
   deleteMemo: vi.fn(),
@@ -47,10 +50,15 @@ vi.mock('@platform/tauri/mobile-client', () => ({
       logout: mocks.cloudLogout,
       refreshMembership: mocks.cloudRefreshMembership,
     },
-    notebooks: { getAll: mocks.notebooksGetAll },
+    notebooks: {
+      getAll: mocks.notebooksGetAll,
+      getLibrarySnapshot: mocks.librarySnapshot,
+      delete: mocks.deleteNotebook,
+    },
     tags: { getAll: mocks.tagsGetAll },
     memos: {
       getMemos: mocks.memosGetMemos,
+      search: mocks.memosSearch,
       openMemoSession: mocks.openMemoSession,
       writeDocument: mocks.writeDocument,
       addDocument: mocks.addDocument,
@@ -152,6 +160,7 @@ describe('useMobileLibrary', () => {
     vi.clearAllMocks();
     mocks.cloudListener = null;
     mocks.syncStatusListener = null;
+    window.localStorage.removeItem('flowix:mobile:selected-notebook');
 
     // 默认: 本地未登录, 两个笔记本, nb1 有 1 篇 / nb2 有 2 篇。
     mocks.initialize.mockResolvedValue(cloudState());
@@ -166,6 +175,36 @@ describe('useMobileLibrary', () => {
       const memos = notebookId === 'nb2' ? [makeMemo('m2'), makeMemo('m3')] : [makeMemo('m1')];
       return Promise.resolve({ memos });
     });
+    mocks.librarySnapshot.mockImplementation(async (params?: {
+      preferredNotebookId?: string;
+      selectedTagId?: string;
+    }) => {
+      const notebooks = await mocks.notebooksGetAll();
+      const selectedNotebookId = notebooks.some((notebook: NotebookRecord) => notebook.id === params?.preferredNotebookId)
+        ? params?.preferredNotebookId!
+        : notebooks[0]?.id ?? null;
+      const [tagResponse, memoResponse] = selectedNotebookId
+        ? await Promise.all([
+          mocks.tagsGetAll(selectedNotebookId),
+          mocks.memosGetMemos({
+            notebookId: selectedNotebookId,
+            filter: params?.selectedTagId ? 'tagged' : 'all',
+            sort: 'updatedAt',
+            tagId: params?.selectedTagId,
+          }),
+        ])
+        : [{ tags: [] }, { memos: [] }];
+      return {
+        notebooks: notebooks.map((notebook: NotebookRecord) => ({
+          ...notebook,
+          memoCount: notebook.id === selectedNotebookId ? memoResponse.memos.length : notebook.memoCount ?? 0,
+        })),
+        selectedNotebookId,
+        tags: tagResponse.tags,
+        memos: memoResponse.memos,
+      };
+    });
+    mocks.memosSearch.mockResolvedValue({ memos: [makeMemo('search-1')] });
     mocks.bootstrapCloud.mockResolvedValue({
       notebooks: 2, uploaded: 0, deleted: 0, downloaded: 0, conflicts: 0,
     });
@@ -175,6 +214,7 @@ describe('useMobileLibrary', () => {
     mocks.deleteMemo.mockResolvedValue(true);
     mocks.favoriteMemo.mockResolvedValue(true);
     mocks.unfavoriteMemo.mockResolvedValue(true);
+    mocks.deleteNotebook.mockResolvedValue(true);
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -212,6 +252,18 @@ describe('useMobileLibrary', () => {
     );
   });
 
+  it('restores the previously selected notebook after reopening', async () => {
+    window.localStorage.setItem('flowix:mobile:selected-notebook', 'nb2');
+
+    await renderAndWait();
+
+    expect(latestLibrary?.selectedNotebookId).toBe('nb2');
+    expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['m2', 'm3']);
+    expect(mocks.memosGetMemos).toHaveBeenCalledWith(
+      expect.objectContaining({ notebookId: 'nb2', sort: 'updatedAt' }),
+    );
+  });
+
   it('quick-switches notebooks: reloading tags + memos for the new notebook', async () => {
     await renderAndWait();
     expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['m1']);
@@ -223,6 +275,7 @@ describe('useMobileLibrary', () => {
     });
 
     expect(latestLibrary?.selectedNotebookId).toBe('nb2');
+    expect(window.localStorage.getItem('flowix:mobile:selected-notebook')).toBe('nb2');
     expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['m2', 'm3']);
     // 切换后用新 notebookId 拉取了一次。
     expect(mocks.memosGetMemos.mock.calls.length).toBeGreaterThan(before);
@@ -247,7 +300,7 @@ describe('useMobileLibrary', () => {
       expect.objectContaining({ notebookId: 'nb1', filter: 'tagged', tagId: 't1' }),
     );
 
-    // 切回"全部笔记"。
+    // 切回"全部"。
     await act(async () => {
       latestLibrary?.selectTag(null);
       await flush();
@@ -256,6 +309,29 @@ describe('useMobileLibrary', () => {
     expect(mocks.memosGetMemos).toHaveBeenCalledWith(
       expect.objectContaining({ filter: 'all', tagId: undefined }),
     );
+  });
+
+  it('re-runs an active search after a cloud-triggered list refresh', async () => {
+    await renderAndWait();
+    await act(async () => {
+      await latestLibrary?.searchMemos('关键词');
+      await flush();
+    });
+    expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['search-1']);
+
+    mocks.memosSearch.mockResolvedValue({ memos: [makeMemo('search-fresh')] });
+    await act(async () => {
+      mocks.cloudListener?.(cloudState());
+      await flush();
+      await flush();
+    });
+
+    expect(mocks.memosSearch).toHaveBeenLastCalledWith({
+      notebookId: 'nb1',
+      tagId: undefined,
+      query: '关键词',
+    });
+    expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['search-fresh']);
   });
 
   it('surfaces a sync failure as a message while still reporting a handled result', async () => {
@@ -369,12 +445,12 @@ describe('useMobileLibrary', () => {
       mocks.syncStatusListener?.({
         notebookId: 'all', runId: 'run-1', state: 'error', phase: 'retrying',
         uploaded: 0, deleted: 0, downloaded: 0, startedAt: 1, finishedAt: 2,
-        lastError: '网络暂不可用',
+        lastError: 'READ_NOTE_FAILED /private/var/mobile/note.md: No such file or directory (os error 2)',
       });
       await flush();
     });
     expect(latestLibrary?.syncing).toBe(false);
-    expect(latestLibrary?.message).toBe('网络暂不可用');
+    expect(latestLibrary?.message).toBe('No such file or directory (os error 2)');
   });
 
   it('opens a memo into an active document session', async () => {
@@ -407,16 +483,22 @@ describe('useMobileLibrary', () => {
     expect(mocks.notebooksGetAll).not.toHaveBeenCalled();
   });
 
-  it('reports missing and failed memo opens without replacing the current view', async () => {
+  it('retains actionable errors for missing and failed memo opens', async () => {
     await renderAndWait();
     mocks.openMemoSession.mockResolvedValueOnce(null);
+    const listCallsBefore = mocks.memosGetMemos.mock.calls.length;
 
     await act(async () => {
       await latestLibrary?.openMemo('gone');
       await flush();
     });
     expect(latestLibrary?.activeDocument).toBeNull();
-    expect(latestLibrary?.message).toContain('已不存在');
+    expect(latestLibrary?.openMemoError).toEqual(expect.objectContaining({
+      id: 'gone',
+      kind: 'missing',
+      message: '这篇笔记可能已被移动或删除。列表已更新。',
+    }));
+    expect(mocks.memosGetMemos.mock.calls.length).toBeGreaterThan(listCallsBefore);
 
     mocks.openMemoSession.mockRejectedValueOnce(new Error('文件权限已撤销'));
     await act(async () => {
@@ -424,7 +506,36 @@ describe('useMobileLibrary', () => {
       await flush();
     });
     expect(latestLibrary?.activeDocument).toBeNull();
-    expect(latestLibrary?.message).toBe('文件权限已撤销');
+    expect(latestLibrary?.openMemoError).toEqual({
+      id: 'm1',
+      filename: 'm1.md',
+      kind: 'failed',
+      message: '文件权限已撤销',
+    });
+  });
+
+  it('resolves and removes a memo opened from search results', async () => {
+    await renderAndWait();
+    mocks.memosSearch.mockResolvedValue({ memos: [makeMemo('gone', { filename: 'searched.md' })] });
+
+    await act(async () => {
+      await latestLibrary?.searchMemos('searched');
+      await flush();
+    });
+    expect(latestLibrary?.memoItems.map((memo) => memo.id)).toEqual(['gone']);
+
+    mocks.openMemoSession.mockResolvedValueOnce(null);
+    await act(async () => {
+      await latestLibrary?.openMemo('gone');
+      await flush();
+    });
+
+    expect(latestLibrary?.openMemoError).toMatchObject({
+      id: 'gone',
+      filename: 'searched.md',
+      kind: 'missing',
+    });
+    expect(latestLibrary?.memoItems).toEqual([]);
   });
 
   it('creates a memo and opens the newly returned session', async () => {
@@ -465,6 +576,26 @@ describe('useMobileLibrary', () => {
       await flush();
     });
     expect(latestLibrary?.message).toBe('删除笔记失败');
+  });
+
+  it('deletes a notebook, selects the remaining notebook, and protects the last one', async () => {
+    await renderAndWait();
+    mocks.notebooksGetAll.mockResolvedValue([makeNotebook('nb2', '工作')]);
+
+    await act(async () => {
+      await latestLibrary?.deleteNotebook('nb1');
+      await flush();
+    });
+    expect(mocks.deleteNotebook).toHaveBeenCalledWith('nb1');
+    expect(latestLibrary?.selectedNotebookId).toBe('nb2');
+    expect(latestLibrary?.message).toBe('笔记本已删除。');
+
+    mocks.deleteNotebook.mockRejectedValueOnce(new Error('CANNOT_DELETE_LAST_NOTEBOOK'));
+    await act(async () => {
+      await latestLibrary?.deleteNotebook('nb2');
+      await flush();
+    });
+    expect(latestLibrary?.message).toBe('至少保留一个笔记本。');
   });
 
   it('calls the matching favorite action and surfaces favorite failures', async () => {

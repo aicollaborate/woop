@@ -1,0 +1,50 @@
+/* Shared Phosphor Cloud family mark. Color is inherited from the surrounding
+ * control so desktop and mobile keep the same text-color treatment. */
+.flowix-cloud-status-icon {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  color: inherit;
+  /* Keep the Cloud mark subordinate to the surrounding text color. */
+  opacity: .67;
+  overflow: visible;
+}
+
+.flowix-cloud-status-icon > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.flowix-cloud-status-icon--unlinked > svg { opacity: .72; }
+
+/* Connecting keeps the cloud frame fixed and only cross-fades the directional
+ * arrow overlays. This preserves the motion cue without moving the cloud. */
+.flowix-cloud-status-icon__sync-arrow {
+  opacity: 0;
+  transform-origin: 50% 50%;
+}
+
+.flowix-cloud-status-icon__sync-arrow--down {
+  animation: flowix-cloud-sync-arrow-down 2.1s ease-in-out infinite;
+}
+
+.flowix-cloud-status-icon__sync-arrow--up {
+  animation: flowix-cloud-sync-arrow-up 2.1s ease-in-out infinite;
+}
+
+@keyframes flowix-cloud-sync-arrow-down {
+  0%, 45% { opacity: 1; transform: translateY(1px); }
+  55%, 100% { opacity: 0; transform: translateY(2px); }
+}
+
+@keyframes flowix-cloud-sync-arrow-up {
+  0%, 45% { opacity: 0; transform: translateY(1px); }
+  55%, 100% { opacity: 1; transform: translateY(-1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flowix-cloud-status-icon__sync-arrow { animation: none; opacity: 0; transform: none; }
+  .flowix-cloud-status-icon__sync-arrow--down { opacity: 1; }
+}

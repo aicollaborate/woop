@@ -36,14 +36,17 @@ interface Rendered {
   container: HTMLDivElement;
   root: Root;
   onBack: ReturnType<typeof vi.fn>;
+  onBackRejected: ReturnType<typeof vi.fn>;
 }
 
 async function renderScreen(props: {
   memoId?: string;
   content?: string;
   onBack?: () => void;
+  onBackRejected?: () => void;
 }): Promise<Rendered> {
   const onBack = vi.fn(props.onBack ?? (() => undefined));
+  const onBackRejected = vi.fn(props.onBackRejected ?? (() => undefined));
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -54,10 +57,11 @@ async function renderScreen(props: {
         filename: 'note.md',
         content: props.content ?? '# Hello',
         onBack,
+        onBackRejected,
       }),
     );
   });
-  return { container, root, onBack };
+  return { container, root, onBack, onBackRejected };
 }
 
 function saveStatus(container: HTMLElement): string {
@@ -78,8 +82,10 @@ describe('MobileDocumentScreen · save state machine', () => {
   let container: HTMLDivElement;
   let root: Root;
   let onBack: ReturnType<typeof vi.fn>;
+  let originalVisualViewport: PropertyDescriptor | undefined;
 
   beforeEach(() => {
+    originalVisualViewport = Object.getOwnPropertyDescriptor(window, 'visualViewport');
     vi.clearAllMocks();
     window.localStorage.clear();
     editor.trigger = null;
@@ -94,9 +100,32 @@ describe('MobileDocumentScreen · save state machine', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     document.body.replaceChildren();
+    if (originalVisualViewport) {
+      Object.defineProperty(window, 'visualViewport', originalVisualViewport);
+    } else {
+      delete (window as unknown as { visualViewport?: VisualViewport }).visualViewport;
+    }
     window.localStorage.clear();
     Object.defineProperty(document, 'hidden', { configurable: true, value: false });
     vi.useRealTimers();
+  });
+
+  it('publishes the complete iOS visual viewport rectangle for the keyboard toolbar', async () => {
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: {
+        height: 420,
+        offsetTop: 137,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      } as unknown as VisualViewport,
+    });
+
+    ({ container, root, onBack } = await renderScreen({}));
+
+    expect(document.documentElement.style.getPropertyValue('--mobile-visual-viewport-top')).toBe('137px');
+    expect(document.documentElement.style.getPropertyValue('--mobile-visual-viewport-height')).toBe('420px');
+    expect(document.documentElement.style.getPropertyValue('--mobile-visual-viewport-bottom')).toBe('557px');
   });
 
   it('auto-saves the joined document after the debounce with the prior content as expected', async () => {
@@ -260,7 +289,8 @@ describe('MobileDocumentScreen · save state machine', () => {
 
   it('keeps the editor open when saving on Back detects a conflict', async () => {
     writeDocument.fn.mockResolvedValue(null);
-    ({ container, root, onBack } = await renderScreen({ content: '# Hello' }));
+    const rendered = await renderScreen({ content: '# Hello' });
+    ({ container, root, onBack } = rendered);
 
     await act(async () => { editor.trigger?.('# changed'); });
     await act(async () => {
@@ -271,6 +301,7 @@ describe('MobileDocumentScreen · save state machine', () => {
     expect(writeDocument.fn).toHaveBeenCalledOnce();
     expect(saveStatus(container)).toBe('conflict');
     expect(onBack).not.toHaveBeenCalled();
+    expect(rendered.onBackRejected).toHaveBeenCalledOnce();
   });
 
   it('waits for an in-flight save and persists newer edits before leaving', async () => {

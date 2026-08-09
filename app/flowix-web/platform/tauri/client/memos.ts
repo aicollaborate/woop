@@ -217,6 +217,8 @@ export interface NotebookRecord {
   id: string;
   name: string;
   icon?: string | null;
+  /** Total number of notes in the notebook, when provided by the caller. */
+  memoCount?: number;
   path: string;
   createdAt: number;
   updatedAt: number;

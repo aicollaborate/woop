@@ -22,7 +22,7 @@
     --radius: 0.625rem;
 
     --font-heading: var(--font-sans);
-    --font-sans: 'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont;
+    --font-sans: 'PingFang SC', -apple-system, 'Nunito Sans', 'Inter', 'Segoe UI', sans-serif;
     --font-nav: 'SF Mono';
 
     --app-font-family: var(--font-sans);
@@ -69,6 +69,7 @@
 }
 
 body:has(.mobile-shell),
+body:has(.mobile-document-layer),
 body:has(.mobile-document-screen),
 body:has(.mobile-auth-screen),
 body:has(.mobile-boot-screen) {
@@ -82,7 +83,12 @@ body:has(.mobile-document-screen) {
   touch-action: auto;
 }
 
+body:has(.mobile-document-layer) {
+  touch-action: auto;
+}
+
 .mobile-shell,
+.mobile-document-layer,
 .mobile-document-screen,
 .mobile-auth-screen,
 .mobile-boot-screen {
@@ -98,8 +104,47 @@ body:has(.mobile-document-screen) {
   touch-action: pan-y;
 }
 
+.mobile-document-layer {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  box-shadow: -18px 0 42px color-mix(in oklch, var(--foreground) 18%, transparent);
+}
+
+.mobile-document-layer--swiping,
+.mobile-document-layer--swipe-settling {
+  will-change: transform;
+}
+
+.mobile-document-layer--swiping {
+  transition: none;
+}
+
+.mobile-document-layer--swipe-settling {
+  transition: transform 280ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.mobile-document-layer--enter {
+  animation: mobile-document-push-in 320ms cubic-bezier(.32,.72,0,1);
+}
+
+.mobile-document-layer--exit {
+  pointer-events: auto;
+  animation: mobile-document-pop-out 320ms cubic-bezier(.32,.72,0,1) both;
+}
+
+.mobile-list-screen {
+  min-height: 100dvh;
+}
+
 .mobile-shell--drawer-open {
-  margin-left: min(84vw, 336px);
+  margin-left: 100vw;
 }
 
 .mobile-topbar {
@@ -116,12 +161,83 @@ body:has(.mobile-document-screen) {
   backdrop-filter: blur(20px) saturate(1.08);
 }
 
-.mobile-list-topbar { border-bottom: 0; }
+.mobile-list-topbar {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-bottom: 0;
+}
+
+/* 搜索从右侧圆形按钮展开为整行输入。保留原 topbar 的高度和安全区，列表不跳动。 */
+.mobile-list-search {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  min-width: 0;
+  height: 46px;
+  align-items: center;
+  gap: 9px;
+  margin: 0 8px;
+  padding: 0 4px 0 14px;
+  border: 1px solid rgba(255, 255, 255, .96);
+  border-radius: 999px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, .045), 0 0 0 1px rgba(255, 255, 255, .55);
+  opacity: 0;
+  pointer-events: none;
+  transform: scaleX(.34);
+  transform-origin: right center;
+  transition: opacity 160ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.mobile-list-topbar.is-search-open .mobile-list-search {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scaleX(1);
+}
+
+.mobile-list-search > svg { flex: none; color: var(--muted-foreground); }
+.mobile-list-search input {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+.mobile-list-search input::placeholder { color: color-mix(in oklch, var(--muted-foreground) 72%, transparent); }
+.mobile-list-search__clear,
+.mobile-list-search__cancel {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.mobile-list-search__clear:active,
+.mobile-list-search__cancel:active { background: #f4f5f7; }
+.mobile-list-search__cancel { color: #1f2937; }
+
+.mobile-list-topbar.is-search-open .mobile-menu-button,
+.mobile-list-topbar.is-search-open .mobile-list-heading,
+.mobile-list-topbar.is-search-open .mobile-list-actions {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(.88);
+  transition: opacity 120ms ease, transform 160ms ease;
+}
 
 .mobile-icon-button {
   display: inline-grid;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   justify-self: center;
   border: 0;
@@ -133,6 +249,82 @@ body:has(.mobile-document-screen) {
 .mobile-icon-button:active { background: var(--muted); }
 .mobile-icon-button:disabled { opacity: .42; }
 
+.mobile-menu-button {
+  grid-column: 1;
+  grid-row: 1;
+  width: 48px;
+  height: 48px;
+  justify-self: start;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, .72),
+    0 3px 12px rgba(15, 23, 42, .045),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+.mobile-menu-button:active { background: #f4f5f7; }
+
+.mobile-drawer-close-button {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, .72),
+    0 3px 12px rgba(15, 23, 42, .045),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+.mobile-drawer-close-button:active { background: #f4f5f7; }
+
+.mobile-list-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  width: max-content;
+  height: 46px;
+  align-items: center;
+  gap: 4px;
+  justify-self: end;
+  padding: 0 2px;
+  border: 1px solid rgba(255, 255, 255, .96);
+  border-radius: 999px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, .045), 0 0 0 1px rgba(255, 255, 255, .55);
+}
+
+.mobile-list-action {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+}
+.mobile-list-action:active { background: #f4f5f7; }
+.mobile-list-action:disabled { opacity: .42; }
+
+/* Match the search icon for stable cloud states; transfer arrows keep the
+ * former cloud-checked tone so active syncing remains visually subordinate. */
+.mobile-list-action .mobile-cloud-status-icon--connected,
+.mobile-list-action .mobile-cloud-status-icon--unlinked {
+  opacity: 1;
+}
+.mobile-list-action .mobile-cloud-status-icon--unlinked > svg { opacity: 1; }
+.mobile-list-action .mobile-cloud-status-icon--connecting { opacity: .67; }
+
+.mobile-menu-button > svg,
+.mobile-list-action > svg,
+.mobile-list-action > .mobile-cloud-status-icon {
+  opacity: .9;
+}
+
 .mobile-list-heading,
 .mobile-document-heading {
   display: flex;
@@ -142,8 +334,17 @@ body:has(.mobile-document-screen) {
   line-height: 1.15;
 }
 
+.mobile-list-topbar .mobile-list-heading {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  max-width: calc(100% - 152px);
+  justify-self: center;
+  overflow: hidden;
+}
+
 .mobile-list-heading > div {
   display: flex;
+  min-width: 0;
   max-width: 100%;
   align-items: center;
   gap: 7px;
@@ -152,7 +353,7 @@ body:has(.mobile-document-screen) {
 .mobile-list-count {
   flex: none;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -174,6 +375,11 @@ body:has(.mobile-document-screen) {
   letter-spacing: -.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mobile-list-heading strong {
+  font-size: 17px;
+  font-weight: 680;
 }
 
 .mobile-list-heading > span,

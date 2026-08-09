@@ -46,6 +46,7 @@ export interface CloudNotebook {
   createdAt: number;
   updatedAt: number;
   synced: boolean;
+  usedBytes: number;
 }
 
 export interface CloudSyncResult {

@@ -30,6 +30,7 @@
 
 @import './base.css';
 @import './list.css';
+@import '../cloud-status-icon.css';
 @import './drawer.css';
 @import './account.css';
 @import './editor.css';
@@ -50,5 +51,8 @@
 @media (prefers-reduced-motion: reduce) {
   .mobile-drawer,
   .mobile-account-sheet,
+  .mobile-document-layer--enter,
+  .mobile-document-layer--exit,
   .is-spinning { animation-duration: 1ms; animation-iteration-count: 1; }
+  .mobile-document-loading-screen > * { animation-delay: 0ms; animation-duration: 1ms; }
 }
