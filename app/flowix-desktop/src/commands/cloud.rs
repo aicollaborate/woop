@@ -298,14 +298,66 @@ fn apply_v2_note_changes(
                 desired_path = base.join(&safe_filename);
                 occupied.push(safe_filename);
             }
-            crate::watcher::runtime::mark_self_write_for(app, &desired_path);
+            // P0-2: 单端同步回声抑制。本端 push 后紧接的 pull 会用旧 cursor 把刚推上去
+            // 的内容再拉回来（协议暂无 device 维度去重）。若此时本地磁盘正文与远端
+            // content_hash 一致，说明是回声而非真实远端更新，跳过覆盖写与 Updated 事件
+            // ——否则文件监听器会把这次“内容未变”的写盘误判为外部编辑，弹“文档已被外部
+            // 修改”。附件已由上方 write_cloud_attachments 幂等落盘，filename/位置未变时
+            // 无需重写正文。
+            // 本地磁盘当前正文哈希：P0-2 回声判据与 P1-3 本地编辑判据共用。
+            let disk_hash = std::fs::read(&desired_path)
+                .ok()
+                .map(|bytes| v2_content_hash(&bytes));
+
+            // P0-2: 回声 / 内容已一致 → 跳过写盘与事件（避免监听器把“内容未变”的
+            // 写盘误判为外部编辑）。
+            if matches!(&old_path, Some(path) if path == &desired_path)
+                && disk_hash.as_deref() == Some(expected_hash)
+            {
+                let memo = memo_file
+                    .register_existing_file_for_notebook_id(notebook_id, &desired_path)
+                    .map_err(sync_error)?;
+                if memo.id != *note_id {
+                    return Err(format!(
+                        "CLOUD_NOTE_ID_MISMATCH: expected {}, registered {}",
+                        note_id, memo.id
+                    ));
+                }
+                continue;
+            }
+
+            // P1-3: 本地有未同步编辑时不接受远端覆盖（本地会在下次 push 以最新远端
+            // revision 为 base 补推上去）。两条判据取或：
+            //   ① has_pending_v2_note_change —— sync dirty 队列，但由 watcher 处理编辑器
+            //     保存事件后才打标记，有 ~400ms settle 延迟；
+            //   ② 磁盘正文偏离同步基线 note_state.content_hash —— 即时读盘+读同步状态，
+            //     堵住 ① 的延迟窗口：快速编辑时编辑器刚保存、watcher 还没 mark dirty，
+            //     但磁盘已领先于同步基线，据此判定本地已编辑、不覆盖。
+            let baseline_hash = state
+                .cloud_sync
+                .v2_note_state(note_id)
+                .ok()
+                .flatten()
+                .and_then(|stored| stored.content_hash);
+            let locally_edited = state
+                .cloud_sync
+                .has_pending_v2_note_change(note_id)
+                .unwrap_or(false)
+                || matches!(
+                    (baseline_hash.as_deref(), disk_hash.as_deref()),
+                    (Some(base), Some(disk)) if base != disk
+                );
+            if locally_edited {
+                continue;
+            }
             if let Some(path) = &old_path {
                 crate::watcher::runtime::mark_self_write_for(app, path);
             }
             let overrides: MergeOverrides =
                 [("key".to_string(), note_id.clone())].into_iter().collect();
             let stamped_content = merge_frontmatter(markdown, &overrides);
-            atomic_write_bytes(&desired_path, stamped_content.as_bytes()).map_err(sync_error)?;
+            crate::watcher::runtime::write_note_atomic(app, &desired_path, stamped_content.as_bytes())
+                .map_err(sync_error)?;
             let memo = memo_file
                 .register_existing_file_for_notebook_id(notebook_id, &desired_path)
                 .map_err(sync_error)?;
@@ -463,8 +515,8 @@ fn canonicalize_local_keys(
             [("key".to_string(), memo.id.clone())].into_iter().collect();
         let canonical = merge_frontmatter(&content, &overrides);
         if canonical != content {
-            crate::watcher::runtime::mark_self_write_for(app, &path);
-            atomic_write_bytes(&path, canonical.as_bytes()).map_err(sync_error)?;
+            crate::watcher::runtime::write_note_atomic(app, &path, canonical.as_bytes())
+                .map_err(sync_error)?;
         }
     }
     Ok(())

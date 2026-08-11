@@ -34,6 +34,16 @@ impl SyncManager {
             .find(|notebook| notebook.notebook_id == notebook_id))
     }
 
+    /// 单条 note 的同步基线状态（content_hash 等）。desktop 适配层在 apply 远端变更前
+    /// 用它做"本地是否已编辑"的即时判据：磁盘正文哈希偏离这个基线，说明本地自上次
+    /// 同步后改过，远端覆盖会丢弃本地编辑。
+    pub fn v2_note_state(
+        &self,
+        note_id: &str,
+    ) -> Result<Option<crate::v2::V2NoteState>, SyncError> {
+        self.store.v2_note_state(note_id)
+    }
+
     pub fn v2_enabled_notebooks(&self) -> Result<Vec<crate::v2::V2SyncedNotebook>, SyncError> {
         self.store.v2_notebooks(true)
     }
@@ -330,7 +340,7 @@ impl SyncManager {
                 .v2_inflight_due_for_notebook(Utc::now().timestamp_millis(), scope)?,
             None => self.store.v2_inflight_due(Utc::now().timestamp_millis())?,
         };
-        let (uploaded, deleted) = self.push_v2_inflight(access_token, &due).await?;
+        let (uploaded, deleted, self_sync_seqs) = self.push_v2_inflight(access_token, &due).await?;
 
         let bootstrap_required = enabled_notebooks
             .iter()
@@ -355,7 +365,7 @@ impl SyncManager {
             )
         } else {
             match self
-                .pull_v2_changes(access_token, cursor, &enabled_ids, notebook_scope)
+                .pull_v2_changes(access_token, cursor, &enabled_ids, notebook_scope, &self_sync_seqs)
                 .await
             {
                 Ok(result) => (result.0, result.1, result.2, Vec::new()),
@@ -595,9 +605,12 @@ impl SyncManager {
         &self,
         access_token: &str,
         due: &[crate::v2::V2InflightOperation],
-    ) -> Result<(usize, usize), SyncError> {
+    ) -> Result<(usize, usize, HashSet<i64>), SyncError> {
         let mut uploaded = 0;
         let mut deleted = 0;
+        // P0-1: 记录本批次 push 在服务端拿到的 sync_seq，回传给 pull 阶段，用于过滤
+        // 本端自己的回声（单端 push 后 pull 用旧 cursor 又拉回自己刚推上去的内容）。
+        let mut self_sync_seqs: HashSet<i64> = HashSet::new();
         for batch in due.chunks(100) {
             let operations = batch
                 .iter()
@@ -633,6 +646,9 @@ impl SyncManager {
                     ))
                 })?;
                 if response.ok {
+                    if let Some(data) = response.data.as_ref() {
+                        self_sync_seqs.insert(data.sync_seq);
+                    }
                     self.store.acknowledge_v2_operation(
                         &item.operation_id,
                         item.entity_type,
@@ -659,7 +675,7 @@ impl SyncManager {
                 }
             }
         }
-        Ok((uploaded, deleted))
+        Ok((uploaded, deleted, self_sync_seqs))
     }
 
     async fn pull_v2_changes(
@@ -668,6 +684,7 @@ impl SyncManager {
         cursor: i64,
         enabled: &HashSet<&str>,
         notebook_scope: Option<&str>,
+        self_sync_seqs: &HashSet<i64>,
     ) -> Result<(Vec<V2RemoteApply>, i64, i64), SyncError> {
         let mut next_cursor = cursor;
         let mut latest = HashMap::<(String, String), V2Change>::new();
@@ -699,6 +716,11 @@ impl SyncManager {
         changes.sort_by_key(|change| change.sync_seq);
         let mut remote = Vec::new();
         for change in changes {
+            // P0-1: 跳过本端刚 push 产生的 change，避免把自己的上传当成远端更新拉回
+            // 覆盖本地（单端 echo）。其他设备的 change 不在 self_sync_seqs 中，正常 apply。
+            if self_sync_seqs.contains(&change.sync_seq) {
+                continue;
+            }
             if change.entity_type == "notebook" {
                 if notebook_scope.is_some_and(|scope| scope != change.entity_id) {
                     continue;

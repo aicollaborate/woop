@@ -739,6 +739,7 @@ const zhCN = {
     "document.titlebar.searchTooltip": "文档搜索",
     "document.titlebar.moreTooltip": "更多",
     "document.external.changeWarning": "文档已被外部修改",
+    "document.cloud.updateAvailable": "云端有更新版本，已保留你的本地编辑",
     "document.external.saveToMemoFailed": "保存到 Memo 失败",
     "document.external.titlebarBadge": "外部文档",
     "document.color.red": "红",

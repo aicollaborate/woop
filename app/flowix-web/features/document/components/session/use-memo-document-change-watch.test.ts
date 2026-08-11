@@ -118,4 +118,23 @@ describe('classifyUpdatedMemoDocumentAction', () => {
       'main',
     )).toBe('reload');
   });
+
+  // 云同步更新走与 external_tool 一致的 reload/defer 路径。其误报已在更上层消除
+  //（后端 echo 过滤 + apply noop + dirty 本地优先），warnAboutConflict 对 cloud_sync
+  // 用独立柔和文案。这里锁定分类行为，防止后续重构把 cloud_sync 误判或漏处理。
+  it('reloads a clean current memo for a cloud_sync update', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      { ...updatedEvent, source: 'cloud_sync' },
+      memoIdentity,
+      false,
+    )).toBe('reload');
+  });
+
+  it('defers a cloud_sync update while the current memo is dirty', () => {
+    expect(classifyUpdatedMemoDocumentAction(
+      { ...updatedEvent, source: 'cloud_sync' },
+      memoIdentity,
+      true,
+    )).toBe('defer');
+  });
 });

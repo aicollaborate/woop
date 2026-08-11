@@ -764,6 +764,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "document.titlebar.searchTooltip": "Find in document",
     "document.titlebar.moreTooltip": "More",
     "document.external.changeWarning": "This note was changed outside Flowix",
+    "document.cloud.updateAvailable": "A newer version arrived from the cloud; your local edits were kept",
     "document.external.saveToMemoFailed": "Failed to save as note",
     "document.external.titlebarBadge": "External document",
     "document.color.red": "Red",

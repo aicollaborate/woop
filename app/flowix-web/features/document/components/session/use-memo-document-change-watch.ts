@@ -11,7 +11,7 @@ import { translate } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { registerMemoEventHandler } from '@/lib/memo-dispatcher';
-import type { MemoEvent } from '@/types/memo';
+import type { MemoEvent, MemoChangeSource } from '@/types/memo';
 import type { MemoContentCommit } from '@/types/memo';
 import {
   markMemoCommitApplied,
@@ -122,12 +122,15 @@ export function useMemoDocumentChangeWatch({
       }
       void reloadLatestExternalContent(pending);
     });
-    const warnAboutConflict = () => {
+    const warnAboutConflict = (source?: MemoChangeSource) => {
       if (!hasDocumentUnsavedChanges(identity)) return;
       if (Date.now() - lastConflictWarningAtRef.current < CONFLICT_WARNING_COOLDOWN_MS) return;
       lastConflictWarningAtRef.current = Date.now();
       const language = useUserSettingsStore.getState().settings.language;
-      toast.warning(translate(language, 'document.external.changeWarning'), { duration: 5000 });
+      const messageKey = source === 'cloud_sync'
+        ? 'document.cloud.updateAvailable'
+        : 'document.external.changeWarning';
+      toast.warning(translate(language, messageKey), { duration: 5000 });
     };
 
     const unsubscribeMemoEvents = registerMemoEventHandler(
@@ -167,7 +170,7 @@ export function useMemoDocumentChangeWatch({
         );
         if (action === 'ignore') return;
         if (action === 'defer') {
-          warnAboutConflict();
+          warnAboutConflict(event.source);
           deferExternalReloadUntilClean(event);
           return;
         }
