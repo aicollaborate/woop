@@ -38,6 +38,8 @@ function sessionIdentity(session: ActiveDocumentSession): DocumentIdentity {
 interface DocumentStore {
   currentDocumentPath: string | null;
   currentDocumentSource: DocumentSource | null;
+  /** A right-panel surface which is not backed by an editable document. */
+  activeAgentConversationId: string | null;
   activeMemoSession: MemoDocumentSession | null;
   activeExternalSession: ExternalDocumentSession | null;
   isDocumentTransitioning: boolean;
@@ -53,6 +55,8 @@ interface DocumentStore {
     initialContent?: string;
   }) => Promise<void>;
   openExternalDocument: (path: string | null) => Promise<void>;
+  openAgentConversation: (instanceId: string) => Promise<void>;
+  closeAgentConversation: () => void;
   clearDocument: () => Promise<void>;
   discardMemoDocument: (memoId: string) => Promise<void>;
 }
@@ -80,6 +84,7 @@ function documentState(path: string | null, source: DocumentSource | null) {
   return {
     currentDocumentPath: path,
     currentDocumentSource: path ? source : null,
+    activeAgentConversationId: null,
     activeMemoSession: null,
     activeExternalSession: null,
     isDocumentTransitioning: false,
@@ -144,6 +149,7 @@ export const useDocumentStore = create<DocumentStore>()(
   (set, get) => ({
     currentDocumentPath: null,
     currentDocumentSource: null,
+    activeAgentConversationId: null,
     activeMemoSession: null,
     activeExternalSession: null,
     isDocumentTransitioning: false,
@@ -166,6 +172,7 @@ export const useDocumentStore = create<DocumentStore>()(
         return {
           currentDocumentPath: canonicalNewPath,
           currentDocumentSource: state.currentDocumentSource,
+          activeAgentConversationId: null,
           activeMemoSession: {
             ...state.activeMemoSession,
             path: canonicalNewPath,
@@ -240,6 +247,7 @@ export const useDocumentStore = create<DocumentStore>()(
             return {
               currentDocumentPath: canonicalNewPath,
               currentDocumentSource: 'memo',
+              activeAgentConversationId: null,
               activeMemoSession: {
                 id: `memo:${memoId}`,
                 memoId,
@@ -291,6 +299,7 @@ export const useDocumentStore = create<DocumentStore>()(
             return {
               currentDocumentPath: canonicalNewPath,
               currentDocumentSource: 'external',
+              activeAgentConversationId: null,
               activeMemoSession: null,
               activeExternalSession: {
                 id: `external:${canonicalNewPath}`,
@@ -306,6 +315,29 @@ export const useDocumentStore = create<DocumentStore>()(
           throw err;
         }
       });
+    },
+    openAgentConversation: async (instanceId) => {
+      const normalizedInstanceId = instanceId.trim();
+      if (!normalizedInstanceId || get().activeAgentConversationId === normalizedInstanceId) return;
+
+      return enqueueTransition(async () => {
+        const prev = get().activeMemoSession ?? get().activeExternalSession;
+        if (prev) {
+          const flushed = await flushDocumentPath(sessionIdentity(prev), prev.path);
+          if (!flushed) throw new Error('Conversation switch cancelled because saving did not complete');
+        }
+        set({
+          ...documentState(null, null),
+          activeAgentConversationId: normalizedInstanceId,
+        });
+      });
+    },
+    closeAgentConversation: () => {
+      set((state) => (
+        state.activeAgentConversationId
+          ? { activeAgentConversationId: null }
+          : state
+      ));
     },
     clearDocument: async () => {
       return enqueueTransition(async () => {

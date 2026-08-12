@@ -1302,6 +1302,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn external_identity_migration_deduplicates_instances_before_canonicalizing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open db");
+            conn.execute_batch(
+                "
+                PRAGMA foreign_keys = ON;
+                CREATE TABLE threads (
+                    thread_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE thread_external_sessions (
+                    thread_id TEXT NOT NULL,
+                    runtime TEXT NOT NULL,
+                    external_session_id TEXT NOT NULL,
+                    session_metadata_json TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (thread_id, runtime),
+                    UNIQUE (runtime, external_session_id),
+                    FOREIGN KEY(thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+                );
+                CREATE TABLE agent_conversation_instances (
+                    instance_id TEXT PRIMARY KEY,
+                    agent_type TEXT NOT NULL,
+                    thread_id TEXT,
+                    runtime_config TEXT,
+                    frozen_cwd TEXT,
+                    source_kind TEXT NOT NULL DEFAULT 'thread-card',
+                    source_document_path TEXT,
+                    source_memo_id TEXT,
+                    role_memo_id TEXT,
+                    role_name TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY(thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_agent_conversation_thread
+                    ON agent_conversation_instances(thread_id);
+                CREATE UNIQUE INDEX idx_agent_conversation_thread_unique
+                    ON agent_conversation_instances(thread_id)
+                    WHERE thread_id IS NOT NULL;
+                CREATE TABLE agent_external_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    runtime TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    event_key TEXT,
+                    normalized_json TEXT NOT NULL,
+                    raw_json TEXT,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY(thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+                );
+                INSERT INTO threads VALUES
+                    ('codex-local-thread', 'codex', 'Local title', 1, 9),
+                    ('codex-provider-thread', 'codex', 'Provider title', 2, 10);
+                INSERT INTO thread_external_sessions VALUES
+                    ('codex-local-thread', 'codex', 'codex-provider-thread', NULL, 1, 10);
+                INSERT INTO agent_conversation_instances VALUES
+                    ('local-instance', 'codex', 'codex-local-thread', NULL, NULL,
+                     'thread-card', NULL, NULL, NULL, NULL, 1, 10),
+                    ('provider-instance', 'codex', 'codex-provider-thread', NULL, NULL,
+                     'thread-card', NULL, 'memo-1', NULL, NULL, 2, 10);
+                ",
+            )
+            .expect("seed duplicate identity records");
+        }
+
+        let manager = Arc::new(ThreadManager::new(db_path).expect("migrate duplicate identities"));
+        let instances = manager.list_agent_conversation_instances().await.unwrap();
+
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].instance_id, "provider-instance");
+        assert_eq!(instances[0].thread_id.as_deref(), Some("codex-local-thread"));
+        assert_eq!(instances[0].source.memo_id.as_deref(), Some("memo-1"));
+    }
+
+    #[tokio::test]
     async fn deleting_external_thread_removes_session_mapping_and_events() {
         let manager = ThreadManager::for_tests();
         manager

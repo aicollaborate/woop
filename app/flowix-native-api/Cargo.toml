@@ -1,0 +1,23 @@
+[package]
+name = "flowix-native-api"
+version.workspace = true
+description = "C-compatible native API for the Swift Flowix client"
+authors = ["Flowix"]
+edition.workspace = true
+
+[lib]
+name = "flowix_native_api"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+flowix-core = { workspace = true }
+flowix-sync = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+base64 = "0.22"
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

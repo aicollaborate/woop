@@ -49,6 +49,8 @@ export interface Notebook {
   id: string;
   name: string;
   icon?: string | null;
+  /** Number of notes in the notebook when loaded for card-style selectors. */
+  memoCount?: number;
   path: string;
   createdAt: number;
   updatedAt: number;

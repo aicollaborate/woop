@@ -605,6 +605,14 @@
   margin-inline: auto;
 }
 
+/* The standalone detail is not CSS-fullscreen, but its message column uses
+ * the same centered width as the fullscreen Thread Card. */
+.markdown-editor.agent-conversation-detail .agent-thread-card__loading-indicator {
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin-inline: auto;
+}
+
 .markdown-editor .agent-thread-card__loading-cells {
   display: inline-grid;
   grid-template-columns: repeat(2, 0.24rem);

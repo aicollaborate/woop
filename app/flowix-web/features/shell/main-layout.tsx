@@ -5,6 +5,8 @@ import { DocumentContainer } from '@features/document/components/document-contai
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
+import { AgentConversationList } from '@features/agent/components/agent-conversation-list';
+import { AgentConversationDetail } from '@features/agent/components/agent-conversation-detail';
 import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
 import { MemoListTitlebarWin } from '@features/memo/components/memo-list-titlebar-win';
 import { MemoListTitlebarMac } from '@features/memo/components/memo-list-titlebar-mac';
@@ -84,7 +86,9 @@ export function MainLayout() {
   const notebooks = useMemoStore((s) => s.notebooks);
   const selectedMemo = useMemoStore((s) => s.selectedMemo);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
+  const activeFilter = useMemoStore((s) => s.activeFilter);
   const activeSort = useMemoStore((s) => s.activeSort);
+  const isAgentConversationView = activeFilter === 'agents';
 
   const memoActions = useMemoStore(
     useShallow((s) => ({
@@ -112,18 +116,22 @@ export function MainLayout() {
   const {
     currentDocumentPath,
     currentDocumentSource,
+    activeAgentConversationId,
     activeMemoSession,
     activeExternalSession,
     isDocumentTransitioning,
     clearDocument,
+    closeAgentConversation,
   } = useDocumentStore(
     useShallow((s) => ({
       currentDocumentPath: s.currentDocumentPath,
       currentDocumentSource: s.currentDocumentSource,
+      activeAgentConversationId: s.activeAgentConversationId,
       activeMemoSession: s.activeMemoSession,
       activeExternalSession: s.activeExternalSession,
       isDocumentTransitioning: s.isDocumentTransitioning,
       clearDocument: s.clearDocument,
+      closeAgentConversation: s.closeAgentConversation,
     })),
   );
 
@@ -156,6 +164,7 @@ export function MainLayout() {
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
   const currentDocumentContentRef = useRef('');
   const syncedNotebookIdRef = useRef<string | null | undefined>(undefined);
+  const wasAgentConversationViewRef = useRef(isAgentConversationView);
   const noteNavigationDividerStartRef = useRef({
     x: 0,
     width: NOTE_NAVIGATION_PANEL_WIDTH,
@@ -183,6 +192,20 @@ export function MainLayout() {
   } = useMemoListHoverPreview(isMemoListHidden);
   const memoListPreviewVisible =
     isMemoListHidden && memoListPreviewPhase !== 'closed';
+
+  useEffect(() => {
+    if (!isAgentConversationView && wasAgentConversationViewRef.current) {
+      // The fullscreen view is only locked while browsing the dedicated
+      // conversation list. Leaving that mode restores the source document.
+      window.dispatchEvent(new CustomEvent('flowix:agent-thread-card-request-fullscreen', {
+        detail: { exitOthers: true, persist: false },
+      }));
+    }
+    if (!isAgentConversationView && wasAgentConversationViewRef.current) {
+      closeAgentConversation();
+    }
+    wasAgentConversationViewRef.current = isAgentConversationView;
+  }, [closeAgentConversation, isAgentConversationView]);
 
   useEffect(() => {
     const notebookId = selectedNotebook?.id ?? null;
@@ -318,6 +341,7 @@ export function MainLayout() {
       ?? (selectedMemo?.id === activeMemoSession.memoId ? selectedMemo : null)
     : null;
   const isExternalDocument = currentDocumentSource === 'external';
+  const isAgentConversationDetail = !!activeAgentConversationId;
   const currentDocumentInstanceKey =
     currentDocumentSource === 'memo' && activeMemoSession
       ? activeMemoSession.id
@@ -499,7 +523,12 @@ export function MainLayout() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden" style={{ backgroundColor: 'var(--document-bg)' }}>
+    <div
+      className="flowix-main-layout flex h-screen w-screen overflow-hidden"
+      data-agent-conversation-view={isAgentConversationView || undefined}
+      data-agent-conversation-detail={isAgentConversationDetail || undefined}
+      style={{ backgroundColor: 'var(--document-bg)' }}
+    >
       <WindowsTitlebarControls />
       <MarkdownFileDropOverlay />
       <div className="flex flex-1 overflow-hidden">
@@ -523,6 +552,7 @@ export function MainLayout() {
                   selectedNotebook={selectedNotebook}
                   onSelectNotebook={handleSelectNotebook}
                   onEditNotebook={handleEditNotebook}
+                  onDeleteNotebook={handleDeleteNotebook}
                   onTogglePanel={handleToggleNoteNavigation}
                 />
               )}
@@ -585,14 +615,14 @@ export function MainLayout() {
                 }
                 className={
                   memoListPreviewVisible
-                    ? 'fixed left-1 top-[6vh] z-[1200] flex h-[88vh] w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-[12px_0_25px_-5px_rgb(0_0_0/_0.1)] [&>div]:pt-2 ' +
+                      ? 'fixed left-1 top-[6vh] z-[1200] flex h-[88vh] w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-lg [&>div]:pt-2 ' +
                       (memoListPreviewPhase === 'open'
                         ? 'flowix-hover-preview-enter'
                         : 'flowix-hover-preview-leave')
                     : 'flex-1 min-h-0'
                 }
               >
-                <MemoList />
+                {isAgentConversationView ? <AgentConversationList /> : <MemoList />}
               </div>
             </div>
           </div>
@@ -606,15 +636,24 @@ export function MainLayout() {
           {/* Memo detail */}
             <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
             {/* Fixed top navigation bar */}
-            {isWindowsPlatform() ? (
+            {!isAgentConversationDetail && (isWindowsPlatform() ? (
               <DocumentTitlebarWin {...documentTitlebarProps} />
             ) : (
               <DocumentTitlebarMac {...documentTitlebarProps} />
-            )}
+            ))}
 
             {/* Content area */}
             <div className="relative flex-1 min-w-0 overflow-hidden">
-              {currentDocumentPath ? (
+              {isAgentConversationDetail ? (
+                <AgentConversationDetail
+                  key={activeAgentConversationId}
+                  instanceId={activeAgentConversationId}
+                  isSidebarCollapsed={isMemoListHidden}
+                  onExpandSidebar={handleToggleMemoList}
+                  onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
+                  onSidebarPreviewLeave={handleMemoListPreviewTriggerLeave}
+                />
+              ) : currentDocumentPath ? (
                 <DocumentContainer
                   key={currentDocumentInstanceKey}
                   filePath={currentDocumentPath}

@@ -223,6 +223,93 @@
 		animation: flowix-hover-preview-out 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 
+	/* Popover presence lifecycle: mount invisibly, position before paint, then
+	 * enter on the next frame. Closing content remains mounted until animation
+	 * completion. Per-popup variables customize distance, scale and duration. */
+	@keyframes flowix-popover-in {
+		from {
+			opacity: 0;
+			transform: translate3d(var(--flowix-popover-enter-x, 0), var(--flowix-popover-enter-y, 0), 0) scale(var(--flowix-popover-enter-scale, 0.97));
+		}
+		to {
+			opacity: 1;
+			transform: translate3d(0, 0, 0) scale(1);
+		}
+	}
+
+	@keyframes flowix-popover-out {
+		from {
+			opacity: 1;
+			transform: translate3d(0, 0, 0) scale(1);
+		}
+		to {
+			opacity: 0;
+			transform: translate3d(var(--flowix-popover-exit-x, 0), var(--flowix-popover-exit-y, 0), 0) scale(var(--flowix-popover-exit-scale, 0.98));
+		}
+	}
+
+	.flowix-popover-content[data-side='top'] {
+		--flowix-popover-enter-y: 4px;
+		--flowix-popover-exit-y: 4px;
+		transform-origin: bottom center;
+	}
+
+	.flowix-popover-content[data-side='bottom'] {
+		--flowix-popover-enter-y: -4px;
+		--flowix-popover-exit-y: -4px;
+		transform-origin: top center;
+	}
+
+	.flowix-popover-content[data-side='left'] {
+		--flowix-popover-enter-x: 4px;
+		--flowix-popover-exit-x: 4px;
+		transform-origin: center right;
+	}
+
+	.flowix-popover-content[data-side='right'] {
+		--flowix-popover-enter-x: -4px;
+		--flowix-popover-exit-x: -4px;
+		transform-origin: center left;
+	}
+
+	.flowix-popover-content[data-motion-state='starting'] {
+		opacity: 0;
+		pointer-events: none;
+		transform: translate3d(var(--flowix-popover-enter-x, 0), var(--flowix-popover-enter-y, 0), 0) scale(var(--flowix-popover-enter-scale, 0.97));
+	}
+
+	.flowix-popover-content[data-motion-state='open'] {
+		animation: flowix-popover-in var(--flowix-popover-enter-duration, 180ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.flowix-popover-content[data-motion-state='closing'] {
+		pointer-events: none;
+		animation: flowix-popover-out var(--flowix-popover-exit-duration, 140ms) ease-in both;
+	}
+
+	.flowix-notebook-selector-popup {
+		--flowix-popover-enter-y: 4px;
+		--flowix-popover-enter-scale: 0.84;
+		--flowix-popover-enter-duration: 180ms;
+		--flowix-popover-exit-y: 4px;
+		--flowix-popover-exit-scale: 0.96;
+		--flowix-popover-exit-duration: 140ms;
+		transform-origin: bottom left !important;
+	}
+
+	/* 左侧当前笔记本卡片的弹窗向下展开；状态栏入口仍保留向上弹出的动效。 */
+	.flowix-notebook-selector-popup--bottom {
+		--flowix-popover-enter-y: -4px;
+		--flowix-popover-exit-y: -4px;
+		transform-origin: top left !important;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.flowix-popover-content {
+			animation: none !important;
+		}
+	}
+
 	.icon-btn {
 		transition: background-color 150ms ease, transform 150ms ease;
 	}

@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::lock_utils::{read_lock, write_lock};
 use flowix_core::memo_file::{MemoFile, MemoIndexFile, Notebook, NotebookConfig};
+use flowix_core::MemoService;
 use flowix_sync::V2LocalNotebook;
 
 use super::agent_access::AGENT_ACCESS_CHANGED_EVENT;
@@ -129,6 +130,14 @@ fn notebook_from_config(config: NotebookConfig) -> Notebook {
         is_default: config.is_default,
         sort: config.sort,
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookListItem {
+    #[serde(flatten)]
+    notebook: Notebook,
+    memo_count: usize,
 }
 
 fn create_notebook_registry(
@@ -316,18 +325,22 @@ fn spawn_notebook_import(app: AppHandle, notebook_id: String) {
 }
 
 #[tauri::command]
-pub fn get_notebooks(state: State<AppState>) -> Vec<Notebook> {
-    state
-        .memo_file
-        .read()
-        .unwrap_or_else(|poisoned| {
-            tracing::error!("memo_file read lock poisoned, recovering");
-            poisoned.into_inner()
-        })
-        .read_notebook_configs()
-        .unwrap_or_default()
+pub fn get_notebooks(state: State<AppState>) -> Vec<NotebookListItem> {
+    let memo_file = read_lock(&state.memo_file, "memo_file");
+    let configs = memo_file.read_notebook_configs().unwrap_or_default();
+    let counts = MemoService::new(&memo_file)
+        .notebook_note_counts(&configs)
+        .unwrap_or_default();
+
+    configs
         .into_iter()
-        .map(notebook_from_config)
+        .map(|config| {
+            let memo_count = counts.get(&config.id).copied().unwrap_or(0);
+            NotebookListItem {
+                notebook: notebook_from_config(config),
+                memo_count,
+            }
+        })
         .collect()
 }
 

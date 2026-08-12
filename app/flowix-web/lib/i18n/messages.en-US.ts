@@ -481,6 +481,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "status.notebook": "Notebook",
     "status.switchNotebook": "Switch notebook",
     "status.notebookList": "Notebook list",
+    "status.notebookMemoCount": "{count} notes",
     "status.noNotebooks": "No notebooks",
     "status.invalid": "Unavailable",
     "status.editNotebook": "Edit notebook",

@@ -135,6 +135,18 @@
   color: currentColor;
 }
 
+/* Dedicated conversation navigation owns the fullscreen state. The selected
+ * card remains the right-hand conversation surface until the user changes
+ * navigation, so there is intentionally no inline "exit fullscreen" control. */
+.flowix-main-layout[data-agent-conversation-view='true']
+  .agent-thread-card--fullscreen
+  .agent-thread-card__fullscreen,
+.flowix-main-layout[data-agent-conversation-view='true']
+  .agent-thread-card--fullscreen
+  .agent-thread-card__actions-divider {
+  display: none;
+}
+
 /* 全屏 / 删除按钮之间的竖向分割线 ── 把"视图操作"与"破坏性操作"
  * 在视觉上明确分组, 减少误删概率。
  *
@@ -200,6 +212,42 @@
   overflow-y: scroll;
   scrollbar-gutter: stable both-edges;
   padding-inline: 0;
+}
+
+/* Dedicated right-panel conversation surface. It deliberately uses the same
+ * message/composer classes as Thread Card, but is a normal flex layout rather
+ * than the card's fixed-position fullscreen mode. */
+.agent-conversation-detail .agent-conversation-detail__card {
+  margin: 0;
+  min-height: 0;
+  background: var(--editor-block-bg, var(--document-bg));
+}
+
+.agent-conversation-detail,
+.agent-conversation-detail .agent-conversation-detail__header {
+  background: var(--editor-block-bg, var(--document-bg));
+}
+
+.agent-conversation-detail .agent-thread-card__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: scroll;
+  scrollbar-gutter: stable both-edges;
+  padding-inline: 0;
+}
+
+.agent-conversation-detail .agent-thread-card__messages,
+.agent-conversation-detail .agent-thread-card__skeleton {
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin-inline: auto;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__composer {
+  align-self: center;
+  width: calc(100% - 3rem);
+  max-width: 780px;
+  margin: 0 auto 0.6rem;
 }
 
 .markdown-editor
@@ -329,5 +377,3 @@
 .markdown-editor .agent-thread-card__messages > * {
   max-width: 100%;
 }
-
-

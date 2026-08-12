@@ -17,6 +17,7 @@ interface NoteNavigationPanelProps {
   selectedNotebook: Notebook | null;
   onSelectNotebook: (notebook: Notebook) => void;
   onEditNotebook: (notebook: Notebook) => void;
+  onDeleteNotebook: (notebook: Notebook) => void;
   onTogglePanel: () => void;
 }
 
@@ -38,6 +39,7 @@ export function NoteNavigationPanel({
   selectedNotebook,
   onSelectNotebook,
   onEditNotebook,
+  onDeleteNotebook,
   onTogglePanel,
 }: NoteNavigationPanelProps) {
   const [counts, setCounts] = useState<NavCounts>({ total: 0, agent: 0, todo: 0 });
@@ -58,17 +60,13 @@ export function NoteNavigationPanel({
         <NoteNavigationPanelHeaderMac onTogglePanel={onTogglePanel} />
       )}
 
-      {/* 笔记本列表 ── max-h 320px 固定顶部, 达到上限内部滚动; 标签列表占剩余高度独立滚动。
-          笔记本列表与 status-bar/notebook-switcher 下拉项呈现一致: NotebookIcon + 名称 +
-          失效路径提示, hover 显形编辑/删除。 */}
+      {/* 笔记本列表 ── max-h 320px 固定顶部, 达到上限内部滚动; 标签列表占剩余高度独立滚动。 */}
       <NotebookList
         notebooks={notebooks}
         selectedNotebook={selectedNotebook}
         onSelectNotebook={onSelectNotebook}
         onEditNotebook={onEditNotebook}
-      />
-      <div
-        className="mx-2 mb-1 shrink-0 border-t border-[var(--muted-foreground)]/30"
+        onDeleteNotebook={onDeleteNotebook}
       />
       <div className="flex min-h-0 flex-1 flex-col">
         <OverlayScrollbar

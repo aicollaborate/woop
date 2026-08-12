@@ -6,7 +6,6 @@ import type {
   EditorView,
   NodeView as ProseMirrorNodeView,
 } from "@tiptap/pm/view";
-import { createRoot } from "react-dom/client";
 import {
   type ThreadState,
 } from "@features/agent/store/thread-runtime-state";
@@ -50,6 +49,7 @@ import {
   AgentThreadCardMessagesController,
   createThreadCacheSkeleton,
 } from "@features/agent/thread-card/messages";
+import { AgentConversationSurfaceController } from "@features/agent/thread-card/surface/agent-conversation-surface-controller";
 
 const logger = createLogger("agent-thread-card");
 import {
@@ -148,6 +148,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private composerController: ComposerController;
   private composerImages: ComposerImageController;
   private messages: AgentThreadCardMessagesController;
+  private surface: AgentConversationSurfaceController;
   private runtime: AgentThreadCardRuntimeController;
   // 全屏 / 删除按钮之间的竖向分割线 ── 非交互元素, aria-hidden 让屏幕
   // 阅读器跳过; 视觉与按钮同高 (28px), 1px var(--border) 着色。
@@ -175,18 +176,19 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       element?: HTMLElement;
       threadId?: string | null;
       exitOthers?: boolean;
+      persist?: boolean;
     }>).detail;
     const isTarget =
       detail?.element === this.dom ||
       (!!detail?.threadId && detail.threadId === this.threadId);
 
     if (isTarget) {
-      this.setFullscreen(true);
+      this.setFullscreen(true, { persist: detail?.persist });
       return;
     }
 
     if (detail?.exitOthers !== false && this.isFullscreen) {
-      this.setFullscreen(false);
+      this.setFullscreen(false, { persist: detail?.persist });
     }
   };
   private boundHandleCardMouseDown = (event: MouseEvent): void => {
@@ -407,10 +409,14 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       renderCodexSettingsPopover: () => this.renderCodexSettingsPopover(),
       syncRuntimeBadge: () => this.chrome.syncRuntimeBadge(),
     });
-    this.messages = new AgentThreadCardMessagesController({
+    this.surface = new AgentConversationSurfaceController({
       dom: this.dom,
       body: this.body,
       loadingIndicator: this.loadingIndicator,
+      composer: this.composer,
+      input: this.input,
+      sendButtonMount: this.sendButtonMount,
+      messageOptions: {
       bottomFollowThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX,
       topHistoryLoadThresholdPx: TOP_HISTORY_LOAD_THRESHOLD_PX,
       scrollDeltaEpsilonPx: SCROLL_DELTA_EPSILON_PX,
@@ -440,13 +446,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       createThreadCacheSkeleton: () => this.createThreadCacheSkeleton(),
       createExternalAgentEmptySettings: () =>
         this.createExternalAgentEmptySettings(),
-    });
-
-    this.composerController = new ComposerController({
-      input: this.input,
-      composer: this.composer,
+      },
+      composerOptions: {
       draft: this.composerDraft,
-      sendButtonRoot: createRoot(this.sendButtonMount),
       inputDraftMaxChars: AGENT_THREAD_CARD_INPUT_DRAFT_MAX_CHARS,
       getCurrentInputDraft: () => this.inputDraft,
       getUserHistoryMessages: () => this.getUserHistoryMessages(),
@@ -464,7 +466,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       stop: () => {
         void stopExternalAgentThreadCardRun(this.runtimeHandleId, this.threadId);
       },
+      },
     });
+    this.messages = this.surface.messages;
+    this.composerController = this.surface.composer;
     this.composerController.setSendButtonState("");
 
     this.refreshAttrs();
@@ -1522,13 +1527,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.releaseThreadInterest?.();
     this.releaseThreadInterest = null;
     this.interestedThreadId = null;
-    this.messages.dispose();
+    this.surface.dispose();
     this.body.removeEventListener("scroll", this.boundHandleBodyScroll);
     this.runtime.dispose();
     this.externalAgentSettings.dispose();
     this.agentRolePicker.dispose();
     this.fullscreenLayout.dispose();
-    this.composerController.dispose();
     this.composerImages.dispose();
   }
 }

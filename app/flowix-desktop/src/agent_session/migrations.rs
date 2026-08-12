@@ -112,17 +112,20 @@ impl super::store::ThreadManager {
         Self::ensure_agent_conversation_schema(conn)?;
         Self::migrate_agent_external_events_table(conn)?;
         Self::ensure_agent_external_event_key_column(conn)?;
+        // External CLI sessions used to be persisted under both the temporary
+        // Flowix thread id and the provider session id. Reconciliation below
+        // removes any colliding instance before the existing unique constraint
+        // can reject the canonical-id update.
+        Self::migrate_external_thread_identity(conn)?;
         conn.execute_batch(
             "
             CREATE INDEX IF NOT EXISTS idx_agent_external_events_thread
                 ON agent_external_events(thread_id, id);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_external_events_idempotency
                 ON agent_external_events(runtime, thread_id, event_key)
-                WHERE event_key IS NOT NULL AND trim(event_key) <> '';
+            WHERE event_key IS NOT NULL AND trim(event_key) <> '';
             ",
         )?;
-
-        Self::migrate_external_thread_identity(conn)?;
         conn.pragma_update(None, "user_version", THREAD_DB_SCHEMA_VERSION)?;
 
         Ok(())
@@ -496,6 +499,11 @@ impl super::store::ThreadManager {
         tx.execute_batch(
             "
             DROP TABLE IF EXISTS temp.external_session_aliases;
+            DROP TABLE IF EXISTS temp.resolved_agent_conversation_instances;
+            -- This index includes thread_id, which is rewritten below. Rebuild
+            -- it after identity reconciliation so equivalent external events
+            -- can be deduplicated under their canonical local thread id.
+            DROP INDEX IF EXISTS idx_agent_external_events_idempotency;
             CREATE TEMP TABLE external_session_aliases AS
             SELECT
                 s.thread_id AS local_thread_id,
@@ -576,8 +584,57 @@ impl super::store::ThreadManager {
                         'codex session',
                         'claude code session',
                         'hermes session'
-                    )
+                )
               );
+
+            -- A legacy external session can have both a temporary local card
+            -- instance and a later provider-session instance. Both resolve to
+            -- the same canonical thread id, so choose the newest record *before*
+            -- rewriting thread_id. This keeps an existing unique index from
+            -- rejecting the UPDATE and also repairs databases that were left in
+            -- the pre-unique-index shape by an earlier build.
+            CREATE TEMP TABLE resolved_agent_conversation_instances AS
+            SELECT
+                i.instance_id,
+                COALESCE((
+                    SELECT a.local_thread_id
+                    FROM external_session_aliases a
+                    WHERE a.external_session_id = i.thread_id
+                    ORDER BY a.updated_at DESC, a.local_thread_id DESC
+                    LIMIT 1
+                ), i.thread_id) AS canonical_thread_id,
+                i.updated_at,
+                i.source_memo_id,
+                i.source_document_path
+            FROM agent_conversation_instances i
+            WHERE i.thread_id IS NOT NULL;
+
+            DELETE FROM agent_conversation_instances
+            WHERE instance_id IN (
+                SELECT stale.instance_id
+                FROM resolved_agent_conversation_instances stale
+                JOIN resolved_agent_conversation_instances newer
+                  ON newer.canonical_thread_id = stale.canonical_thread_id
+                 AND (
+                    newer.updated_at > stale.updated_at
+                    OR (
+                        newer.updated_at = stale.updated_at
+                        AND (
+                            (newer.source_memo_id IS NOT NULL AND stale.source_memo_id IS NULL)
+                            OR (
+                                (newer.source_memo_id IS NOT NULL) = (stale.source_memo_id IS NOT NULL)
+                                AND newer.source_document_path IS NOT NULL
+                                AND stale.source_document_path IS NULL
+                            )
+                            OR (
+                                (newer.source_memo_id IS NOT NULL) = (stale.source_memo_id IS NOT NULL)
+                                AND (newer.source_document_path IS NOT NULL) = (stale.source_document_path IS NOT NULL)
+                                AND newer.instance_id > stale.instance_id
+                            )
+                        )
+                    )
+                 )
+            );
 
             UPDATE agent_conversation_instances
             SET thread_id = (
@@ -643,6 +700,7 @@ impl super::store::ThreadManager {
             );
 
             DROP TABLE thread_external_sessions_legacy;
+            DROP TABLE IF EXISTS temp.resolved_agent_conversation_instances;
             DROP TABLE IF EXISTS temp.external_session_aliases;
             ",
         )?;

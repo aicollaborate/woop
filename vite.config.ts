@@ -12,15 +12,20 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const isMobile = mode === "mobile";
+  const isEditorWebView = mode === "editor-webview";
 
   return {
+    base: isEditorWebView ? "./" : "/",
     // 前端入口: app/flowix-web/ 作为 Vite 根, 让 index.html / entrypoints /
     // public 都在同一目录, 避免 Tauri / Vite 路径互相穿越。
     root: frontendRoot,
     publicDir: resolve(frontendRoot, "public"),
     build: {
-      outDir: resolve(__dirname, ".build/web-dist"),
+      outDir: resolve(__dirname, isEditorWebView ? ".build/ios-editor" : ".build/web-dist"),
       emptyOutDir: true,
+      rollupOptions: {
+        input: resolve(frontendRoot, isEditorWebView ? "editor-webview.html" : "index.html"),
+      },
     },
 
     plugins: [react()],

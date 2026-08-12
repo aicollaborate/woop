@@ -145,6 +145,29 @@
   background: var(--document-bg);
   transform: translate3d(0, var(--mobile-visual-viewport-top, 0px), 0);
 }
+
+/* The native WKWebView is a document surface, not a translucent shell. Keep
+ * every viewport layer white and full-height so the iOS safe-area region cannot
+ * expose the app background as a bottom block before/after the editor loads. */
+html[data-platform="non-mac"],
+html[data-platform="non-mac"] body,
+html[data-platform="non-mac"] #root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: var(--document-bg);
+}
+
+html[data-platform="non-mac"] #root {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-platform="non-mac"] .mobile-markdown-editor {
+  min-height: 100%;
+}
+
 .mobile-topbar-spacer { width: 44px; }
 .mobile-save-status { display: inline-flex; min-width: max-content; align-items: center; justify-self: end; gap: 4px; padding-inline: 8px; font-size: 14px; white-space: nowrap; }
 .mobile-save-status--saved { color: color-mix(in oklch, var(--success) 52%, var(--muted-foreground)) !important; }

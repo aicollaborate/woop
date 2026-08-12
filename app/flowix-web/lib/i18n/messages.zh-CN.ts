@@ -457,6 +457,7 @@ const zhCN = {
     "status.notebook": "笔记本",
     "status.switchNotebook": "切换笔记本",
     "status.notebookList": "笔记本列表",
+    "status.notebookMemoCount": "{count} 篇",
     "status.noNotebooks": "暂无笔记本",
     "status.invalid": "已失效",
     "status.editNotebook": "编辑笔记本",

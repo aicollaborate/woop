@@ -32,7 +32,6 @@ import { NoteReference } from '@features/editor/extensions/note-link';
 import { TablePlugin } from '@features/editor/extensions/table/table-plugin';
 import { Tag } from '@features/editor/extensions/tag';
 import { WebCard } from '@features/editor/extensions/web-card';
-import { mobileClient } from '@platform/tauri/mobile-client';
 import {
   MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT,
   scrollMobileEditorSelectionIntoView,
@@ -43,66 +42,41 @@ interface MobileRichMarkdownEditorProps {
   memoId: string;
   content: string;
   onChange: (markdown: string) => void;
+  uploadAttachment?: (params: { file: File; fileName: string }) => Promise<string | null>;
+  onEditorReady?: (editor: Editor) => void;
+  externalContent?: { value: string; emitUpdate: boolean; token: number };
+  /** The native iOS shell draws the keyboard toolbar outside this WebView. */
+  showToolbar?: boolean;
+  /** Let WKWebView own caret scrolling when its toolbar is native. */
+  nativeKeyboardToolbar?: boolean;
+  nativeToolbarAction?: { action: MobileEditorToolbarAction; token: number };
 }
 
+export type MobileEditorToolbarAction =
+  | 'bold' | 'italic' | 'heading1' | 'heading2' | 'bulletList'
+  | 'orderedList' | 'taskList' | 'blockquote' | 'codeBlock'
+  | 'attachment' | 'dismiss';
+
 interface ToolbarAction {
+  id: MobileEditorToolbarAction;
   icon: LucideIcon;
   title: string;
   run: (editor: Editor) => void;
   active?: (editor: Editor) => boolean;
 }
 
-const MOBILE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const MOBILE_ATTACHMENT_MAX_BATCH_BYTES = 100 * 1024 * 1024;
-const MOBILE_ATTACHMENT_CHUNK_BYTES = 512 * 1024;
-
-function readBlobAsBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = String(reader.result || '');
-      resolve(value.includes(',') ? value.slice(value.indexOf(',') + 1) : value);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('无法读取附件'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function saveMobileAttachment(file: File, fileName: string, memoId: string): Promise<string> {
-  if (file.size <= 0 || file.size > MOBILE_ATTACHMENT_MAX_BYTES) {
-    throw new Error('单个附件不能超过 25 MB。');
-  }
-  const started = await mobileClient.attachments.beginUpload({
-    fileName,
-    mimeType: file.type || 'application/octet-stream',
-    sizeBytes: file.size,
-    memoId,
-  });
-  try {
-    for (let offset = 0; offset < file.size; offset += MOBILE_ATTACHMENT_CHUNK_BYTES) {
-      const chunk = file.slice(offset, Math.min(offset + MOBILE_ATTACHMENT_CHUNK_BYTES, file.size));
-      await mobileClient.attachments.writeChunk({
-        uploadId: started.uploadId,
-        content: await readBlobAsBase64(chunk),
-      });
-    }
-    return await mobileClient.attachments.finishUpload(started.uploadId);
-  } catch (error) {
-    void mobileClient.attachments.cancelUpload(started.uploadId);
-    throw error;
-  }
-}
 
 const TOOLBAR_ACTIONS: ToolbarAction[] = [
-  { icon: Bold, title: '粗体', run: (editor) => { editor.chain().focus().toggleBold().run(); }, active: (editor) => editor.isActive('bold') },
-  { icon: Italic, title: '斜体', run: (editor) => { editor.chain().focus().toggleItalic().run(); }, active: (editor) => editor.isActive('italic') },
-  { icon: Heading1, title: '一级标题', run: (editor) => { editor.chain().focus().toggleHeading({ level: 1 }).run(); }, active: (editor) => editor.isActive('heading', { level: 1 }) },
-  { icon: Heading2, title: '二级标题', run: (editor) => { editor.chain().focus().toggleHeading({ level: 2 }).run(); }, active: (editor) => editor.isActive('heading', { level: 2 }) },
-  { icon: List, title: '无序列表', run: (editor) => { editor.chain().focus().toggleBulletList().run(); }, active: (editor) => editor.isActive('bulletList') },
-  { icon: ListOrdered, title: '有序列表', run: (editor) => { editor.chain().focus().toggleOrderedList().run(); }, active: (editor) => editor.isActive('orderedList') },
-  { icon: ListTodo, title: '任务列表', run: (editor) => { editor.chain().focus().toggleTaskList().run(); }, active: (editor) => editor.isActive('taskList') },
-  { icon: Quote, title: '引用', run: (editor) => { editor.chain().focus().toggleBlockquote().run(); }, active: (editor) => editor.isActive('blockquote') },
-  { icon: Braces, title: '代码块', run: (editor) => { editor.chain().focus().toggleCodeBlock().run(); }, active: (editor) => editor.isActive('codeBlock') },
+  { id: 'bold', icon: Bold, title: '粗体', run: (editor) => { editor.chain().focus().toggleBold().run(); }, active: (editor) => editor.isActive('bold') },
+  { id: 'italic', icon: Italic, title: '斜体', run: (editor) => { editor.chain().focus().toggleItalic().run(); }, active: (editor) => editor.isActive('italic') },
+  { id: 'heading1', icon: Heading1, title: '一级标题', run: (editor) => { editor.chain().focus().toggleHeading({ level: 1 }).run(); }, active: (editor) => editor.isActive('heading', { level: 1 }) },
+  { id: 'heading2', icon: Heading2, title: '二级标题', run: (editor) => { editor.chain().focus().toggleHeading({ level: 2 }).run(); }, active: (editor) => editor.isActive('heading', { level: 2 }) },
+  { id: 'bulletList', icon: List, title: '无序列表', run: (editor) => { editor.chain().focus().toggleBulletList().run(); }, active: (editor) => editor.isActive('bulletList') },
+  { id: 'orderedList', icon: ListOrdered, title: '有序列表', run: (editor) => { editor.chain().focus().toggleOrderedList().run(); }, active: (editor) => editor.isActive('orderedList') },
+  { id: 'taskList', icon: ListTodo, title: '任务列表', run: (editor) => { editor.chain().focus().toggleTaskList().run(); }, active: (editor) => editor.isActive('taskList') },
+  { id: 'blockquote', icon: Quote, title: '引用', run: (editor) => { editor.chain().focus().toggleBlockquote().run(); }, active: (editor) => editor.isActive('blockquote') },
+  { id: 'codeBlock', icon: Braces, title: '代码块', run: (editor) => { editor.chain().focus().toggleCodeBlock().run(); }, active: (editor) => editor.isActive('codeBlock') },
 ];
 
 type MarkdownContext = { parentType?: string | null; index?: number; meta?: { parentAttrs?: { start?: number } } };
@@ -202,13 +176,17 @@ export function createMobileRichExtensions() {
   ];
 }
 
-export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRichMarkdownEditorProps) {
+export function MobileRichMarkdownEditor({
+  content, onChange, uploadAttachment, onEditorReady, externalContent,
+  showToolbar: renderToolbar = true, nativeKeyboardToolbar = false, nativeToolbarAction,
+}: MobileRichMarkdownEditorProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onChange);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [editorFocused, setEditorFocused] = useState(false);
   const [, setToolbarVersion] = useState(0);
+  const handledNativeToolbarToken = useRef(0);
   onChangeRef.current = onChange;
 
   useEffect(() => {
@@ -219,20 +197,26 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
       content: normalizeTables(content),
       contentType: 'markdown',
       autofocus: false,
-      editorProps: {
-        // ProseMirror normally only keeps the caret inside the visual viewport.
-        // The formatting toolbar overlays the bottom of that viewport, so leave
-        // one toolbar-height of breathing room when Enter moves the caret down.
-        scrollThreshold: { top: 16, right: 0, bottom: 78, left: 0 },
-        scrollMargin: { top: 16, right: 0, bottom: 78, left: 0 },
-        handleScrollToSelection: scrollMobileEditorSelectionIntoView,
-      },
+      editorProps: nativeKeyboardToolbar
+        // The native toolbar is outside the DOM and WKWebView already knows
+        // the keyboard's exact frame. Let it perform the sole caret-scroll;
+        // the Web toolbar path below remains necessary for Tauri mobile.
+        ? {}
+        : {
+            // ProseMirror normally only keeps the caret inside the visual viewport.
+            // The formatting toolbar overlays the bottom of that viewport, so leave
+            // one toolbar-height of breathing room when Enter moves the caret down.
+            scrollThreshold: { top: 16, right: 0, bottom: 78, left: 0 },
+            scrollMargin: { top: 16, right: 0, bottom: 78, left: 0 },
+            handleScrollToSelection: scrollMobileEditorSelectionIntoView,
+          },
       onUpdate: ({ editor: current }) => { onChangeRef.current(normalizeTables(current.getMarkdown())); setToolbarVersion((v) => v + 1); },
       onSelectionUpdate: () => setToolbarVersion((v) => v + 1),
     });
     normalizeTaskPlaceholders(instance);
     editorRef.current = instance;
     setEditor(instance);
+    onEditorReady?.(instance);
     const editorDom = instance.view.dom;
     const handleFocusIn = () => setEditorFocused(true);
     const handleFocusOut = () => {
@@ -250,10 +234,14 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
         if (instance.isFocused) scrollMobileEditorSelectionIntoView(instance.view);
       });
     };
-    window.addEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
+    if (!nativeKeyboardToolbar) {
+      window.addEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
+    }
     return () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
-      window.removeEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
+      if (!nativeKeyboardToolbar) {
+        window.removeEventListener(MOBILE_EDITOR_VIEWPORT_CHANGE_EVENT, handleViewportChange);
+      }
       editorDom.removeEventListener('focusin', handleFocusIn);
       editorDom.removeEventListener('focusout', handleFocusOut);
       instance.destroy();
@@ -262,10 +250,18 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
     };
   }, []);
 
+  useEffect(() => {
+    if (!editor || !externalContent) return;
+    editor.commands.setContent(externalContent.value, {
+      contentType: 'markdown',
+      emitUpdate: externalContent.emitUpdate,
+    });
+  }, [editor, externalContent]);
+
   // iOS/WKWebView may briefly report a zero keyboard height while it scrolls
   // the visual viewport to follow a caret created by Enter. Focus remains the
   // stable signal that the user is editing, so it alone controls visibility.
-  const showToolbar = editorFocused;
+  const toolbarVisible = editorFocused;
 
   const dismissKeyboard = () => {
     if (!editor) return;
@@ -275,6 +271,10 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
 
   const addAttachment = () => {
     if (!editor) return;
+    if (!uploadAttachment) {
+      console.warn('[MobileAttachment] 当前客户端尚未提供附件上传能力');
+      return;
+    }
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
@@ -289,9 +289,7 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
         return;
       }
       void (async () => {
-        const result = await createAttachmentUpload(files, undefined, ({ file, fileName }) =>
-          saveMobileAttachment(file, fileName, memoId),
-        );
+        const result = await createAttachmentUpload(files, undefined, uploadAttachment);
         const assets = result.assets.filter((asset) => asset.storageKey);
         result.assets.forEach((asset) => {
           if (asset.revokeObjectURL) URL.revokeObjectURL(asset.url);
@@ -305,8 +303,22 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
     input.click();
   };
 
+  useEffect(() => {
+    if (!editor || !nativeToolbarAction || nativeToolbarAction.token === handledNativeToolbarToken.current) return;
+    handledNativeToolbarToken.current = nativeToolbarAction.token;
+    if (nativeToolbarAction.action === 'dismiss') {
+      dismissKeyboard();
+      return;
+    }
+    if (nativeToolbarAction.action === 'attachment') {
+      addAttachment();
+      return;
+    }
+    TOOLBAR_ACTIONS.find((action) => action.id === nativeToolbarAction.action)?.run(editor);
+  }, [editor, nativeToolbarAction]);
+
   const toolbar = (
-    <div className={`mobile-editor-toolbar${showToolbar ? ' is-visible' : ''}`} role="toolbar" aria-label="Markdown 格式" aria-hidden={!showToolbar}>
+    <div className={`mobile-editor-toolbar${toolbarVisible ? ' is-visible' : ''}`} role="toolbar" aria-label="Markdown 格式" aria-hidden={!toolbarVisible}>
       <div className="mobile-editor-toolbar__scroll">
         {TOOLBAR_ACTIONS.map((action, index) => {
           const Icon = action.icon;
@@ -316,10 +328,10 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
             <Icon size={18} strokeWidth={1.8} />
           </button>;
         })}
-        <button type="button" title="添加附件" aria-label="添加附件" disabled={!editor}
+        {uploadAttachment && <button type="button" title="添加附件" aria-label="添加附件" disabled={!editor}
           onPointerDown={(event) => event.preventDefault()} onClick={addAttachment}>
           <Paperclip size={18} strokeWidth={1.8} />
-        </button>
+        </button>}
       </div>
       <div className="mobile-editor-toolbar__fixed">
         <button type="button" className="mobile-editor-toolbar__dismiss" title="收起键盘" aria-label="收起键盘"
@@ -333,7 +345,7 @@ export function MobileRichMarkdownEditor({ memoId, content, onChange }: MobileRi
   return (
     <div className="mobile-markdown-editor markdown-editor">
       <div ref={mountRef} className="mobile-markdown-editor__content editor-content" />
-      {createPortal(toolbar, document.body)}
+      {renderToolbar && createPortal(toolbar, document.body)}
     </div>
   );
 }

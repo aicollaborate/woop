@@ -260,6 +260,7 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   cd "$MOBILE_DIR"
   IOS_MINIMUM_SYSTEM_VERSION="$(node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("tauri.ios.conf.json", "utf8")); console.log(config.bundle.iOS.minimumSystemVersion)')"
   IPHONEOS_DEPLOYMENT_TARGET="$IOS_MINIMUM_SYSTEM_VERSION" \
+  RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-undefined,dynamic_lookup" \
   CARGO_TARGET_DIR="$REPO_ROOT/.build/cargo-target" \
   GIT_CONFIG_COUNT=1 \
   GIT_CONFIG_KEY_0=http.version \

@@ -97,7 +97,7 @@ function deletePersistedInstancesForThread(threadId: string): void {
   });
 }
 
-function normalizeBackendInstance(
+export function normalizeBackendInstance(
   instance: AgentConversationInstance | BackendAgentConversationInstance,
 ): AgentConversationInstance {
   const threadTitle = "threadTitle" in instance ? instance.threadTitle : null;

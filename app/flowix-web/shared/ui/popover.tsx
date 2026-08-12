@@ -108,7 +108,12 @@ interface PopoverContentProps {
 	side?: "top" | "right" | "bottom" | "left";
 	sideOffset?: number;
 	className?: string;
+	onExitComplete?: () => void;
 }
+
+type PopoverMotionState = "starting" | "open" | "closing";
+
+const EXIT_ANIMATION_FALLBACK_MS = 500;
 
 function PopoverContent({
 	children,
@@ -116,19 +121,58 @@ function PopoverContent({
 	side = "bottom",
 	sideOffset = 4,
 	className,
+	onExitComplete,
 }: PopoverContentProps) {
 	const { open, setOpen, triggerRef } = usePopoverContext();
 	const contentRef = React.useRef<HTMLDivElement>(null);
 	const [position, setPosition] = React.useState({ top: 0, left: 0 });
+	const [present, setPresent] = React.useState(open);
+	const [motionState, setMotionState] = React.useState<PopoverMotionState>("starting");
+	const onExitCompleteRef = React.useRef(onExitComplete);
+	onExitCompleteRef.current = onExitComplete;
 
-	// Calculate position when opened
-	React.useEffect(() => {
-		if (!open || !triggerRef.current) return;
+	const finishClose = React.useCallback(() => {
+		setPresent(false);
+		onExitCompleteRef.current?.();
+	}, []);
+
+	// Keep the portal mounted while the closing animation runs. Reopening during
+	// that window reverses the lifecycle without tearing down the content node.
+	React.useLayoutEffect(() => {
+		if (open) {
+			if (!present) {
+				setMotionState("starting");
+				setPresent(true);
+			} else if (motionState === "closing") {
+				setMotionState("starting");
+			}
+			return;
+		}
+
+		if (!present) return;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			finishClose();
+			return;
+		}
+
+		setMotionState("closing");
+		const fallbackId = window.setTimeout(() => {
+			finishClose();
+		}, EXIT_ANIMATION_FALLBACK_MS);
+		return () => window.clearTimeout(fallbackId);
+	}, [finishClose, motionState, open, present]);
+
+	// Position the invisible starting frame before paint, then enter next frame.
+	React.useLayoutEffect(() => {
+		if (!open || !present || !triggerRef.current) return;
 
 		let rafId: number;
+		let settleTimerId: number;
 
 		const updatePosition = () => {
-			const rect = triggerRef.current!.getBoundingClientRect();
+			const trigger = triggerRef.current;
+			if (!trigger) return;
+			const rect = trigger.getBoundingClientRect();
 			const width = contentRef.current?.offsetWidth ?? 200;
 			const height = contentRef.current?.offsetHeight ?? 200;
 
@@ -151,24 +195,31 @@ function PopoverContent({
 						: rect.left;
 			}
 
-			setPosition({
+			const nextPosition = {
 				top: Math.max(4, Math.min(topPos, window.innerHeight - height - 4)),
 				left: Math.max(4, Math.min(leftPos, window.innerWidth - width - 4)),
-			});
+			};
+			setPosition((current) =>
+				current.top === nextPosition.top && current.left === nextPosition.left
+					? current
+					: nextPosition
+			);
 		};
 
-		rafId = requestAnimationFrame(updatePosition);
-		setTimeout(updatePosition, 50);
+		updatePosition();
+		rafId = requestAnimationFrame(() => setMotionState("open"));
+		settleTimerId = window.setTimeout(updatePosition, 50);
 
 		window.addEventListener('scroll', updatePosition, true);
 		window.addEventListener('resize', updatePosition);
 
 		return () => {
 			cancelAnimationFrame(rafId);
+			window.clearTimeout(settleTimerId);
 			window.removeEventListener('scroll', updatePosition, true);
 			window.removeEventListener('resize', updatePosition);
 		};
-	}, [open, side, sideOffset, align]);
+	}, [open, present, side, sideOffset, align]);
 
 	// Close on click outside
 	React.useEffect(() => {
@@ -206,7 +257,7 @@ function PopoverContent({
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, [open, setOpen]);
 
-	if (!open) return null;
+	if (!present) return null;
 	if (typeof document === "undefined") return null;
 
 	// 一律走 shadow-lg。 之前 top 侧走
@@ -219,15 +270,22 @@ function PopoverContent({
 		<div
 			ref={contentRef}
 			className={cn(
-				"fixed z-[1500] w-[200px] bg-[var(--card)] border border-[var(--border)] rounded-lg p-1 animate-in fade-in-0 zoom-in-95",
+				"flowix-popover-content fixed z-[1500] w-[200px] bg-[var(--card)] border border-[var(--border)] rounded-lg p-1",
 				shadowClass,
 				className
 			)}
+			data-motion-state={motionState}
+			data-side={side}
 			style={{
 				top: position.top,
 				left: position.left,
 			}}
 			onClick={(e) => e.stopPropagation()}
+			onAnimationEnd={(event) => {
+				if (event.target === event.currentTarget && motionState === "closing") {
+					finishClose();
+				}
+			}}
 		>
 			{children}
 		</div>,

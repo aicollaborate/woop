@@ -14,7 +14,10 @@ const flattenAppIconsScript = resolve(root, 'scripts/flatten-ios-app-icons.swift
 const portraitOrientations = `        UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait`;
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight`;
 
 // Entitlements source-of-truth lives in app/flowix-mobile/ios/; `tauri ios init`
 // (which patch runs after) regenerates gen/apple/ and resets the entitlements

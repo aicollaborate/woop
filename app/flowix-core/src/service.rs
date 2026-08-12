@@ -4,7 +4,7 @@
 //! such as notebook resolution, global memo lookup, exact edits, validation, and typed
 //! errors so transport adapters do not need to reimplement them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -98,15 +98,14 @@ impl<'a> MemoService<'a> {
         &mut self,
         configs: &[NotebookConfig],
     ) -> Result<HashMap<String, usize>, FlowixError> {
-        let mut counts = HashMap::new();
+        let mut counts = self.memo_file.memo_counts_by_notebook()?;
+        let notebook_ids = configs
+            .iter()
+            .map(|config| config.id.as_str())
+            .collect::<HashSet<_>>();
+        counts.retain(|notebook_id, _| notebook_ids.contains(notebook_id.as_str()));
         for config in configs {
-            let count = self
-                .memo_file
-                .read_index_for_notebook_id(Some(&config.id))?
-                .unwrap_or_default()
-                .memos
-                .len();
-            counts.insert(config.id.clone(), count);
+            counts.entry(config.id.clone()).or_insert(0);
         }
         Ok(counts)
     }
@@ -643,6 +642,35 @@ mod tests {
         let deleted = service.delete_memo(&created.memo.id).unwrap();
         assert!(deleted.file_removed);
         assert!(!deleted.path.exists());
+    }
+
+    #[test]
+    fn notebook_note_counts_returns_every_notebook_from_one_index_read() {
+        let (temp, memo_file) = service_fixture();
+        let personal_path = temp.path().join("personal");
+        std::fs::create_dir_all(&personal_path).unwrap();
+        let mut configs = memo_file.read_notebook_configs().unwrap();
+        configs.push(NotebookConfig {
+            id: "personal".into(),
+            name: "Personal".into(),
+            icon: None,
+            path: format!("{}/", personal_path.display()),
+            is_default: false,
+            sort: 10,
+            created_at: 2,
+            updated_at: 2,
+        });
+        memo_file.write_notebook_configs(&configs).unwrap();
+
+        let mut service = MemoService::new(&memo_file);
+        service.create_memo("work", "# Work one\n").unwrap();
+        service.create_memo("work", "# Work two\n").unwrap();
+        service.create_memo("personal", "# Personal one\n").unwrap();
+
+        let configs = service.list_notebooks().unwrap();
+        let counts = service.notebook_note_counts(&configs).unwrap();
+        assert_eq!(counts.get("work"), Some(&2));
+        assert_eq!(counts.get("personal"), Some(&1));
     }
 
     #[test]

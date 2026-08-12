@@ -94,7 +94,9 @@ function MobileMemoRow({
 
   const setVisualOffset = (offset: number) => {
     rowRef.current?.style.setProperty('--mobile-memo-row-offset', `${offset}px`);
-    const actionProgress = Math.min(1, Math.max(0, -Math.min(offset, 0) / SWIPE_ACTIONS_WIDTH));
+    const actionWidth = Math.min(SWIPE_ACTIONS_WIDTH, Math.max(0, -offset));
+    const actionProgress = actionWidth / SWIPE_ACTIONS_WIDTH;
+    shellRef.current?.style.setProperty('--mobile-memo-row-actions-width', `${actionWidth}px`);
     shellRef.current?.style.setProperty('--mobile-memo-row-action-progress', `${actionProgress}`);
   };
 
@@ -102,6 +104,7 @@ function MobileMemoRow({
     gestureRef.current = null;
     shellRef.current?.removeAttribute('data-swiping');
     shellRef.current?.removeAttribute('data-settling');
+    shellRef.current?.style.removeProperty('--mobile-memo-row-actions-width');
     shellRef.current?.style.removeProperty('--mobile-memo-row-action-progress');
     rowRef.current?.style.removeProperty('--mobile-memo-row-offset');
     interactingRef.current = false;
@@ -135,6 +138,7 @@ function MobileMemoRow({
     settleTimerRef.current = window.setTimeout(() => {
       settleTimerRef.current = null;
       row.style.removeProperty('--mobile-memo-row-offset');
+      shell.style.removeProperty('--mobile-memo-row-actions-width');
       shell.style.removeProperty('--mobile-memo-row-action-progress');
       shell.removeAttribute('data-settling');
       interactingRef.current = false;

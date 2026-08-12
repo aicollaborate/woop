@@ -2,6 +2,7 @@ import { ArrowLeft, Check, CloudAlert, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MobileRichMarkdownEditor } from '@features/editor/mobile/mobile-rich-markdown-editor';
+import { createTauriMobileAttachmentUploader } from '@features/editor/mobile/tauri-mobile-attachment-uploader';
 import {
   joinMobileDocumentContent,
   splitMobileDocumentContent,
@@ -295,7 +296,13 @@ export function MobileDocumentScreen({
         <span />
         <span className={`mobile-save-status mobile-save-status--${saveState}`}>{status}</span>
       </header>
-      <MobileRichMarkdownEditor key={memoId} memoId={memoId} content={body} onChange={handleBodyChange} />
+      <MobileRichMarkdownEditor
+        key={memoId}
+        memoId={memoId}
+        content={body}
+        onChange={handleBodyChange}
+        uploadAttachment={createTauriMobileAttachmentUploader(memoId)}
+      />
     </main>
   );
 }

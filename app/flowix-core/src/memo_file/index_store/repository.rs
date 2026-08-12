@@ -1,6 +1,30 @@
+use std::collections::HashMap;
+
 use super::*;
 
 impl MemoFile {
+    /// Read every notebook's memo count with one grouped index query.
+    pub fn memo_counts_by_notebook(&self) -> std::io::Result<HashMap<String, usize>> {
+        let conn = self.open_memo_index_db()?;
+        let mut statement = conn
+            .prepare("SELECT notebook_id, COUNT(*) FROM memos GROUP BY notebook_id")
+            .map_err(sqlite_to_io)?;
+        let rows = statement
+            .query_map([], |row| {
+                let notebook_id: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((notebook_id, usize::try_from(count).unwrap_or(0)))
+            })
+            .map_err(sqlite_to_io)?;
+
+        let mut counts = HashMap::new();
+        for row in rows {
+            let (notebook_id, count) = row.map_err(sqlite_to_io)?;
+            counts.insert(notebook_id, count);
+        }
+        Ok(counts)
+    }
+
     pub fn read_index(&self) -> Option<MemoIndexFile> {
         let notebook_id = self.current_notebook_id_for_index();
         if let Ok(Some(cached)) = self.current_cached_index(&notebook_id) {

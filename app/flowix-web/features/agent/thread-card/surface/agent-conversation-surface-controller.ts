@@ -1,0 +1,61 @@
+import { createRoot } from 'react-dom/client';
+
+import {
+  AgentThreadCardMessagesController,
+  type AgentThreadCardMessagesControllerOptions,
+} from '@features/agent/thread-card/messages';
+import {
+  ComposerController,
+  type ComposerControllerOptions,
+} from '@features/agent/thread-card/composer';
+
+type SurfaceMessageOptions = Omit<
+  AgentThreadCardMessagesControllerOptions,
+  'dom' | 'body' | 'loadingIndicator'
+>;
+type SurfaceComposerOptions = Omit<
+  ComposerControllerOptions,
+  'input' | 'composer' | 'sendButtonRoot'
+>;
+
+/**
+ * Shared interactive core for a thread conversation.
+ *
+ * The surrounding host decides how title/role/draft attributes are persisted:
+ * a Tiptap NodeView writes node attrs, while the independent detail writes its
+ * conversation instance. Message history and composer event lifecycles are
+ * identical and live here exactly once.
+ */
+export class AgentConversationSurfaceController {
+  readonly messages: AgentThreadCardMessagesController;
+  readonly composer: ComposerController;
+
+  constructor(options: {
+    dom: HTMLElement;
+    body: HTMLElement;
+    loadingIndicator: HTMLDivElement;
+    composer: HTMLElement;
+    input: HTMLTextAreaElement;
+    sendButtonMount: HTMLSpanElement;
+    messageOptions: SurfaceMessageOptions;
+    composerOptions: SurfaceComposerOptions;
+  }) {
+    this.messages = new AgentThreadCardMessagesController({
+      dom: options.dom,
+      body: options.body,
+      loadingIndicator: options.loadingIndicator,
+      ...options.messageOptions,
+    });
+    this.composer = new ComposerController({
+      input: options.input,
+      composer: options.composer,
+      sendButtonRoot: createRoot(options.sendButtonMount),
+      ...options.composerOptions,
+    });
+  }
+
+  dispose(): void {
+    this.messages.dispose();
+    this.composer.dispose();
+  }
+}

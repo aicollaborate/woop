@@ -75,6 +75,7 @@ describe('MobileMemoList swipe actions', () => {
     row!.dispatchEvent(pointer('pointermove', 170, 100));
 
     expect(row!.style.getPropertyValue('--mobile-memo-row-offset')).toBe('-50px');
+    expect(container.querySelector<HTMLElement>('.mobile-memo-row-shell')!.style.getPropertyValue('--mobile-memo-row-actions-width')).toBe('50px');
     expect(container.querySelector<HTMLElement>('.mobile-memo-row-shell')!.style.getPropertyValue('--mobile-memo-row-action-progress')).toBe('0.46296296296296297');
     expect(onToggleActions).not.toHaveBeenCalled();
 
@@ -83,5 +84,29 @@ describe('MobileMemoList swipe actions', () => {
 
     row!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('dispatches the pin and delete actions from the revealed tray', async () => {
+    const onTogglePin = vi.fn();
+    const onDelete = vi.fn();
+    await act(async () => root.render(createElement(MobileMemoList, {
+      items: [memo],
+      loading: false,
+      onRefresh: vi.fn(),
+      onOpen: vi.fn(),
+      openMemoId: 'memo-1',
+      onToggleActions: vi.fn(),
+      onDelete,
+      onTogglePin,
+    })));
+
+    const actions = container.querySelectorAll<HTMLButtonElement>('.mobile-memo-row-action');
+    await act(async () => {
+      actions[0].click();
+      actions[1].click();
+    });
+
+    expect(onTogglePin).toHaveBeenCalledWith(memo);
+    expect(onDelete).toHaveBeenCalledWith(memo.id);
   });
 });

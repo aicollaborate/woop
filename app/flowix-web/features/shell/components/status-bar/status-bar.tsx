@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Hash, ListTodo, SlidersHorizontal } from 'lucide-react';
 import { Tooltip } from '@shared/ui/tooltip';
 import type { Notebook } from '@features/memo';
-import { NotebookSwitcher } from '@features/shell/components/status-bar/notebook-switcher';
+import { NotebookSelectorPopup } from '@features/shell/components/status-bar/notebook-selector-popup';
 import { AgentRuntimeStatusMenu } from '@features/shell/components/status-bar/agent-runtime-status-menu';
 import { ProductUpdatePill } from '@features/shell/components/status-bar/product-update-pill';
 import { useI18n } from '@/lib/i18n';
@@ -60,20 +60,14 @@ export function StatusBar({
     <div className="flex h-[26px] shrink-0 select-none items-stretch bg-[var(--statusbar-bg)] text-xs text-[var(--muted-foreground)]">
       {/* Left column: notebook switcher (fixed width by its own button content). */}
       <div className="shrink-0 flex items-center">
-        <NotebookSwitcher
+        <NotebookSelectorPopup
           open={notebookPopupOpen}
           onOpenChange={setNotebookPopupOpen}
           notebooks={notebooks}
           selectedNotebook={selectedNotebook}
           onSelect={onSelectNotebook}
-          onEdit={(notebook) => {
-            setNotebookPopupOpen(false);
-            onEditNotebook(notebook);
-          }}
-          onDelete={(notebook) => {
-            setNotebookPopupOpen(false);
-            onDeleteNotebook(notebook);
-          }}
+          onEdit={onEditNotebook}
+          onDelete={onDeleteNotebook}
           onRefresh={setNotebooks}
         />
       </div>

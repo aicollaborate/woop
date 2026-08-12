@@ -81,13 +81,14 @@
   z-index: 1;
   display: flex;
   align-items: stretch;
-  width: 108px;
+  overflow: hidden;
+  width: var(--mobile-memo-row-actions-width, 108px);
   gap: 4px;
   padding: 0;
   visibility: hidden;
   opacity: var(--mobile-memo-row-action-progress, 0);
   pointer-events: none;
-  transition: opacity 120ms ease, visibility 0s linear 180ms;
+  transition: width 220ms cubic-bezier(.32, .72, 0, 1), opacity 120ms ease, visibility 0s linear 180ms;
 }
 
 .mobile-memo-row-shell.is-actions-open .mobile-memo-row-actions {
@@ -106,8 +107,9 @@
 
 .mobile-memo-row-action {
   display: flex;
-  width: 52px;
+  min-width: 0;
   height: auto;
+  flex: 1 1 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;

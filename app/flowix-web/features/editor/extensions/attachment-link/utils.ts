@@ -1,6 +1,14 @@
 // ─── Storage Key Utilities ─────────────────────────────────────────────────────
 import { convertFileSrc } from '@platform/tauri/core';
 
+function isNativeEditorWebView(): boolean {
+    if (typeof window === 'undefined') return false;
+    const candidate = window as Window & {
+        webkit?: { messageHandlers?: { flowixEditor?: { postMessage?: unknown } } };
+    };
+    return typeof candidate.webkit?.messageHandlers?.flowixEditor?.postMessage === 'function';
+}
+
 export function decodeStorageKey(src: string): string | null {
     if (!src.startsWith('asset://') && !src.startsWith('http://asset.localhost/') && !src.startsWith('https://asset.localhost/')) return null;
     try {
@@ -30,6 +38,12 @@ export function isVideoUrl(src: string | null | undefined): boolean {
 
 export function assetUrl(storageKey: string | null | undefined): string {
     if (!storageKey) return '';
+    if (isNativeEditorWebView()) {
+        const encoded = encodeURIComponent(storageKey)
+            .replace(/\(/g, '%28')
+            .replace(/\)/g, '%29');
+        return `flowix-asset://localhost/${encoded}`;
+    }
     return convertFileSrc(storageKey);
 }
 
