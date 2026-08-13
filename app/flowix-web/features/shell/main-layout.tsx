@@ -1,12 +1,10 @@
 ﻿'use client';
 
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
-import { DocumentContainer } from '@features/document/components/document-container';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
 import { AgentConversationList } from '@features/agent/components/agent-conversation-list';
-import { AgentConversationDetail } from '@features/agent/components/agent-conversation-detail';
 import { AgentConversationTitlebar } from '@features/agent/components/agent-conversation-titlebar';
 import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
 import { MemoListTitlebarWin } from '@features/memo/components/memo-list-titlebar-win';
@@ -29,10 +27,15 @@ import { useDocumentCommands } from '@features/document/components/use-document-
 import { useNotebookTodoCount } from '@features/memo/components/use-notebook-todo-count';
 import { useResizablePanels } from '@features/shell/hooks/use-resizable-panels';
 import { useMacosTrackpadSwipe, type MacosTrackpadSwipeDirection } from '@features/shell/hooks/use-macos-trackpad-swipe';
-import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
-import { PluginDocumentView, PluginWorkbench, getPluginNoteInfo } from '@features/plugin';
+import { getPluginNoteInfo } from '@features/plugin';
+import {
+  ThirdColumnSurfaceHost,
+  getThirdColumnSurfaceDefinition,
+  resolveThirdColumnSurface,
+  surfaceSupports,
+} from '@features/surface';
 import type { PluginDescriptor } from '@platform/tauri/client';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 192;
@@ -365,19 +368,19 @@ export function MainLayout() {
     }
   }, [closeMemoListAndNoteNavigation, memoListVisible, setMemoListVisible]);
 
-  // Plugin UI is local to MainLayout while its active id lives in the memo
-  // store. Keep both, plus the document selection, in one close operation so
-  // changing to a normal filter/notebook cannot leave a stale canvas mounted.
-  // clearDocument performs async save/transition work, so callers explicitly
-  // discard its promise here instead of creating an unhandled rejection.
+  // artifact-tool plugins are second-column filters and never own the current
+  // document. Legacy agent-markdown plugins still mount a third-column
+  // workbench, so only that branch clears its document when closed.
   const closePluginSurface = useCallback(() => {
+    const hadWorkbench = activePlugin !== null;
     setActivePlugin(null);
     setActivePluginId(null);
+    if (!hadWorkbench) return;
     setSelectedMemo(null);
     void clearDocument().catch((error) => {
       logger.warn('clear plugin document failed', { error });
     });
-  }, [clearDocument, setActivePluginId, setSelectedMemo]);
+  }, [activePlugin, clearDocument, setActivePluginId, setSelectedMemo]);
 
   useEffect(() => {
     if (!activePlugin) return;
@@ -399,7 +402,6 @@ export function MainLayout() {
     setActivePluginId(null);
   }, [activePlugin, currentDocumentSource, currentPluginNote, setActivePluginId]);
   const isExternalDocument = currentDocumentSource === 'external';
-  const isAgentConversationDetail = !!activeAgentConversationId;
   const currentDocumentInstanceKey =
     currentDocumentSource === 'memo' && activeMemoSession
       ? activeMemoSession.id
@@ -464,6 +466,16 @@ export function MainLayout() {
   }, [activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
 
   const handleOpenPlugin = useCallback(async (plugin: PluginDescriptor) => {
+    if (plugin.manifest.kind === 'artifact-tool') {
+      // Mindmap and other artifact tools behave like list filters: update the
+      // second column only and preserve the currently open third-column
+      // document until the user selects an artifact from the list.
+      setActivePlugin(null);
+      setActiveFilter('all');
+      setActivePluginId(plugin.manifest.id);
+      setMemoListVisible(true);
+      return;
+    }
     // A pointer memo is rendered in the document area with higher priority
     // than the plugin workbench. Close the previous memo session first so a
     // plugin switch cannot leave the previous canvas mounted over the new
@@ -568,6 +580,50 @@ export function MainLayout() {
     );
   }, [currentMemo]);
 
+  const thirdColumnSurface = resolveThirdColumnSurface({
+    document: currentDocumentPath
+      ? {
+          memo: currentMemo,
+          markdown: {
+            kind: 'markdown',
+            instanceKey: currentDocumentInstanceKey ?? getDocumentInstanceKey(currentDocumentPath),
+            props: {
+              filePath: currentDocumentPath,
+              memoId: activeMemoSession?.memoId ?? null,
+              notebookId: activeMemoSession?.notebookId ?? null,
+              notebookPath: activeMemoSession?.notebookPath ?? null,
+              transitionId: activeMemoSession?.transitionId ?? activeExternalSession?.transitionId ?? null,
+              isExternalDocument,
+              searchPanelOpen: isSearchPanelOpen,
+              onSearchPanelOpenChange: setIsSearchPanelOpen,
+              toolbarCollapsed,
+              onToolbarCollapsedChange: setToolbarCollapsed,
+              onMetainfoData: (data) => {
+                currentDocumentContentRef.current = data.memoContent;
+              },
+            },
+          },
+          artifact: currentPluginNote && activeMemoSession
+            ? {
+                memoId: activeMemoSession.memoId,
+                transitionId: activeMemoSession.transitionId,
+              }
+            : undefined,
+        }
+      : null,
+    pluginWorkbench: activePlugin
+      ? {
+          plugin: activePlugin,
+          notebookPath: selectedNotebook?.path,
+          currentNotePath: currentDocumentPath,
+          currentNoteContent: currentDocumentContentRef.current,
+        }
+      : null,
+    agentConversationId: activeAgentConversationId,
+    emptyMessage: t('shell.emptyDocument'),
+  });
+  const thirdColumnSurfaceDefinition = getThirdColumnSurfaceDefinition(thirdColumnSurface);
+  const isAgentConversationDetail = thirdColumnSurface.kind === 'agent-conversation';
   const documentTitlebarProps = {
     document: {
       currentMemo,
@@ -584,6 +640,14 @@ export function MainLayout() {
       canNavigateForward,
       onNavigateBack: handleNavigateBack,
       onNavigateForward: handleNavigateForward,
+    },
+    contentCapabilities: {
+      search: surfaceSupports(thirdColumnSurface, 'search'),
+      properties: surfaceSupports(thirdColumnSurface, 'properties'),
+      copyFullText: surfaceSupports(thirdColumnSurface, 'copy-content'),
+      exportContent: surfaceSupports(thirdColumnSurface, 'export-content'),
+      saveAsTemplate: surfaceSupports(thirdColumnSurface, 'save-template'),
+      versionHistory: surfaceSupports(thirdColumnSurface, 'version-history'),
     },
     actions: {
       onOpenSearch: () => setIsSearchPanelOpen(true),
@@ -716,9 +780,9 @@ export function MainLayout() {
           {/* Memo detail */}
             <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
             {/* Fixed top navigation bar */}
-            {isAgentConversationDetail ? (
+            {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar
-                instanceId={activeAgentConversationId}
+                instanceId={thirdColumnSurface.instanceId}
                 isSidebarCollapsed={isMemoListHidden}
                 onExpandSidebar={handleToggleMemoList}
                 onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
@@ -736,54 +800,7 @@ export function MainLayout() {
 
             {/* Content area */}
             <div className="relative flex-1 min-w-0 overflow-hidden">
-              {currentPluginNote && activeMemoSession ? (
-                <PluginDocumentView
-                  key={activeMemoSession.memoId}
-                  memoId={activeMemoSession.memoId}
-                  transitionId={activeMemoSession.transitionId}
-                />
-              ) : activePlugin ? (
-                <PluginWorkbench
-                  key={activePlugin.manifest.id}
-                  plugin={activePlugin}
-                  notebookPath={selectedNotebook?.path}
-                  currentNotePath={currentDocumentPath}
-                  currentNoteContent={currentDocumentContentRef.current}
-                />
-              ) : isAgentConversationDetail ? (
-                <AgentConversationDetail
-                  key={activeAgentConversationId}
-                  instanceId={activeAgentConversationId}
-                />
-              ) : currentDocumentPath ? (
-                <DocumentContainer
-                  key={currentDocumentInstanceKey}
-                  filePath={currentDocumentPath}
-                  memoId={activeMemoSession?.memoId ?? null}
-                  notebookId={activeMemoSession?.notebookId ?? null}
-                  notebookPath={activeMemoSession?.notebookPath ?? null}
-                  transitionId={activeMemoSession?.transitionId ?? activeExternalSession?.transitionId ?? null}
-                  isExternalDocument={isExternalDocument}
-                  searchPanelOpen={isSearchPanelOpen}
-                  onSearchPanelOpenChange={setIsSearchPanelOpen}
-                  toolbarCollapsed={toolbarCollapsed}
-                  onToolbarCollapsedChange={setToolbarCollapsed}
-                  onMetainfoData={(data) => {
-                    currentDocumentContentRef.current = data.memoContent;
-                  }}
-                />
-              ) : (
-                <div className="relative flex h-full w-full items-center justify-center">
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 bg-no-repeat bg-bottom bg-[length:auto_800px] opacity-[0.32]"
-                    style={{ backgroundImage: `url(${backgroundImage})` }}
-                  />
-                  <span className="relative text-center text-[var(--muted-foreground)] text-sm">
-                    {t('shell.emptyDocument')}
-                  </span>
-                </div>
-              )}
+              <ThirdColumnSurfaceHost surface={thirdColumnSurface} />
               {isDocumentTransitioning && (
                 <div
                   className="absolute inset-0 z-40 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_78%,transparent)] backdrop-blur-[1px]"

@@ -284,8 +284,12 @@ export const useMemoStore = create<MemoStore>()(
         }
         const nextMemos = response.memos as MemoItem[];
         const latestSelectedMemo = get().selectedMemo;
+        // Plugin navigation filters only the second column. Keep an ordinary
+        // memo selected when it is not part of the plugin result so the third
+        // column (including its titlebar metadata) remains unchanged.
         const selectedMemo = latestSelectedMemo
-          ? nextMemos.find((memo) => memo.id === latestSelectedMemo.id) ?? null
+          ? nextMemos.find((memo) => memo.id === latestSelectedMemo.id)
+            ?? (pluginId ? latestSelectedMemo : null)
           : null;
 
         set({

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 flowix-core = { workspace = true }
+flowix-plugin-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

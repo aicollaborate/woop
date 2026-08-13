@@ -25,6 +25,7 @@
  * 非 Mac 平台门控在文件内部, 详见 overlay-scrollbar.css 顶部注释。 */
 @import './overlay-scrollbar.css';
 @import './cloud-status-icon.css';
+@import './plugin-markmap.css';
 
 /* 主题色板单一真源在 css/theme, JS 只通过 data-theme 切换;
  * 5 个主题 import 在 @layer base 之外, 保证 [data-theme="..."]

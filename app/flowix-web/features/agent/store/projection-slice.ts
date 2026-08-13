@@ -1,5 +1,4 @@
 import type { AgentEvent } from "@/types/agent";
-import type { AgentConversationInstance } from "@features/agent/store/agent-conversation-types";
 import type {
   AgentConversationRegistry,
   AgentSessionMeta,
@@ -39,7 +38,6 @@ export interface ProjectionSlice {
 
 export function createProjectionSlice(
   set: SessionSet,
-  persistInstance: (instance: AgentConversationInstance) => void,
 ): ProjectionSlice {
   return {
     threadProjections: {},
@@ -129,50 +127,29 @@ export function createProjectionSlice(
       const localThreadId = event.threadId;
       const sessionId = event.sessionId;
       if (!sessionId || sessionId === localThreadId) return;
-      let migratedInstance: AgentConversationInstance | null = null;
       set((state) => {
         const local = state.threadProjections[localThreadId];
-        const existing = state.threadProjections[sessionId];
+        const legacySession = state.threadProjections[sessionId];
         let threadProjections = state.threadProjections;
-        if (local || existing) {
+        if (local || legacySession) {
           const merged = mergeThreadProjections(
             local,
-            existing,
+            legacySession,
             event.agentType,
           );
-          const { [localThreadId]: _removed, ...rest } = threadProjections;
-          threadProjections = { ...rest, [sessionId]: merged };
-        }
-
-        let conversationRegistry = state.conversationRegistry;
-        const instance = Object.values(
-          state.conversationRegistry.instances,
-        ).find((candidate) => candidate.threadId === localThreadId);
-        if (instance) {
-          migratedInstance = {
-            ...instance,
-            agentType: event.agentType,
-            threadId: sessionId,
-            updatedAt: Date.now(),
-          };
-          conversationRegistry = {
-            instances: {
-              ...state.conversationRegistry.instances,
-              [instance.instanceId]: migratedInstance,
-            },
-          };
+          const { [sessionId]: _removed, ...rest } = threadProjections;
+          threadProjections = { ...rest, [localThreadId]: merged };
         }
 
         return {
           threadProjections,
-          conversationRegistry,
           threadEpochs: {
             ...state.threadEpochs,
-            [localThreadId]: (state.threadEpochs[localThreadId] ?? 0) + 1,
+            [sessionId]: (state.threadEpochs[sessionId] ?? 0) + 1,
           },
           threadTombstones: {
             ...state.threadTombstones,
-            [localThreadId]: true,
+            [sessionId]: true,
           },
           sessionMeta: {
             ...state.sessionMeta,
@@ -187,13 +164,12 @@ export function createProjectionSlice(
             },
             activeThreadIds: {
               ...state.sessionMeta.activeThreadIds,
-              [event.agentType]: sessionId,
+              [event.agentType]: localThreadId,
             },
             activeAgentTypeKey: event.agentType,
           },
         };
       });
-      if (migratedInstance) persistInstance(migratedInstance);
     },
   };
 }

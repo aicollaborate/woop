@@ -446,6 +446,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.cli.commands.search":
       "Search across notes, with optional notebook and result limits.",
     "preferences.cli.commands.completion": "Print shell completion scripts.",
+    "preferences.cli.commands.pluginCreate": "Create a plugin artifact and its Flowix document from standard input.",
 
     "preferences.mcp.title": "MCP Server",
     "preferences.mcp.generic": "Generic stdio",

@@ -36,12 +36,9 @@ export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> 
     after.sessionMeta.activeThreadIds,
   )) {
     if (!activeThreadId) continue;
-    const canonicalThreadId =
-      after.sessionMeta.externalSessionResolutions[activeThreadId] ?? activeThreadId;
     refreshTargets.set(
-      canonicalThreadId,
-      after.sessionMeta.threadTypes[canonicalThreadId] ??
-        after.sessionMeta.threadTypes[activeThreadId] ??
+      activeThreadId,
+      after.sessionMeta.threadTypes[activeThreadId] ??
         (agentType as typeof after.sessionMeta.activeAgentTypeKey),
     );
   }
@@ -50,13 +47,9 @@ export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> 
   }
 
   for (const interestedThreadId of getInterestedThreadIds()) {
-    const canonicalThreadId =
-      after.sessionMeta.externalSessionResolutions[interestedThreadId] ??
-      interestedThreadId;
     refreshTargets.set(
-      canonicalThreadId,
-      after.sessionMeta.threadTypes[canonicalThreadId] ??
-        after.sessionMeta.threadTypes[interestedThreadId] ??
+      interestedThreadId,
+      after.sessionMeta.threadTypes[interestedThreadId] ??
         after.sessionMeta.activeAgentTypeKey,
     );
   }

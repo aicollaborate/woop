@@ -28,44 +28,8 @@ use artifact::{clean_markdown, parse_html, parse_json, parse_mindmap_markdown};
 pub(crate) use lifecycle::PluginRunCoordinator;
 use manifest::{validate_manifest, PluginDefinition, PluginManifest, PluginParser, PluginRuntime};
 
-const MINDMAP_MANIFEST: &str = r#"{
-  "schemaVersion": 1,
-  "id": "mindmap",
-  "name": "思维导图",
-  "version": "0.1.0",
-  "kind": "agent-markdown",
-  "ui": { "placement": "sidebar", "order": 100, "icon": "mindmap" },
-  "input": {
-    "fields": [
-      { "id": "prompt", "type": "textarea", "label": "提示词", "required": true }
-    ]
-  },
-  "agent": { "skill": "SKILL.md" },
-  "discovery": { "noteType": "mindmap" },
-  "execution": { "runtime": "flowix" },
-  "output": {
-    "format": "markdown",
-    "directory": ".plugin-output/mindmap",
-    "extension": ".md",
-    "renderer": "markmap",
-    "parser": "mindmap-markdown"
-  }
-}"#;
-
-const MINDMAP_SKILL: &str = r#"# Mindmap Generation Skill
-
-你负责把用户的主题、问题或笔记内容整理成适合 Markmap 渲染的 Markdown 思维导图。
-
-输出约束：
-
-1. 只输出最终 Markdown，不要输出解释、前言、总结或道歉。
-2. 必须只有一个一级标题作为根节点。
-3. 使用二级、三级标题和无序列表表达树状结构。
-4. 节点文字简洁，避免一整个段落塞进节点。
-5. 用户需求不完整时，根据上下文做合理的结构化推断。
-6. 不要创建文件，不要修改用户笔记。
-7. 不要使用 Markdown 代码围栏；如果模型运行时必须使用代码围栏，宿主会在写盘前清理。
-"#;
+const MINDMAP_MANIFEST: &str = flowix_plugin_runtime::MINDMAP_MANIFEST;
+const MINDMAP_SKILL: &str = flowix_plugin_runtime::MINDMAP_SKILL;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,7 +120,12 @@ pub fn ensure_builtin_plugins() -> Result<(), String> {
             .map_err(|e| format!("write mindmap manifest: {e}"))?;
     }
     let skill = mindmap.join("SKILL.md");
-    if !skill.exists() {
+    let needs_skill_migration = match fs::read_to_string(&skill) {
+        Ok(existing) => existing != MINDMAP_SKILL,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => return Err(format!("read mindmap skill: {error}")),
+    };
+    if needs_skill_migration {
         fs::write(&skill, MINDMAP_SKILL).map_err(|e| format!("write mindmap skill: {e}"))?;
     }
     Ok(())
@@ -180,7 +149,13 @@ fn read_plugin(path: &Path) -> Result<PluginDescriptor, String> {
         ));
     }
     let definition = validate_manifest(&manifest)?;
-    let skill_path = path.join(&manifest.agent.skill);
+    let instructions_path = manifest
+        .tool
+        .as_ref()
+        .map(|tool| tool.instructions.as_str())
+        .or_else(|| manifest.agent.as_ref().map(|agent| agent.skill.as_str()))
+        .ok_or_else(|| format!("plugin has no instructions: {}", manifest.id))?;
+    let skill_path = path.join(instructions_path);
     let skill = fs::read_to_string(&skill_path)
         .map_err(|e| format!("read {}: {e}", skill_path.display()))?;
     let is_system = manifest.id == "mindmap";
@@ -375,6 +350,12 @@ pub fn emit_run_failed(
 
 pub fn prepare_prompt(id: &str, user_prompt: &str, context: &str) -> Result<String, String> {
     let plugin = get_plugin(id)?;
+    if plugin.manifest.kind != "agent-markdown" {
+        return Err(format!(
+            "plugin '{}' is an artifact tool; use its declared CLI command",
+            plugin.manifest.id
+        ));
+    }
     let user_prompt = user_prompt.trim();
     if user_prompt.is_empty() {
         return Err("plugin prompt cannot be empty".to_string());
@@ -812,6 +793,7 @@ fn plugin_notebook_for_memo(
 
 #[cfg(test)]
 mod tests {
+    use super::manifest::PluginField;
     use super::{
         clean_markdown, is_relative_plugin_path, parse_html, parse_json, parse_mindmap_markdown,
         valid_plugin_id, validate_manifest, PluginManifest, PluginRuntime, MINDMAP_MANIFEST,
@@ -865,7 +847,7 @@ mod tests {
         let manifest: PluginManifest = serde_json::from_str(MINDMAP_MANIFEST).unwrap();
         let definition = validate_manifest(&manifest).expect("builtin manifest is valid");
         assert_eq!(definition.parser, super::PluginParser::MindmapMarkdown);
-        assert_eq!(definition.runtime, Some(super::PluginRuntime::Flowix));
+        assert_eq!(definition.runtime, None);
         assert_eq!(definition.extension, ".md");
         assert_eq!(definition.note_type, "mindmap");
     }
@@ -877,7 +859,24 @@ mod tests {
         assert!(validate_manifest(&manifest).is_err());
 
         let mut manifest: PluginManifest = serde_json::from_str(MINDMAP_MANIFEST).unwrap();
-        manifest.input.fields.push(manifest.input.fields[0].clone());
+        manifest.input.fields = vec![
+            PluginField {
+                id: "duplicate".to_string(),
+                field_type: "text".to_string(),
+                label: None,
+                required: false,
+                placeholder: None,
+                options: vec![],
+            },
+            PluginField {
+                id: "duplicate".to_string(),
+                field_type: "text".to_string(),
+                label: None,
+                required: false,
+                placeholder: None,
+                options: vec![],
+            },
+        ];
         assert!(validate_manifest(&manifest).is_err());
     }
 
@@ -894,6 +893,6 @@ mod tests {
             std::path::Path::new(".plugin-output/mindmap")
         );
         assert_eq!(definition.extension, ".md");
-        assert_eq!(definition.runtime.map(PluginRuntime::key), Some("flowix"));
+        assert_eq!(definition.runtime.map(PluginRuntime::key), None);
     }
 }

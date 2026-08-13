@@ -422,6 +422,7 @@ const zhCN = {
     "preferences.cli.commands.search":
       "跨笔记全文搜索，可限制笔记本和结果数量。",
     "preferences.cli.commands.completion": "输出 shell 补全脚本。",
+    "preferences.cli.commands.pluginCreate": "从标准输入创建插件产物和对应的 Flowix 文档。",
 
     "preferences.mcp.title": "MCP Server",
     "preferences.mcp.generic": "通用 stdio",

@@ -68,6 +68,11 @@ const CLI_COMMANDS: CliCommandItem[] = [
     usage: 'flowix completion <bash|zsh|fish>',
     descriptionKey: 'preferences.cli.commands.completion',
   },
+  {
+    command: 'plugin create',
+    usage: 'printf "# Root\\n\\n## Branch\\n- Leaf\\n" | flowix plugin create mindmap -b <notebook> --json',
+    descriptionKey: 'preferences.cli.commands.pluginCreate',
+  },
 ];
 
 export function CliSection() {

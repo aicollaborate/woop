@@ -71,9 +71,7 @@ export function AgentConversationDetail({
   const { language, t } = useI18n();
   const instance = useAgentSessionStore((state) => state.getInstance(instanceId));
   const threadId = instance?.threadId ?? null;
-  const renderThreadId = useAgentSessionStore((state) => (
-    threadId ? state.sessionMeta.externalSessionResolutions[threadId] ?? threadId : null
-  ));
+  const renderThreadId = threadId;
   const projection = useAgentSessionStore((state) => (
     renderThreadId ? state.threadProjections[renderThreadId] : undefined
   ));
@@ -359,7 +357,14 @@ export function AgentConversationDetail({
   ).trim() || undefined;
   const commitTitle = () => {
     const title = titleDraft.trim();
-    if (title) useAgentSessionStore.getState().renameInstance(instance.instanceId, title);
+    if (title) {
+      void useAgentSessionStore.getState().renameAgentConversation({
+        instanceId: instance.instanceId,
+        threadId: instance.threadId,
+        title,
+        typeKey: instance.agentType,
+      });
+    }
     setIsEditingTitle(false);
   };
 

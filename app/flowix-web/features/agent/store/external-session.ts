@@ -19,12 +19,22 @@ export interface ExternalSessionResolvedState {
   externalSessionResolutions: Record<string, string>;
 }
 
+/** Resolve either a product thread id or provider session id to the product id. */
+export function resolveProductThreadId(
+  threadId: string,
+  resolutions: Record<string, string>,
+): string {
+  if (resolutions[threadId]) return threadId;
+  return Object.entries(resolutions).find(
+    ([, externalSessionId]) => externalSessionId === threadId,
+  )?.[0] ?? threadId;
+}
+
 export function resolveExternalChunkThreadId(
   chunk: AgentChunk,
   resolutions: Record<string, string>
 ): string {
-  if (chunk.kind === 'session_resolved') return chunk.thread_id;
-  return resolutions[chunk.thread_id] ?? chunk.thread_id;
+  return resolveProductThreadId(chunk.thread_id, resolutions);
 }
 
 export function resolveExternalChunkAgentType(
@@ -37,12 +47,9 @@ export function resolveExternalChunkAgentType(
 }
 
 /**
- * Runtime-only session migration ── chat-store.threadStates 层面的
- * local → canonical session id 合并: threadTypes / externalSessionResolutions
- * 都同步更新, 但 messages 走 conversation store. 这条 helper 是 chat-store
- * 唯一允许把 runtime 状态从 local id 合并到 session id 的入口 ── 同时被
- * session_resolved chunk / backend snapshot / Thread Card cache resolve
- * 三条路径共享, 避免重复实现。
+ * Register the provider session without changing the product-owned thread id.
+ * Legacy state may already contain a projection under the provider id; fold it
+ * back into the product thread so every UI surface keeps one stable identity.
  */
 export function applyExternalSessionResolved(
   state: ExternalSessionStateInput,
@@ -50,8 +57,9 @@ export function applyExternalSessionResolved(
   sessionId: string,
   agentType: AgentTypeKey,
 ): ExternalSessionResolvedState {
-  const fromState = state.threadStates[localThreadId] ?? emptyThreadState();
-  const toState = state.threadStates[sessionId] ?? emptyThreadState();
+  const productState = state.threadStates[localThreadId] ?? emptyThreadState();
+  const legacySessionState = state.threadStates[sessionId] ?? emptyThreadState();
+  const { [sessionId]: _legacySessionState, ...threadStates } = state.threadStates;
 
   return {
     threadTypes: {
@@ -64,15 +72,17 @@ export function applyExternalSessionResolved(
       [localThreadId]: sessionId,
     },
     threadStates: {
-      ...state.threadStates,
-      [sessionId]: {
-        ...toState,
-        isLoading: toState.isLoading || fromState.isLoading,
-        activeRunId: toState.activeRunId ?? fromState.activeRunId,
-        runs: { ...toState.runs, ...fromState.runs },
-        oldestSequence: toState.oldestSequence ?? fromState.oldestSequence,
-        hasMoreHistory: toState.hasMoreHistory || fromState.hasMoreHistory,
-        loadingMore: toState.loadingMore || fromState.loadingMore,
+      ...threadStates,
+      [localThreadId]: {
+        ...productState,
+        isLoading: productState.isLoading || legacySessionState.isLoading,
+        activeRunId: productState.activeRunId ?? legacySessionState.activeRunId,
+        runs: { ...legacySessionState.runs, ...productState.runs },
+        oldestSequence:
+          productState.oldestSequence ?? legacySessionState.oldestSequence,
+        hasMoreHistory:
+          productState.hasMoreHistory || legacySessionState.hasMoreHistory,
+        loadingMore: productState.loadingMore || legacySessionState.loadingMore,
       },
     },
   };

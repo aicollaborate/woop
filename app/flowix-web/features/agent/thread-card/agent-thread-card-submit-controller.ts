@@ -1,6 +1,7 @@
 import type { AgentTypeKey } from "@/types/agent";
 import type { AgentConversationSource } from "@features/agent/store/agent-conversation-types";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { createConversationInstanceId } from "@features/agent/store/conversation-slice";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import { ensureConversationWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
 import { ensureAgentThreadCardThread } from "@features/agent/thread-card/agent-thread-card-submit";
@@ -41,18 +42,7 @@ export async function submitAgentThreadCardConversation(
   let nextTypeKey = input.typeKey;
 
   if (!nextInstanceId) {
-    const instance = useAgentSessionStore.getState().createInstance({
-      agentType: nextTypeKey,
-      title: nextTitle,
-      threadId: nextThreadId,
-      source: input.source,
-      role: input.role,
-      // 与 ensureInstanceBinding / insertAgentThreadCard 同: instance
-      // 创建瞬间把 runtime_config 快照写进 DB, 不再让 cwd 兜底链依赖
-      // 启动 race 窗口内的 selectedNotebook / agent-access store.
-      runtimeConfig: buildInitialInstanceRuntimeConfig(nextTypeKey),
-    });
-    nextInstanceId = instance.instanceId;
+    nextInstanceId = createConversationInstanceId();
   }
 
   if (!nextThreadId) {
@@ -70,10 +60,6 @@ export async function submitAgentThreadCardConversation(
       nextThreadId = ensured.threadId;
       nextTitle = ensured.title;
       nextTypeKey = ensured.typeKey;
-      useAgentSessionStore.getState().updateThread(nextInstanceId, {
-        agentType: ensured.typeKey,
-        threadId: ensured.threadId,
-      });
     }
   }
 
@@ -81,13 +67,14 @@ export async function submitAgentThreadCardConversation(
     throw new Error("Agent thread id was not created");
   }
 
-  const conversation = upsertAgentThreadCardConversationInstance({
+  const conversation = await upsertAgentThreadCardConversationInstance({
     instanceId: nextInstanceId,
     agentType: nextTypeKey,
     title: nextTitle,
     threadId: nextThreadId,
     source: input.source,
     role: input.role,
+    runtimeConfig: buildInitialInstanceRuntimeConfig(nextTypeKey),
   });
   nextInstanceId = conversation.instanceId;
   // Freeze the effective cwd / add-dir / notebook paths immediately before

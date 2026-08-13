@@ -204,6 +204,32 @@ impl<'a> MemoService<'a> {
         })
     }
 
+    /// Create a named memo from a separate CLI/tool process and mark it for
+    /// Desktop's watcher before publishing the Markdown file.
+    pub fn create_external_memo_named(
+        &mut self,
+        notebook_key: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<CreatedMemo, FlowixError> {
+        if title.trim().is_empty() {
+            return Err(FlowixError::InvalidInput(
+                "empty title, note not created".into(),
+            ));
+        }
+        let notebook = self.resolve_notebook(notebook_key)?;
+        let _write_guard = self.memo_file.acquire_cross_process_write_lock()?;
+        let memo =
+            self.memo_file
+                .create_external_memo_for_notebook_id(&notebook.id, title, body, None)?;
+        let path = PathBuf::from(&notebook.path).join(&memo.filename);
+        Ok(CreatedMemo {
+            memo,
+            notebook,
+            path,
+        })
+    }
+
     /// Create a memo with an explicit title while preserving Desktop's ability to
     /// create an empty document. When `notebook_key` is omitted, the store's current
     /// notebook/default fallback remains in effect.

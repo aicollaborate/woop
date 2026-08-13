@@ -27,7 +27,10 @@ export function PluginNavItems({
 
   if (items.length === 0) return null;
   return (
-    <div className="mt-1 space-y-0.5 border-t border-[var(--muted-foreground)]/30 pt-1">
+    // Sidebar plugins are part of the same top-level navigation group as the
+    // memo filters (all / conversations / todos). Keep this wrapper borderless
+    // so the built-in mindmap entry is not visually separated into its own group.
+    <div className="space-y-0.5">
       {items.map((plugin) => (
         <div
           key={plugin.manifest.id}

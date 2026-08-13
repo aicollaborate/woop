@@ -118,7 +118,7 @@ describe("agent event mapper", () => {
     });
   });
 
-  it("routes later chunks to the resolved external session id", () => {
+  it("routes later chunks to the stable product thread id", () => {
     const event = mapAgentChunkToEvent(
       {
         kind: "stream_end",
@@ -137,7 +137,7 @@ describe("agent event mapper", () => {
 
     expect(event).toMatchObject({
       kind: "stream_end",
-      threadId: "codex-real-session",
+      threadId: "codex-local-inst-1",
       runId: "run-1",
     });
   });

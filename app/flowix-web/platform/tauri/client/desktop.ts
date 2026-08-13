@@ -167,7 +167,13 @@ export interface PluginManifest {
     prompt?: PluginField;
     agentType?: PluginField;
   };
-  agent: { skill: string };
+  agent?: { skill: string } | null;
+  tool?: {
+    command: string;
+    input: string;
+    contentType: string;
+    instructions: string;
+  } | null;
   discovery?: { noteType?: string | null };
   execution?: { runtime?: string | null };
   output: {

@@ -10,15 +10,7 @@ export interface ApplyResolvedSessionOptions {
   threadId: string;
   sessionId: string;
   typeKey: AgentTypeKey;
-  currentThreadId: string | null;
-  storedThreadId: string | null;
   isDestroyed: boolean;
-  instanceId: string | null;
-  updateConversationThread: (
-    instanceId: string,
-    update: { agentType: AgentTypeKey; threadId: string },
-  ) => void;
-  updateAttrs: (attrs: Record<string, unknown>) => void;
 }
 
 export class ThreadSessionController {
@@ -31,8 +23,7 @@ export class ThreadSessionController {
   }
 
   getRenderThreadId(threadId: string | null): string | null {
-    const runtimeThreadId = this.getRuntimeThreadId(threadId);
-    return getResolvedExternalSessionId(runtimeThreadId) ?? runtimeThreadId;
+    return this.getRuntimeThreadId(threadId);
   }
 
   getResolvedSessionId(threadId: string | null): string | null {
@@ -44,25 +35,14 @@ export class ThreadSessionController {
       threadId,
       sessionId,
       typeKey,
-      currentThreadId,
-      storedThreadId,
       isDestroyed,
-      instanceId,
-      updateConversationThread,
-      updateAttrs,
     } = options;
     const resolutionKey = `${threadId}->${sessionId}`;
-    const runtimeThreadId = this.getRuntimeThreadId(currentThreadId);
     if (
       !sessionId ||
       sessionId === threadId ||
       this.appliedResolvedSessionKeys.has(resolutionKey) ||
-      isDestroyed ||
-      (
-        runtimeThreadId !== threadId &&
-        currentThreadId !== sessionId &&
-        storedThreadId !== threadId
-      )
+      isDestroyed
     ) {
       return;
     }
@@ -74,15 +54,5 @@ export class ThreadSessionController {
       sessionId,
       typeKey,
     );
-    if (instanceId) {
-      updateConversationThread(instanceId, {
-        agentType: typeKey,
-        threadId: sessionId,
-      });
-    }
-    updateAttrs({
-      threadId: sessionId,
-      typeKey,
-    });
   }
 }

@@ -1,18 +1,15 @@
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { deriveThreadTitleFromPrompt } from "@features/agent/store/thread-titles";
 import type { AgentTypeKey } from "@/types/agent";
-import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { focusWithoutScroll } from "@features/agent/thread-card/agent-thread-card-dom";
 
 export interface AgentThreadCardTitleEditControllerOptions {
   titleEl: HTMLElement;
   getAttrTitle: () => string | null;
-  getAttrTypeKey: () => string | null;
   getInstanceTitle: () => string | undefined;
   getThreadId: () => string | null;
   getInstanceId: () => string | null;
   getTypeKey: () => AgentTypeKey;
-  updateAttrs: (attrs: Record<string, unknown>) => void;
   /**
    * 首条 user 消息原文 (已 strip 系统块), 用于孤儿卡片标题恢复。
    * 无可用消息时返回 undefined。
@@ -25,12 +22,10 @@ export interface AgentThreadCardTitleEditControllerOptions {
 export class AgentThreadCardTitleEditController {
   private readonly titleEl: HTMLElement;
   private readonly getAttrTitle: () => string | null;
-  private readonly getAttrTypeKey: () => string | null;
   private readonly getInstanceTitle: () => string | undefined;
   private readonly getThreadId: () => string | null;
   private readonly getInstanceId: () => string | null;
   private readonly getTypeKey: () => AgentTypeKey;
-  private readonly updateAttrs: (attrs: Record<string, unknown>) => void;
   private readonly getFirstUserMessageText: () => string | undefined;
   private readonly getDefaultTitle: () => string;
   private titleInput: HTMLInputElement | null = null;
@@ -39,12 +34,10 @@ export class AgentThreadCardTitleEditController {
   constructor(options: AgentThreadCardTitleEditControllerOptions) {
     this.titleEl = options.titleEl;
     this.getAttrTitle = options.getAttrTitle;
-    this.getAttrTypeKey = options.getAttrTypeKey;
     this.getInstanceTitle = options.getInstanceTitle;
     this.getThreadId = options.getThreadId;
     this.getInstanceId = options.getInstanceId;
     this.getTypeKey = options.getTypeKey;
-    this.updateAttrs = options.updateAttrs;
     this.getFirstUserMessageText = options.getFirstUserMessageText;
     this.getDefaultTitle = options.getDefaultTitle;
   }
@@ -54,29 +47,15 @@ export class AgentThreadCardTitleEditController {
   }
 
   /**
-   * 显式标题 ── 来自持久化真源 (threadLists / 活跃 thread / instance.title /
-   * node attr), 不含从首条 user 消息现取或默认标题的恢复回退。
+   * The exact instance title is the normal source. The Markdown attribute is
+   * read only for a legacy card that has no persisted instance identity.
    *
    * card 视图据此判断"标题是否仍需随消息加载而恢复", 避免对已有真实标题的
    * 卡片在每条消息 tick 上重复 syncTitleText。
    */
   private explicitTitle(): string {
     const attrTitle = (this.getAttrTitle() ?? "").trim();
-    const attrTypeKey = normalizeAgentTypeKey(this.getAttrTypeKey());
-    const threadId = this.getThreadId();
-    if (threadId) {
-      const meta = useAgentSessionStore.getState().sessionMeta;
-      const listTitle = meta.threadLists[attrTypeKey]?.find(
-        (item) => item.threadId === threadId,
-      )?.title;
-      if (listTitle) return listTitle;
-      if (meta.activeThreadIds[attrTypeKey] === threadId) {
-        const activeTitle = meta.currentThreadTitles[attrTypeKey];
-        if (activeTitle) return activeTitle;
-      }
-    }
-
-    return this.getInstanceTitle() || attrTitle;
+    return this.getInstanceTitle() || (!this.getInstanceId() ? attrTitle : "");
   }
 
   hasExplicitTitle(): boolean {
@@ -166,16 +145,9 @@ export class AgentThreadCardTitleEditController {
     }
 
     this.titleEl.textContent = nextTitle;
-    // Phase 5.3 修正 (2026-08-03): 同步先调 renameInstance 更新 conv-store
-    // + session-store 的 instance.title, 再触发 updateAttrs. 否则后续
-    // syncTitleText 读 instance.title 仍是 previousTitle, 把刚设的
-    // nextTitle 又覆盖回去, DOM 卡在旧 title.
-    if (instanceId) {
-      useAgentSessionStore.getState().renameInstance(instanceId, nextTitle);
-    }
-    this.updateAttrs({ title: nextTitle });
-
     try {
+      // renameAgentConversation updates the exact instance optimistically, then
+      // performs the only operation allowed to mutate threads.title.
       await useAgentSessionStore.getState().renameAgentConversation({
         instanceId,
         threadId,
@@ -184,10 +156,6 @@ export class AgentThreadCardTitleEditController {
       });
     } catch {
       this.titleEl.textContent = previousTitle;
-      if (instanceId) {
-        useAgentSessionStore.getState().renameInstance(instanceId, previousTitle);
-      }
-      this.updateAttrs({ title: previousTitle });
     }
   }
 }

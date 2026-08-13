@@ -183,6 +183,42 @@ fn create_dash_suffix_no_longer_special() {
     ));
 }
 
+// ===== Plugin artifact tools =====
+
+#[test]
+fn plugin_commands_parse_typed_arguments() {
+    assert!(matches!(
+        parse_args(&["plugin", "list", "--json"]),
+        Ok(Some(Cli::PluginList { json: true }))
+    ));
+    assert!(matches!(
+        parse_args(&["plugin", "describe", "mindmap"]),
+        Ok(Some(Cli::PluginDescribe { plugin_id, json: false })) if plugin_id == "mindmap"
+    ));
+    assert!(matches!(
+        parse_args(&[
+            "plugin", "create", "mindmap", "--notebook", "/notes/work",
+            "--source-note", "/notes/work/source.md", "--producer", "codex", "--json"
+        ]),
+        Ok(Some(Cli::PluginCreate {
+            plugin_id,
+            notebook,
+            source_note: Some(source_note),
+            producer,
+            json: true,
+        })) if plugin_id == "mindmap"
+            && notebook == "/notes/work"
+            && source_note == "/notes/work/source.md"
+            && producer == "codex"
+    ));
+}
+
+#[test]
+fn plugin_create_requires_notebook() {
+    let error = parse_args(&["plugin", "create", "mindmap"]).unwrap_err();
+    assert_err_contains(&error, "notebook");
+}
+
 // ===== Delete =====
 
 #[test]

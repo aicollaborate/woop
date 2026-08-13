@@ -43,7 +43,10 @@ import {
   type AgentEventMapperState,
 } from "@features/agent/events/agent-event-mapper";
 import { completedRunUserMessageId } from "@features/agent/events/message-identity";
-import { resolveExternalChunkThreadId } from "@features/agent/store/external-session";
+import {
+  resolveExternalChunkThreadId,
+  resolveProductThreadId,
+} from "@features/agent/store/external-session";
 import {
   recordAgentChunkMapped,
   recordAgentStopRequested,
@@ -77,7 +80,6 @@ import {
 } from "@features/agent/store/projection-slice";
 import {
   createConversationSlice,
-  persistConversationInstance,
   type ConversationSlice,
 } from "@features/agent/store/conversation-slice";
 import {
@@ -300,7 +302,10 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
           get().sessionMeta.threadTypes[threadId] ??
           get().sessionMeta.activeAgentTypeKey,
         resolveThreadId: (threadId) =>
-          get().sessionMeta.externalSessionResolutions[threadId] ?? threadId,
+          resolveProductThreadId(
+            threadId,
+            get().sessionMeta.externalSessionResolutions,
+          ),
         canDispatch: (threadId) => !get().threadTombstones[threadId],
         dispatch: (event) => get().dispatch(event),
         applySessionResolved: (event) => get().applySessionResolved(event),
@@ -308,9 +313,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
       return ({
         ...createSessionMetaSlice(set, get),
         ...createConversationSlice(set, get),
-        ...createProjectionSlice(set, (instance) => {
-          persistConversationInstance(instance);
-        }),
+        ...createProjectionSlice(set),
         ...createThreadHistorySlice(set, get),
         ...createThreadLifecycleSlice(set, get),
 
@@ -462,19 +465,22 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
           const snapshotThreadIds = new Set<string>();
           for (const [reportedThreadId, info] of Object.entries(running)) {
             const localThreadId = info.pendingThreadId || reportedThreadId;
-            const canonicalThreadId = info.sessionId || localThreadId;
-            snapshotThreadIds.add(canonicalThreadId);
+            const productThreadId = resolveProductThreadId(
+              localThreadId,
+              get().sessionMeta.externalSessionResolutions,
+            );
+            snapshotThreadIds.add(productThreadId);
             const current = get();
             const agentType = normalizeAgentTypeKey(
               info.agentType ??
-                current.sessionMeta.threadTypes[canonicalThreadId] ??
+                current.sessionMeta.threadTypes[productThreadId] ??
                 current.sessionMeta.threadTypes[localThreadId] ??
                 current.sessionMeta.activeAgentTypeKey,
             );
-            if (localThreadId !== canonicalThreadId) {
+            if (info.sessionId && info.sessionId !== productThreadId) {
               current.resolveSessionByThreadId(
-                localThreadId,
-                canonicalThreadId,
+                productThreadId,
+                info.sessionId,
                 agentType,
               );
             }
@@ -482,37 +488,37 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
               ...meta,
               threadTypes: {
                 ...meta.threadTypes,
-                [localThreadId]: agentType,
-                [canonicalThreadId]: agentType,
+                [productThreadId]: agentType,
+                ...(info.sessionId ? { [info.sessionId]: agentType } : {}),
               },
               externalSessionResolutions:
-                localThreadId !== canonicalThreadId
+                info.sessionId && info.sessionId !== productThreadId
                   ? {
                       ...meta.externalSessionResolutions,
-                      [localThreadId]: canonicalThreadId,
+                      [productThreadId]: info.sessionId,
                     }
                   : meta.externalSessionResolutions,
             }));
             const titleMeta = get().sessionMeta;
             ensureConversationInstanceForSession(
               get,
-              canonicalThreadId,
+              productThreadId,
               agentType,
               normalizeThreadTitle(
                 getConversationTitleForThread(
                   titleMeta,
                   agentType,
-                  canonicalThreadId,
+                  productThreadId,
                 ),
               ),
               { defaultTitle: defaultExternalThreadTitle(agentType) },
             );
             const startedAt = info.startedAt || now;
-            get().setThreadProjection(canonicalThreadId, (projection) => {
+            get().setThreadProjection(productThreadId, (projection) => {
               const runId =
                 info.runId ??
                 projection.runs.activeRunId ??
-                `${canonicalThreadId}-${now}`;
+                `${productThreadId}-${now}`;
               const existing = projection.runs.runs[runId];
               return {
                 ...projection,
@@ -525,7 +531,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
                       ...existing,
                       runId,
                       agentType,
-                      threadId: canonicalThreadId,
+                      threadId: productThreadId,
                       startedAt: existing?.startedAt ?? startedAt,
                       status: "running",
                       currentTool: info.currentTool ?? existing?.currentTool ?? null,

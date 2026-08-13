@@ -6,15 +6,18 @@ import {
 } from '@features/memo/components/memo-list-loading-state';
 
 describe('memo-list loading state', () => {
-  it('builds stable query keys from notebook, filter, sort, tag, and color state', () => {
+  it('builds stable query keys from notebook, filter, sort, tag, color, and plugin state', () => {
     expect(getMemoListQueryKey('nb_1', 'all', 'createdAt', null, 'any')).toBe(
-      'nb_1:all:createdAt::',
+      'nb_1:all:createdAt:::',
     );
     expect(getMemoListQueryKey('nb_1', 'tagged', 'updatedAt', 'tag-a', 'any')).toBe(
-      'nb_1:tagged:updatedAt:tag-a:',
+      'nb_1:tagged:updatedAt:tag-a::',
     );
     expect(getMemoListQueryKey('nb_1', 'color', 'updatedAt', 'tag-a', 'red')).toBe(
-      'nb_1:color:updatedAt::red',
+      'nb_1:color:updatedAt::red:',
+    );
+    expect(getMemoListQueryKey('nb_1', 'all', 'createdAt', null, 'any', 'mindmap')).toBe(
+      'nb_1:all:createdAt:::mindmap',
     );
   });
 

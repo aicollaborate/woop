@@ -54,6 +54,20 @@ pub enum Cli {
         id: String,
         json: bool,
     },
+    PluginList {
+        json: bool,
+    },
+    PluginDescribe {
+        plugin_id: String,
+        json: bool,
+    },
+    PluginCreate {
+        plugin_id: String,
+        notebook: String,
+        source_note: Option<String>,
+        producer: String,
+        json: bool,
+    },
     Completion {
         shell: String,
     },
@@ -137,6 +151,29 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Cli>, CliError> {
                 json,
             }))
         }
+        Some(("plugin", sub)) => match sub.subcommand() {
+            Some(("list", _)) => Ok(Some(Cli::PluginList { json })),
+            Some(("describe", command)) => Ok(Some(Cli::PluginDescribe {
+                plugin_id: required_string(command, "plugin-id")?,
+                json,
+            })),
+            Some(("create", command)) => Ok(Some(Cli::PluginCreate {
+                plugin_id: required_string(command, "plugin-id")?,
+                notebook: required_string(command, "notebook")?,
+                source_note: command.get_one::<String>("source-note").cloned(),
+                producer: command
+                    .get_one::<String>("producer")
+                    .cloned()
+                    .unwrap_or_else(|| "agent-cli".to_string()),
+                json,
+            })),
+            Some((other, _)) => Err(CliError::Usage(format!(
+                "unknown plugin command: `{other}`"
+            ))),
+            None => Err(CliError::Usage(format!(
+                "usage: {DISPLAY_BIN} plugin <list|describe|create>"
+            ))),
+        },
         Some(("completion", sub)) => Ok(Some(Cli::Completion {
             shell: required_string(sub, "shell")?,
         })),
@@ -206,6 +243,36 @@ pub(crate) fn cli_command() -> Command {
                         .short('l')
                         .value_parser(clap::value_parser!(usize))
                         .num_args(1),
+                ),
+        )
+        .subcommand(
+            Command::new("plugin")
+                .subcommand_required(true)
+                .subcommand(Command::new("list"))
+                .subcommand(Command::new("describe").arg(required_arg("plugin-id")))
+                .subcommand(
+                    Command::new("create")
+                        .arg(required_arg("plugin-id"))
+                        .arg(
+                            Arg::new("notebook")
+                                .long("notebook")
+                                .short('b')
+                                .required(true)
+                                .allow_hyphen_values(true)
+                                .num_args(1),
+                        )
+                        .arg(
+                            Arg::new("source-note")
+                                .long("source-note")
+                                .allow_hyphen_values(true)
+                                .num_args(1),
+                        )
+                        .arg(
+                            Arg::new("producer")
+                                .long("producer")
+                                .allow_hyphen_values(true)
+                                .num_args(1),
+                        ),
                 ),
         )
         .subcommand(Command::new("completion").arg(required_arg("shell")))
@@ -319,6 +386,23 @@ fn preflight_usage_errors(args: &[String]) -> Result<(), CliError> {
                     "usage: {DISPLAY_BIN} mcp  (no extra args; MCP over stdio)"
                 )));
             }
+        }
+        Some("plugin") => {
+            missing_value(
+                args,
+                &["--notebook", "-b"],
+                "plugin create: --notebook/-b requires a value",
+            )?;
+            missing_value(
+                args,
+                &["--source-note"],
+                "plugin create: --source-note requires a value",
+            )?;
+            missing_value(
+                args,
+                &["--producer"],
+                "plugin create: --producer requires a value",
+            )?;
         }
         Some("create") | Some("new") | Some("c") => {
             let positional = command_positionals(args, &["--json", "-j"]);
@@ -551,6 +635,12 @@ COMMANDS:
     search <query>     Full-text search                      [alias: q]
                        [--notebook|-b <nb>] [--limit|-l <n>]
     completion <sh>    Print shell completion (bash|zsh|fish)
+    plugin list        List artifact tools
+    plugin describe <id>
+                       Describe an artifact tool and its input contract
+    plugin create <id> Create an artifact from stdin
+                       --notebook|-b <name|id|path>
+                       [--source-note <id|path>] [--producer <name>]
     mcp               MCP over stdio (external Agent integration)
 
 ENVIRONMENT:
@@ -577,6 +667,7 @@ EXAMPLES:
     printf \"# new title\\nbody\\n\" | flowix write a1b2c3
     flowix edit a1b2c3 --old \"old text\" --new \"new text\"
     flowix search TODO --limit 20
+    printf \"# Root\\n\\n## Branch\\n- Leaf\\n\" | flowix plugin create mindmap -b work --json
     FLOWIX_HOME=/tmp/fx-test flowix notebooks
 ";
     print!("{usage}");

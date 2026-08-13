@@ -21,7 +21,6 @@ export interface AgentThreadCardChromeControllerOptions {
   closeTransientUi: () => void;
   dragThresholdPx: number;
   getAttrTitle: () => string | null;
-  getAttrTypeKey: () => string | null;
   getInstanceTitle: () => string | undefined;
   getFirstUserMessageText: () => string | undefined;
   getDefaultTitle: () => string;
@@ -30,7 +29,6 @@ export interface AgentThreadCardChromeControllerOptions {
   getTypeKey: () => AgentTypeKey;
   getCwd: () => string | null;
   getThreadState: () => ThreadState | undefined;
-  updateAttrs: (attrs: Record<string, unknown>) => void;
   t: (key: I18nKey) => string;
 }
 
@@ -53,14 +51,12 @@ export class AgentThreadCardChromeController {
     this.title = new AgentThreadCardTitleEditController({
       titleEl: options.titleEl,
       getAttrTitle: options.getAttrTitle,
-      getAttrTypeKey: options.getAttrTypeKey,
       getInstanceTitle: options.getInstanceTitle,
       getFirstUserMessageText: options.getFirstUserMessageText,
       getDefaultTitle: options.getDefaultTitle,
       getThreadId: options.getThreadId,
       getInstanceId: options.getInstanceId,
       getTypeKey: options.getTypeKey,
-      updateAttrs: options.updateAttrs,
     });
     this.badge = new AgentThreadCardBadgeChromeController({
       badgeEl: options.badgeEl,

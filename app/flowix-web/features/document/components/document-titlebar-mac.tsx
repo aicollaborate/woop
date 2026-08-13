@@ -31,6 +31,14 @@ export function DocumentTitlebarMac({
     onNavigateForward,
     visible: showNavigationButtons = true,
   },
+  contentCapabilities: {
+    search: canSearch,
+    properties: canEditProperties,
+    copyFullText: canCopyFullText,
+    exportContent: canExportContent,
+    saveAsTemplate: canSaveAsTemplate,
+    versionHistory: canViewVersionHistory,
+  },
   actions: {
     onOpenSearch,
     onCopyLink,
@@ -129,6 +137,12 @@ export function DocumentTitlebarMac({
             onExportWord={onExportWord}
             onRequestDeleteMemo={onRequestDeleteMemo}
             onColorsChange={onColorsChange ?? (() => {})}
+            canSearch={canSearch}
+            canEditProperties={canEditProperties}
+            canCopyFullText={canCopyFullText}
+            canExportContent={canExportContent}
+            canSaveAsTemplate={canSaveAsTemplate}
+            canViewVersionHistory={canViewVersionHistory}
           />
         )}
       </div>

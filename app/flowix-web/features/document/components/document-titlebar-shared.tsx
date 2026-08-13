@@ -77,6 +77,14 @@ export interface DocumentTitlebarProps {
     onNavigateForward: () => void;
     visible?: boolean;
   };
+  contentCapabilities: {
+    search: boolean;
+    properties: boolean;
+    copyFullText: boolean;
+    exportContent: boolean;
+    saveAsTemplate: boolean;
+    versionHistory: boolean;
+  };
   actions: {
     onOpenSearch: () => void;
     onCopyLink: () => void;
@@ -771,6 +779,12 @@ export function MemoActions({
   onExportWord,
   onRequestDeleteMemo,
   onColorsChange,
+  canSearch,
+  canEditProperties,
+  canCopyFullText,
+  canExportContent,
+  canSaveAsTemplate,
+  canViewVersionHistory,
 }: {
   memo: MemoItem;
   iconButtonClass: string;
@@ -784,6 +798,12 @@ export function MemoActions({
   onExportWord: () => void;
   onRequestDeleteMemo: () => void;
   onColorsChange: (next: MemoColor[]) => void;
+  canSearch: boolean;
+  canEditProperties: boolean;
+  canCopyFullText: boolean;
+  canExportContent: boolean;
+  canSaveAsTemplate: boolean;
+  canViewVersionHistory: boolean;
 }) {
   const { t, language } = useI18n();
   const isPinned = !!memo.favorited;
@@ -859,23 +879,25 @@ export function MemoActions({
         iconButtonClass={iconButtonClass}
         onChange={onColorsChange}
       />
-      <Tooltip
-        content={t("document.titlebar.searchTooltip")}
-        shortcut="editor.find"
-        disabled={isAgentThreadCardFullscreen}
-      >
-        <button
-          type="button"
+      {canSearch && (
+        <Tooltip
+          content={t("document.titlebar.searchTooltip")}
+          shortcut="editor.find"
           disabled={isAgentThreadCardFullscreen}
-          aria-disabled={isAgentThreadCardFullscreen}
-          onClick={() => {
-            if (!isAgentThreadCardFullscreen) onOpenSearch();
-          }}
-          className={searchButtonClass}
         >
-          <Search className="w-4 h-4" />
-        </button>
-      </Tooltip>
+          <button
+            type="button"
+            disabled={isAgentThreadCardFullscreen}
+            aria-disabled={isAgentThreadCardFullscreen}
+            onClick={() => {
+              if (!isAgentThreadCardFullscreen) onOpenSearch();
+            }}
+            className={searchButtonClass}
+          >
+            <Search className="w-4 h-4" />
+          </button>
+        </Tooltip>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Tooltip content={t("document.titlebar.moreTooltip")}>
@@ -891,18 +913,22 @@ export function MemoActions({
           >
             <LinkSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.copyLink")}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={onCopyFullText}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-          >
-            <CopyIcon className="w-4 h-4 mr-2" /> {t("document.action.copyFullText")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={onOpenProperties}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-          >
-            <StackSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.properties")}
-          </DropdownMenuItem>
+          {canCopyFullText && (
+            <DropdownMenuItem
+              onClick={onCopyFullText}
+              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+            >
+              <CopyIcon className="w-4 h-4 mr-2" /> {t("document.action.copyFullText")}
+            </DropdownMenuItem>
+          )}
+          {canEditProperties && (
+            <DropdownMenuItem
+              onClick={onOpenProperties}
+              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+            >
+              <StackSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.properties")}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onClick={onTogglePin}
             className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
@@ -913,32 +939,42 @@ export function MemoActions({
               <><PushPinIcon className="w-4 h-4 mr-2" /> {t("document.action.pin")}</>
             )}
           </DropdownMenuItem>
+          {(canSaveAsTemplate || canExportContent) && (
+            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+          )}
+          {canSaveAsTemplate && (
+            <DropdownMenuItem
+              onClick={onSaveAsTemplate}
+              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+            >
+              <SwatchesIcon className="w-4 h-4 mr-2" /> {t("document.action.saveAsTemplate")}
+            </DropdownMenuItem>
+          )}
+          {canExportContent && (
+            <>
+              <DropdownMenuItem
+                onClick={onExportMarkdown}
+                className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+              >
+                <FileMdIcon className="w-4 h-4 mr-2" /> {t("document.action.exportMarkdown")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={onExportWord}
+                className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+              >
+                <FileDocIcon className="w-4 h-4 mr-2" /> {t("document.action.exportWord")}
+              </DropdownMenuItem>
+            </>
+          )}
           <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
-          <DropdownMenuItem
-            onClick={onSaveAsTemplate}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-          >
-            <SwatchesIcon className="w-4 h-4 mr-2" /> {t("document.action.saveAsTemplate")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={onExportMarkdown}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-          >
-            <FileMdIcon className="w-4 h-4 mr-2" /> {t("document.action.exportMarkdown")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={onExportWord}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-          >
-            <FileDocIcon className="w-4 h-4 mr-2" /> {t("document.action.exportWord")}
-          </DropdownMenuItem>
-          <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
-          <VersionHistorySubmenu
-            memoId={memo.id}
-            refreshKey={versionRefreshKey}
-            restoringVersionId={restoringVersionId}
-            onSelectVersion={setConfirmVersion}
-          />
+          {canViewVersionHistory && (
+            <VersionHistorySubmenu
+              memoId={memo.id}
+              refreshKey={versionRefreshKey}
+              restoringVersionId={restoringVersionId}
+              onSelectVersion={setConfirmVersion}
+            />
+          )}
           <DropdownMenuItem
             onClick={onRequestDeleteMemo}
             className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)]"

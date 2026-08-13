@@ -2,7 +2,7 @@
 //!
 //! `cli` 模块只负责把 argv 解析成结构化命令；这里负责把命令转给执行层。
 
-use crate::{cli, errors::CliError, mcp, store};
+use crate::{cli, errors::CliError, mcp, plugin, store};
 
 /// 跑 CLI 主入口。
 pub fn run_cli(args: &[String]) -> Result<(), CliError> {
@@ -61,6 +61,21 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             json,
         ),
         cli::Cli::Write { id, json } => store::cmd_write(&id, json),
+        cli::Cli::PluginList { json } => plugin::cmd_list(json),
+        cli::Cli::PluginDescribe { plugin_id, json } => plugin::cmd_describe(&plugin_id, json),
+        cli::Cli::PluginCreate {
+            plugin_id,
+            notebook,
+            source_note,
+            producer,
+            json,
+        } => plugin::cmd_create(
+            &plugin_id,
+            &notebook,
+            source_note.as_deref(),
+            &producer,
+            json,
+        ),
         cli::Cli::Completion { shell } => store::cmd_completion(&shell),
         cli::Cli::Mcp => {
             use std::io::{stdin, stdout};

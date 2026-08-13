@@ -19,10 +19,10 @@ describe("external-session helpers", () => {
     expect(resolveExternalChunkThreadId(resolved, {})).toBe("thread-local");
   });
 
-  it("resolveExternalChunkThreadId uses resolutions map for non-resolved chunks", () => {
+  it("resolveExternalChunkThreadId keeps the product id for later chunks", () => {
     const textChunk = chunk("text", { thread_id: "thread-local" });
     expect(resolveExternalChunkThreadId(textChunk, { "thread-local": "session-A" })).toBe(
-      "session-A",
+      "thread-local",
     );
     expect(resolveExternalChunkThreadId(textChunk, {})).toBe("thread-local");
   });
@@ -51,7 +51,7 @@ describe("external-session helpers", () => {
     expect(resolveExternalChunkAgentType(textChunk, "missing", "missing", {})).toBeUndefined();
   });
 
-  it("applyExternalSessionResolved merges local runtime into the canonical session", () => {
+  it("applyExternalSessionResolved keeps merged runtime under the product thread", () => {
     const fromState = {
       messages: [
         { id: "m1", role: "assistant" as const, content: "hello", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -103,7 +103,8 @@ describe("external-session helpers", () => {
       "thread-local": "codex",
       "session-A": "codex",
     });
-    const merged = result.threadStates["session-A"];
+    const merged = result.threadStates["thread-local"];
+    expect(result.threadStates["session-A"]).toBeUndefined();
     expect(merged.isLoading).toBe(true);
     expect(merged.activeRunId).toBe("run-1");
     expect(merged.runs["run-1"]?.agentType).toBe("codex");
@@ -155,7 +156,7 @@ describe("external-session helpers", () => {
       "codex",
     );
 
-    const merged = result.threadStates["session-A"];
+    const merged = result.threadStates["thread-local"];
     // `fromState.runs` 在合并时覆盖 `toState.runs` 同 key, 这是当前
     // applyExternalSessionResolved 的行为 (用 spread merge 表达 "local
     // 优先"): 同 key 的 run 在合并结果里取 local thread 的状态。

@@ -8,11 +8,6 @@ export interface AgentThreadCardRuntimeControllerOptions {
   getTypeKey: () => AgentTypeKey;
   getInstanceId: () => string | null;
   isDestroyed: () => boolean;
-  updateConversationThread: (
-    instanceId: string,
-    update: { agentType: AgentTypeKey; threadId: string },
-  ) => void;
-  updateAttrs: (attrs: Record<string, unknown>) => void;
   renderThreadState: () => void;
   refreshAttrs: () => void;
   refreshExternalAgentEmptySettings: () => void;
@@ -74,12 +69,7 @@ export class AgentThreadCardRuntimeController {
       threadId,
       sessionId,
       typeKey,
-      currentThreadId: this.options.getCurrentThreadId(),
-      storedThreadId: this.options.getStoredThreadId(),
       isDestroyed: this.options.isDestroyed(),
-      instanceId: this.options.getInstanceId(),
-      updateConversationThread: this.options.updateConversationThread,
-      updateAttrs: this.options.updateAttrs,
     });
   }
 

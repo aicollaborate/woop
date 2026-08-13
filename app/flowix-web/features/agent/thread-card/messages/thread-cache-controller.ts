@@ -146,6 +146,10 @@ export class ThreadCacheController {
           if (result.resolvedSessionId) {
             this.renderResolvedSessionMessages(result.messages);
             this.applyResolvedSession(threadId, result.resolvedSessionId, typeKey);
+            // Resolution registers provider metadata; it no longer rekeys the
+            // product card. Mark the product id loaded to avoid repeated cache
+            // fetches on every visibility/render cycle.
+            this.loadedFor = threadId;
             return;
           }
           this.loadedFor = threadId;

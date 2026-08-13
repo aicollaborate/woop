@@ -23,7 +23,8 @@ import type { MemoEvent } from '@/types/memo';
 import { TabStrip } from './tab-strip';
 import { FLOWIX_TAB_DRAG_TYPE } from './tab-tear-off';
 import { adjacentTabId, useTabWindowStore } from './tab-window-store';
-import { TabContent } from './tab-content';
+import { TabContent, resolveTabContentSurface } from './tab-content';
+import { surfaceSupports } from '@features/surface';
 import { TabActivationCoordinator } from './tab-activation-coordinator';
 import {
   hydrateMemoTab,
@@ -536,6 +537,33 @@ export function TabWindow() {
       if (ok) closeTab(`memo:${currentMemo.id}`, true);
     });
   };
+  const activeMemoContentProps = activeTab ? {
+    filePath: currentDocumentPath ?? (
+      activeTab.target.kind === 'memo' || activeTab.target.kind === 'external_markdown'
+        ? activeTab.target.filePath
+        : ''
+    ),
+    notebookId: activeMemoSession?.notebookId ?? null,
+    notebookPath: activeMemoSession?.notebookPath ?? null,
+    transitionId:
+      activeMemoSession?.transitionId
+      ?? activeExternalSession?.transitionId
+      ?? null,
+    isExternalDocument: activeTab.target.kind === 'external_markdown',
+    searchPanelOpen: isSearchPanelOpen,
+    onSearchPanelOpenChange: setIsSearchPanelOpen,
+    toolbarCollapsed,
+    onToolbarCollapsedChange: setToolbarCollapsed,
+    onMetainfoData: (data: { memoContent: string }) => { contentRef.current = data.memoContent; },
+  } : null;
+  const activeSurface = activeTab && activeMemoContentProps
+    ? resolveTabContentSurface({
+        tab: activeTab,
+        contentKey: activeMemoSession?.id ?? activeExternalSession?.id ?? activeTab.id,
+        memo: currentMemo,
+        memoContentProps: activeMemoContentProps,
+      })
+    : null;
   const titlebarProps = {
     document: {
       currentMemo,
@@ -551,6 +579,14 @@ export function TabWindow() {
       onNavigateBack: NOOP,
       onNavigateForward: NOOP,
       visible: false,
+    },
+    contentCapabilities: {
+      search: activeSurface ? surfaceSupports(activeSurface, 'search') : false,
+      properties: activeSurface ? surfaceSupports(activeSurface, 'properties') : false,
+      copyFullText: activeSurface ? surfaceSupports(activeSurface, 'copy-content') : false,
+      exportContent: activeSurface ? surfaceSupports(activeSurface, 'export-content') : false,
+      saveAsTemplate: activeSurface ? surfaceSupports(activeSurface, 'save-template') : false,
+      versionHistory: activeSurface ? surfaceSupports(activeSurface, 'version-history') : false,
     },
     actions: {
       onOpenSearch: () => setIsSearchPanelOpen(true),
@@ -577,31 +613,9 @@ export function TabWindow() {
       <WindowsTitlebarControls />
       <MarkdownFileDropOverlay />
       {isWindowsPlatform() ? <DocumentTitlebarWin {...titlebarProps} /> : <DocumentTitlebarMac {...titlebarProps} />}
-      {error ? errorView : activeTab ? (
+      {error ? errorView : activeTab && activeSurface ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <TabContent
-            tab={activeTab}
-            contentKey={activeMemoSession?.id ?? activeExternalSession?.id ?? activeTab.id}
-            memoContentProps={{
-              filePath: currentDocumentPath ?? (
-                activeTab.target.kind === 'memo' || activeTab.target.kind === 'external_markdown'
-                  ? activeTab.target.filePath
-                  : ''
-              ),
-              notebookId: activeMemoSession?.notebookId ?? null,
-              notebookPath: activeMemoSession?.notebookPath ?? null,
-              transitionId:
-                activeMemoSession?.transitionId
-                ?? activeExternalSession?.transitionId
-                ?? null,
-              isExternalDocument: activeTab.target.kind === 'external_markdown',
-              searchPanelOpen: isSearchPanelOpen,
-              onSearchPanelOpenChange: setIsSearchPanelOpen,
-              toolbarCollapsed,
-              onToolbarCollapsedChange: setToolbarCollapsed,
-              onMetainfoData: (data) => { contentRef.current = data.memoContent; },
-            }}
-          />
+          <TabContent surface={activeSurface} />
           {isDocumentTransitioning && <div className="absolute inset-0 z-40 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_78%,transparent)] backdrop-blur-[1px]" role="status" aria-label="Loading"><div className="h-5 w-5 animate-spin rounded-full border-2 border-[color-mix(in_oklch,var(--muted-foreground)_26%,transparent)] border-t-[var(--brand)]" /></div>}
         </div>
       ) : loadingView}

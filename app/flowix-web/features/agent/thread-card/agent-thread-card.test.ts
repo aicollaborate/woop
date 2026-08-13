@@ -82,7 +82,10 @@ vi.mock("@platform/tauri/client", () => ({
     getClaudeSessionId: vi.fn(async () => null),
     getCodexDefaultModel: vi.fn(async () => "gpt-5.5"),
     listConversationInstances: vi.fn(async () => []),
-    upsertConversationInstance: vi.fn(async (instance: unknown) => instance),
+    upsertConversationInstance: vi.fn(async (instance: any) => ({
+      ...instance,
+      threadTitle: instance.initialTitle,
+    })),
     deleteConversationInstance: vi.fn(async () => true),
     deleteConversationInstancesForThread: vi.fn(async () => 0),
     deleteThread: vi.fn(),
@@ -824,7 +827,8 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(card!.classList.contains("ProseMirror-selectednode")).toBe(false);
     expect(card!.querySelector(".agent-thread-card__title-input")).toBeNull();
     expect(title!.textContent).toBe("Renamed title");
-    expect(editor.getJSON().content?.[0]?.attrs?.title).toBe("Renamed title");
+    // Markdown title is legacy recovery metadata; threads.title is authoritative.
+    expect(editor.getJSON().content?.[0]?.attrs?.title).toBe("Editable title");
   });
 
   it("keeps the instance title when an existing conversation is rebound", async () => {
@@ -842,7 +846,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       role: { memoId: "role-old", name: "Old role" },
     });
 
-    const result = upsertAgentThreadCardConversationInstance({
+    const result = await upsertAgentThreadCardConversationInstance({
       instanceId: instance.instanceId,
       agentType: "flowix",
       title: "Prompt generated title",
@@ -856,6 +860,61 @@ describe("AgentThreadCard NodeView streaming", () => {
       .getInstance(result.instanceId);
     expect(updated?.title).toBe("User renamed title");
     expect(updated?.role).toEqual({ memoId: "role-new", name: "New role" });
+  });
+
+  it("renders each card's persisted title instead of the active Codex title", async () => {
+    const { AgentThreadCard } = await import("@features/agent/thread-card");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const first = useAgentSessionStore.getState().createInstance({
+      agentType: "codex",
+      title: "First persisted title",
+      threadId: "codex-product-first",
+      source: { kind: "thread-card" },
+    });
+    const second = useAgentSessionStore.getState().createInstance({
+      agentType: "codex",
+      title: "Second persisted title",
+      threadId: "codex-product-second",
+      source: { kind: "thread-card" },
+    });
+    useAgentSessionStore.getState().setSessionMeta((meta) => ({
+      ...meta,
+      activeThreadIds: {
+        ...meta.activeThreadIds,
+        codex: first.threadId ?? undefined,
+      },
+      currentThreadTitles: {
+        ...meta.currentThreadTitles,
+        codex: "Unrelated active title",
+      },
+    }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [first, second].map((instance) => ({
+          type: "agentThreadCard",
+          attrs: {
+            instanceId: instance.instanceId,
+            threadId: instance.threadId,
+            title: "Stale Markdown title",
+            typeKey: "codex",
+            collapsed: false,
+          },
+        })),
+      },
+    });
+
+    expect(
+      [...host.querySelectorAll(".agent-thread-card__title")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["First persisted title", "Second persisted title"]);
   });
 
   it("submits from the Thread Card and renders the response stream on the same card", async () => {
@@ -895,7 +954,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     input!.dispatchEvent(new Event("input", { bubbles: true }));
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
-    await flushPromises();
+    await vi.waitFor(() => expect(agent.chatStream).toHaveBeenCalled());
 
     expect(agent.chatStream).toHaveBeenCalledWith(
       threadId,
@@ -925,6 +984,88 @@ describe("AgentThreadCard NodeView streaming", () => {
       card?.querySelector(".agent-thread-card__message--assistant")
         ?.textContent,
     ).toContain("Streamed answer");
+  });
+
+  it("does not start chat until first-send title initialization is persisted", async () => {
+    const { AgentThreadCard } = await import("@features/agent/thread-card");
+    const { agent } = await import("@platform/tauri/client");
+    let releaseInitialization!: () => void;
+    const initializationPending = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    vi.mocked(agent.upsertConversationInstance).mockImplementationOnce(
+      async (instance: any) => {
+        await initializationPending;
+        return { ...instance, threadTitle: instance.initialTitle };
+      },
+    );
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [{
+          type: "agentThreadCard",
+          attrs: {
+            threadId: "thread-awaited-initialization",
+            title: "Awaited initialization",
+            typeKey: "flowix",
+            collapsed: false,
+          },
+        }],
+      },
+    });
+
+    const card = host.querySelector<HTMLElement>(".agent-thread-card")!;
+    const input = card.querySelector<HTMLTextAreaElement>("textarea")!;
+    input.value = "first message waits";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    (await waitForEnabledSendButton(card)).click();
+    await flushPromises();
+    expect(agent.chatStream).not.toHaveBeenCalled();
+
+    releaseInitialization();
+    await vi.waitFor(() => expect(agent.chatStream).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not start chat when first-send title initialization fails", async () => {
+    const { AgentThreadCard } = await import("@features/agent/thread-card");
+    const { agent } = await import("@platform/tauri/client");
+    vi.mocked(agent.upsertConversationInstance).mockRejectedValueOnce(
+      new Error("thread initialization failed"),
+    );
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [{
+          type: "agentThreadCard",
+          attrs: {
+            threadId: null,
+            title: "Failed initialization",
+            typeKey: "flowix",
+            collapsed: false,
+          },
+        }],
+      },
+    });
+
+    const card = host.querySelector<HTMLElement>(".agent-thread-card")!;
+    const input = card.querySelector<HTMLTextAreaElement>("textarea")!;
+    input.value = "must not be sent";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    (await waitForEnabledSendButton(card)).click();
+    await vi.waitFor(() => {
+      expect(
+        card.querySelector<HTMLElement>(".agent-thread-card__error")?.hidden,
+      ).toBe(false);
+    });
+    expect(agent.chatStream).not.toHaveBeenCalled();
   });
 
   it("persists short Thread Card composer drafts in node attrs", async () => {
@@ -1123,7 +1264,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     input!.dispatchEvent(new Event("input", { bubbles: true }));
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
-    await flushPromises();
+    await vi.waitFor(() => expect(agent.chatStream).toHaveBeenCalled());
 
     expect(agent.chatStream).toHaveBeenCalledWith(
       threadId,
@@ -1316,8 +1457,8 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushAnimationFrame();
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card");
-    expect(editor.getJSON().content?.[0]?.attrs?.threadId).toBe(sessionId);
-    expect(card?.dataset.threadId).toBe(sessionId);
+    expect(editor.getJSON().content?.[0]?.attrs?.threadId).toBe(localThreadId);
+    expect(card?.dataset.threadId).toBe(localThreadId);
     expect(agent.getCodexThreadPage).toHaveBeenCalledWith(
       sessionId,
       null,
@@ -2378,7 +2519,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     input!.dispatchEvent(new Event("input", { bubbles: true }));
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
-    await flushPromises();
+    await vi.waitFor(() => expect(chatStreamMock).toHaveBeenCalled());
 
     const localThreadId = chatStreamMock.mock.calls[0]?.[0] as string;
     const runId = chatStreamMock.mock.calls[0]?.[1]?.runId;
@@ -2414,8 +2555,8 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(editor.getJSON().content?.[0]?.attrs?.threadId).toBe(sessionId);
-    expect(card?.dataset.threadId).toBe(sessionId);
+    expect(editor.getJSON().content?.[0]?.attrs?.threadId).toBe(localThreadId);
+    expect(card?.dataset.threadId).toBe(localThreadId);
     expect(card?.textContent).toContain("first codex request");
     expect(agent.getCodexSessionId).not.toHaveBeenCalled();
   });

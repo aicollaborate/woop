@@ -2298,6 +2298,7 @@ dependencies = [
  "clap_complete",
  "dirs 5.0.1",
  "flowix-core",
+ "flowix-plugin-runtime",
  "nanoid",
  "serde",
  "serde_json",
@@ -2340,6 +2341,7 @@ dependencies = [
  "dirs 5.0.1",
  "dunce",
  "flowix-core",
+ "flowix-plugin-runtime",
  "flowix-sync",
  "futures",
  "hostname",
@@ -2410,6 +2412,20 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "flowix-plugin-runtime"
+version = "1.1.15"
+dependencies = [
+ "chrono",
+ "flowix-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "tempfile",
  "uuid",
 ]
 

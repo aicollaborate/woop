@@ -1,0 +1,18 @@
+[package]
+name = "flowix-plugin-runtime"
+version.workspace = true
+description = "Flowix plugin artifact contracts and non-agent execution runtime"
+authors = ["Flowix Contributors"]
+edition.workspace = true
+
+[dependencies]
+flowix-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

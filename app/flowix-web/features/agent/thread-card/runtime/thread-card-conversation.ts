@@ -4,8 +4,9 @@ import type {
   AgentConversationInstance,
   AgentConversationSource,
 } from "@features/agent/store/agent-conversation-types";
+import type { RuntimeConfig } from "@/types/agent";
 
-export function upsertAgentThreadCardConversationInstance(options: {
+export async function upsertAgentThreadCardConversationInstance(options: {
   instanceId: string;
   agentType: AgentTypeKey;
   title: string;
@@ -15,21 +16,22 @@ export function upsertAgentThreadCardConversationInstance(options: {
     memoId: string | null;
     name: string | null;
   };
-}): {
+  runtimeConfig?: RuntimeConfig | null;
+}): Promise<{
   instanceId: string;
   instance: AgentConversationInstance;
-} {
-  const { instanceId, agentType, title, threadId, source, role } = options;
+}> {
+  const { instanceId, agentType, title, threadId, source, role, runtimeConfig } = options;
 
   // Read and update the canonical conversation registry.
   const session = useAgentSessionStore.getState();
-  const existing = session.getInstance(instanceId);
-  const instance = session.upsertInstance(instanceId, {
+  const instance = await session.initializeThread(instanceId, {
     agentType,
-    ...(existing?.title ? {} : { title }),
+    title,
     threadId,
     source,
     role,
+    runtimeConfig,
   });
   return { instanceId, instance };
 }

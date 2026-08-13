@@ -15,12 +15,24 @@ pub(crate) struct PluginManifest {
     pub kind: String,
     pub ui: PluginUi,
     pub input: PluginInput,
-    pub agent: PluginAgent,
+    #[serde(default)]
+    pub agent: Option<PluginAgent>,
+    #[serde(default)]
+    pub tool: Option<PluginTool>,
     #[serde(default)]
     pub discovery: PluginDiscovery,
     #[serde(default)]
     pub execution: PluginExecution,
     pub output: PluginOutput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginTool {
+    pub command: String,
+    pub input: String,
+    pub content_type: String,
+    pub instructions: String,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -186,7 +198,7 @@ pub(crate) struct PluginOutput {
 }
 
 pub(super) fn validate_manifest(manifest: &PluginManifest) -> Result<PluginDefinition, String> {
-    if manifest.schema_version != 1 {
+    if manifest.schema_version != 1 && manifest.schema_version != 2 {
         return Err(format!(
             "unsupported plugin schema version: {}",
             manifest.schema_version
@@ -214,17 +226,41 @@ pub(super) fn validate_manifest(manifest: &PluginManifest) -> Result<PluginDefin
     if manifest.name.trim().is_empty() || manifest.version.trim().is_empty() {
         return Err("plugin name and version are required".to_string());
     }
+    match manifest.kind.as_str() {
+        "agent-markdown" => {}
+        "artifact-tool" if manifest.schema_version >= 2 => {
+            let tool = manifest
+                .tool
+                .as_ref()
+                .ok_or_else(|| "artifact-tool plugin requires a tool declaration".to_string())?;
+            if tool.command.trim().is_empty()
+                || tool.input != "stdin"
+                || tool.content_type.trim().is_empty()
+                || tool.instructions.trim().is_empty()
+                || !is_relative_plugin_path(&tool.instructions)
+            {
+                return Err("plugin tool declaration is invalid".to_string());
+            }
+        }
+        other => return Err(format!("unsupported plugin kind: {other}")),
+    }
     if manifest.ui.placement != "sidebar" {
         return Err(format!(
             "unsupported plugin UI placement: {}",
             manifest.ui.placement
         ));
     }
-    if manifest.agent.skill.trim().is_empty()
-        || !is_relative_plugin_path(&manifest.agent.skill)
-        || !is_relative_plugin_path(&manifest.output.directory)
-    {
-        return Err("plugin manifest contains an invalid skill or output directory".to_string());
+    if manifest.kind == "agent-markdown" {
+        let agent = manifest
+            .agent
+            .as_ref()
+            .ok_or_else(|| "agent-markdown plugin requires an agent skill".to_string())?;
+        if agent.skill.trim().is_empty() || !is_relative_plugin_path(&agent.skill) {
+            return Err("plugin manifest contains an invalid skill".to_string());
+        }
+    }
+    if !is_relative_plugin_path(&manifest.output.directory) {
+        return Err("plugin manifest contains an invalid output directory".to_string());
     }
     let mut field_ids = HashSet::new();
     let fields = if manifest.input.fields.is_empty() {

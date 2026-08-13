@@ -52,27 +52,13 @@ export class AgentThreadCardSubscriptionsController {
     const options = this.options;
     return useAgentSessionStore.subscribe(
       (state) => {
-        const threadId = options.getRenderThreadId();
-        const typeKey = options.getTypeKey();
-        // Read canonical metadata directly.
-        const meta = state.sessionMeta;
-        return {
-          listTitle: threadId
-            ? meta.threadLists[typeKey]?.find(
-                (item) => item.threadId === threadId,
-              )?.title
-            : undefined,
-          activeTitle:
-            threadId && meta.activeThreadIds[typeKey] === threadId
-              ? meta.currentThreadTitles[typeKey]
-              : undefined,
-        };
+        const instanceId = options.getInstanceId();
+        return instanceId
+          ? state.conversationRegistry.instances[instanceId]?.title
+          : undefined;
       },
       () => options.refreshAttrs(),
-      {
-        equalityFn: (a, b) =>
-          a.listTitle === b.listTitle && a.activeTitle === b.activeTitle,
-      },
+      { equalityFn: (a, b) => a === b },
     );
   }
 

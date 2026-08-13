@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@/types";
 import type { AgentTypeKey } from "@/types/agent";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { resolveProductThreadId } from "@features/agent/store/external-session";
 
 interface SelectRenderableThreadMessagesInput {
   typeKey: AgentTypeKey;
@@ -28,9 +29,10 @@ export function selectRenderableThreadMessages({
   if (!threadId) return EMPTY_MESSAGES;
 
   const session = useAgentSessionStore.getState();
-  const resolvedSessionId =
-    session.sessionMeta.externalSessionResolutions[threadId];
-  const lookupId = resolvedSessionId ?? threadId;
-  const projection = session.threadProjections[lookupId];
+  const productThreadId = resolveProductThreadId(
+    threadId,
+    session.sessionMeta.externalSessionResolutions,
+  );
+  const projection = session.threadProjections[productThreadId];
   return projection?.messages ?? EMPTY_MESSAGES;
 }

@@ -8,6 +8,7 @@ pub mod fmt;
 pub mod mcp;
 pub(crate) mod output;
 pub mod paths;
+pub mod plugin;
 pub mod store;
 
 mod dispatch;

@@ -160,6 +160,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private isCreating = false;
   private isDestroyed = false;
   private interestedThreadId: string | null = null;
+  private hydratingInstanceId: string | null = null;
   private releaseThreadInterest: (() => void) | null = null;
   private isFullscreen = false;
   private fullscreenRestoreGeneration = 0;
@@ -305,7 +306,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       },
       dragThresholdPx: AGENT_THREAD_CARD_HEADER_DRAG_THRESHOLD_PX,
       getAttrTitle: () => this.node.attrs.title as string | null,
-      getAttrTypeKey: () => this.node.attrs.typeKey as string | null,
       getInstanceTitle: () => this.instance?.title,
       getFirstUserMessageText: () => this.firstUserMessageText(),
       getDefaultTitle: () => defaultThreadTitle(this.typeKey),
@@ -313,7 +313,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getInstanceId: () => this.instanceId,
       getTypeKey: () => this.typeKey,
       getCwd: () => this.cwd,
-      updateAttrs: (attrs) => this.updateAttrs(attrs),
       t: (key) => this.t(key),
       getThreadState: () => this.currentThreadState(),
     });
@@ -397,10 +396,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getTypeKey: () => this.typeKey,
       getInstanceId: () => this.instanceId,
       isDestroyed: () => this.isDestroyed,
-      updateConversationThread: (instanceId, update) => {
-        useAgentSessionStore.getState().updateThread(instanceId, update);
-      },
-      updateAttrs: (attrs) => this.updateAttrs(attrs),
       renderThreadState: () => this.renderThreadState(),
       refreshAttrs: () => this.refreshAttrs(),
       refreshExternalAgentEmptySettings: () =>
@@ -571,7 +566,38 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private ensureInstanceBinding(): void {
     if (this.isDestroyed) return;
     const existingInstanceId = this.instanceId;
-    if (existingInstanceId) return;
+    if (existingInstanceId) {
+      const boundInstance = this.instance;
+      if (boundInstance) {
+        const attrs: Record<string, unknown> = {};
+        if (this.node.attrs.threadId !== boundInstance.threadId) {
+          attrs.threadId = boundInstance.threadId;
+        }
+        if (this.node.attrs.typeKey !== boundInstance.agentType) {
+          attrs.typeKey = boundInstance.agentType;
+        }
+        if (Object.keys(attrs).length > 0) this.updateAttrs(attrs);
+      } else if (this.hydratingInstanceId !== existingInstanceId) {
+        this.hydratingInstanceId = existingInstanceId;
+        void useAgentSessionStore.getState().hydrateInstance(existingInstanceId).then(
+          (instance) => {
+            if (this.isDestroyed || this.instanceId !== existingInstanceId) return;
+            if (instance) {
+              const attrs: Record<string, unknown> = {};
+              if (this.node.attrs.threadId !== instance.threadId) {
+                attrs.threadId = instance.threadId;
+              }
+              if (this.node.attrs.typeKey !== instance.agentType) {
+                attrs.typeKey = instance.agentType;
+              }
+              if (Object.keys(attrs).length > 0) this.updateAttrs(attrs);
+              this.refreshAttrs();
+            }
+          },
+        );
+      }
+      return;
+    }
     // Phase 5.3 修正 (2026-08-03): 改走 conv-store.createInstance, 让
     // setWithInstanceMirror 同时写两个 store. 旧路径走 session-store
     // 直接 createInstance, 但 renameAgentConversation 走 conv-store
@@ -579,10 +605,16 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // session-store 的 instance.title 永远不更新, syncTitleText 卡在
     // 旧 title. 双写保证两个 store 的 instance 形状一致, 重命名 /
     // 角色 / runtimeConfig 后续 mutation 都能正确收敛.
+    const existingThreadId = this.threadId;
     const instance = useAgentSessionStore.getState().createInstance({
       agentType: this.typeKey,
-      title: this.title,
-      threadId: this.threadId,
+      // A genuinely new card stays provisional until first send. An older
+      // threaded card without instanceId keeps its Markdown title only as a
+      // one-time recovery seed; INSERT OR IGNORE cannot overwrite threads.title.
+      title: existingThreadId
+        ? ((this.node.attrs.title as string | null) ?? "")
+        : "",
+      threadId: existingThreadId,
       source: getCurrentThreadCardSource(),
       role: {
         memoId: this.agentRoleMemoId,
@@ -594,7 +626,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     });
     this.updateAttrs({
       instanceId: instance.instanceId,
-      threadId: instance.threadId,
+      threadId: existingThreadId,
       typeKey: instance.agentType,
     });
   }
@@ -1395,7 +1427,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         typeKey: this.typeKey,
         currentThreadId: this.threadId,
         currentInstanceId: this.instanceId,
-        currentTitle: this.title,
+        currentTitle: this.instance?.title ?? "",
         runtimeHandleId: this.runtimeHandleId,
         source,
         role: {
@@ -1434,6 +1466,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const oldAttrs = this.node.attrs;
     const wasCollapsed = !!oldAttrs.collapsed;
     this.node = node;
+    // Re-assert backend-owned instance/thread identity after Markdown updates.
+    // This also repairs cards written by older builds with a provider session
+    // id in the threadId attribute.
+    this.ensureInstanceBinding();
     this.syncThreadInterest();
     if (
       this.isFullscreen &&

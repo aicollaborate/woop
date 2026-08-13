@@ -4,7 +4,7 @@
 //! restricted Flowix CLI command plus optional stdin content. Commands are parsed into
 //! argv and dispatched directly to the typed store layer; no system shell is spawned.
 
-use crate::{cli, errors::CliError, fmt, output, store};
+use crate::{cli, errors::CliError, fmt, output, plugin, store};
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, Write};
 
@@ -17,7 +17,7 @@ const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     LATEST_PROTOCOL_VERSION,
 ];
 
-pub const TOOL_DESCRIPTION: &str = "Manage Flowix notebooks and Markdown notes using restricted Flowix CLI syntax. Do not include the leading `flowix`. Supported commands: `notebooks`; `list <notebook>`; `show <id>`; `search <query> [--notebook <name|id>] [--limit <1..200>]`; `create <notebook>` with the complete non-empty Markdown body in `stdin`; `edit <id> --old <exact-text> (--new <text> | --new-stdin)` where `--old` must occur exactly once and `stdin` supplies the replacement when `--new-stdin` is used; `edit` also supports `--dry-run`; `write <id>` with the complete replacement Markdown body in `stdin`; and `delete <id>`. Obtain memo IDs from list or search before reading or modifying a memo. Notebook may be a registered notebook name or ID. Quoted arguments are supported. Shell syntax and arbitrary programs are forbidden, including pipes, redirects, semicolons, `&&`, command substitution, and environment expansion. `delete` is destructive. Results are always returned as structured data, so `--json` is unnecessary.";
+pub const TOOL_DESCRIPTION: &str = "Manage Flowix notebooks, Markdown notes, and declared plugin artifacts using restricted Flowix CLI syntax. Do not include the leading `flowix`. Supported commands: `notebooks`; `list <notebook>`; `show <id>`; `search <query> [--notebook <name|id>] [--limit <1..200>]`; `create <notebook>` with the complete non-empty Markdown body in `stdin`; `edit <id> --old <exact-text> (--new <text> | --new-stdin)` where `--old` must occur exactly once and `stdin` supplies the replacement when `--new-stdin` is used; `edit` also supports `--dry-run`; `write <id>` with the complete replacement Markdown body in `stdin`; `delete <id>`; `plugin list`; `plugin describe <id>`; and `plugin create mindmap --notebook <name|id|path> [--source-note <id|path>]` with final Markmap Markdown in `stdin`. The mindmap input must start with exactly one level-one heading. Quoted arguments are supported. Shell syntax and arbitrary programs are forbidden, including pipes, redirects, semicolons, `&&`, command substitution, and environment expansion. `delete` is destructive. Results are always returned as structured data, so `--json` is unnecessary.";
 
 /// Run the MCP line-delimited JSON-RPC loop until stdin reaches EOF.
 pub fn run_mcp<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(), CliError> {
@@ -76,7 +76,7 @@ fn initialize_result(params: &Value) -> Value {
             "title": "Flowix Memo",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use the flowix_memo tool to search, read, create, and edit Flowix Markdown memos."
+        "instructions": "Use the flowix_memo tool to search, read, create, and edit Flowix Markdown memos, and to create declared plugin artifacts such as mind maps."
     })
 }
 
@@ -253,6 +253,30 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             let (mut memo_file, full_id) = store::resolve_id(&id)?;
             output::to_json_value(&store::write_note(&mut memo_file, &full_id, body)?)
         }
+        cli::Cli::PluginList { .. } => {
+            reject_stdin(stdin)?;
+            output::to_json_value(&plugin::list_data())
+        }
+        cli::Cli::PluginDescribe { plugin_id, .. } => {
+            reject_stdin(stdin)?;
+            output::to_json_value(&plugin::describe_data(&plugin_id)?)
+        }
+        cli::Cli::PluginCreate {
+            plugin_id,
+            notebook,
+            source_note,
+            producer,
+            ..
+        } => {
+            let content = require_stdin(stdin, "plugin create")?;
+            output::to_json_value(&plugin::create_data(
+                &plugin_id,
+                &notebook,
+                source_note.as_deref(),
+                &producer,
+                content,
+            )?)
+        }
         cli::Cli::Version | cli::Cli::Completion { .. } | cli::Cli::Mcp => Err(CliError::Usage(
             "command is not available through flowix_memo".into(),
         )),
@@ -350,6 +374,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("create <notebook>"));
+        assert!(tools[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("plugin create mindmap"));
         assert_eq!(tools[0]["inputSchema"]["required"], json!(["command"]));
     }
 

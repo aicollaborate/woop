@@ -27,6 +27,17 @@ fn binary_prints_version_and_help() {
     assert!(text.contains("USAGE:"));
     assert!(text.contains("COMMANDS:"));
     assert!(text.contains("create <notebook>"));
+    assert!(text.contains("plugin create <id>"));
+}
+
+#[test]
+fn binary_describes_builtin_mindmap_tool() {
+    let output = cli(&["plugin", "describe", "mindmap", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(value["id"], "mindmap");
+    assert_eq!(value["kind"], "artifact-tool");
+    assert_eq!(value["input"], "stdin");
 }
 
 #[test]

@@ -35,10 +35,10 @@ extension Color {
     static let flowixMobileSaved = flowixMobileSuccess
 
     // Native sidebar palette: warm dark gray with warm light foregrounds.
-    static let flowixSidebarBackground = Color(red: 84 / 255, green: 82 / 255, blue: 78 / 255)
-    static let flowixSidebarCard = Color(red: 101 / 255, green: 98 / 255, blue: 93 / 255)
-    static let flowixSidebarNotebookCard = Color(red: 98 / 255, green: 96 / 255, blue: 91 / 255)
-    static let flowixSidebarMuted = Color(red: 112 / 255, green: 109 / 255, blue: 103 / 255)
+    static let flowixSidebarBackground = Color(red: 59 / 255, green: 57 / 255, blue: 54 / 255)
+    static let flowixSidebarCard = Color(red: 72 / 255, green: 69 / 255, blue: 65 / 255)
+    static let flowixSidebarNotebookCard = Color(red: 68 / 255, green: 66 / 255, blue: 62 / 255)
+    static let flowixSidebarMuted = Color(red: 82 / 255, green: 79 / 255, blue: 74 / 255)
     static let flowixSidebarForeground = Color(red: 0.96, green: 0.95, blue: 0.92)
     static let flowixSidebarMutedForeground = Color(red: 0.79, green: 0.77, blue: 0.72)
     static let flowixSidebarHairline = Color.white.opacity(0.14)

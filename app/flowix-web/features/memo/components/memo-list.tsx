@@ -511,6 +511,12 @@ export function MemoList() {
   // (activeTagName 为空) 时退回"全部"。
   const { headerLabel, hasActiveFilter } = (() => {
     const parts: string[] = [];
+    if (activePluginId) {
+      return {
+        headerLabel: activePluginId === 'mindmap' ? '思维导图' : activePluginId,
+        hasActiveFilter: true,
+      };
+    }
     // tag 保留 "#" 前缀; 其余筛选 (待办/对话/颜色/只看本周/只看本月) 仅展示文案,
     // 不带 "@" 前缀。
     if (activeTagName) parts.push(`#${activeTagName}`);

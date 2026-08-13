@@ -890,25 +890,22 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const chatState = useChatStore.getState();
     expect(chatState.externalSessionResolutions[localThreadId]).toBe(sessionId);
-    expect(chatState.threadStates[sessionId]).toMatchObject({
+    expect(chatState.threadStates[localThreadId]).toMatchObject({
       isLoading: true,
       activeRunId: "run-snapshot-pending",
     });
-    expect(chatState.threadStates[sessionId].messages[0]).toMatchObject({
+    expect(chatState.threadStates[localThreadId].messages[0]).toMatchObject({
       id: "assistant-snapshot-pending",
       content: "snapshot restored pending message",
     });
 
     const messageState =
-      useAgentConversationStore.getState().messageStates[sessionId];
+      useAgentConversationStore.getState().messageStates[localThreadId];
     expect(messageState.messages[0]).toMatchObject({
       id: "assistant-snapshot-pending",
       content: "snapshot restored pending message",
     });
     expect(messageState.pendingAssistantId).toBe("assistant-snapshot-pending");
-    expect(
-      useAgentConversationStore.getState().messageStates[localThreadId],
-    ).toBeUndefined();
   });
 
   it("reconciles Agent conversation instances from backend running snapshot", async () => {
@@ -1436,27 +1433,24 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const state = useChatStore.getState();
     expect(state.externalSessionResolutions[localThreadId]).toBe(sessionId);
-    expect(state.activeThreadIds.codex).toBe(sessionId);
+    expect(state.activeThreadIds.codex).toBe(localThreadId);
     expect(state.threadTypes[sessionId]).toBe("codex");
-    expect(state.threadStates[sessionId].isLoading).toBe(true);
-    expect(state.threadStates[sessionId].activeRunId).toBe("run-local-1");
+    expect(state.threadStates[localThreadId].isLoading).toBe(true);
+    expect(state.threadStates[localThreadId].activeRunId).toBe("run-local-1");
     // Phase 2 (2026-08-02): projection 持久 messages, session_resolved 迁移后保留.
     // 旧 release 语义断言已废弃 ── 见 store/index.ts 注释.
-    expect(state.threadStates[sessionId].messages).toMatchObject([
+    expect(state.threadStates[localThreadId].messages).toMatchObject([
       { content: "Codex answer before session id" },
     ]);
     expect(
-      useAgentConversationStore.getState().messageStates[sessionId].messages[0]
+      useAgentConversationStore.getState().messageStates[localThreadId].messages[0]
         ?.content,
     ).toBe("Codex answer before session id");
-    expect(
-      useAgentConversationStore.getState().messageStates[localThreadId],
-    ).toBeUndefined();
     const resolvedInstance = useAgentConversationStore
       .getState()
       .getInstance(instance.instanceId);
     expect(resolvedInstance).toMatchObject({
-      threadId: sessionId,
+      threadId: localThreadId,
       source: {
         kind: "thread-card",
         memoId: "memo-running-session",
@@ -1468,7 +1462,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
         useAgentConversationStore.getState(),
         useChatStore.getState().threadStates,
       ),
-    ).toEqual([sessionId]);
+    ).toEqual([localThreadId]);
     store.dispatchAgentChunk({
       kind: "stream_end",
       thread_id: localThreadId,
@@ -1478,8 +1472,8 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
 
     const endedState = useChatStore.getState();
-    expect(endedState.threadStates[sessionId].isLoading).toBe(false);
-    expect(endedState.threadStates[sessionId].activeRunId).toBeNull();
+    expect(endedState.threadStates[localThreadId].isLoading).toBe(false);
+    expect(endedState.threadStates[localThreadId].activeRunId).toBeNull();
   });
 
   it("migrates conversation messages on session resolution without requiring an instance", async () => {
@@ -1518,15 +1512,12 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     });
 
     const messageState =
-      useAgentConversationStore.getState().messageStates[sessionId];
+      useAgentConversationStore.getState().messageStates[localThreadId];
     expect(messageState.messages[0]).toMatchObject({
       id: "assistant-local",
       content: "message before instance exists",
     });
     expect(messageState.pendingAssistantId).toBe("assistant-local");
-    expect(
-      useAgentConversationStore.getState().messageStates[localThreadId],
-    ).toBeUndefined();
     expect(
       useChatStore.getState().externalSessionResolutions[localThreadId],
     ).toBe(sessionId);
@@ -1568,13 +1559,13 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const state = useAgentSessionStore.getState();
     expect(notifications).toBe(1);
-    expect(state.threadProjections[localThreadId]).toBeUndefined();
-    expect(state.threadProjections[sessionId]).toBeDefined();
+    expect(state.threadProjections[localThreadId]).toBeDefined();
+    expect(state.threadProjections[sessionId]).toBeUndefined();
     expect(state.sessionMeta.externalSessionResolutions[localThreadId]).toBe(
       sessionId,
     );
     expect(state.conversationRegistry.instances[instance.instanceId].threadId).toBe(
-      sessionId,
+      localThreadId,
     );
   });
 
@@ -1628,25 +1619,22 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     const chatState = useChatStore.getState();
     expect(chatState.externalSessionResolutions[localThreadId]).toBe(sessionId);
     expect(getResolvedExternalSessionId(localThreadId)).toBe(sessionId);
-    expect(chatState.threadStates[sessionId]).toMatchObject({
+    expect(chatState.threadStates[localThreadId]).toMatchObject({
       isLoading: true,
       activeRunId: "run-cache-resolved",
     });
     // Phase 2 (2026-08-02): projection 持久 messages, 见同文件 1283 注释.
-    expect(chatState.threadStates[sessionId].messages).toMatchObject([
+    expect(chatState.threadStates[localThreadId].messages).toMatchObject([
       { content: "cache resolved message" },
     ]);
 
     const messageState =
-      useAgentConversationStore.getState().messageStates[sessionId];
+      useAgentConversationStore.getState().messageStates[localThreadId];
     expect(messageState.messages[0]).toMatchObject({
       id: "assistant-cache-resolved",
       content: "cache resolved message",
     });
     expect(messageState.pendingAssistantId).toBe("assistant-cache-resolved");
-    expect(
-      useAgentConversationStore.getState().messageStates[localThreadId],
-    ).toBeUndefined();
   });
 
   it("keeps parallel Thread Card streams isolated by thread id", async () => {

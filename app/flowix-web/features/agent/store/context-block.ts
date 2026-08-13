@@ -107,7 +107,7 @@ function buildAgentRolePromptBlockFromContent(
 
 const FLOWIX_CLI_PROMPT_BLOCK = [
   "# flowix CLI",
-  "非交互笔记 CLI:8 个子命令(列/读/搜/改/写/建/删笔记),--json 取 JSON 输出。",
+  "非交互笔记与插件产物 CLI，--json 取 JSON 输出。",
   "",
   '只在显式触发时调:用户说"搜/列/改/删/新建笔记",或给了 8 位 ID / 笔记本名要求"看/改/删"。',
   "如果上下文包含当前任务标签, 创建新笔记时必须在正文写入该 #标签。",
@@ -120,6 +120,9 @@ const FLOWIX_CLI_PROMPT_BLOCK = [
   "- `flowix write <id>` (body from stdin) — overwrite a note.",
   "- `flowix create <notebook>` (body from stdin) — create a note.",
   "- `flowix delete <id>` — delete a note.",
+  "- `flowix plugin create mindmap --notebook <name|id|path> [--source-note <id|path>] --json` — read final Markmap Markdown from stdin and create a Flowix mindmap document.",
+  "",
+  "仅当用户明确要求生成/创建思维导图时调用 mindmap 工具。先自行整理最终 Markdown（恰好一个一级根标题，分支使用二/三级标题和无序列表），再传给 stdin；不要手工创建 `.plugin-output` 文件。成功后向用户返回 title 和 noteId。",
 ].join("\n");
 
 export function appendFirstMessageContext(
@@ -143,7 +146,7 @@ export function appendFirstMessageContext(
       blocks.push(roleBlock);
     }
   }
-  if (agentType && agentType !== "flowix") {
+  if (agentType) {
     blocks.push(FLOWIX_CLI_PROMPT_BLOCK);
   }
   return `${content}\n${blocks.join("\n\n")}`;

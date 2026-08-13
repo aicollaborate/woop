@@ -18,6 +18,10 @@ struct MemoPreview: Identifiable, Hashable {
 
 extension MemoPreview {
     init(nativeMemo: NativeMemo) {
+        self.init(nativeMemo: nativeMemo, content: "")
+    }
+
+    init(nativeMemo: NativeMemo, content: String) {
         self.init(
             id: nativeMemo.id,
             title: nativeMemo.title,
@@ -26,7 +30,7 @@ extension MemoPreview {
             createdAt: Self.relativeDate(nativeMemo.createdAt),
             thumbnail: nativeMemo.thumbnail,
             tags: nativeMemo.tags,
-            content: "",
+            content: content,
             favorited: nativeMemo.favorited
         )
     }

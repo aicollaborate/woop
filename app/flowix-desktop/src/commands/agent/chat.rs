@@ -67,10 +67,10 @@ pub async fn chat_with_agent_stream(
     {
         let manager = &state.thread_manager;
         manager
-            .update_title(
+            .ensure_thread(
                 &threadId,
-                title,
                 crate::agent_types::AgentId::new(runtime.key()),
+                title,
             )
             .await
             .map_err(|error| error.to_string())?;

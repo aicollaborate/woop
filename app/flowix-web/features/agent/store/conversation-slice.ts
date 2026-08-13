@@ -3,6 +3,8 @@ import { stripSystemBlock } from "@features/agent/message";
 import { agentClient } from "@features/agent/store/agent-client";
 import type {
   AgentConversationInstance,
+  AgentConversationRole,
+  AgentConversationSource,
   CreateAgentConversationInstanceInput,
 } from "@features/agent/store/agent-conversation-types";
 import type { ProjectionSlice } from "@features/agent/store/projection-slice";
@@ -31,7 +33,7 @@ function markInstanceDeleted(instanceId: string): void {
   }
 }
 
-function createConversationInstanceId(): string {
+export function createConversationInstanceId(): string {
   const randomUuid = globalThis.crypto?.randomUUID?.();
   if (randomUuid) return `agent-inst-${randomUuid}`;
   instanceSequence += 1;
@@ -63,6 +65,25 @@ function enqueueInstancePersistence(
   });
 }
 
+function queueInstancePersistence<T>(
+  instanceId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = instancePersistenceQueues.get(instanceId) ?? Promise.resolve();
+  const pending = previous.catch(() => undefined).then(operation);
+  const settled = pending.then(
+    () => undefined,
+    () => undefined,
+  );
+  instancePersistenceQueues.set(instanceId, settled);
+  void settled.finally(() => {
+    if (instancePersistenceQueues.get(instanceId) === settled) {
+      instancePersistenceQueues.delete(instanceId);
+    }
+  });
+  return pending;
+}
+
 function normalizeTitle(title: string | null | undefined): string {
   return stripSystemBlock(title ?? "").replace(/\s+/g, " ").trim();
 }
@@ -81,6 +102,23 @@ export function persistConversationInstance(instance: AgentConversationInstance)
     }),
     "Failed to persist instance",
   );
+}
+
+async function persistConversationInstanceAndWait(
+  instance: AgentConversationInstance,
+): Promise<AgentConversationInstance> {
+  const { title, ...persisted } = instance;
+  const backend = await queueInstancePersistence(instance.instanceId, () =>
+    agentClient.upsertConversationInstance({
+      ...persisted,
+      initialTitle: title,
+      runtimeConfig:
+        instance.runtimeConfig && Object.keys(instance.runtimeConfig).length > 0
+          ? JSON.stringify(instance.runtimeConfig)
+          : null,
+    }),
+  );
+  return normalizeBackendInstance(backend);
 }
 
 function deletePersistedInstance(instanceId: string): void {
@@ -127,6 +165,7 @@ export interface ConversationSlice {
     updater: (registry: AgentConversationRegistry) => AgentConversationRegistry,
   ): void;
   hydrateFromBackend(): Promise<void>;
+  hydrateInstance(instanceId: string): Promise<AgentConversationInstance | null>;
   createInstance(input: CreateAgentConversationInstanceInput): AgentConversationInstance;
   upsertInstance(
     instanceId: string,
@@ -138,6 +177,17 @@ export interface ConversationSlice {
     instanceId: string,
     patch: { threadId?: string | null; agentType?: AgentTypeKey },
   ): void;
+  initializeThread(
+    instanceId: string,
+    patch: {
+      threadId: string;
+      agentType: AgentTypeKey;
+      title: string;
+      source: AgentConversationSource;
+      role?: AgentConversationRole | null;
+      runtimeConfig?: RuntimeConfig | null;
+    },
+  ): Promise<AgentConversationInstance>;
   renameInstance(instanceId: string, title: string): void;
   removeInstance(instanceId: string): void;
   removeInstancesForThread(threadId: string): void;
@@ -182,6 +232,29 @@ export function createConversationSlice(
         console.error("[AgentSession] Failed to hydrate instances:", error);
       }
     },
+    hydrateInstance: async (instanceId) => {
+      try {
+        const backend = await agentClient.getConversationInstance(instanceId);
+        if (!backend || deletedInstanceIds.has(instanceId)) return null;
+        const normalized = normalizeBackendInstance(backend);
+        set((state) => {
+          const existing = state.conversationRegistry.instances[instanceId];
+          if (existing && existing.updatedAt > normalized.updatedAt) return state;
+          return {
+            conversationRegistry: {
+              instances: {
+                ...state.conversationRegistry.instances,
+                [instanceId]: normalized,
+              },
+            },
+          };
+        });
+        return normalized;
+      } catch (error) {
+        console.error("[AgentSession] Failed to hydrate instance:", error);
+        return null;
+      }
+    },
     createInstance: (input) => {
       const now = Date.now();
       const instance: AgentConversationInstance = {
@@ -200,7 +273,12 @@ export function createConversationSlice(
         ...registry,
         instances: { ...registry.instances, [instance.instanceId]: instance },
       }));
-      persistConversationInstance(instance);
+      // A card mounted before its first send has neither product thread nor
+      // title. Keep that provisional identity in memory; initializeThread
+      // performs the single awaited SQLite upsert once both values exist.
+      if (instance.threadId || instance.title) {
+        persistConversationInstance(instance);
+      }
       return instance;
     },
     upsertInstance: (instanceId, patch) => {
@@ -269,6 +347,66 @@ export function createConversationSlice(
         instances: { ...registry.instances, [instanceId]: nextInstance },
       }));
       persistConversationInstance(nextInstance);
+    },
+    initializeThread: async (instanceId, patch) => {
+      const existing = get().conversationRegistry.instances[instanceId];
+      const now = nextUpdatedAt(existing);
+      const nextInstance: AgentConversationInstance = {
+        instanceId,
+        agentType: patch.agentType,
+        title: existing?.title || normalizeTitle(patch.title),
+        threadId: existing?.threadId ?? patch.threadId,
+        runtimeConfig: existing?.runtimeConfig ?? patch.runtimeConfig ?? null,
+        source: patch.source,
+        role: patch.role ?? existing?.role,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      deletedInstanceIds.delete(instanceId);
+      set((state) => ({
+        conversationRegistry: {
+          instances: {
+            ...state.conversationRegistry.instances,
+            [instanceId]: nextInstance,
+          },
+        },
+      }));
+      try {
+        const persisted = await persistConversationInstanceAndWait(nextInstance);
+        set((state) => ({
+          conversationRegistry: {
+            instances: {
+              ...state.conversationRegistry.instances,
+              [instanceId]:
+                (state.conversationRegistry.instances[instanceId]?.updatedAt ?? 0) >
+                nextInstance.updatedAt
+                  ? state.conversationRegistry.instances[instanceId]
+                  : persisted,
+            },
+          },
+        }));
+        return persisted;
+      } catch (error) {
+        set((state) => {
+          if (state.conversationRegistry.instances[instanceId] !== nextInstance) {
+            return state;
+          }
+          if (existing) {
+            return {
+              conversationRegistry: {
+                instances: {
+                  ...state.conversationRegistry.instances,
+                  [instanceId]: existing,
+                },
+              },
+            };
+          }
+          const { [instanceId]: _removed, ...instances } =
+            state.conversationRegistry.instances;
+          return { conversationRegistry: { instances } };
+        });
+        throw error;
+      }
     },
     renameInstance: (instanceId, title) => {
       const nextTitle = normalizeTitle(title);

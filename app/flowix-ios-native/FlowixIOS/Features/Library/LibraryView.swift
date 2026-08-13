@@ -10,8 +10,10 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var cloudState: NativeCloudState?
     @Published private(set) var errorMessage: String?
     @Published private(set) var isSyncing = false
+    @Published private(set) var isCreatingMemo = false
     @Published private(set) var isInitialLoading = false
     @Published private(set) var hasCompletedInitialLoad = false
+    @Published var actionErrorMessage: String?
 
     var canSync: Bool {
         guard let state = cloudState else { return false }
@@ -83,31 +85,43 @@ final class LibraryModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func createMemo() async {
-        guard let notebookID = selectedNotebookId else { return }
+    func createMemo() async -> MemoPreview? {
+        guard let notebookID = selectedNotebookId, !isCreatingMemo else { return nil }
+        isCreatingMemo = true
+        defer { isCreatingMemo = false }
+
         do {
             let title = "未命名笔记"
-            _ = try await FlowixAPI.shared.createMemoAsync(
+            let created = try await FlowixAPI.shared.createMemoAsync(
                 notebookID: notebookID,
                 title: title,
                 content: "# \(title)\n\n"
             )
-            await refresh()
-        } catch { errorMessage = error.localizedDescription }
+            let memo = MemoPreview(nativeMemo: created.memo, content: created.content)
+
+            // The editor can open from the create response immediately. Keep
+            // the library cache in sync in the background so returning from
+            // the editor shows the new memo without an extra round trip.
+            Task { await self.refresh() }
+            return memo
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     func deleteMemo(_ memo: MemoPreview) async {
         do {
             guard try await FlowixAPI.shared.deleteMemoAsync(id: memo.id) else { return }
             await refresh()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { actionErrorMessage = error.localizedDescription }
     }
 
     func toggleFavorite(_ memo: MemoPreview) async {
         do {
             try await FlowixAPI.shared.setMemoFavoritedAsync(id: memo.id, favorited: !memo.favorited)
             await refresh()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { actionErrorMessage = error.localizedDescription }
     }
 
     func createNotebook(name: String) async {
@@ -151,6 +165,7 @@ struct LibraryView: View {
     @State private var accountDragActive = false
     @State private var openActionsID: String?
     @State private var selectedMemo: MemoPreview?
+    @State private var memoToDelete: MemoPreview?
     @State private var showingNewNotebook = false
     @State private var newNotebookName = ""
     @State private var notebookToRename: NativeNotebook?
@@ -434,6 +449,34 @@ struct LibraryView: View {
             Button("取消", role: .cancel) {}
         } message: { _ in
             Text("其中的全部笔记会从此设备删除。")
+        }
+        .confirmationDialog(
+            "删除笔记？",
+            isPresented: Binding(
+                get: { memoToDelete != nil },
+                set: { if !$0 { memoToDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: memoToDelete
+        ) { memo in
+            Button("删除“\(memo.title)”", role: .destructive) {
+                memoToDelete = nil
+                Task { await model.deleteMemo(memo) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("删除后无法撤销，并会从此设备移除这篇笔记。")
+        }
+        .alert(
+            "操作失败",
+            isPresented: Binding(
+                get: { model.actionErrorMessage != nil },
+                set: { if !$0 { model.actionErrorMessage = nil } }
+            )
+        ) {
+            Button("好", role: .cancel) { model.actionErrorMessage = nil }
+        } message: {
+            Text(model.actionErrorMessage ?? "请稍后重试。")
         }
     }
 
@@ -724,7 +767,7 @@ struct LibraryView: View {
                                 },
                                 onDelete: {
                                     openActionsID = nil
-                                    Task { await model.deleteMemo(memo) }
+                                    memoToDelete = memo
                                 },
                                 onToggleFavorite: {
                                     openActionsID = nil
@@ -751,15 +794,21 @@ struct LibraryView: View {
     }
 
     private var fab: some View {
-        Button { Task { await model.createMemo() } } label: {
+        Button {
+            Task {
+                if let memo = await model.createMemo() {
+                    selectedMemo = memo
+                }
+            }
+        } label: {
             NativeMobileSVGIconView(icon: .squarePen, color: "#FFFFFF")
                 .frame(width: 24, height: 24)
                 .frame(width: 58, height: 58)
                 .background(Color.flowixAccent, in: Circle())
                 .shadow(color: Color.flowixAccent.opacity(0.22), radius: 14, y: 7)
         }
-        .disabled(model.selectedNotebookId == nil)
-        .opacity(model.selectedNotebookId == nil ? 0.4 : 1)
+        .disabled(model.selectedNotebookId == nil || model.isCreatingMemo)
+        .opacity(model.selectedNotebookId == nil || model.isCreatingMemo ? 0.4 : 1)
         .padding(.trailing, 18)
         .padding(.bottom, 20)
     }
@@ -1052,9 +1101,10 @@ private final class NativeRefreshIndicator: UIView {
 private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat, CGFloat) -> Void
+    let onCancelled: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onChanged: onChanged, onEnded: onEnded)
+        Coordinator(onChanged: onChanged, onEnded: onEnded, onCancelled: onCancelled)
     }
 
     func makeUIView(context: Context) -> BridgeView {
@@ -1066,6 +1116,7 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
     func updateUIView(_ view: BridgeView, context: Context) {
         context.coordinator.onChanged = onChanged
         context.coordinator.onEnded = onEnded
+        context.coordinator.onCancelled = onCancelled
         context.coordinator.attachIfNeeded(to: view)
     }
 
@@ -1096,17 +1147,21 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var onChanged: (CGFloat) -> Void
         var onEnded: (CGFloat, CGFloat) -> Void
+        var onCancelled: () -> Void
         weak var scrollView: UIScrollView?
         private weak var bridgeView: BridgeView?
         private var panGesture: UIPanGestureRecognizer?
+        private var hasActivePan = false
         private var rowFrame: CGRect = .zero
 
         init(
             onChanged: @escaping (CGFloat) -> Void,
-            onEnded: @escaping (CGFloat, CGFloat) -> Void
+            onEnded: @escaping (CGFloat, CGFloat) -> Void,
+            onCancelled: @escaping () -> Void
         ) {
             self.onChanged = onChanged
             self.onEnded = onEnded
+            self.onCancelled = onCancelled
         }
 
         func attachIfNeeded(to bridgeView: BridgeView) {
@@ -1144,12 +1199,13 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
-                  let scrollView,
-                  rowFrame != .zero else { return false }
+                  let scrollView else { return false }
 
             if let bridgeView {
                 rowFrame = bridgeView.convert(bridgeView.bounds, to: scrollView)
             }
+
+            guard rowFrame != .zero else { return false }
 
             let velocity = pan.velocity(in: scrollView)
             guard abs(velocity.x) > abs(velocity.y) * 1.2 else { return false }
@@ -1160,9 +1216,12 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            // Let UIScrollView continue its normal arbitration. The custom
-            // recognizer has already rejected vertical movement above.
-            otherGestureRecognizer is UIPanGestureRecognizer
+            // The surrounding pager uses SwiftUI's private drag recognizer,
+            // not necessarily UIPanGestureRecognizer. Allowing only UIKit
+            // pans here lets that pager prevent the row recognizer before it
+            // can open the action tray. Direction filtering above still keeps
+            // vertical scrolling out of the row callback.
+            true
         }
 
         @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
@@ -1171,10 +1230,25 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
             let velocity = recognizer.velocity(in: scrollView)
 
             switch recognizer.state {
-            case .began, .changed:
+            case .began:
+                hasActivePan = true
+                onChanged(translation.x)
+            case .changed:
+                guard hasActivePan else { return }
                 onChanged(translation.x)
             case .ended:
+                guard hasActivePan else { return }
+                hasActivePan = false
                 onEnded(translation.x, velocity.x)
+            case .cancelled:
+                guard hasActivePan else { return }
+                hasActivePan = false
+                onCancelled()
+            case .failed:
+                // A directional pan that never began can fail during an
+                // ordinary tap or a vertical list scroll. It did not mutate
+                // row state, so do not reset the row or suppress its next tap.
+                hasActivePan = false
             default:
                 break
             }
@@ -1184,6 +1258,128 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
             if let panGesture, let scrollView {
                 scrollView.removeGestureRecognizer(panGesture)
             }
+        }
+    }
+}
+
+/// UIKit action controls for the revealed memo tray.
+///
+/// The memo body is hosted by SwiftUI inside a UIScrollView. SwiftUI Buttons
+/// in a clipped, offset ZStack can remain visible while their hit-test path
+/// is owned by the hosted view or the scroll view. These controls live in a
+/// real UIKit overlay, so the two actions have deterministic hit targets.
+private struct NativeMemoActionButtonsBridge: UIViewRepresentable {
+    let isFavorited: Bool
+    let onToggleFavorite: () -> Void
+    let onDelete: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onToggleFavorite: onToggleFavorite, onDelete: onDelete)
+    }
+
+    func makeUIView(context: Context) -> ActionView {
+        let view = ActionView()
+        view.coordinator = context.coordinator
+        view.connectTargets()
+        view.update(isFavorited: isFavorited)
+        return view
+    }
+
+    func updateUIView(_ view: ActionView, context: Context) {
+        context.coordinator.onToggleFavorite = onToggleFavorite
+        context.coordinator.onDelete = onDelete
+        view.coordinator = context.coordinator
+        view.update(isFavorited: isFavorited)
+    }
+
+    final class Coordinator: NSObject {
+        var onToggleFavorite: () -> Void
+        var onDelete: () -> Void
+
+        init(onToggleFavorite: @escaping () -> Void, onDelete: @escaping () -> Void) {
+            self.onToggleFavorite = onToggleFavorite
+            self.onDelete = onDelete
+        }
+
+        @objc func toggleFavorite() {
+            onToggleFavorite()
+        }
+
+        @objc func deleteMemo() {
+            onDelete()
+        }
+    }
+
+    final class ActionView: UIView {
+        weak var coordinator: Coordinator?
+        private let favoriteButton = UIButton(type: .system)
+        private let deleteButton = UIButton(type: .system)
+        private let stack = UIStackView()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = true
+            backgroundColor = .clear
+
+            configure(
+                favoriteButton,
+                color: UIColor(Color.flowixMobilePrimary)
+            )
+            configure(
+                deleteButton,
+                color: UIColor(Color.flowixMobileDestructive)
+            )
+
+            stack.axis = .horizontal
+            stack.spacing = 4
+            stack.distribution = .fillEqually
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(favoriteButton)
+            stack.addArrangedSubview(deleteButton)
+            addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+                stack.topAnchor.constraint(equalTo: topAnchor),
+                stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        }
+
+        func connectTargets() {
+            guard let coordinator else { return }
+            favoriteButton.addTarget(
+                coordinator,
+                action: #selector(Coordinator.toggleFavorite),
+                for: .touchUpInside
+            )
+            deleteButton.addTarget(
+                coordinator,
+                action: #selector(Coordinator.deleteMemo),
+                for: .touchUpInside
+            )
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        func update(isFavorited: Bool) {
+            let pinName = isFavorited ? "pin.fill" : "pin"
+            favoriteButton.setImage(UIImage(systemName: pinName), for: .normal)
+            favoriteButton.accessibilityLabel = isFavorited ? "取消置顶" : "置顶"
+            deleteButton.accessibilityLabel = "删除"
+        }
+
+        private func configure(
+            _ button: UIButton,
+            color: UIColor
+        ) {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.tintColor = .white
+            button.backgroundColor = color
+            button.layer.cornerRadius = 9
+            button.clipsToBounds = true
         }
     }
 }
@@ -1321,38 +1517,6 @@ private struct NativeMemoSwipeRow: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            HStack(spacing: actionGap) {
-                Button(action: onToggleFavorite) {
-                    NativeMobileSVGIconView(icon: memo.favorited ? .pushPinFill : .pushPinRegular, color: "#FFFFFF")
-                        .frame(width: 18, height: 18)
-                        .frame(maxWidth: .infinity)
-                        .frame(maxHeight: .infinity)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(memo.favorited ? "取消置顶" : "置顶")
-                .background(Color.flowixMobilePrimary, in: RoundedRectangle(cornerRadius: 9))
-                Button(role: .destructive, action: onDelete) {
-                    NativeMobileSVGIconView(icon: .trashSimpleRegular, color: "#FFFFFF")
-                        .frame(width: 18, height: 18)
-                        .frame(maxWidth: .infinity)
-                        .frame(maxHeight: .infinity)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("删除")
-                .background(Color.flowixMobileDestructive, in: RoundedRectangle(cornerRadius: 9))
-            }
-            .frame(width: revealedActionsWidth)
-            .clipped()
-            .frame(maxHeight: .infinity, alignment: .trailing)
-            .foregroundStyle(Color.white)
-            .font(.system(size: 10, weight: .semibold))
-            .opacity(actionProgress)
-            // The action tray must sit above the translated memo button. Keep
-            // it tappable as soon as the open state is committed, including
-            // during the final snap animation.
-            .zIndex(1)
-            .allowsHitTesting(actionsOpen && !isSwiping)
-
             Button {
                 if suppressTap {
                     suppressTap = false
@@ -1362,7 +1526,14 @@ private struct NativeMemoSwipeRow: View {
             } label: {
                 memoContent
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.flowixLibrarySurface)
+                    // Apply the card fill after the label has expanded to the
+                    // row width.  The previous fill lived inside
+                    // `memoContent`, so SwiftUI sized it to the content's
+                    // intrinsic width and left the rest of the row exposed.
+                    .background(
+                        Color.flowixMobileAccountCard,
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
             }
             .buttonStyle(.plain)
             .zIndex(0)
@@ -1370,9 +1541,32 @@ private struct NativeMemoSwipeRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(Rectangle())
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.flowixMobileHairline, lineWidth: 1)
+        }
+        .overlay(alignment: .trailing) {
+            if actionsOpen {
+                NativeMemoActionButtonsBridge(
+                    isFavorited: memo.favorited,
+                    onToggleFavorite: onToggleFavorite,
+                    onDelete: onDelete
+                )
+                .frame(width: actionsWidth)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .zIndex(10)
+            }
+        }
+        .overlay {
+            NativeHorizontalSwipeBridge(
+                onChanged: handleSwipeChanged,
+                onEnded: handleSwipeEnded,
+                onCancelled: handleSwipeCancelled
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
         }
         .onChange(of: actionsOpen) { open in
             guard !isSwiping && !isSettling else { return }
@@ -1382,12 +1576,6 @@ private struct NativeMemoSwipeRow: View {
             gestureStart = open ? -actionsWidth : 0
             isSettling = false
         }
-        .background {
-            NativeHorizontalSwipeBridge(
-                onChanged: handleSwipeChanged,
-                onEnded: handleSwipeEnded
-            )
-        }
     }
 
     private var actionProgress: Double {
@@ -1396,6 +1584,10 @@ private struct NativeMemoSwipeRow: View {
 
     private var revealedActionsWidth: CGFloat {
         min(actionsWidth, max(0, -offset))
+    }
+
+    private var actionButtonWidth: CGFloat {
+        (actionsWidth - actionGap) / 2
     }
 
     private var snapAnimation: Animation {
@@ -1444,6 +1636,18 @@ private struct NativeMemoSwipeRow: View {
         settle(to: targetOpen)
         gestureLock = .undecided
         isSwiping = false
+    }
+
+    private func handleSwipeCancelled() {
+        // UIScrollView may cancel a recognizer after it has begun, for
+        // example when another pan wins arbitration. Restore every local
+        // gesture flag and settle to the last committed source-of-truth
+        // state. Without this path `isSwiping` could stay true forever and
+        // the action tray would remain non-interactive.
+        suppressTap = true
+        gestureLock = .undecided
+        isSwiping = false
+        settle(to: actionsOpen)
     }
 
     private func settle(to targetOpen: Bool) {
@@ -1537,10 +1741,6 @@ private struct NativeMemoSwipeRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 15)
         .contentShape(Rectangle())
-        .background(
-            Color.flowixMobileAccountCard,
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
     }
 }
 
