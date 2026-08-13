@@ -12,13 +12,16 @@ struct RootView: View {
 extension Color {
     static let flowixAccent = Color(red: 0.20, green: 0.24, blue: 0.30)
     static let flowixForeground = Color(red: 0.12, green: 0.14, blue: 0.17)
-    static let flowixBackground = Color(red: 0.97, green: 0.97, blue: 0.96)
+    static let flowixBackground = Color(red: 0.985, green: 0.985, blue: 0.98)
+    static let flowixLibrarySurface = Color(red: 236 / 255, green: 235 / 255, blue: 230 / 255)
     static let flowixSecondary = Color(red: 0.43, green: 0.45, blue: 0.48)
     static let flowixCard = Color.white.opacity(0.92)
 
     // Mirrors the fixed Rock palette used by the Web mobile drawer.
-    static let flowixMobileBackground = Color(red: 0.988, green: 0.988, blue: 0.982)
+    static let flowixMobileBackground = Color(red: 236 / 255, green: 235 / 255, blue: 230 / 255)
     static let flowixMobileCard = Color.white
+    static let flowixMobileAccountCard = Color(red: 252 / 255, green: 251 / 255, blue: 246 / 255)
+    static let flowixNavigationButtonBackground = Color(red: 252 / 255, green: 251 / 255, blue: 246 / 255)
     static let flowixMobileNotebookCard = Color(red: 0.975, green: 0.975, blue: 0.968)
     static let flowixMobileForeground = Color(red: 0.18, green: 0.19, blue: 0.18)
     static let flowixMobileMuted = Color(red: 0.945, green: 0.945, blue: 0.938)
@@ -30,4 +33,14 @@ extension Color {
     static let flowixMobileDestructive = Color(red: 0.84, green: 0.31, blue: 0.25)
     static let flowixMobileSuccess = Color(red: 0.43, green: 0.53, blue: 0.44)
     static let flowixMobileSaved = flowixMobileSuccess
+
+    // Native sidebar palette: warm dark gray with warm light foregrounds.
+    static let flowixSidebarBackground = Color(red: 84 / 255, green: 82 / 255, blue: 78 / 255)
+    static let flowixSidebarCard = Color(red: 101 / 255, green: 98 / 255, blue: 93 / 255)
+    static let flowixSidebarNotebookCard = Color(red: 98 / 255, green: 96 / 255, blue: 91 / 255)
+    static let flowixSidebarMuted = Color(red: 112 / 255, green: 109 / 255, blue: 103 / 255)
+    static let flowixSidebarForeground = Color(red: 0.96, green: 0.95, blue: 0.92)
+    static let flowixSidebarMutedForeground = Color(red: 0.79, green: 0.77, blue: 0.72)
+    static let flowixSidebarHairline = Color.white.opacity(0.14)
+    static let flowixSidebarBrand = Color(red: 0.82, green: 0.45, blue: 0.32)
 }

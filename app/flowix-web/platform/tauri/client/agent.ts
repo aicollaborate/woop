@@ -107,6 +107,7 @@ export type AgentConversationSource = {
   kind: 'thread-card';
   documentPath?: string | null;
   memoId?: string | null;
+  notebookId?: string | null;
 };
 
 export interface AgentConversationRole {
@@ -220,6 +221,8 @@ export const agent = {
     }>('thread_get_page', { threadId, beforeSequence, limit }),
   listConversationInstances: () =>
     invoke<AgentConversationInstance[]>('agent_conversation_list'),
+  countConversationInstancesByNotebook: (notebookId: string | null) =>
+    invoke<number>('agent_conversation_count_by_notebook', { notebookId }),
   getConversationInstance: (instanceId: string) =>
     invoke<AgentConversationInstance | null>('agent_conversation_get', {
       instanceId,

@@ -13,6 +13,7 @@ import { SquareMinus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { isValidTagPath } from '@/lib/tag-path';
+import { createLogger } from '@/lib/logger';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@shared/ui/dialog';
 import { Button } from '@shared/ui/button';
@@ -46,7 +47,7 @@ import {
   type TagDropPosition,
 } from '@features/memo/components/tag-reorder';
 import { markTagsCollapsedByAncestor } from '@features/memo/components/tag-collapse';
-import { system } from '@platform/tauri/client';
+import { agent, system } from '@platform/tauri/client';
 
 interface TagTreeProps {
   selectedNotebook: Notebook | null;
@@ -56,6 +57,7 @@ interface TagTreeProps {
 
 // 笔记本列表区域高度 ── 持久化键 + 读 / 写助手。
 const TAG_COLLAPSED_STORAGE_PREFIX = 'flowix:tag-collapsed:';
+const logger = createLogger('tag-tree');
 
 function getCollapsedTagsStorageKey(notebookId: string): string {
   return `${TAG_COLLAPSED_STORAGE_PREFIX}${notebookId}`;
@@ -154,9 +156,18 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         setTagLayout(metadata.tagLayout);
         setHiddenTagIds(metadata.hiddenTagIds);
         setPinnedByParent(metadata.pinnedByParent);
+        // 「对话」计数走 agent conversation 实例表 (按 source_notebook_id 圈定),
+        // 而非 memo 索引里的"含对话笔记数" —— 与中间列对话列表同口径。
+        const conversationCount = await agent
+          .countConversationInstancesByNotebook(notebook.id)
+          .catch((error) => {
+            logger.warn('failed to count conversations', { error });
+            return 0;
+          });
+        if (cancelled) return;
         onCountsChange({
           total: metadata.totalMemoCount,
-          agent: metadata.agentMemoCount,
+          agent: conversationCount,
           todo: metadata.todoMemoCount,
         });
         if (selectedNotebook) {
@@ -175,7 +186,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
         }
       } catch (error) {
         if (!cancelled) {
-          console.warn('[TagTree] Failed to load tags:', error);
+          logger.warn('failed to load tags', { error });
           setTagOptions([]);
           setTagLayout([]);
           setHiddenTagIds([]);
@@ -299,7 +310,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
           await system.setTagPinned(notebookId, parentKey, pinnedIds);
         } catch (err) {
           lastError = err;
-          console.warn('[TagTree] Failed to persist pinned for', parentKey, err);
+          logger.warn('failed to persist pinned', { error: err, parentKey });
         }
       }
       if (lastError) throw lastError;

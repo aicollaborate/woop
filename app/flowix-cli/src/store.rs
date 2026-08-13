@@ -37,10 +37,8 @@ pub fn cmd_notebooks_json() -> Result<(), CliError> {
 
 /// notebook 列表的数据源，供 CLI 和 MCP 命令层复用。
 pub(crate) fn notebooks_list_configs() -> Result<Vec<NotebookConfig>, CliError> {
-    let mut mf = open()?;
-    MemoService::new(&mut mf)
-        .list_notebooks()
-        .map_err(Into::into)
+    let mf = open()?;
+    MemoService::new(&mf).list_notebooks().map_err(Into::into)
 }
 
 /// `flowix-cli notebooks` ── 列出所有 notebook。
@@ -55,8 +53,8 @@ pub fn cmd_notebooks() -> Result<(), CliError> {
 pub(crate) fn notebook_note_counts(
     configs: &[NotebookConfig],
 ) -> Result<HashMap<String, usize>, CliError> {
-    let mut mf = open()?;
-    MemoService::new(&mut mf)
+    let mf = open()?;
+    MemoService::new(&mf)
         .notebook_note_counts(configs)
         .map_err(Into::into)
 }
@@ -96,8 +94,8 @@ pub fn cmd_list_json(notebook_key: &str) -> Result<(), CliError> {
 pub(crate) fn notes_list_entries(
     notebook_key: &str,
 ) -> Result<Vec<flowix_core::memo_file::MemoIndexEntry>, CliError> {
-    let mut mf = open()?;
-    MemoService::new(&mut mf)
+    let mf = open()?;
+    MemoService::new(&mf)
         .list_memos(notebook_key)
         .map_err(Into::into)
 }
@@ -125,7 +123,7 @@ pub(crate) fn resolve_id_with_notebook(
     id_arg: &str,
 ) -> Result<(MemoFile, String, NotebookConfig), CliError> {
     let mut mf = open()?;
-    let resolved = MemoService::new(&mut mf).resolve_memo(id_arg)?;
+    let resolved = MemoService::new(&mf).resolve_memo(id_arg)?;
     mf.set_current_notebook(Some(resolved.notebook.id.clone()));
     Ok((mf, resolved.id, resolved.notebook))
 }
@@ -163,8 +161,8 @@ impl NoteShowData {
 
 /// memo 读取的数据源：解析 id 并读取 body，供 CLI 和 MCP 命令层复用。
 pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
-    let mut mf = open()?;
-    let document = MemoService::new(&mut mf).get_memo(id_arg)?;
+    let mf = open()?;
+    let document = MemoService::new(&mf).get_memo(id_arg)?;
     Ok(NoteShowData {
         entry: document.entry,
         body: document.body,
@@ -340,8 +338,8 @@ pub(crate) fn search_hits(
     notebook_filter: Option<&str>,
     limit: usize,
 ) -> Result<flowix_core::search::NotebookSearchResults, CliError> {
-    let mut mf = open()?;
-    MemoService::new(&mut mf)
+    let mf = open()?;
+    MemoService::new(&mf)
         .search_memos(query, notebook_filter, limit)
         .map_err(Into::into)
 }
@@ -434,7 +432,7 @@ pub fn cmd_edit(
         }
     };
 
-    let payload = edit_note_impl(&mut mf, &full_id, &old, &new, dry_run)?;
+    let payload = edit_note_impl(&mut mf, &full_id, old, &new, dry_run)?;
     if json {
         print_pretty_json(&payload)?;
     } else {

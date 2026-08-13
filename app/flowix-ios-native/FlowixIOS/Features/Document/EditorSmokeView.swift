@@ -12,9 +12,11 @@ struct EditorSmokeView: View {
         Group {
             if let memo {
                 NavigationStack {
-                    DocumentView(memo: memo, runBridgeSmokeTest: true) {
-                        editorReady = true
-                    }
+                    DocumentView(
+                        memo: memo,
+                        runBridgeSmokeTest: true,
+                        onEditorReady: { editorReady = true }
+                    )
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
                             Text(editorReady ? "Tiptap ready" : "加载编辑器…")

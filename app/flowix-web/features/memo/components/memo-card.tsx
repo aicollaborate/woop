@@ -8,7 +8,8 @@ import { MEMO_COLOR_HEX, type MemoColor, type MemoItem } from '@features/memo';
 import { cn } from '@/lib/utils';
 import { getAgentType } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
-import { useI18n, type I18nParams } from '@/lib/i18n';
+import { useI18n } from '@/lib/i18n';
+import { formatTimeAgo } from '@/lib/format-time-ago';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -66,28 +67,6 @@ interface MemoCardShellProps {
   onFavoriteToggle: (memo: MemoItem) => void;
   onDelete: (memo: MemoItem) => void;
   onColorsChange?: (memo: MemoItem, colors: MemoColor[]) => void;
-}
-
-function formatTimeAgo(
-  timestamp: number,
-  t: (key: import('@/lib/i18n').I18nKey, params?: I18nParams) => string,
-): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 30) {
-    const months = Math.floor(days / 30);
-    return t('memo.time.monthsAgo', { m: months } satisfies I18nParams);
-  }
-  if (days > 0) return t('memo.time.daysAgo', { d: days } satisfies I18nParams);
-  if (hours > 0) return t('memo.time.hoursAgo', { h: hours } satisfies I18nParams);
-  if (minutes > 0) return t('memo.time.minutesAgo', { m: minutes } satisfies I18nParams);
-  if (seconds > 0) return t('memo.time.secondsAgo', { s: seconds } satisfies I18nParams);
-  return t('memo.time.justNow');
 }
 
 function thumbnailSrc(thumbnail: string | null | undefined): string | null {

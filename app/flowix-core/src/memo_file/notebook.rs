@@ -15,7 +15,7 @@ use super::types::NotebookConfig;
 use super::MemoFile;
 
 pub(super) fn sqlite_to_io(error: rusqlite::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, error)
+    std::io::Error::other(error)
 }
 
 impl MemoFile {
@@ -82,10 +82,8 @@ impl MemoFile {
                 "#,
             )
             .map_err(sqlite_to_io)?;
-            conn.execute_batch(
-                "ALTER TABLE notebooks ADD COLUMN sort INTEGER NOT NULL DEFAULT 0;",
-            )
-            .map_err(sqlite_to_io)?;
+            conn.execute_batch("ALTER TABLE notebooks ADD COLUMN sort INTEGER NOT NULL DEFAULT 0;")
+                .map_err(sqlite_to_io)?;
         }
         conn.execute_batch(
             r#"
@@ -268,11 +266,7 @@ impl MemoFile {
     pub fn next_notebook_sort(&self) -> std::io::Result<i64> {
         let conn = self.open_index_db()?;
         let max_sort: Option<i64> = conn
-            .query_row(
-                "SELECT MAX(sort) FROM notebooks",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(sort) FROM notebooks", [], |row| row.get(0))
             .ok()
             .flatten();
         Ok(max_sort.map(|v| v + 10).unwrap_or(10))

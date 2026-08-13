@@ -107,6 +107,18 @@ pub async fn agent_conversation_list(
 }
 
 #[tauri::command]
+pub async fn agent_conversation_count_by_notebook(
+    notebook_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let manager = &state.thread_manager;
+    manager
+        .count_agent_conversation_instances_by_notebook(notebook_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn agent_conversation_get(
     instance_id: String,
     state: State<'_, AppState>,
@@ -336,12 +348,7 @@ pub async fn hermes_thread_get(
         while page.has_more {
             page = state
                 .thread_manager
-                .get_external_event_messages_page(
-                    "hermes",
-                    &thread_id,
-                    page.oldest_sequence,
-                    50,
-                )
+                .get_external_event_messages_page("hermes", &thread_id, page.oldest_sequence, 50)
                 .await
                 .map_err(|error| error.to_string())?
                 .unwrap_or(ThreadMessagesPage {

@@ -47,11 +47,7 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
 
 pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
     let mut messages = session_messages(session_id).await?.0;
-    crate::agent_external::canonicalize_imported_messages(
-        AGENT_TYPE,
-        session_id,
-        &mut messages,
-    );
+    crate::agent_external::canonicalize_imported_messages(AGENT_TYPE, session_id, &mut messages);
     Ok(messages)
 }
 
@@ -61,11 +57,7 @@ pub async fn get_session_page(
     limit: i64,
 ) -> Result<ThreadMessagesPage, String> {
     let (mut messages, _) = session_messages(session_id).await?;
-    crate::agent_external::canonicalize_imported_messages(
-        AGENT_TYPE,
-        session_id,
-        &mut messages,
-    );
+    crate::agent_external::canonicalize_imported_messages(AGENT_TYPE, session_id, &mut messages);
     Ok(page_from_messages(messages, before_sequence, limit))
 }
 

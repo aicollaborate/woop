@@ -7,6 +7,7 @@ import { DocumentTitlebarMac } from '@features/document/components/document-titl
 import { MemoList } from '@features/memo/components/memo-list';
 import { AgentConversationList } from '@features/agent/components/agent-conversation-list';
 import { AgentConversationDetail } from '@features/agent/components/agent-conversation-detail';
+import { AgentConversationTitlebar } from '@features/agent/components/agent-conversation-titlebar';
 import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
 import { MemoListTitlebarWin } from '@features/memo/components/memo-list-titlebar-win';
 import { MemoListTitlebarMac } from '@features/memo/components/memo-list-titlebar-mac';
@@ -31,6 +32,8 @@ import { useMacosTrackpadSwipe, type MacosTrackpadSwipeDirection } from '@featur
 import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
+import { PluginDocumentView, PluginWorkbench, getPluginNoteInfo } from '@features/plugin';
+import type { PluginDescriptor } from '@platform/tauri/client';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 192;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
@@ -43,13 +46,23 @@ function isWindowsPlatform(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
 }
 
-function isDifferentHistoryTarget(entry: DocumentHistoryEntry, activeMemoSession: MemoDocumentSession | null): boolean {
-  if (entry.kind !== 'memo') return true;
-  if (!activeMemoSession) return true;
-  return (
-    entry.memoId !== activeMemoSession.memoId ||
-    canonicalPath(entry.path) !== canonicalPath(activeMemoSession.path)
-  );
+function isDifferentHistoryTarget(
+  entry: DocumentHistoryEntry,
+  activeMemoSession: MemoDocumentSession | null,
+  currentDocumentSource: 'memo' | 'external' | null,
+  currentDocumentPath: string | null,
+  activeAgentConversationId: string | null,
+): boolean {
+  if (entry.kind === 'agent-conversation') {
+    return entry.instanceId !== activeAgentConversationId;
+  }
+  if (entry.kind === 'memo') {
+    return !activeMemoSession || (
+      entry.memoId !== activeMemoSession.memoId ||
+      canonicalPath(entry.path) !== canonicalPath(activeMemoSession.path)
+    );
+  }
+  return currentDocumentSource !== 'external' || canonicalPath(entry.path) !== canonicalPath(currentDocumentPath ?? '');
 }
 
 type PanelVisibilityState = {
@@ -87,12 +100,14 @@ export function MainLayout() {
   const selectedMemo = useMemoStore((s) => s.selectedMemo);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const activeFilter = useMemoStore((s) => s.activeFilter);
+  const activePluginId = useMemoStore((s) => s.activePluginId);
   const activeSort = useMemoStore((s) => s.activeSort);
   const isAgentConversationView = activeFilter === 'agents';
 
   const memoActions = useMemoStore(
     useShallow((s) => ({
       setActiveFilter: s.setActiveFilter,
+      setActivePluginId: s.setActivePluginId,
       loadMemos: s.loadMemos,
       setSelectedMemo: s.setSelectedMemo,
       setSelectedNotebook: s.setSelectedNotebook,
@@ -104,6 +119,7 @@ export function MainLayout() {
   );
   const {
     setActiveFilter,
+    setActivePluginId,
     loadMemos,
     setSelectedMemo,
     setSelectedNotebook,
@@ -153,13 +169,26 @@ export function MainLayout() {
     })),
   );
   const canNavigateBack = useDocumentHistoryStore((s) => (
-    s.backStack.some((entry) => isDifferentHistoryTarget(entry, activeMemoSession))
+    s.backStack.some((entry) => isDifferentHistoryTarget(
+      entry,
+      activeMemoSession,
+      currentDocumentSource,
+      currentDocumentPath,
+      activeAgentConversationId,
+    ))
   ));
   const canNavigateForward = useDocumentHistoryStore((s) => (
-    s.forwardStack.some((entry) => isDifferentHistoryTarget(entry, activeMemoSession))
+    s.forwardStack.some((entry) => isDifferentHistoryTarget(
+      entry,
+      activeMemoSession,
+      currentDocumentSource,
+      currentDocumentPath,
+      activeAgentConversationId,
+    ))
   ));
   const [notebookToDelete, setNotebookToDelete] = useState<Notebook | null>(null);
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
+  const [activePlugin, setActivePlugin] = useState<PluginDescriptor | null>(null);
   const [noteNavigationPanelWidth, setNoteNavigationPanelWidth] = useState(NOTE_NAVIGATION_PANEL_WIDTH);
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
   const currentDocumentContentRef = useRef('');
@@ -336,10 +365,39 @@ export function MainLayout() {
     }
   }, [closeMemoListAndNoteNavigation, memoListVisible, setMemoListVisible]);
 
+  // Plugin UI is local to MainLayout while its active id lives in the memo
+  // store. Keep both, plus the document selection, in one close operation so
+  // changing to a normal filter/notebook cannot leave a stale canvas mounted.
+  // clearDocument performs async save/transition work, so callers explicitly
+  // discard its promise here instead of creating an unhandled rejection.
+  const closePluginSurface = useCallback(() => {
+    setActivePlugin(null);
+    setActivePluginId(null);
+    setSelectedMemo(null);
+    void clearDocument().catch((error) => {
+      logger.warn('clear plugin document failed', { error });
+    });
+  }, [clearDocument, setActivePluginId, setSelectedMemo]);
+
+  useEffect(() => {
+    if (!activePlugin) return;
+    if (activeFilter === 'all' && activePluginId === activePlugin.manifest.id) return;
+    closePluginSurface();
+  }, [activeFilter, activePlugin, activePluginId, closePluginSurface]);
+
   const currentMemo = currentDocumentPath && currentDocumentSource === 'memo' && activeMemoSession
     ? memos.find((memo) => memo.id === activeMemoSession.memoId)
       ?? (selectedMemo?.id === activeMemoSession.memoId ? selectedMemo : null)
     : null;
+  const currentPluginNote = getPluginNoteInfo(currentMemo);
+  // Opening an ordinary memo must also dismiss the workbench. Plugin pointer
+  // memos are deliberately excluded because they render through the plugin
+  // document view instead.
+  useEffect(() => {
+    if (!activePlugin || currentDocumentSource !== 'memo' || currentPluginNote) return;
+    setActivePlugin(null);
+    setActivePluginId(null);
+  }, [activePlugin, currentDocumentSource, currentPluginNote, setActivePluginId]);
   const isExternalDocument = currentDocumentSource === 'external';
   const isAgentConversationDetail = !!activeAgentConversationId;
   const currentDocumentInstanceKey =
@@ -395,6 +453,7 @@ export function MainLayout() {
   }, []);
 
   const handleOpenTodos = useCallback(async () => {
+    closePluginSurface();
     setMemoListVisible(true);
     setActiveFilter('todos');
     await loadMemos({
@@ -402,7 +461,25 @@ export function MainLayout() {
       filter: 'todos',
       sort: activeSort,
     });
-  }, [activeSort, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
+  }, [activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
+
+  const handleOpenPlugin = useCallback(async (plugin: PluginDescriptor) => {
+    // A pointer memo is rendered in the document area with higher priority
+    // than the plugin workbench. Close the previous memo session first so a
+    // plugin switch cannot leave the previous canvas mounted over the new
+    // configuration panel.
+    try {
+      await clearDocument();
+    } catch (error) {
+      logger.warn('open plugin failed to clear document', { error });
+      return;
+    }
+    setSelectedMemo(null);
+    setActivePlugin(plugin);
+    setActiveFilter('all');
+    setActivePluginId(plugin.manifest.id);
+    setMemoListVisible(true);
+  }, [clearDocument, setActiveFilter, setActivePluginId, setMemoListVisible, setSelectedMemo]);
 
   const handleNavigateBack = useCallback(() => {
     void navigateDocumentHistory('back');
@@ -415,12 +492,12 @@ export function MainLayout() {
   const handleSelectNotebook = useCallback(
     (notebook: Notebook) => {
       if (selectedNotebook?.id === notebook.id) return;
+      closePluginSurface();
       setSelectedNotebook(notebook);
       setSelectedMemo(null);
-      clearDocument();
       triggerRefresh();
     },
-    [clearDocument, selectedNotebook?.id, setSelectedMemo, setSelectedNotebook, triggerRefresh]
+    [closePluginSurface, selectedNotebook?.id, setSelectedMemo, setSelectedNotebook, triggerRefresh]
   );
 
   const handleEditNotebook = useCallback(
@@ -554,6 +631,9 @@ export function MainLayout() {
                   onEditNotebook={handleEditNotebook}
                   onDeleteNotebook={handleDeleteNotebook}
                   onTogglePanel={handleToggleNoteNavigation}
+                  activePluginId={activePluginId}
+                  onOpenPlugin={handleOpenPlugin}
+                  onClosePlugin={closePluginSurface}
                 />
               )}
             </div>
@@ -636,22 +716,44 @@ export function MainLayout() {
           {/* Memo detail */}
             <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
             {/* Fixed top navigation bar */}
-            {!isAgentConversationDetail && (isWindowsPlatform() ? (
+            {isAgentConversationDetail ? (
+              <AgentConversationTitlebar
+                instanceId={activeAgentConversationId}
+                isSidebarCollapsed={isMemoListHidden}
+                onExpandSidebar={handleToggleMemoList}
+                onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
+                onSidebarPreviewLeave={handleMemoListPreviewTriggerLeave}
+                canNavigateBack={canNavigateBack}
+                canNavigateForward={canNavigateForward}
+                onNavigateBack={handleNavigateBack}
+                onNavigateForward={handleNavigateForward}
+              />
+            ) : isWindowsPlatform() ? (
               <DocumentTitlebarWin {...documentTitlebarProps} />
             ) : (
               <DocumentTitlebarMac {...documentTitlebarProps} />
-            ))}
+            )}
 
             {/* Content area */}
             <div className="relative flex-1 min-w-0 overflow-hidden">
-              {isAgentConversationDetail ? (
+              {currentPluginNote && activeMemoSession ? (
+                <PluginDocumentView
+                  key={activeMemoSession.memoId}
+                  memoId={activeMemoSession.memoId}
+                  transitionId={activeMemoSession.transitionId}
+                />
+              ) : activePlugin ? (
+                <PluginWorkbench
+                  key={activePlugin.manifest.id}
+                  plugin={activePlugin}
+                  notebookPath={selectedNotebook?.path}
+                  currentNotePath={currentDocumentPath}
+                  currentNoteContent={currentDocumentContentRef.current}
+                />
+              ) : isAgentConversationDetail ? (
                 <AgentConversationDetail
                   key={activeAgentConversationId}
                   instanceId={activeAgentConversationId}
-                  isSidebarCollapsed={isMemoListHidden}
-                  onExpandSidebar={handleToggleMemoList}
-                  onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
-                  onSidebarPreviewLeave={handleMemoListPreviewTriggerLeave}
                 />
               ) : currentDocumentPath ? (
                 <DocumentContainer

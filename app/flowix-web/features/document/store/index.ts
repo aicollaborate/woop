@@ -4,6 +4,7 @@ export {
 } from '@features/document/store/document-store';
 export {
   useDocumentHistoryStore,
+  type AgentConversationHistoryEntry,
   type DocumentHistoryEntry,
   type MemoHistoryEntry,
 } from '@features/document/store/document-history-store';

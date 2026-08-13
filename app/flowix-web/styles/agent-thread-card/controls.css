@@ -223,9 +223,16 @@
   background: var(--editor-block-bg, var(--document-bg));
 }
 
-.agent-conversation-detail,
-.agent-conversation-detail .agent-conversation-detail__header {
+.agent-conversation-detail {
   background: var(--editor-block-bg, var(--document-bg));
+}
+
+.markdown-editor.agent-conversation-detail .agent-conversation-detail__header {
+  flex: 0 0 auto;
+  width: min(calc(100% - 3rem), 780px);
+  margin-inline: auto;
+  padding-inline: 0;
+  cursor: default;
 }
 
 .agent-conversation-detail .agent-thread-card__body {

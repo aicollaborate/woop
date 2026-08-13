@@ -127,6 +127,7 @@ export interface AgentSessionStore
       runtimeConfig?: RuntimeConfig | null;
       imagePaths?: string[];
       agentRoleBody?: string | null;
+      runId?: string;
     },
   ) => Promise<void>;
   stopStream: () => Promise<void>;
@@ -355,7 +356,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             systemReminderDirectory:
               options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
           });
-          const runId = createRunId(threadId);
+          const runId = options?.runId ?? createRunId(threadId);
           userMessage.id = completedRunUserMessageId(type.key, runId);
           const startedAt = Date.now();
           state.dispatch({

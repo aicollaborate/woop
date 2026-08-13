@@ -10,8 +10,9 @@ use flowix_core::memo_file::{
     sanitize_filename_component, IsMd, MergeOverrides,
 };
 use flowix_sync::{
-    v2_content_hash, CloudCheckout, CloudMembership, CloudNotebook, CloudProduct, CloudState,
-    collect_v2_attachments, SyncError, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply, V2SyncedNotebook,
+    collect_v2_attachments, v2_content_hash, CloudCheckout, CloudMembership, CloudNotebook,
+    CloudProduct, CloudState, SyncError, V2AccountSyncReport, V2LocalNote, V2LocalNotebook,
+    V2RemoteApply, V2SyncedNotebook,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
@@ -158,10 +159,8 @@ fn v2_account_snapshot(
             let path = PathBuf::from(&config.path).join(&memo.filename);
             let content = std::fs::read(&path)
                 .map_err(|error| format!("READ_NOTE_FAILED {}: {error}", path.display()))?;
-            let attachments = collect_v2_attachments(
-                &PathBuf::from(&config.path).join("attachments"),
-                &content,
-            )?;
+            let attachments =
+                collect_v2_attachments(&PathBuf::from(&config.path).join("attachments"), &content)?;
             notes.push(V2LocalNote {
                 id: memo.id,
                 notebook_id: config.id.clone(),
@@ -190,13 +189,20 @@ fn safe_cloud_note_path(base: &Path, filename: &str) -> Result<PathBuf, String> 
     Ok(base.join(filename))
 }
 
-fn write_cloud_attachments(base: &Path, attachments: &[flowix_sync::V2RemoteAttachment]) -> Result<(), String> {
+fn write_cloud_attachments(
+    base: &Path,
+    attachments: &[flowix_sync::V2RemoteAttachment],
+) -> Result<(), String> {
     let directory = base.join("attachments");
     std::fs::create_dir_all(&directory).map_err(sync_error)?;
     for attachment in attachments {
         let filename = &attachment.metadata.filename;
-        if Path::new(filename).file_name().and_then(|value| value.to_str()) != Some(filename)
-            || attachment.metadata.size_bytes != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
+        if Path::new(filename)
+            .file_name()
+            .and_then(|value| value.to_str())
+            != Some(filename)
+            || attachment.metadata.size_bytes
+                != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
             || v2_content_hash(&attachment.content) != attachment.metadata.content_hash
         {
             return Err(format!("CLOUD_ATTACHMENT_INVALID: {filename}"));
@@ -356,8 +362,12 @@ fn apply_v2_note_changes(
             let overrides: MergeOverrides =
                 [("key".to_string(), note_id.clone())].into_iter().collect();
             let stamped_content = merge_frontmatter(markdown, &overrides);
-            crate::watcher::runtime::write_note_atomic(app, &desired_path, stamped_content.as_bytes())
-                .map_err(sync_error)?;
+            crate::watcher::runtime::write_note_atomic(
+                app,
+                &desired_path,
+                stamped_content.as_bytes(),
+            )
+            .map_err(sync_error)?;
             let memo = memo_file
                 .register_existing_file_for_notebook_id(notebook_id, &desired_path)
                 .map_err(sync_error)?;
@@ -544,9 +554,7 @@ async fn sync_v2_account(
         .v2_enabled_notebooks()
         .map_err(sync_error)?
         .into_iter()
-        .filter(|notebook| {
-            notebook_scope.is_none_or(|scope| notebook.notebook_id == scope)
-        })
+        .filter(|notebook| notebook_scope.is_none_or(|scope| notebook.notebook_id == scope))
         .collect();
     if sync_lock.try_lock().is_err() {
         for notebook in &enabled {
@@ -581,8 +589,7 @@ async fn sync_v2_account(
             canonicalize_local_keys(state, app, &notebook.notebook_id)?;
         }
     }
-    let (notebooks, notes) =
-        v2_account_snapshot(state, full_local_snapshot, notebook_scope)?;
+    let (notebooks, notes) = v2_account_snapshot(state, full_local_snapshot, notebook_scope)?;
     for notebook in &enabled {
         emit_sync_status(
             app,
@@ -596,10 +603,12 @@ async fn sync_v2_account(
         );
     }
     let report_result = match notebook_scope {
-        Some(notebook_id) => state
-            .cloud_sync
-            .sync_v2_notebook(notebook_id, notebooks, notes)
-            .await,
+        Some(notebook_id) => {
+            state
+                .cloud_sync
+                .sync_v2_notebook(notebook_id, notebooks, notes)
+                .await
+        }
         None => state.cloud_sync.sync_v2_account(notebooks, notes).await,
     };
     persist_rotated_token(state)?;

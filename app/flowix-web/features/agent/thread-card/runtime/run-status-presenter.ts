@@ -3,6 +3,18 @@ import type { I18nKey } from "@/lib/i18n";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import { selectAgentThreadCardRunStatus } from "@features/agent/thread-card/agent-thread-card-selectors";
 
+/**
+ * The compact subset of runtime state required by the agent badge hover card.
+ * Both an embedded ThreadState and the standalone conversation projection
+ * expose this shape, so the two fullscreen conversation surfaces can render
+ * the same metadata without copying the presentation rules.
+ */
+export interface AgentThreadCardBadgeRuntimeState {
+  lastRun?: ThreadState["lastRun"];
+  activeRunId: string | null;
+  runs: ThreadState["runs"];
+}
+
 export interface AgentThreadCardBadgeData {
   model: string | undefined;
   lastRunAt: number | undefined;
@@ -14,7 +26,7 @@ export interface AgentThreadCardBadgeData {
 }
 
 export function computeAgentThreadCardBadgeData(options: {
-  threadState: ThreadState | undefined;
+  threadState: AgentThreadCardBadgeRuntimeState | undefined;
   codexModel: string | undefined;
   typeKey: AgentTypeKey;
 }): AgentThreadCardBadgeData {

@@ -172,6 +172,7 @@ export function MemoList() {
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const refreshTrigger = useMemoStore((s) => s.refreshTrigger);
   const activeFilter = useMemoStore((s) => s.activeFilter);
+  const activePluginId = useMemoStore((s) => s.activePluginId);
   const activeSort = useMemoStore((s) => s.activeSort);
   const colorFilter = useMemoStore((s) => s.colorFilter);
   const selectedNotebookId = selectedNotebook?.id;
@@ -436,7 +437,8 @@ export function MemoList() {
       activeFilter,
       activeSort,
       activeTagId,
-      colorFilter
+      colorFilter,
+      activePluginId,
     );
     const shouldShowLoading = queryKey !== loadedMemoListQueryKey;
 
@@ -479,14 +481,15 @@ export function MemoList() {
     return () => {
       cancelled = true;
     };
-  }, [activeFilter, activeSort, activeTagId, colorFilter, loadMemos, refreshTrigger, selectedNotebookId]);
+  }, [activeFilter, activePluginId, activeSort, activeTagId, colorFilter, loadMemos, refreshTrigger, selectedNotebookId]);
 
   const currentMemoListQueryKey = getMemoListQueryKey(
     selectedNotebookId,
     activeFilter,
     activeSort,
     activeTagId,
-    colorFilter
+    colorFilter,
+    activePluginId,
   );
   const showMemoListLoading = shouldShowMemoListLoading({
     selectedNotebookId,

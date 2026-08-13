@@ -41,6 +41,7 @@ pub mod helpers;
 pub mod kv;
 pub mod memo;
 pub mod notebook;
+pub mod plugin;
 pub mod product;
 pub mod settings;
 pub mod tab_window;

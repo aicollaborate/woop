@@ -6,6 +6,7 @@ export function getMemoListQueryKey(
   sort: string,
   tagId: string | null,
   colorFilter: ColorFilterValue,
+  pluginId?: string | null,
 ): string {
   return [
     notebookId ?? '',
@@ -13,6 +14,7 @@ export function getMemoListQueryKey(
     sort,
     filter === 'tagged' ? tagId ?? '' : '',
     filter === 'color' ? colorFilter : '',
+    pluginId ?? '',
   ].join(':');
 }
 

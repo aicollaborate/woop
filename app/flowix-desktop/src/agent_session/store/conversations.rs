@@ -41,13 +41,43 @@ impl ThreadManager {
             "SELECT
                 i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
              FROM agent_conversation_instances i
              LEFT JOIN threads t ON t.thread_id = i.thread_id
              ORDER BY i.updated_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_agent_conversation_instance)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Count conversation instances scoped to a notebook for the sidebar badge.
+    ///
+    /// Semantics mirror the frontend list scoping: a `NULL` `source_notebook_id`
+    /// (conversations started outside any note, plus all pre-`source_notebook_id`
+    /// history) counts in every notebook so nothing disappears; `None` notebook
+    /// counts the whole table.
+    pub async fn count_agent_conversation_instances_by_notebook(
+        self: &Arc<Self>,
+        notebook_id: Option<String>,
+    ) -> Result<usize, ThreadError> {
+        self.run_blocking(move |tm| {
+            tm.count_agent_conversation_instances_by_notebook_inner(notebook_id)
+        })
+        .await
+    }
+
+    fn count_agent_conversation_instances_by_notebook_inner(
+        &self,
+        notebook_id: Option<String>,
+    ) -> Result<usize, ThreadError> {
+        let conn = self.lock_conn();
+        let count = conn.query_row(
+            "SELECT COUNT(*) FROM agent_conversation_instances
+             WHERE ?1 IS NULL OR source_notebook_id = ?1 OR source_notebook_id IS NULL",
+            params![notebook_id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(count as usize)
     }
 
     pub async fn get_agent_conversation_instance(
@@ -68,7 +98,7 @@ impl ThreadManager {
             "SELECT
                 i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
              FROM agent_conversation_instances i
              LEFT JOIN threads t ON t.thread_id = i.thread_id
              WHERE i.instance_id = ?1",
@@ -97,7 +127,7 @@ impl ThreadManager {
             "SELECT
                 i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                 i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
              FROM agent_conversation_instances i
              LEFT JOIN threads t ON t.thread_id = i.thread_id
              WHERE i.thread_id = ?1
@@ -172,9 +202,9 @@ impl ThreadManager {
         tx.execute(
             "INSERT INTO agent_conversation_instances (
                 instance_id, agent_type, thread_id,
-                runtime_config, source_kind, source_document_path, source_memo_id,
+                runtime_config, source_kind, source_document_path, source_memo_id, source_notebook_id,
                 role_memo_id, role_name, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(instance_id) DO UPDATE SET
                 agent_type = excluded.agent_type,
                 thread_id = excluded.thread_id,
@@ -182,9 +212,10 @@ impl ThreadManager {
                 source_kind = excluded.source_kind,
                 source_document_path = excluded.source_document_path,
                 source_memo_id = excluded.source_memo_id,
+                source_notebook_id = excluded.source_notebook_id,
                 role_memo_id = excluded.role_memo_id,
-                 role_name = excluded.role_name,
-                 updated_at = excluded.updated_at
+                role_name = excluded.role_name,
+                updated_at = excluded.updated_at
               WHERE excluded.updated_at >= agent_conversation_instances.updated_at",
             params![
                 input.instance_id,
@@ -194,6 +225,7 @@ impl ThreadManager {
                 source_kind,
                 input.source.document_path,
                 input.source.memo_id,
+                input.source.notebook_id,
                 role_memo_id,
                 role_name,
                 created_at,
@@ -205,7 +237,7 @@ impl ThreadManager {
                 "SELECT
                     i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
                     i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                    i.role_memo_id, i.role_name, i.created_at, i.updated_at
+                    i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
                  FROM agent_conversation_instances i
                  LEFT JOIN threads t ON t.thread_id = i.thread_id
                  WHERE i.instance_id = ?1",
@@ -418,6 +450,7 @@ impl ThreadManager {
             kind: row.get(6)?,
             document_path: row.get(7)?,
             memo_id: row.get(8)?,
+            notebook_id: row.get(13)?,
         };
         let role_memo_id: Option<String> = row.get(9)?;
         let role_name: Option<String> = row.get(10)?;

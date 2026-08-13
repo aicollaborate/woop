@@ -55,7 +55,11 @@ pub fn set_tag_system_pinned(
         .system_data
         .set_pinned_tags(
             &notebook_id,
-            if parent_id.is_empty() { None } else { Some(parent_id.as_str()) },
+            if parent_id.is_empty() {
+                None
+            } else {
+                Some(parent_id.as_str())
+            },
             pinned,
         )
         .map_err(|e| e.to_string())

@@ -9,12 +9,12 @@
 #   1. The .ipa is a valid zip and contains Payload/*.app
 #   2. codesign --verify on the .app passes with strict + deep
 #   3. The signed bundle's TeamIdentifier matches $APPLE_TEAM_ID
-#   4. The bundle's CFBundleIdentifier is "com.flowix.app.mobile"
+#   4. The bundle's CFBundleIdentifier is the expected native/Tauri id
 #   5. The embedded.mobileprovision decodes, has the same TeamIdentifier,
 #      names the right bundle id, and isn't expiring within 30 days
 #
 # Usage:
-#   bash scripts/verify-ios-release.sh <path-to-ipa>
+#   bash scripts/verify-ios-release.sh <path-to-ipa> [expected-bundle-id]
 #
 # Requires APPLE_TEAM_ID env var (10-char Team ID) for the team-id checks.
 
@@ -37,7 +37,7 @@ if [ -z "${APPLE_TEAM_ID:-}" ]; then
   exit 2
 fi
 
-EXPECTED_BUNDLE_ID="com.flowix.app.mobile"
+EXPECTED_BUNDLE_ID="${2:-${EXPECTED_IOS_BUNDLE_ID:-com.flowix.app.mobile}}"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -97,7 +97,7 @@ fi
 PROFILE_APPLICATION_ID="$(plutil -extract Entitlements.application-identifier raw "$PROVISION_PLIST" 2>/dev/null || echo "")"
 PROFILE_BUNDLE="${PROFILE_APPLICATION_ID#"$PROFILE_TEAM".}"
 case "$PROFILE_BUNDLE" in
-  "$EXPECTED_BUNDLE_ID"|"*") ;;
+  "$EXPECTED_BUNDLE_ID"|\*) ;;
   *)
     echo "ERROR: profile BundleIdentifier mismatch: expected $EXPECTED_BUNDLE_ID or '*', got '$PROFILE_BUNDLE'" >&2
     exit 1

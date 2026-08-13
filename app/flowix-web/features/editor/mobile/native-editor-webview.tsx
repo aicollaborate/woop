@@ -144,7 +144,6 @@ function createNativeAttachmentUploader(memoId: string) {
 export function NativeEditorWebViewApp() {
   const [memoId, setMemoId] = useState('native-preview');
   const [content, setContent] = useState('');
-  const [revision, setRevision] = useState(0);
   const [externalContent, setExternalContent] = useState<{
     value: string;
     emitUpdate: boolean;
@@ -156,9 +155,11 @@ export function NativeEditorWebViewApp() {
   } | undefined>();
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const contentRef = useRef(content);
+  const memoIdRef = useRef(memoId);
   const editorRef = useRef<Editor | null>(null);
   const toolbarActionTokenRef = useRef(0);
   contentRef.current = content;
+  memoIdRef.current = memoId;
 
   useEffect(() => {
     const receiveCommand = (event: Event) => {
@@ -190,7 +191,7 @@ export function NativeEditorWebViewApp() {
           window.setTimeout(() => {
             sendEditorEvent({
               type: 'changed',
-              memoId,
+              memoId: memoIdRef.current,
               markdown: editorRef.current?.getMarkdown() || nextContent,
             });
           }, 0);
@@ -198,13 +199,12 @@ export function NativeEditorWebViewApp() {
         return;
       }
       if (command.type !== 'setContent') return;
-      setMemoId(command.memoId || 'native-preview');
+      const nextMemoId = command.memoId || 'native-preview';
+      memoIdRef.current = nextMemoId;
+      setMemoId(nextMemoId);
       const nextContent = command.content || '';
       setContent(nextContent);
       setExternalContent({ value: nextContent, emitUpdate: false, token: Date.now() });
-      if (!editorRef.current) {
-        setRevision((value) => value + 1);
-      }
     };
 
     window.addEventListener('flowix-editor-command', receiveCommand);
@@ -227,9 +227,10 @@ export function NativeEditorWebViewApp() {
   }, []);
 
   useEffect(() => {
-    if (!editorInstance) return;
+    if (!editorInstance || editorInstance.isDestroyed) return;
     let previousState = '';
     const reportFormatState = () => {
+      if (editorInstance.isDestroyed) return;
       const state: EditorFormatState = {
         focused: editorInstance.isFocused,
         bold: editorInstance.isActive('bold'),
@@ -257,6 +258,7 @@ export function NativeEditorWebViewApp() {
       sendMotion('editorBlur', { focused: false });
     };
     const reportSelection = () => {
+      if (editorInstance.isDestroyed) return;
       reportFormatState();
       sendMotion('selection', { focused: editorInstance.isFocused });
     };
@@ -283,12 +285,11 @@ export function NativeEditorWebViewApp() {
   const handleChange = (markdown: string) => {
     contentRef.current = markdown;
     setContent(markdown);
-    sendEditorEvent({ type: 'changed', memoId, markdown });
+    sendEditorEvent({ type: 'changed', memoId: memoIdRef.current, markdown });
   };
 
   return (
     <MobileRichMarkdownEditor
-      key={`${memoId}:${revision}`}
       memoId={memoId}
       content={content}
       onChange={handleChange}

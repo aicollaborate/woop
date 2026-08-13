@@ -605,13 +605,7 @@ impl SyncStore {
         bootstrapped_notebooks: &[String],
         applied_at: i64,
     ) -> Result<(), SyncError> {
-        self.commit_v2_sync_report_scoped(
-            remote,
-            cursor,
-            bootstrapped_notebooks,
-            applied_at,
-            None,
-        )
+        self.commit_v2_sync_report_scoped(remote, cursor, bootstrapped_notebooks, applied_at, None)
     }
 
     pub fn commit_v2_notebook_sync_report(
@@ -716,7 +710,14 @@ impl SyncStore {
                         filename: filename.clone(),
                         deleted: *deleted,
                         last_seq: *sync_seq,
-                        attachments: if *deleted { Vec::new() } else { attachments.iter().map(|item| item.metadata.clone()).collect() },
+                        attachments: if *deleted {
+                            Vec::new()
+                        } else {
+                            attachments
+                                .iter()
+                                .map(|item| item.metadata.clone())
+                                .collect()
+                        },
                     },
                 )?,
             }
@@ -812,8 +813,9 @@ impl SyncStore {
     }
 
     fn write_v2_note_state(connection: &Connection, state: &V2NoteState) -> Result<(), SyncError> {
-        let attachments_json = serde_json::to_string(&state.attachments)
-            .map_err(|error| SyncError::InvalidState(format!("serialize v2 attachments: {error}")))?;
+        let attachments_json = serde_json::to_string(&state.attachments).map_err(|error| {
+            SyncError::InvalidState(format!("serialize v2 attachments: {error}"))
+        })?;
         connection.execute(
             r#"INSERT INTO v2_note_states
                  (note_id, notebook_id, revision, content_hash, attachments_json, filename, deleted, last_seq, updated_at)

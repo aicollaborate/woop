@@ -2,8 +2,10 @@ import Foundation
 import Security
 
 enum FlowixKeychain {
-    private static let service = "com.flowix.app.ios-native"
-    private static let account = "cloud-refresh-token"
+    // Keep the same keychain service/account as the Tauri app so an update
+    // installed over the existing TestFlight build retains cloud login.
+    private static let service = "com.flowix.app.mobile.credentials"
+    private static let account = "flowix_cloud::refresh_token"
 
     static var refreshToken: String? {
         let query: [String: Any] = [

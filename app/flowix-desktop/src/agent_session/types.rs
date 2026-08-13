@@ -84,6 +84,12 @@ pub struct AgentConversationSource {
     pub kind: String,
     pub document_path: Option<String>,
     pub memo_id: Option<String>,
+    /// Owning notebook for the source note, so the conversation list can be
+    /// scoped per notebook. `None` for conversations started outside any note
+    /// (dedicated conversation surface / external docs). `#[serde(default)]`
+    /// keeps deserialization tolerant of older payloads that omit it.
+    #[serde(default)]
+    pub notebook_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

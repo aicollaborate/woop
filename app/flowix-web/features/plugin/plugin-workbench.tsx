@@ -1,0 +1,195 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowSquareOutIcon,
+  ArrowsInIcon,
+  CornersInIcon,
+  CornersOutIcon,
+  MagicWandIcon,
+  MinusIcon,
+  PlusIcon,
+  SidebarSimpleIcon,
+  SpinnerIcon,
+} from '@phosphor-icons/react';
+import { AGENT_TYPES, isAgentTypeSelectable } from '@/lib/agent-types';
+import type { AgentTypeKey } from '@/types/agent';
+import { useMemoStore } from '@features/memo';
+import { memos, windows, type PluginArtifact, type PluginDescriptor, type PluginField } from '@platform/tauri/client';
+import { listenToPluginRuns } from '@platform/tauri/client/plugin';
+import { isPluginRunning, runPlugin } from './plugin-runner';
+import { PluginArtifactRenderer, type PluginArtifactRendererHandle } from './plugin-artifact-renderer';
+import { isEmptyPluginFieldValue, pluginFieldLabel, PluginFieldControl, type PluginFieldValue } from './plugin-field-control';
+import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
+
+function fieldList(plugin: PluginDescriptor): PluginField[] {
+  const fields = plugin.manifest.input?.fields ?? [];
+  const resolvedFields = fields.length > 0 ? fields : [
+    ...(plugin.manifest.input.prompt ? [{ ...plugin.manifest.input.prompt, id: 'prompt' }] : []),
+    ...(plugin.manifest.input.agentType ? [{ ...plugin.manifest.input.agentType, id: 'agentType' }] : []),
+  ];
+  return resolvedFields;
+}
+
+export function PluginWorkbench({
+  plugin,
+  notebookPath,
+  currentNotePath,
+  currentNoteContent,
+}: {
+  plugin: PluginDescriptor;
+  notebookPath: string | undefined;
+  currentNotePath: string | null;
+  currentNoteContent: string;
+}) {
+  const [values, setValues] = useState<Record<string, PluginFieldValue>>({ prompt: '' });
+  const [agentType, setAgentType] = useState<AgentTypeKey>('flowix');
+  const [artifact, setArtifact] = useState<PluginArtifact | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<PluginArtifactRendererHandle>(null);
+  const selectedNotebook = useMemoStore((state) => state.selectedNotebook);
+  const hasCanvasControls = artifact?.renderer === 'markmap';
+  const agentOptions = useMemo(
+    () => AGENT_TYPES.filter((item) => isAgentTypeSelectable(item.key)),
+    [],
+  );
+  const fields = useMemo(() => fieldList(plugin), [plugin]);
+  const promptField = fields.find((field) => field.id === 'prompt')
+    ?? fields.find((field) => field.type === 'textarea' || field.type === 'text' || field.type === 'input');
+  const prompt = promptField ? String(values[promptField.id] ?? '') : '';
+  const missingRequiredField = fields.find((field) => {
+    if (field.type === 'agent-select' || field.id === 'agentType') return false;
+    return field.required && isEmptyPluginFieldValue(values[field.id], field);
+  });
+  const configurationFields = fields.filter((field) => field.id !== promptField?.id && field.id !== 'agentType' && field.type !== 'agent-select');
+  const requestFields = configurationFields
+    .map((field) => `${pluginFieldLabel(field)}: ${String(values[field.id] ?? '')}`)
+    .join('\n');
+  const canGenerate = !running && !missingRequiredField && Boolean(prompt.trim() || requestFields.trim());
+  useEffect(() => { setRunning(isPluginRunning(plugin.manifest.id)); }, [plugin.manifest.id]);
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === canvasRef.current);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!canvasRef.current) return;
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await canvasRef.current.requestFullscreen();
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listenToPluginRuns((event) => {
+      if (event.pluginId !== plugin.manifest.id) return;
+      setRunStatus(event.status);
+      if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') setRunning(false);
+      if (event.status === 'failed' && event.error) setError(event.error);
+      if (event.status === 'completed' && event.artifact) setArtifact(event.artifact);
+    });
+    return () => unlisten();
+  }, [plugin.manifest.id]);
+
+  const handleGenerate = useCallback(async () => {
+    if (!notebookPath) return;
+    setRunning(true);
+    setError(null);
+    setRunStatus(null);
+    try {
+      const context = [
+        `当前笔记本路径: ${notebookPath}`,
+        `当前笔记路径: ${currentNotePath || 'none'}`,
+        '',
+        '当前笔记内容（前5000字）:',
+        currentNoteContent.slice(0, 5000) || 'none',
+      ].join('\n');
+      const request = [prompt.trim(), requestFields ? `## Additional configuration\n${requestFields}` : '']
+        .filter(Boolean)
+        .join('\n\n');
+      const next = await runPlugin({
+        pluginId: plugin.manifest.id,
+        userPrompt: request,
+        context,
+        agentType: plugin.manifest.execution?.runtime || agentType,
+        notebookPath,
+        sourceNote: currentNotePath || undefined,
+      });
+      setArtifact(next);
+      if (next.noteId) {
+        const note = await memos.readMemo(next.noteId);
+        if (note && selectedNotebook) await openMemoSession(note, selectedNotebook);
+      }
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : String(runError));
+    } finally {
+      setRunning(false);
+    }
+  }, [agentType, currentNoteContent, currentNotePath, notebookPath, plugin.manifest.execution?.runtime, plugin.manifest.id, prompt, requestFields, selectedNotebook]);
+
+  if (!notebookPath || !selectedNotebook) {
+    return <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">请先选择一个笔记本</div>;
+  }
+
+  return (
+    <div ref={canvasRef} className="relative flex h-full min-w-0 flex-col overflow-hidden bg-[var(--document-bg)] [&:fullscreen]:h-screen">
+      <div className="absolute left-4 right-4 top-4 z-20 flex items-center justify-between pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--card)]/90 px-3 py-2 shadow-lg backdrop-blur">
+          <button
+            className="rounded-lg p-2 hover:bg-[var(--muted)]"
+            onClick={() => setPanelOpen((open) => !open)}
+            title={panelOpen ? '收起配置面板' : '打开配置面板'}
+            aria-label={panelOpen ? '收起配置面板' : '打开配置面板'}
+          >
+            <SidebarSimpleIcon size={16} weight="bold" />
+          </button>
+          <div>
+            <h1 className="text-sm font-semibold text-[var(--foreground)]">{plugin.manifest.name}</h1>
+            {artifact?.name && <p className="text-[11px] text-[var(--muted-foreground)]">{artifact.name}</p>}
+          </div>
+        </div>
+        <div className="pointer-events-auto flex items-center gap-1 rounded-xl border border-[var(--divider)] bg-[var(--card)]/90 p-1 shadow-lg backdrop-blur">
+          {hasCanvasControls && <>
+            <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => rendererRef.current?.fit?.()} title="适配画布" aria-label="适配画布"><ArrowsInIcon size={16} weight="bold" /></button>
+            <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => rendererRef.current?.zoomIn?.()} title="放大" aria-label="放大"><PlusIcon size={16} weight="bold" /></button>
+            <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => rendererRef.current?.zoomOut?.()} title="缩小" aria-label="缩小"><MinusIcon size={16} weight="bold" /></button>
+          </>}
+          {artifact && <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => void windows.openMarkdownPathTab(artifact.path)} title="打开产物" aria-label="打开产物"><ArrowSquareOutIcon size={16} weight="bold" /></button>}
+          <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => void toggleFullscreen()} title={isFullscreen ? '退出全屏' : '全屏'} aria-label={isFullscreen ? '退出全屏' : '全屏'}>{isFullscreen ? <CornersInIcon size={16} weight="bold" /> : <CornersOutIcon size={16} weight="bold" />}</button>
+        </div>
+      </div>
+      {panelOpen && <div className="absolute bottom-4 left-4 top-20 z-10 flex w-[min(340px,calc(100%-2rem))] min-h-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-[var(--divider)] bg-[var(--card)]/95 p-4 shadow-2xl backdrop-blur">
+          {fields.map((field) => {
+            const id = `plugin-${field.id}`;
+            const isCheckbox = field.type === 'checkbox';
+            return (
+              <div key={field.id} className="flex flex-col gap-2">
+                {!isCheckbox && <label className="text-sm font-medium text-[var(--foreground)]" htmlFor={id}>{pluginFieldLabel(field)}{field.required && <span className="ml-1 text-red-500">*</span>}</label>}
+                <PluginFieldControl
+                  field={field}
+                  value={values[field.id]}
+                  agentType={agentType}
+                  agentOptions={agentOptions}
+                  onChange={(value) => setValues((current) => ({ ...current, [field.id]: value }))}
+                  onAgentTypeChange={setAgentType}
+                />
+              </div>
+            );
+          })}
+          <button disabled={!canGenerate} onClick={() => void handleGenerate()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--brand)] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
+            {running ? <SpinnerIcon size={16} weight="bold" className="animate-spin" /> : <MagicWandIcon size={16} weight="bold" />}
+            {running ? '生成中…' : runStatus === 'completed' ? '重新生成' : '生成思维导图'}
+          </button>
+          {missingRequiredField && <p className="text-xs text-[var(--muted-foreground)]">请填写必填项：{pluginFieldLabel(missingRequiredField)}</p>}
+          {error && <p className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600">{error}</p>}
+      </div>}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {artifact ? <PluginArtifactRenderer rendererRef={rendererRef} renderer={artifact.renderer} content={artifact.content || ''} /> : <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">输入提示词后开始生成</div>}
+      </div>
+    </div>
+  );
+}

@@ -35,8 +35,8 @@ pub async fn get_session(session_id: &str) -> Result<Vec<ChatMessage>, String> {
         );
         Ok(messages)
     })
-        .await
-        .map_err(|e| e.to_string())?
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub async fn get_session_page(

@@ -269,7 +269,33 @@ Internal testing does NOT need Apple beta review. Each tester receives an Apple 
 
 - We never invoke `xcrun altool` with the Apple ID password on the command line — only with the API key triple or an App-Specific Password piped via env var, never inlined in a script body
 - We never commit the iOS provisioning profile, the .p12, or the .p8. `.gitignore` covers `*.p8`, `*.mobileprovision`, and the `appstoreconnect/` dir under `~/.flowix-signing/`
-- We do NOT write a custom `ExportOptions.plist` — Tauri CLI generates one internally for each `--export-method` value
+- The Tauri pipeline does NOT write a custom `ExportOptions.plist` — Tauri CLI generates one internally for each `--export-method` value. The native Swift pipeline writes its own temporary export plist because it calls `xcodebuild` directly.
+
+### Native Swift iOS TestFlight
+
+The native SwiftUI client has an independent target and App Store Connect app:
+
+- Project: `app/flowix-ios-native/FlowixIOS.xcodeproj`
+- Scheme: `FlowixIOS`
+- Bundle ID: `com.flowix.app.mobile` (same as the existing Tauri TestFlight app)
+- Marketing version: `1.1.15`
+- Provisioning variable: `IOS_NATIVE_MOBILE_PROVISION_PATH`
+
+Reuse the existing `com.flowix.app.mobile` App ID and App Store provisioning profile. The native binary is uploaded as an update to the existing Tauri TestFlight app. Then run:
+
+```bash
+export APPLE_TEAM_ID="9FJ9ZD86C2"
+export IOS_CERT_P12_PATH="$HOME/.flowix-signing/devid-ios.p12"
+export IOS_CERT_P12_PASSWORD="<p12 password>"
+export IOS_NATIVE_MOBILE_PROVISION_PATH="$HOME/.flowix-signing/Flowix_iOS_AppStore.mobileprovision"
+export APPLE_ASC_API_KEY_ID="<key id>"
+export APPLE_ASC_API_ISSUER_ID="<issuer uuid>"
+export APPLE_ASC_API_KEY_PATH="$HOME/.flowix-signing/appstoreconnect/AuthKey_<KEY_ID>.p8"
+
+npm run ios-native:build:testflight
+```
+
+This builds the editor bundle, Rust native API, signed `FlowixIOS` archive, and App Store IPA, then verifies and uploads it. `SKIP_UPLOAD=1` builds and verifies without uploading; `IOS_BUILD_NUMBER` overrides the default timestamp build number.
 
 ## Troubleshooting
 

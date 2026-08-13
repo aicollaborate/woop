@@ -47,7 +47,7 @@ impl MemoFile {
             }
         }
 
-        tags.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        tags.sort_by_key(|tag| tag.name.to_lowercase());
         tags
     }
 
@@ -71,9 +71,9 @@ impl MemoFile {
     fn memos_from_index(list: super::types::MemoIndexFile) -> Vec<Memo> {
         let mut memos: Vec<Memo> = list
             .memos
-            .into_iter()
+            .iter()
             .filter(|entry| !entry.id.is_empty())
-            .map(|entry| MemoFile::index_entry_to_memo(&entry))
+            .map(MemoFile::index_entry_to_memo)
             .collect();
         memos.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         memos
@@ -185,7 +185,7 @@ impl MemoFile {
         list.memos
             .iter()
             .find(|e| e.id == id)
-            .map(|e| MemoFile::index_entry_to_memo(e))
+            .map(MemoFile::index_entry_to_memo)
     }
 
     pub fn read_memo(&self, id: &str) -> Option<Memo> {

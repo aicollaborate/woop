@@ -11,17 +11,30 @@ import type { MemoItem } from '@/types/memo-item';
 
 export type DocumentHistoryDirection = 'back' | 'forward';
 
-function currentMemoHistoryEntry(): MemoHistoryEntry | null {
-  const session = useDocumentStore.getState().activeMemoSession;
-  if (!session) return null;
-  return {
-    kind: 'memo',
-    memoId: session.memoId,
-    notebookId: session.notebookId,
-    notebookPath: session.notebookPath,
-    path: session.path,
-    openedAt: session.openedAt,
-  };
+function currentHistoryEntry(): DocumentHistoryEntry | null {
+  const state = useDocumentStore.getState();
+  const memo = state.activeMemoSession;
+  if (memo) {
+    return {
+      kind: 'memo',
+      memoId: memo.memoId,
+      notebookId: memo.notebookId,
+      notebookPath: memo.notebookPath,
+      path: memo.path,
+      openedAt: memo.openedAt,
+    };
+  }
+  const external = state.activeExternalSession;
+  if (external) {
+    return { kind: 'external', path: external.path, openedAt: external.openedAt };
+  }
+  return state.activeAgentConversationId
+    ? {
+        kind: 'agent-conversation',
+        instanceId: state.activeAgentConversationId,
+        openedAt: Date.now(),
+      }
+    : null;
 }
 
 function filenameFromPath(path: string): string {
@@ -96,27 +109,35 @@ async function openMemoHistoryEntry(entry: MemoHistoryEntry): Promise<void> {
   });
 }
 
-function isMemoHistoryEntry(entry: DocumentHistoryEntry | null): entry is MemoHistoryEntry {
-  return entry?.kind === 'memo';
+function historyEntryKey(entry: DocumentHistoryEntry | null): string | null {
+  if (!entry) return null;
+  if (entry.kind === 'memo') return `memo:${entry.memoId}:${canonicalPath(entry.path)}`;
+  if (entry.kind === 'agent-conversation') return `agent-conversation:${entry.instanceId}`;
+  return `external:${canonicalPath(entry.path)}`;
 }
 
-function isSameMemoEntry(a: MemoHistoryEntry | null, b: MemoHistoryEntry | null): boolean {
-  return !!a && !!b && a.memoId === b.memoId && canonicalPath(a.path) === canonicalPath(b.path);
+async function openHistoryEntry(entry: DocumentHistoryEntry): Promise<void> {
+  if (entry.kind === 'memo') {
+    await openMemoHistoryEntry(entry);
+    return;
+  }
+  if (entry.kind === 'agent-conversation') {
+    await useDocumentStore.getState().openAgentConversation(entry.instanceId, { history: 'skip' });
+    return;
+  }
+  await useDocumentStore.getState().openExternalDocument(entry.path, { history: 'skip' });
 }
 
 export async function navigateDocumentHistory(direction: DocumentHistoryDirection): Promise<boolean> {
-  const current = currentMemoHistoryEntry();
+  const current = currentHistoryEntry();
   let target: DocumentHistoryEntry | null = null;
 
   while (true) {
     const history = useDocumentHistoryStore.getState();
     target = direction === 'back' ? history.peekBack() : history.peekForward();
 
-    if (!isMemoHistoryEntry(target)) {
-      return false;
-    }
-
-    if (!isSameMemoEntry(current, target)) {
+    if (!target) return false;
+    if (historyEntryKey(current) !== historyEntryKey(target)) {
       break;
     }
 
@@ -133,7 +154,7 @@ export async function navigateDocumentHistory(direction: DocumentHistoryDirectio
     useDocumentHistoryStore.getState().commitForwardNavigation(current);
   }
 
-  await openMemoHistoryEntry(target);
+  await openHistoryEntry(target);
 
   return true;
 }

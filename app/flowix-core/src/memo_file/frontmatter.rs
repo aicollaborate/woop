@@ -278,7 +278,7 @@ pub(crate) fn replace_frontmatter_tags_preserving_invalid_paths(
     content: &str,
     tags: &[String],
 ) -> Result<String, FrontmatterMetadataError> {
-    let replacement = serialized_tags_lines(&tags);
+    let replacement = serialized_tags_lines(tags);
 
     let Some(caps) = FRONTMATTER_RE.captures(content) else {
         return Ok(format!("---\n{}\n---\n{}", replacement.join("\n"), content));
@@ -767,8 +767,7 @@ mod tests {
 
     #[test]
     fn document_metadata_does_not_classify_body_tags() {
-        let metadata = extract_document_metadata("---\nkey: abc12345\n---\n# body-only\n")
-            .unwrap();
+        let metadata = extract_document_metadata("---\nkey: abc12345\n---\n# body-only\n").unwrap();
         assert!(metadata.tags.is_empty());
     }
 
@@ -796,8 +795,7 @@ mod tests {
 
     #[test]
     fn document_metadata_rejects_non_array_tags() {
-        let error =
-            extract_document_metadata("---\ntags: product\n---\nbody\n").unwrap_err();
+        let error = extract_document_metadata("---\ntags: product\n---\nbody\n").unwrap_err();
         assert!(matches!(error, FrontmatterMetadataError::InvalidTagsType));
     }
 
@@ -813,11 +811,9 @@ mod tests {
             "---\n",
             "# old/path remains body text\n"
         );
-        let output = replace_frontmatter_tags(
-            input,
-            &["new/path".to_string(), "product".to_string()],
-        )
-        .unwrap();
+        let output =
+            replace_frontmatter_tags(input, &["new/path".to_string(), "product".to_string()])
+                .unwrap();
         assert_eq!(
             output,
             concat!(

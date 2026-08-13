@@ -5,6 +5,7 @@ export type AgentConversationSource = {
   kind: "thread-card";
   documentPath?: string | null;
   memoId?: string | null;
+  notebookId?: string | null;
 };
 
 export interface AgentConversationRole {

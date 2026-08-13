@@ -11,10 +11,10 @@ use crate::agent_external::cli_resolver::{
     no_extra_candidates, resolve_external_cli, ExternalCliSpec,
 };
 use crate::agent_external::{
-    append_workspace_context, canonical_message_id, default_thread_title, persist_and_emit_external_chunk,
-    persist_external_chunk, read_to_string, resolve_and_freeze_runtime_cwd,
-    select_external_session_for_runtime, truncate_for_log, ExternalRunRegistry,
-    USER_STOPPED_REASON,
+    append_workspace_context, canonical_message_id, default_thread_title,
+    persist_and_emit_external_chunk, persist_external_chunk, read_to_string,
+    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, truncate_for_log,
+    ExternalRunRegistry, USER_STOPPED_REASON,
 };
 use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
@@ -392,12 +392,7 @@ impl HermesCliManager {
             .add_message(
                 thread_id,
                 ThreadChatMessage {
-                    id: canonical_message_id(
-                        AGENT_TYPE,
-                        run_id,
-                        "user",
-                        &format!("user-{run_id}"),
-                    ),
+                    id: canonical_message_id(AGENT_TYPE, run_id, "user", &format!("user-{run_id}")),
                     role: "user".to_string(),
                     content: prompt.to_string(),
                     llm_content: Some(prompt.to_string()),

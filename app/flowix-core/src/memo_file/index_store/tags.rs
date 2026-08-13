@@ -1,5 +1,7 @@
 use super::*;
 
+type TagUsageSummary = (Vec<String>, Vec<(String, usize)>, usize, usize, usize);
+
 impl MemoFile {
     pub fn read_used_tag_ids(&self) -> std::io::Result<Vec<String>> {
         let list = self.read_index_result()?.unwrap_or_default();
@@ -85,7 +87,7 @@ impl MemoFile {
     pub fn read_tag_usage_summary_for_notebook_id(
         &self,
         notebook_id: Option<&str>,
-    ) -> std::io::Result<(Vec<String>, Vec<(String, usize)>, usize, usize, usize)> {
+    ) -> std::io::Result<TagUsageSummary> {
         let notebook_id = self.notebook_id_for_index(notebook_id);
         let _ = self.read_index_for_notebook_id(Some(&notebook_id));
         let conn = self.open_memo_index_db()?;

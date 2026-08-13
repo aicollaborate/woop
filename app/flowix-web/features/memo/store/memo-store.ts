@@ -137,6 +137,7 @@ export interface MemoStore {
   selectedNotebook: Notebook | null;
   // UI filter/sort
   activeFilter: ExtendedFilterType;
+  activePluginId: string | null;
   activeSort: SortType;
   // 'color' 二级弹窗用的具体颜色值。'any'/'none'/具体颜色 (MEMO_COLORS)。
   // 当 activeFilter !== 'color' 时此值仍然保留, 切回颜色筛选时恢复。
@@ -156,6 +157,7 @@ export interface MemoStore {
    */
   reorderNotebooks: (nextOrderIds: string[]) => Promise<void>;
   setActiveFilter: (filter: ExtendedFilterType) => void;
+  setActivePluginId: (pluginId: string | null) => void;
   setActiveSort: (sort: SortType) => void;
   setColorFilter: (color: ColorFilterValue) => void;
   triggerRefresh: () => void;
@@ -209,6 +211,7 @@ export const useMemoStore = create<MemoStore>()(
       selectedMemo: null,
       selectedNotebook: null,
       activeFilter: 'all',
+      activePluginId: null,
       activeSort: 'createdAt',
       colorFilter: 'any',
       refreshTrigger: 0,
@@ -226,12 +229,13 @@ export const useMemoStore = create<MemoStore>()(
         const nextNotebookId = notebook?.id ?? null;
         if (currentNotebookId !== nextNotebookId) {
           useTagStore.getState().setSelectedTagId(null);
-          set({ selectedNotebook: notebook, activeFilter: 'all' });
+          set({ selectedNotebook: notebook, activeFilter: 'all', activePluginId: null });
           return;
         }
         set({ selectedNotebook: notebook });
       },
-      setActiveFilter: (filter) => set({ activeFilter: filter }),
+      setActiveFilter: (filter) => set({ activeFilter: filter, activePluginId: null }),
+      setActivePluginId: (pluginId) => set({ activePluginId: pluginId }),
       setActiveSort: (sort) => set({ activeSort: sort }),
       setColorFilter: (color) => set({ colorFilter: color }),
       triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
@@ -263,15 +267,18 @@ export const useMemoStore = create<MemoStore>()(
         const state = get();
         const notebookId = params?.notebookId || state.selectedNotebook?.id;
         const filter = params?.filter || state.activeFilter;
+        const pluginId = state.activePluginId;
         const sort = params?.sort || state.activeSort;
         const tagId = params?.tagId;
         // 'color' 是前端专用, 转 'all' 走全量, 由 useMemo 按 colorFilter 过滤。
-        const response = await memoRepository.list({
-          notebookId,
-          filter: toBackendFilter(filter),
-          sort,
-          tagId,
-        });
+        const response = pluginId && notebookId
+          ? { memos: await memoRepository.listPluginNotes(pluginId, notebookId) }
+          : await memoRepository.list({
+              notebookId,
+              filter: toBackendFilter(filter),
+              sort,
+              tagId,
+            });
         if (requestSeq !== loadMemosRequestSeq) {
           return;
         }

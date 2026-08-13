@@ -118,8 +118,13 @@ pub struct V2RemoteAttachment {
 /// Collects only files referenced by this document's `asset://` links.
 /// `attachments/` is notebook-scoped storage, while cloud manifests must be
 /// document-scoped to avoid unrelated files causing sync churn.
-pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V2LocalAttachment>, String> {
-    if !directory.exists() { return Ok(Vec::new()); }
+pub fn collect_v2_attachments(
+    directory: &Path,
+    markdown: &[u8],
+) -> Result<Vec<V2LocalAttachment>, String> {
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
     let directory = match std::fs::canonicalize(directory) {
         Ok(directory) => directory,
         // The attachments directory may be removed between `exists` and
@@ -129,8 +134,14 @@ pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V
     };
     let mut attachments = Vec::new();
     for path in referenced_attachment_paths(&directory, markdown) {
-        let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_string();
-        if filename.is_empty() || filename.contains(['/', '\\']) { continue; }
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if filename.is_empty() || filename.contains(['/', '\\']) {
+            continue;
+        }
         let content = match std::fs::read(&path) {
             Ok(content) => content,
             // An attachment can disappear after the markdown scan. It should
@@ -144,7 +155,8 @@ pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V
                 mime_type: attachment_mime_type(&filename).to_string(),
                 filename,
                 content_hash: v2_content_hash(&content),
-                size_bytes: i64::try_from(content.len()).map_err(|_| "attachment exceeds i64".to_string())?,
+                size_bytes: i64::try_from(content.len())
+                    .map_err(|_| "attachment exceeds i64".to_string())?,
             },
             content,
         });
@@ -154,14 +166,21 @@ pub fn collect_v2_attachments(directory: &Path, markdown: &[u8]) -> Result<Vec<V
 }
 
 fn referenced_attachment_paths(directory: &Path, markdown: &[u8]) -> BTreeSet<PathBuf> {
-    const PREFIXES: [&str; 3] = ["asset://localhost/", "http://asset.localhost/", "https://asset.localhost/"];
+    const PREFIXES: [&str; 3] = [
+        "asset://localhost/",
+        "http://asset.localhost/",
+        "https://asset.localhost/",
+    ];
     let source = String::from_utf8_lossy(markdown);
     let mut paths = BTreeSet::new();
     for prefix in PREFIXES {
         let mut remaining = source.as_ref();
         while let Some(index) = remaining.find(prefix) {
             let encoded = &remaining[index + prefix.len()..];
-            let end = encoded.find(|value: char| value.is_whitespace() || matches!(value, ')' | '"' | '\'' | '<' | '>'))
+            let end = encoded
+                .find(|value: char| {
+                    value.is_whitespace() || matches!(value, ')' | '"' | '\'' | '<' | '>')
+                })
                 .unwrap_or(encoded.len());
             if let Some(decoded) = percent_decode(&encoded[..end]) {
                 if let Ok(path) = std::fs::canonicalize(PathBuf::from(decoded)) {
@@ -171,7 +190,9 @@ fn referenced_attachment_paths(directory: &Path, markdown: &[u8]) -> BTreeSet<Pa
                 }
             }
             remaining = &encoded[end..];
-            if remaining.is_empty() { break; }
+            if remaining.is_empty() {
+                break;
+            }
         }
     }
     paths
@@ -183,7 +204,9 @@ fn percent_decode(value: &str) -> Option<String> {
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            decoded.push((hex_value(*bytes.get(index + 1)?)? << 4) | hex_value(*bytes.get(index + 2)?)?);
+            decoded.push(
+                (hex_value(*bytes.get(index + 1)?)? << 4) | hex_value(*bytes.get(index + 2)?)?,
+            );
             index += 3;
         } else {
             decoded.push(bytes[index]);
@@ -203,7 +226,13 @@ fn hex_value(value: u8) -> Option<u8> {
 }
 
 fn attachment_mime_type(filename: &str) -> &'static str {
-    match Path::new(filename).extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+    match Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
@@ -556,7 +585,9 @@ pub struct V2PushResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_v2_attachments, new_v2_operation_id, v2_content_hash, V2NotePut, V2PushOperation};
+    use super::{
+        collect_v2_attachments, new_v2_operation_id, v2_content_hash, V2NotePut, V2PushOperation,
+    };
 
     #[test]
     fn content_hash_matches_web_crypto_base64_url_without_padding() {
@@ -612,7 +643,10 @@ mod tests {
         let used = directory.join("used image.png");
         std::fs::write(&used, b"used").unwrap();
         std::fs::write(directory.join("unrelated.mp4"), b"unrelated").unwrap();
-        let encoded = used.to_string_lossy().replace('/', "%2F").replace(' ', "%20");
+        let encoded = used
+            .to_string_lossy()
+            .replace('/', "%2F")
+            .replace(' ', "%20");
         let markdown = format!("![image](asset://localhost/{encoded})");
 
         let attachments = collect_v2_attachments(&directory, markdown.as_bytes()).unwrap();
@@ -632,6 +666,8 @@ mod tests {
         let encoded = outside.to_string_lossy().replace('/', "%2F");
         let markdown = format!("[file](asset://localhost/{encoded})");
 
-        assert!(collect_v2_attachments(&directory, markdown.as_bytes()).unwrap().is_empty());
+        assert!(collect_v2_attachments(&directory, markdown.as_bytes())
+            .unwrap()
+            .is_empty());
     }
 }

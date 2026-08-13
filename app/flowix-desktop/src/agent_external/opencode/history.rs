@@ -33,11 +33,7 @@ pub async fn get_session_page(
         .map_err(|error| format!("invalid OpenCode session export: {error}"))?;
     let mut turns = export_to_turns(&value);
     for turn in &mut turns {
-        crate::agent_external::canonicalize_imported_messages(
-            "opencode",
-            session_id,
-            turn,
-        );
+        crate::agent_external::canonicalize_imported_messages("opencode", session_id, turn);
     }
     Ok(paginate_turns(turns, before_sequence, limit))
 }

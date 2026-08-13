@@ -13,6 +13,7 @@ interface NavFilterButtonsProps {
   totalMemoCount: number;
   agentMemoCount: number;
   todoMemoCount: number;
+  onSelectFilter?: () => void;
 }
 
 // 顶部过滤器 (全部 / 对话 / 待办) ── 从 NoteNavigationPanel 拆出。
@@ -24,6 +25,7 @@ export function NavFilterButtons({
   totalMemoCount,
   agentMemoCount,
   todoMemoCount,
+  onSelectFilter,
 }: NavFilterButtonsProps) {
   const { t } = useI18n();
   const activeFilter = useMemoStore((s) => s.activeFilter);
@@ -32,19 +34,26 @@ export function NavFilterButtons({
       setActiveFilter: s.setActiveFilter,
     })),
   );
+  const setActivePluginId = useMemoStore((s) => s.setActivePluginId);
   const setSelectedTagId = useTagStore((s) => s.setSelectedTagId);
 
   const handleShowAllTags = () => {
+    onSelectFilter?.();
+    setActivePluginId(null);
     setSelectedTagId(null);
     setActiveFilter('all');
   };
 
   const handleShowAgentMemos = () => {
+    onSelectFilter?.();
+    setActivePluginId(null);
     setSelectedTagId(null);
     setActiveFilter('agents');
   };
 
   const handleShowTaskMemos = () => {
+    onSelectFilter?.();
+    setActivePluginId(null);
     setSelectedTagId(null);
     setActiveFilter('todos');
   };

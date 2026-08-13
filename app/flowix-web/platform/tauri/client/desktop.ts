@@ -155,10 +155,104 @@ export const product = {
   openLogDir: () => invoke<void>('open_log_dir'),
 };
 
+export interface PluginManifest {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  version: string;
+  kind: string;
+  ui: { placement: string; order: number; icon: string };
+  input: {
+    fields: PluginField[];
+    prompt?: PluginField;
+    agentType?: PluginField;
+  };
+  agent: { skill: string };
+  discovery?: { noteType?: string | null };
+  execution?: { runtime?: string | null };
+  output: {
+    format: string;
+    directory: string;
+    extension: string;
+    renderer: string;
+    parser?: string;
+  };
+}
+
+export interface PluginOption {
+  value: string;
+  label: string;
+}
+
+export interface PluginField {
+  id: string;
+  type: string;
+  label?: string | null;
+  required: boolean;
+  placeholder?: string | null;
+  options: PluginOption[];
+}
+
+export interface PluginDescriptor {
+  manifest: PluginManifest;
+  installedPath: string;
+  skill: string;
+  isSystem: boolean;
+}
+
+export interface PluginArtifact {
+  pluginId: string;
+  path: string;
+  name: string;
+  createdAt: string;
+  format: string;
+  renderer: string;
+  content?: string | null;
+  noteId?: string | null;
+}
+
+export interface PluginRunStarted {
+  runId: string;
+  preparedPrompt: string;
+}
+
+export interface PluginRunEvent {
+  runId: string;
+  pluginId: string;
+  status: 'started' | 'text' | 'completed' | 'failed' | 'cancelled';
+  agentType: string;
+  artifact?: PluginArtifact | null;
+  error?: string | null;
+  content?: string | null;
+}
+
+export const plugins = {
+  list: () => invoke<PluginDescriptor[]>('plugin_list'),
+  refresh: () => invoke<PluginDescriptor[]>('plugin_refresh'),
+  install: (sourceDirectory: string) =>
+    invoke<PluginDescriptor>('plugin_install', { sourceDirectory }),
+  uninstall: (pluginId: string) => invoke<void>('plugin_uninstall', { pluginId }),
+  get: (pluginId: string) => invoke<PluginDescriptor>('plugin_get', { pluginId }),
+  preparePrompt: (pluginId: string, userPrompt: string, context: string) =>
+    invoke<string>('plugin_prepare_prompt', { pluginId, userPrompt, context }),
+  run: (params: {
+    pluginId: string;
+    userPrompt: string;
+    context: string;
+    agentType: string;
+    notebookPath: string;
+    sourceNote?: string;
+  }) => invoke<PluginRunStarted>('plugin_run', params),
+  runStop: (runId: string) => invoke<boolean>('plugin_run_stop', { runId }),
+  listNotes: (pluginId: string, notebookId: string) =>
+    invoke<import('@/types/memo-item').MemoItem[]>('plugin_list_notes', { pluginId, notebookId }),
+  resolveNote: (memoId: string) =>
+    invoke<PluginArtifact>('plugin_resolve_note', { memoId }),
+};
+
 // Agent
 //
 // AI model config is sourced from ~/.flowix/agent-config.toml; see aiConfig.set/get above.
 // 骞舵儼鎬ф瀯寤?provider 瀹炰緥 (瑙?backend/src/agent.rs AgentManager::ensure_instance)銆?//
 // 瀛楁鍛藉悕: 鍚庣 AiModelConfig 鐢?`#[serde(rename_all = "camelCase")]`, 鎵€浠?// IPC 浼犺繃鍘诲繀椤绘槸 camelCase 鈹€ snake_case 浼氳 serde 闈欓粯涓㈠純, 瀛楁鍏ㄩ儴鍥為€€
 // 鍒?#[serde(default)] = 绌轰覆, 琛ㄧ幇灏辨槸"淇濆瓨鍚庡埛鏂?apiKey/apiUrl 閮界┖浜?銆?
-

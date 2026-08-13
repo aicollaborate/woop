@@ -9,6 +9,7 @@ use super::events::{
     ClaudeStreamState, ParsedClaudeStdoutLine,
 };
 use super::AGENT_TYPE;
+use crate::agent_external::shared::TurnEvents;
 use crate::agent_external::{
     emit_chunk_with_run_id_and_metadata, persist_and_emit_external_chunk,
     persist_external_chunk_for_thread_with_metadata, read_capped_line, truncate_for_log,
@@ -18,7 +19,6 @@ use crate::agent_external::{
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
-use crate::agent_external::shared::TurnEvents;
 
 type ClaudeTurnEvents = TurnEvents;
 
@@ -77,7 +77,6 @@ fn observe_claude_turn(
         _ => {}
     }
 }
-
 
 /// Flush the frame buffer to the live UI and fold it into the turn snapshot.
 /// Database persistence happens once at the end of the turn.
@@ -250,7 +249,8 @@ where
                     thread_id: thread_id.clone(),
                     text: text.clone(),
                 };
-                let metadata = crate::agent_external::shared::complete_chunk_metadata(true, 
+                let metadata = crate::agent_external::shared::complete_chunk_metadata(
+                    true,
                     AgentChunkMetadata {
                         message_phase: Some("updated"),
                         content_mode: Some("delta"),
@@ -346,7 +346,8 @@ where
         let source_timestamp = claude_event_timestamp_millis(&value)
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         for (source_subsequence, chunk) in parsed.chunks.into_iter().enumerate() {
-            let metadata = crate::agent_external::shared::complete_chunk_metadata(true, 
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(
+                true,
                 claude_chunk_metadata(&value, &chunk, &stream_state),
                 &chunk,
                 &run_id,
@@ -486,7 +487,8 @@ mod tests {
             ..Default::default()
         };
         for text in ["hello ", "world"] {
-            observe_claude_turn(&mut turn, 
+            observe_claude_turn(
+                &mut turn,
                 &AgentChunk::Text {
                     thread_id: "thread-1".to_string(),
                     text: text.to_string(),
@@ -495,7 +497,8 @@ mod tests {
                 "run-1",
             );
         }
-        observe_claude_turn(&mut turn, 
+        observe_claude_turn(
+            &mut turn,
             &AgentChunk::ToolCall {
                 thread_id: "thread-1".to_string(),
                 id: "call-1".to_string(),
@@ -521,7 +524,8 @@ mod tests {
             thread_id: "thread-1".to_string(),
             text: "thinking".to_string(),
         };
-        let first = crate::agent_external::shared::complete_chunk_metadata(true, 
+        let first = crate::agent_external::shared::complete_chunk_metadata(
+            true,
             AgentChunkMetadata {
                 message_id: Some("reasoning-provider-message-1-block-0".to_string()),
                 ..Default::default()
@@ -532,7 +536,8 @@ mod tests {
             1,
             0,
         );
-        let second = crate::agent_external::shared::complete_chunk_metadata(true, 
+        let second = crate::agent_external::shared::complete_chunk_metadata(
+            true,
             AgentChunkMetadata {
                 message_id: Some("reasoning-provider-message-2-block-0".to_string()),
                 ..Default::default()
@@ -568,8 +573,15 @@ mod tests {
             first_raw.message_id.as_deref(),
             Some("reasoning-provider-message-1-block-0")
         );
-        let first_metadata =
-            crate::agent_external::shared::complete_chunk_metadata(true, first_raw, first_chunk, "run-1", 100, 1, 0);
+        let first_metadata = crate::agent_external::shared::complete_chunk_metadata(
+            true,
+            first_raw,
+            first_chunk,
+            "run-1",
+            100,
+            1,
+            0,
+        );
 
         let parsed = parse_claude_stdout_line_with_state("thread-1", second_start, &mut state);
         assert!(parsed.chunks.is_empty());
@@ -581,8 +593,15 @@ mod tests {
             second_raw.message_id.as_deref(),
             Some("reasoning-provider-message-2-block-0")
         );
-        let second_metadata =
-            crate::agent_external::shared::complete_chunk_metadata(true, second_raw, second_chunk, "run-1", 200, 2, 0);
+        let second_metadata = crate::agent_external::shared::complete_chunk_metadata(
+            true,
+            second_raw,
+            second_chunk,
+            "run-1",
+            200,
+            2,
+            0,
+        );
 
         assert_eq!(
             first_metadata.message_id.as_deref(),

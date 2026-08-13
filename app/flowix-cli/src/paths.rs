@@ -8,7 +8,7 @@
 //!
 //! 路径常量属于应用入口职责，业务核心 (`flowix-core`) 不依赖这些目录约定。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::CliError;
 
@@ -56,6 +56,6 @@ pub fn get_app_data_path() -> PathBuf {
         .join(APP_DATA_DIR_NAME)
 }
 
-pub fn get_user_config_dir(home_dir: &PathBuf) -> PathBuf {
+pub fn get_user_config_dir(home_dir: &Path) -> PathBuf {
     home_dir.join(USER_CONFIG_DIR_NAME)
 }

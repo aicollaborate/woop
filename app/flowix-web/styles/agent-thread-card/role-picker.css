@@ -299,6 +299,15 @@
   display: none;
 }
 
+/* Standalone conversation details use the same badge hover card as the
+ * fullscreen Thread Card. Unlike the editor NodeView it does not need a
+ * separately-positioned mount; this local wrapper is the anchor. */
+.agent-thread-card__badge-hover-wrapper {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
 .agent-thread-card__badge-hover-trigger {
   position: absolute;
   inset: 0;
@@ -315,4 +324,3 @@
 .agent-thread-card__badge-hover-trigger[data-state="open"] ~ .agent-type-badge .agent-type-badge__name {
   color: var(--foreground);
 }
-

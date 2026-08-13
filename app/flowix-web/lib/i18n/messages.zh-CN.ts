@@ -35,6 +35,7 @@ const zhCN = {
     "preferences.tabs.videoGeneration": "视频生成",
     "preferences.tabs.tools": "工具",
     "preferences.tabs.history": "历史",
+    "preferences.tabs.plugins": "插件",
 
     "preferences.cloud.title": "Flowix 云同步",
     "preferences.cloud.description": "使用 Flowix Cloud 在设备之间同步已启用笔记本的 Markdown 文件。",
@@ -452,6 +453,7 @@ const zhCN = {
     "status.agent.noConversations": "暂无对话",
     "status.agent.openRun": "打开所在文档",
     "status.agent.originUnavailable": "无法定位文档",
+    "document.agent.viewInNote": "笔记中查看",
     "status.agent.history.title": "Agent 对话记录",
     "status.agent.history.all": "全部",
     "status.notebook": "笔记本",
@@ -1021,6 +1023,12 @@ const zhCN = {
     "document.agent.menuTooltip": "查看 Agent 对话",
     "document.agent.empty": "无 Agent 对话",
     "document.agent.conversationsTitle": "对话",
+    "document.agent.filterByAgent": "按 Agent 类型筛选",
+    "document.agent.filterByAgentCount": "筛选：{name}（共 {count} 个）",
+    "document.agent.group.today": "今天",
+    "document.agent.group.yesterday": "昨天",
+    "document.agent.group.last7Days": "最近 7 天",
+    "document.agent.group.earlier": "更早",
 
     // shell
     "shell.commandPalette.placeholder": "搜索备忘录、笔记本、操作…",

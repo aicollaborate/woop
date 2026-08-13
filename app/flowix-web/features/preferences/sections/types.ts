@@ -20,6 +20,7 @@ export type SettingsTab =
   | 'tools'
   | 'history'
   | 'aiAgent'
+  | 'plugins'
   // 旧 id, 仍在 normalizeInitialTab 里重定向使用。
   | 'agent'
   | 'agents'

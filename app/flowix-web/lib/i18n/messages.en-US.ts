@@ -40,6 +40,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.tabs.videoGeneration": "Video Generation",
     "preferences.tabs.tools": "Tools",
     "preferences.tabs.history": "History",
+    "preferences.tabs.plugins": "Plugins",
 
     "preferences.cloud.title": "Flowix Cloud Sync",
     "preferences.cloud.description": "Sync Markdown files from enabled notebooks across devices with Flowix Cloud.",
@@ -476,6 +477,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "status.agent.noConversations": "No conversations",
     "status.agent.openRun": "Open document",
     "status.agent.originUnavailable": "Document unavailable",
+    "document.agent.viewInNote": "View in note",
     "status.agent.history.title": "Agent conversations",
     "status.agent.history.all": "All",
     "status.notebook": "Notebook",
@@ -1051,6 +1053,12 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "document.agent.menuTooltip": "View Agent threads",
     "document.agent.empty": "No Agent threads",
     "document.agent.conversationsTitle": "Conversations",
+    "document.agent.filterByAgent": "Filter by agent type",
+    "document.agent.filterByAgentCount": "Filter: {name} ({count})",
+    "document.agent.group.today": "Today",
+    "document.agent.group.yesterday": "Yesterday",
+    "document.agent.group.last7Days": "Last 7 days",
+    "document.agent.group.earlier": "Earlier",
 
     // shell
     "shell.commandPalette.placeholder": "Search notes, notebooks, actions...",

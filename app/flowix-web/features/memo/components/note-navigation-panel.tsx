@@ -11,6 +11,8 @@ import { NavFilterButtons } from '@features/memo/components/nav-filter-buttons';
 import { TagTree } from '@features/memo/components/tag-tree';
 import { type Notebook } from '@features/memo';
 import { isWindowsPlatform } from '@/lib/shortcuts/platform';
+import { PluginNavItems } from '@features/plugin';
+import type { PluginDescriptor } from '@platform/tauri/client';
 
 interface NoteNavigationPanelProps {
   notebooks: Notebook[];
@@ -19,6 +21,9 @@ interface NoteNavigationPanelProps {
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
   onTogglePanel: () => void;
+  activePluginId: string | null;
+  onOpenPlugin: (plugin: PluginDescriptor) => void | Promise<void>;
+  onClosePlugin: () => void;
 }
 
 interface NavCounts {
@@ -41,6 +46,9 @@ export function NoteNavigationPanel({
   onEditNotebook,
   onDeleteNotebook,
   onTogglePanel,
+  activePluginId,
+  onOpenPlugin,
+  onClosePlugin,
 }: NoteNavigationPanelProps) {
   const [counts, setCounts] = useState<NavCounts>({ total: 0, agent: 0, todo: 0 });
 
@@ -77,6 +85,11 @@ export function NoteNavigationPanel({
             totalMemoCount={counts.total}
             agentMemoCount={counts.agent}
             todoMemoCount={counts.todo}
+            onSelectFilter={onClosePlugin}
+          />
+          <PluginNavItems
+            activePluginId={activePluginId}
+            onOpenPlugin={onOpenPlugin}
           />
           {/* 待办与标签组之间的分割线 ── my-1 上下各 4px 留白; 下方 4px 与标签组容器 pt-1 (padding, 不与 margin 折叠) 叠加, 分隔线到标签标题实际间距 8px。 */}
           <div className="my-1 border-t border-[var(--muted-foreground)]/30" />

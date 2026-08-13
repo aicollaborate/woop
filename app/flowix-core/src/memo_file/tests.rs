@@ -53,7 +53,7 @@ fn fresh_memo_file() -> (MemoFile, PathBuf) {
         icon: Some("📓".to_string()),
         path: format!("{}/", tmp.display()),
         is_default: true,
-            sort: 0,
+        sort: 0,
         created_at: 0,
         updated_at: 0,
     };
@@ -224,7 +224,7 @@ fn read_memos_for_notebook_id_does_not_switch_current_notebook() {
         icon: None,
         path: format!("{}/", other_dir.display()),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     });
@@ -260,7 +260,7 @@ fn register_existing_file_for_other_notebook_does_not_switch_current_notebook() 
         icon: None,
         path: format!("{}/", other_dir.display()),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     });
@@ -310,7 +310,7 @@ fn read_memo_by_id_resolves_global_notebook_location() {
         icon: None,
         path: format!("{}/", other_dir.display()),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     });
@@ -359,7 +359,7 @@ fn write_memo_by_id_updates_global_notebook_without_switching_current() {
         icon: None,
         path: format!("{}/", other_dir.display()),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     });
@@ -402,7 +402,7 @@ fn pasted_file_with_key_from_other_notebook_gets_new_id_in_current_notebook() {
         icon: None,
         path: format!("{}/", other_dir.display()),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     });
@@ -2191,7 +2191,7 @@ fn notebook_configs_cache_updates_on_write() {
         icon: None,
         path: "/tmp/extra/".to_string(),
         is_default: false,
-            sort: 0,
+        sort: 0,
         created_at: 1,
         updated_at: 1,
     };
@@ -2701,7 +2701,7 @@ fn tag_prefix_counts_use_distinct_memos_not_tag_sum() {
         "中国/湖南/长沙 应有 1 个 memo (C only)"
     );
     // 不在 schema 里的 prefix 不应出现
-    assert!(counts.get("泰国").is_none());
+    assert!(!counts.contains_key("泰国"));
 }
 
 #[test]
@@ -2847,13 +2847,29 @@ fn open_index_db_upgrades_legacy_schema_and_normalizes_sort() {
         conn.execute(
             "INSERT INTO notebooks (id, name, icon, path, is_default, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params!["nb_alpha", "Alpha", Option::<String>::None, "/tmp/a/", 0i64, 100i64, 100i64],
+            rusqlite::params![
+                "nb_alpha",
+                "Alpha",
+                Option::<String>::None,
+                "/tmp/a/",
+                0i64,
+                100i64,
+                100i64
+            ],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO notebooks (id, name, icon, path, is_default, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params!["nb_beta", "Beta", Option::<String>::None, "/tmp/b/", 0i64, 50i64, 50i64],
+            rusqlite::params![
+                "nb_beta",
+                "Beta",
+                Option::<String>::None,
+                "/tmp/b/",
+                0i64,
+                50i64,
+                50i64
+            ],
         )
         .unwrap();
     }

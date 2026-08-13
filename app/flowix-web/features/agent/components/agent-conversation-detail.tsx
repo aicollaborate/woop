@@ -1,13 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { getAgentType } from '@/lib/agent-types';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { windows } from '@platform/tauri/client';
-import { SidebarToggleIcon } from '@shared/icons/sidebar-toggle-icon';
-import { isWindowsPlatform } from '@features/shortcuts';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { acquireThreadInterest } from '@features/agent/store/thread-interest';
 import type { ThreadState } from '@features/agent/store/thread-runtime-state';
@@ -24,6 +22,8 @@ import {
 import { AgentRolePickerController } from '@features/agent/thread-card/role/agent-role-picker-controller';
 import { ExternalAgentSettingsController } from '@features/agent/thread-card/settings/external-agent-settings-controller';
 import { AgentConversationSurfaceController } from '@features/agent/thread-card/surface/agent-conversation-surface-controller';
+import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
+import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -59,21 +59,14 @@ function persistDetailDraft(instanceId: string, draft: string | null): void {
  *
  * Unlike the first implementation, this surface now uses the exact same
  * message viewport and composer controllers as the note-embedded Thread Card.
- * The remaining ProseMirror-only concerns (node attrs, collapse, delete and
- * title editing) deliberately remain in AgentThreadCardView.
+ * ProseMirror-only concerns (node attrs, collapse and delete) deliberately
+ * remain in AgentThreadCardView; this host keeps the shared conversation
+ * chrome, including title editing, above its message viewport.
  */
 export function AgentConversationDetail({
   instanceId,
-  isSidebarCollapsed,
-  onExpandSidebar,
-  onSidebarPreviewEnter,
-  onSidebarPreviewLeave,
 }: {
   instanceId: string;
-  isSidebarCollapsed: boolean;
-  onExpandSidebar: () => void;
-  onSidebarPreviewEnter?: () => void;
-  onSidebarPreviewLeave?: () => void;
 }) {
   const { language, t } = useI18n();
   const instance = useAgentSessionStore((state) => state.getInstance(instanceId));
@@ -84,11 +77,11 @@ export function AgentConversationDetail({
   const projection = useAgentSessionStore((state) => (
     renderThreadId ? state.threadProjections[renderThreadId] : undefined
   ));
+  const codexModel = useAgentSessionStore((state) => state.sessionMeta.settings.agentCodexModel);
   const messages = projection?.messages ?? EMPTY_MESSAGES;
   const isLoading = !!projection?.runs.isLoading;
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
-
   const domRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const loadingIndicatorRef = useRef<HTMLDivElement>(null);
@@ -345,59 +338,76 @@ export function AgentConversationDetail({
   }
 
   const agent = getAgentType(instance.agentType);
-  const useMacosTrafficLightInset = isSidebarCollapsed && !isWindowsPlatform();
+  const badgeData = useMemo(
+    () => computeAgentThreadCardBadgeData({
+      threadState: projection
+        ? {
+            lastRun: projection.runs.lastRun,
+            activeRunId: projection.runs.activeRunId,
+            runs: projection.runs.runs,
+          }
+        : undefined,
+      codexModel,
+      typeKey: instance.agentType,
+    }),
+    [codexModel, instance.agentType, projection],
+  );
+  const runtimeCwd = (
+    instance.runtimeConfig?.workspaceSnapshot?.cwd
+    ?? instance.runtimeConfig?.cwd
+    ?? ''
+  ).trim() || undefined;
   const commitTitle = () => {
     const title = titleDraft.trim();
     if (title) useAgentSessionStore.getState().renameInstance(instance.instanceId, title);
     setIsEditingTitle(false);
   };
+
   return (
     <section className="agent-conversation-detail markdown-editor flex h-full min-h-0 flex-col">
-      <div className={`agent-conversation-detail__header flex h-12 shrink-0 items-center gap-2 ${
-        useMacosTrafficLightInset ? 'pl-[90px] pr-5' : 'px-5'
-      }`}>
-        {isSidebarCollapsed && (
-          <button
-            type="button"
-            onClick={onExpandSidebar}
-            onMouseEnter={onSidebarPreviewEnter}
-            onMouseLeave={onSidebarPreviewLeave}
-            aria-label={t('document.titlebar.showSidebar')}
-            title={t('document.titlebar.showSidebarTooltip')}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-          >
-            <SidebarToggleIcon className="h-5 w-5" variant="collapsed" />
-          </button>
-        )}
-        <span className="agent-type-badge" aria-hidden="true">
-          <img className="agent-type-badge__icon" src={agent.icon} alt="" draggable={false} />
-        </span>
-        {isEditingTitle ? (
-          <input
-            autoFocus
-            value={titleDraft}
-            className="min-w-0 flex-1 bg-transparent text-sm font-medium text-[var(--foreground)] outline-none"
-            onChange={(event) => setTitleDraft(event.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                commitTitle();
-              }
-              if (event.key === 'Escape') setIsEditingTitle(false);
-            }}
-          />
-        ) : (
-          <h1
-            className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]"
-            onDoubleClick={() => {
-              setTitleDraft(instance.title?.trim() || '');
-              setIsEditingTitle(true);
-            }}
-          >
-            {instance.title?.trim() || t('common.untitled')}
-          </h1>
-        )}
+      <div className="agent-conversation-detail__header agent-thread-card__header">
+        <div className="agent-thread-card__agent">
+          <span className="agent-thread-card__badge-hover-wrapper">
+            <BadgeHoverCard
+              sessionId={renderThreadId ?? threadId}
+              model={badgeData.model}
+              lastRunAt={badgeData.lastRunAt}
+              totalTokens={badgeData.totalTokens}
+              cwd={runtimeCwd}
+            />
+            <span className="agent-type-badge" aria-hidden="true" title={agent.desc}>
+              <img className="agent-type-badge__icon" src={agent.icon} alt="" draggable={false} />
+            </span>
+          </span>
+          {isEditingTitle ? (
+            <div className="agent-thread-card__title">
+              <input
+                autoFocus
+                value={titleDraft}
+                className="agent-thread-card__title-input"
+                onChange={(event) => setTitleDraft(event.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitTitle();
+                  }
+                  if (event.key === 'Escape') setIsEditingTitle(false);
+                }}
+              />
+            </div>
+          ) : (
+            <div
+              className="agent-thread-card__title"
+              onDoubleClick={() => {
+                setTitleDraft(instance.title?.trim() || '');
+                setIsEditingTitle(true);
+              }}
+            >
+              {instance.title?.trim() || t('common.untitled')}
+            </div>
+          )}
+        </div>
       </div>
       <div ref={domRef} className="agent-thread-card agent-conversation-detail__card flex min-h-0 flex-1 flex-col">
         <div ref={bodyRef} className="agent-thread-card__body" onScroll={() => messagesControllerRef.current?.handleScroll()}>

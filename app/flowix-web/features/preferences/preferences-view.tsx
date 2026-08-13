@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { StarFourIcon } from '@phosphor-icons/react';
-import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
+import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings, Puzzle } from 'lucide-react';
 import {
 	useUserSettings,
 	useUserSettingsActions,
@@ -20,6 +20,7 @@ import {
 	CloudSyncSection,
 	HistorySection,
 	QuickPhrasesSection,
+	PluginsSection,
 	SectionHeader,
 	type SettingsTab,
 } from '@features/preferences/sections';
@@ -41,7 +42,7 @@ type PreferencesTabItem = { id: SettingsTab; labelKey: I18nKey; icon: React.Reac
 const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 	{
 		labelKey: 'preferences.groups.features',
-		tabs: [
+			tabs: [
 			{ id: 'general', labelKey: 'preferences.tabs.general', icon: <Settings className="w-4 h-4" /> },
 			{ id: 'format', labelKey: 'preferences.tabs.format', icon: <Type className="w-4 h-4" /> },
 			{ id: 'theme', labelKey: 'preferences.tabs.theme', icon: <Palette className="w-4 h-4" /> },
@@ -49,6 +50,7 @@ const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 			{ id: 'shortcuts', labelKey: 'preferences.tabs.shortcuts', icon: <Keyboard className="w-4 h-4" /> },
 			{ id: 'history', labelKey: 'preferences.tabs.history', icon: <History className="w-4 h-4" /> },
 			{ id: 'cloudSync', labelKey: 'preferences.tabs.cloudSync', icon: <Cloud className="w-4 h-4" /> },
+			{ id: 'plugins', labelKey: 'preferences.tabs.plugins', icon: <Puzzle className="w-4 h-4" /> },
 		],
 	},
 	{
@@ -218,7 +220,8 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 									<QuickPhrasesSection />
 								</div>
 							)}
-							{activeTab === 'history' && <HistorySection />}
+			{activeTab === 'history' && <HistorySection />}
+			{activeTab === 'plugins' && <PluginsSection />}
 						</div>
 					</div>
 				</div>

@@ -15,10 +15,16 @@ fn verify_v2_blob(
 }
 
 fn v2_note_fingerprint(note: &crate::v2::V2LocalNote) -> Result<String, SyncError> {
-    let mut attachments: Vec<_> = note.attachments.iter().map(|item| item.metadata.clone()).collect();
+    let mut attachments: Vec<_> = note
+        .attachments
+        .iter()
+        .map(|item| item.metadata.clone())
+        .collect();
     attachments.sort();
     let canonical = serde_json::to_vec(&(crate::v2::v2_content_hash(&note.content), attachments))
-        .map_err(|error| SyncError::InvalidState(format!("serialize attachment manifest: {error}")))?;
+        .map_err(|error| {
+        SyncError::InvalidState(format!("serialize attachment manifest: {error}"))
+    })?;
     Ok(crate::v2::v2_content_hash(&canonical))
 }
 
@@ -83,12 +89,13 @@ impl SyncManager {
         };
         let mut used_bytes_by_notebook = HashMap::new();
         for note in bootstrap.notes.iter().filter(|note| !note.deleted) {
-            let attachment_bytes = note
-                .attachments
-                .iter()
-                .fold(0_i64, |total, attachment| total.saturating_add(attachment.size_bytes.max(0)));
+            let attachment_bytes = note.attachments.iter().fold(0_i64, |total, attachment| {
+                total.saturating_add(attachment.size_bytes.max(0))
+            });
             let note_bytes = note.size_bytes.max(0).saturating_add(attachment_bytes);
-            let total = used_bytes_by_notebook.entry(note.notebook_id.clone()).or_insert(0_i64);
+            let total = used_bytes_by_notebook
+                .entry(note.notebook_id.clone())
+                .or_insert(0_i64);
             *total = total.saturating_add(note_bytes);
         }
         let enabled: HashSet<String> = self
@@ -102,7 +109,10 @@ impl SyncManager {
             .into_iter()
             .filter(|notebook| !notebook.deleted)
             .map(|notebook| {
-                let used_bytes = used_bytes_by_notebook.get(&notebook.id).copied().unwrap_or(0);
+                let used_bytes = used_bytes_by_notebook
+                    .get(&notebook.id)
+                    .copied()
+                    .unwrap_or(0);
                 crate::models::CloudNotebook {
                     synced: enabled.contains(&notebook.id),
                     id: notebook.id,
@@ -315,9 +325,7 @@ impl SyncManager {
             .store
             .v2_notebooks(true)?
             .into_iter()
-            .filter(|notebook| {
-                notebook_scope.is_none_or(|scope| notebook.notebook_id == scope)
-            })
+            .filter(|notebook| notebook_scope.is_none_or(|scope| notebook.notebook_id == scope))
             .collect();
         if let Some(scope) = notebook_scope {
             if enabled_notebooks.is_empty() {
@@ -365,7 +373,13 @@ impl SyncManager {
             )
         } else {
             match self
-                .pull_v2_changes(access_token, cursor, &enabled_ids, notebook_scope, &self_sync_seqs)
+                .pull_v2_changes(
+                    access_token,
+                    cursor,
+                    &enabled_ids,
+                    notebook_scope,
+                    &self_sync_seqs,
+                )
                 .await
             {
                 Ok(result) => (result.0, result.1, result.2, Vec::new()),
@@ -444,7 +458,12 @@ impl SyncManager {
                     || state.notebook_id != note.notebook_id
                     || state.filename != note.filename
                     || state.content_hash.as_deref() != Some(content_hash.as_str())
-                    || state.attachments != note.attachments.iter().map(|item| item.metadata.clone()).collect::<Vec<_>>()
+                    || state.attachments
+                        != note
+                            .attachments
+                            .iter()
+                            .map(|item| item.metadata.clone())
+                            .collect::<Vec<_>>()
             }) {
                 self.store.mark_v2_dirty(
                     V2EntityType::Note,
@@ -547,17 +566,22 @@ impl SyncManager {
                         )
                         .await?;
                     for attachment in &note.attachments {
-                        let reservation = self.client.v2_reserve_blob(
-                            access_token,
-                            &attachment.metadata.content_hash,
-                            attachment.metadata.size_bytes,
-                            "attachment",
-                        ).await?;
-                        self.client.v2_upload_blob(
-                            access_token,
-                            &reservation.upload.path,
-                            attachment.content.clone(),
-                        ).await?;
+                        let reservation = self
+                            .client
+                            .v2_reserve_blob(
+                                access_token,
+                                &attachment.metadata.content_hash,
+                                attachment.metadata.size_bytes,
+                                "attachment",
+                            )
+                            .await?;
+                        self.client
+                            .v2_upload_blob(
+                                access_token,
+                                &reservation.upload.path,
+                                attachment.content.clone(),
+                            )
+                            .await?;
                     }
                     V2PushOperation::NotePut {
                         operation_id: operation_id.clone(),
@@ -570,7 +594,11 @@ impl SyncManager {
                             size_bytes: i64::try_from(note.content.len()).map_err(|_| {
                                 SyncError::InvalidState("memo content length exceeds i64".into())
                             })?,
-                            attachments: note.attachments.iter().map(|item| item.metadata.clone()).collect(),
+                            attachments: note
+                                .attachments
+                                .iter()
+                                .map(|item| item.metadata.clone())
+                                .collect(),
                         },
                     }
                 }
@@ -759,11 +787,19 @@ impl SyncManager {
                     ),
                     _ => None,
                 };
-                let attachments = if change.deleted { Vec::new() } else {
+                let attachments = if change.deleted {
+                    Vec::new()
+                } else {
                     let mut values = Vec::new();
                     for attachment in &change.attachments {
                         values.push(crate::v2::V2RemoteAttachment {
-                            content: self.download_verified_v2_blob(access_token, &change.entity_id, &attachment.content_hash).await?,
+                            content: self
+                                .download_verified_v2_blob(
+                                    access_token,
+                                    &change.entity_id,
+                                    &attachment.content_hash,
+                                )
+                                .await?,
                             metadata: attachment.clone(),
                         });
                     }
@@ -825,7 +861,13 @@ impl SyncManager {
             if !note.deleted {
                 for attachment in &note.attachments {
                     attachments.push(crate::v2::V2RemoteAttachment {
-                        content: self.download_verified_v2_blob(access_token, &note.id, &attachment.content_hash).await?,
+                        content: self
+                            .download_verified_v2_blob(
+                                access_token,
+                                &note.id,
+                                &attachment.content_hash,
+                            )
+                            .await?,
                         metadata: attachment.clone(),
                     });
                 }
@@ -1012,11 +1054,13 @@ mod tests {
                 .deleted
         );
         assert!(manager.store.v2_inflight_due(i64::MAX).unwrap().is_empty());
-        assert!(manager
-            .v2_notebook(&notebook.id)
-            .unwrap()
-            .unwrap()
-            .bootstrap_required);
+        assert!(
+            manager
+                .v2_notebook(&notebook.id)
+                .unwrap()
+                .unwrap()
+                .bootstrap_required
+        );
     }
 
     #[test]

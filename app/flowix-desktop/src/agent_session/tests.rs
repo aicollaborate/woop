@@ -243,6 +243,7 @@ mod tests {
                     kind: "thread-card".to_string(),
                     document_path: None,
                     memo_id: None,
+                    notebook_id: None,
                 },
                 role: None,
                 created_at: None,
@@ -307,6 +308,7 @@ mod tests {
                     kind: "thread-card".to_string(),
                     document_path: None,
                     memo_id: None,
+                    notebook_id: None,
                 },
                 role: None,
                 created_at: None,
@@ -345,6 +347,7 @@ mod tests {
                 kind: "thread-card".to_string(),
                 document_path: None,
                 memo_id: None,
+                notebook_id: None,
             },
             role: None,
             created_at: Some(1),
@@ -386,6 +389,7 @@ mod tests {
                     kind: "thread-card".to_string(),
                     document_path: None,
                     memo_id: None,
+                    notebook_id: None,
                 },
                 role: None,
                 created_at: None,
@@ -742,15 +746,21 @@ mod tests {
                 ("tool", "result 2"),
             ]
         );
-        assert_eq!(page.messages[1].id, "run-1::assistant::assistant-item_0");
-        assert_eq!(page.messages[4].id, "run-2::assistant::assistant-item_0");
+        assert_eq!(
+            page.messages[1].id,
+            "msg:codex:run-1:assistant:assistant-item_0"
+        );
+        assert_eq!(
+            page.messages[4].id,
+            "msg:codex:run-2:assistant:assistant-item_0"
+        );
         assert_eq!(
             page.messages[2].tool_call_id.as_deref(),
-            Some("run-1::tool-call::tool-item_1")
+            Some("msg:codex:run-1:tool-call:tool-item_1")
         );
         assert_eq!(
             page.messages[5].tool_call_id.as_deref(),
-            Some("run-2::tool-call::tool-item_1")
+            Some("msg:codex:run-2:tool-call:tool-item_1")
         );
     }
 
@@ -1024,7 +1034,10 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("read user_version");
-        assert_eq!(version, 2);
+        assert_eq!(
+            version,
+            crate::agent_session::migrations::THREAD_DB_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -1087,21 +1100,32 @@ mod tests {
                     source_kind TEXT NOT NULL DEFAULT 'thread-card',
                     source_document_path TEXT,
                     source_memo_id TEXT,
+                    source_notebook_id TEXT,
                     role_memo_id TEXT,
                     role_name TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                CREATE TABLE threads (
+                    thread_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at) VALUES
+                    ('thread-legacy-frozen', 'claude', 'legacy', 1, 1),
+                    ('thread-snapshot-fallback', 'claude', 'snapshot', 1, 1);
                 INSERT INTO agent_conversation_instances (
                     instance_id, agent_type, title, thread_id, runtime_config,
-                    source_kind, created_at, updated_at
+                    source_kind, source_notebook_id, created_at, updated_at
                 ) VALUES
                     ('legacy-frozen', 'claude', 'legacy', 'thread-legacy-frozen',
                      '{"frozenCwd":"/legacy/frozen","workspaceSnapshot":{"cwd":"/snapshot/ignored"}}',
-                     'thread-card', 1, 1),
+                     'thread-card', 'notebook-legacy', 1, 1),
                     ('snapshot-fallback', 'claude', 'snapshot', 'thread-snapshot-fallback',
                      '{"workspaceSnapshot":{"cwd":"/snapshot/recovered"}}',
-                     'thread-card', 1, 1);
+                     'thread-card', 'notebook-snapshot', 1, 1);
                 "#,
             )
             .expect("seed legacy conversation table");
@@ -1114,6 +1138,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(legacy.frozen_cwd.as_deref(), Some("/legacy/frozen"));
+        assert_eq!(
+            legacy.source.notebook_id.as_deref(),
+            Some("notebook-legacy")
+        );
         let legacy_config: serde_json::Value =
             serde_json::from_str(legacy.runtime_config.as_deref().unwrap()).unwrap();
         assert!(legacy_config.get("frozenCwd").is_none());
@@ -1124,6 +1152,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(recovered.frozen_cwd.as_deref(), Some("/snapshot/recovered"));
+        assert_eq!(
+            recovered.source.notebook_id.as_deref(),
+            Some("notebook-snapshot")
+        );
     }
 
     #[tokio::test]
@@ -1378,7 +1410,10 @@ mod tests {
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].instance_id, "provider-instance");
-        assert_eq!(instances[0].thread_id.as_deref(), Some("codex-local-thread"));
+        assert_eq!(
+            instances[0].thread_id.as_deref(),
+            Some("codex-local-thread")
+        );
         assert_eq!(instances[0].source.memo_id.as_deref(), Some("memo-1"));
     }
 

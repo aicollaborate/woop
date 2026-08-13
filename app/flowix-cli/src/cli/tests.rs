@@ -525,9 +525,6 @@ fn exit_codes() {
     // 4 个 CliError 变体各自映射到约定的退出码
     assert_eq!(CliError::Usage("x".into()).exit_code(), 2);
     assert_eq!(CliError::NotFound("x".into()).exit_code(), 3);
-    assert_eq!(
-        CliError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).exit_code(),
-        5
-    );
+    assert_eq!(CliError::Io(std::io::Error::other("x")).exit_code(), 5);
     assert_eq!(CliError::Other("x".into()).exit_code(), 1);
 }

@@ -222,8 +222,10 @@ impl MemoFile {
         drop(stmt);
 
         // 6. 逐 memo 改写 YAML 与正文中的真实标签来源，再同步并集索引。
-        let mut report = MoveTagReport::default();
-        report.renamed_tags = renamed_catalog_paths.clone();
+        let mut report = MoveTagReport {
+            renamed_tags: renamed_catalog_paths.clone(),
+            ..Default::default()
+        };
         let mut renamed_seen: std::collections::HashSet<(String, String)> =
             report.renamed_tags.iter().cloned().collect();
         for memo_id in &affected_ids {
@@ -280,10 +282,10 @@ impl MemoFile {
             for old_tag in &location.memo.tags {
                 let new_tag = if old_tag == &old_path {
                     Some(new_path.clone())
-                } else if let Some(suffix) = old_tag.strip_prefix(&prefix) {
-                    Some(format!("{new_path}/{suffix}"))
                 } else {
-                    None
+                    old_tag
+                        .strip_prefix(&prefix)
+                        .map(|suffix| format!("{new_path}/{suffix}"))
                 };
                 if let Some(new_tag) = new_tag {
                     if renamed_seen.insert((old_tag.clone(), new_tag.clone())) {

@@ -12,17 +12,17 @@ use super::events::{
 use super::history::{
     get_rollout_tool_response_items_since, is_codex_session_id, CodexRolloutEvent,
 };
-use crate::agent_external::read_capped_line;
 use super::runtime::{persist_and_emit_codex_chunk, persist_codex_chunk_with_metadata};
 use super::tool_events::nested_exec_tool_names;
 use super::{AGENT_TYPE, MAX_STDOUT_LINE_BYTES, MAX_TOOL_OUTPUT_CHARS};
+use crate::agent_external::read_capped_line;
+use crate::agent_external::shared::TurnEvents;
 use crate::agent_external::{
     emit_chunk_with_run_id_and_metadata, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
 };
 use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
 use crate::runtime_log;
-use crate::agent_external::shared::TurnEvents;
 
 type CodexTurnEvents = TurnEvents;
 
@@ -61,7 +61,6 @@ fn observe_codex_turn(te: &mut TurnEvents, chunk: &AgentChunk, metadata: &AgentC
         _ => {}
     }
 }
-
 
 async fn persist_turn_events(
     thread_manager: &Arc<ThreadManager>,
@@ -162,7 +161,8 @@ where
                 thread_id: emit_thread_id.clone(),
                 text,
             };
-            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(
+                false,
                 AgentChunkMetadata {
                     message_phase: Some("completed"),
                     content_mode: Some("snapshot"),
@@ -253,7 +253,8 @@ where
                 continue;
             }
             record_stdout_tool_call(&chunk, &mut emitted_tool_ids, &mut emitted_tool_signatures);
-            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(
+                false,
                 codex_chunk_metadata(&value, &chunk),
                 &chunk,
                 &run_id,
@@ -404,7 +405,8 @@ fn reconcile_rollout_tool_events(
             .into_iter()
             .enumerate()
         {
-            let metadata = crate::agent_external::shared::complete_chunk_metadata(false, 
+            let metadata = crate::agent_external::shared::complete_chunk_metadata(
+                false,
                 codex_chunk_metadata(&event.value, &chunk),
                 &chunk,
                 "rollout",
@@ -669,14 +671,16 @@ mod tests {
             content_mode: Some("snapshot"),
             ..Default::default()
         };
-        observe_codex_turn(&mut turn, 
+        observe_codex_turn(
+            &mut turn,
             &AgentChunk::Text {
                 thread_id: "session-1".to_string(),
                 text: "partial".to_string(),
             },
             &text_metadata,
         );
-        observe_codex_turn(&mut turn, 
+        observe_codex_turn(
+            &mut turn,
             &AgentChunk::Text {
                 thread_id: "session-1".to_string(),
                 text: "complete answer".to_string(),
@@ -687,7 +691,8 @@ mod tests {
             },
         );
         for command in ["pwd", "pwd -P"] {
-            observe_codex_turn(&mut turn, 
+            observe_codex_turn(
+                &mut turn,
                 &AgentChunk::ToolCall {
                     thread_id: "session-1".to_string(),
                     id: "tool-1".to_string(),
@@ -697,7 +702,8 @@ mod tests {
                 &AgentChunkMetadata::default(),
             );
         }
-        observe_codex_turn(&mut turn, 
+        observe_codex_turn(
+            &mut turn,
             &AgentChunk::ToolResult {
                 thread_id: "session-1".to_string(),
                 id: "tool-1".to_string(),
@@ -707,7 +713,8 @@ mod tests {
             &AgentChunkMetadata::default(),
         );
         for total_tokens in [10, 20] {
-            observe_codex_turn(&mut turn, 
+            observe_codex_turn(
+                &mut turn,
                 &AgentChunk::Usage {
                     thread_id: "session-1".to_string(),
                     model_id: None,

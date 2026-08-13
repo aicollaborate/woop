@@ -3,17 +3,45 @@
 //! - **Tauri command 边界** (`commands.rs`) —UI/前�?传入�?path 必须在已注册
 //!   notebook �?��之内, 否则拒绝读写。允许在 `is_markdown_like` 后�? (任意 .md 文件)�?//! - **AI 工具调用边界** (`providers/tools/`) —必须�?`registered_notebook_paths` 之一�?//!
 //! 这两类共用同一�?`path_is_inside` / `canonical_existing_or_parent` 实现 —�?//! 之前 `commands.rs` �?`providers/tools/mod.rs` 各自维护一�? 漂移风险高�?//! 现在统一在这�? 跨模块一处真源�?
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// `fs::canonicalize` 需要路径已存在; 在写�?�� (�?��尚不存在) 上�?回退�?/// parent �?���?canonicalize + 拼回 file_name�?
 fn canonical_existing_or_parent(path: &Path) -> Option<PathBuf> {
-    if path.exists() {
-        return std::fs::canonicalize(path).ok();
+    // Normalize `.` / `..` before searching for an existing ancestor. Without
+    // this, a path such as `<root>/missing/../file` can be compared using its
+    // unresolved lexical prefix and produce an incorrect scope result.
+    let path = normalize_lexically(path);
+    let mut unresolved = Vec::new();
+    let mut existing = path.clone();
+
+    while !existing.exists() {
+        unresolved.push(existing.file_name()?.to_os_string());
+        existing = existing.parent()?.to_path_buf();
     }
 
-    let parent = path.parent()?;
-    let canonical_parent = std::fs::canonicalize(parent).ok()?;
-    Some(canonical_parent.join(path.file_name()?))
+    let mut canonical = std::fs::canonicalize(existing).ok()?;
+    for component in unresolved.iter().rev() {
+        canonical.push(component);
+    }
+    Some(canonical)
+}
+
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    normalized
 }
 
 /// �?��包含判定: �?canonicalize 之后�?`starts_with`。兼�?/// `path` / `root` 尚不存在 (写路�? 的情况�?
@@ -68,6 +96,36 @@ mod tests {
         let future = tmp.join("not-yet-created.md");
         // �?��尚不存在 —应回退�?parent canonicalize
         assert!(path_is_inside(&future, &tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn inside_works_for_multiple_nonexistent_directories() {
+        let tmp = std::env::temp_dir().join(format!(
+            "flowix-path-scope-multi-level-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let future = tmp.join(".plugin-output").join("mindmap");
+        assert!(path_is_inside(&future, &tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn inside_normalizes_parent_components_before_comparing() {
+        let tmp =
+            std::env::temp_dir().join(format!("flowix-path-scope-parent-{}", std::process::id()));
+        let outside = tmp
+            .join("..")
+            .join(format!("flowix-path-scope-outside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(!path_is_inside(
+            &tmp.join("missing").join("..").join(".."),
+            &tmp
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

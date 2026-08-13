@@ -16,7 +16,16 @@ type ExternalHistoryEntry = {
   openedAt: number;
 };
 
-export type DocumentHistoryEntry = MemoHistoryEntry | ExternalHistoryEntry;
+export type AgentConversationHistoryEntry = {
+  kind: 'agent-conversation';
+  instanceId: string;
+  openedAt: number;
+};
+
+export type DocumentHistoryEntry =
+  | MemoHistoryEntry
+  | ExternalHistoryEntry
+  | AgentConversationHistoryEntry;
 
 interface DocumentHistoryStore {
   backStack: DocumentHistoryEntry[];
@@ -34,9 +43,9 @@ interface DocumentHistoryStore {
 const MAX_HISTORY_ENTRIES = 30;
 
 function entryKey(entry: DocumentHistoryEntry): string {
-  return entry.kind === 'memo'
-    ? `memo:${entry.memoId}:${entry.path}`
-    : `external:${entry.path}`;
+  if (entry.kind === 'memo') return `memo:${entry.memoId}:${entry.path}`;
+  if (entry.kind === 'agent-conversation') return `agent-conversation:${entry.instanceId}`;
+  return `external:${entry.path}`;
 }
 
 function pushCapped(
@@ -82,4 +91,3 @@ export const useDocumentHistoryStore = create<DocumentHistoryStore>()((set, get)
   clearForward: () => set({ forwardStack: [] }),
   clear: () => set({ backStack: [], forwardStack: [] }),
 }));
-

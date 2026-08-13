@@ -111,10 +111,7 @@ pub fn move_memo_tag(
     let sync_notebook_id = notebook_id.as_deref().unwrap_or("nb_default");
     mark_tagged_memos_cloud_dirty(state.inner(), sync_notebook_id, &affected_memo_ids);
     if !affected_memo_ids.is_empty() {
-        crate::commands::cloud::schedule_notebook_sync(
-            app.clone(),
-            sync_notebook_id.to_string(),
-        );
+        crate::commands::cloud::schedule_notebook_sync(app.clone(), sync_notebook_id.to_string());
     }
     memo_events::emit(
         &app,
@@ -163,10 +160,7 @@ pub fn delete_memo_tag(
     let sync_notebook_id = notebook_id.as_deref().unwrap_or("nb_default");
     mark_tagged_memos_cloud_dirty(state.inner(), sync_notebook_id, &affected_memo_ids);
     if !affected_memo_ids.is_empty() {
-        crate::commands::cloud::schedule_notebook_sync(
-            app.clone(),
-            sync_notebook_id.to_string(),
-        );
+        crate::commands::cloud::schedule_notebook_sync(app.clone(), sync_notebook_id.to_string());
     }
     // 2) one-shot emit TagsDeleted to the frontend.
     memo_events::emit(

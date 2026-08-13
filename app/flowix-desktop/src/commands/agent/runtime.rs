@@ -111,7 +111,23 @@ pub(super) fn runtime_handle<'a>(state: &'a AppState, runtime: AgentRuntime) -> 
     }
 }
 
-pub(super) async fn stop_any_runtime_chat(
+/// Start an Agent runtime without exposing the conversation-specific command
+/// contract to plugin callers. The runtime keeps its existing persistence and
+/// lifecycle semantics; the plugin coordinator owns the result collection.
+pub(crate) async fn start_plugin_chat(
+    state: &AppState,
+    thread_id: &str,
+    message: AgentUserMessage,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    let runtime = AgentRuntime::from_message(&message);
+    runtime_handle(state, runtime)
+        .chat_stream(thread_id, message, app_handle)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn stop_any_runtime_chat(
     thread_id: &str,
     state: &AppState,
     app_handle: &tauri::AppHandle,

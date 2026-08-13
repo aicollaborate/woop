@@ -8,7 +8,8 @@ use flowix_core::memo_file::{
     IsMd, MergeOverrides, NotebookConfig,
 };
 use flowix_sync::{
-    collect_v2_attachments, v2_content_hash, V2AccountSyncReport, V2LocalNote, V2LocalNotebook, V2RemoteApply,
+    collect_v2_attachments, v2_content_hash, V2AccountSyncReport, V2LocalNote, V2LocalNotebook,
+    V2RemoteApply,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -53,18 +54,26 @@ fn safe_cloud_note_path(base: &Path, filename: &str) -> Result<PathBuf, String> 
     Ok(base.join(filename))
 }
 
-fn write_cloud_attachments(base: &Path, attachments: &[flowix_sync::V2RemoteAttachment]) -> Result<(), String> {
+fn write_cloud_attachments(
+    base: &Path,
+    attachments: &[flowix_sync::V2RemoteAttachment],
+) -> Result<(), String> {
     let directory = base.join("attachments");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     for attachment in attachments {
         let filename = &attachment.metadata.filename;
-        if Path::new(filename).file_name().and_then(|value| value.to_str()) != Some(filename)
-            || attachment.metadata.size_bytes != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
+        if Path::new(filename)
+            .file_name()
+            .and_then(|value| value.to_str())
+            != Some(filename)
+            || attachment.metadata.size_bytes
+                != i64::try_from(attachment.content.len()).map_err(|_| "ATTACHMENT_TOO_LARGE")?
             || v2_content_hash(&attachment.content) != attachment.metadata.content_hash
         {
             return Err(format!("CLOUD_ATTACHMENT_INVALID: {filename}"));
         }
-        atomic_write_bytes(&directory.join(filename), &attachment.content).map_err(|error| error.to_string())?;
+        atomic_write_bytes(&directory.join(filename), &attachment.content)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -598,18 +607,18 @@ mod tests {
 
         assert!(notes.is_empty());
         assert!(read_memo_file(&state).read_memo(&created.memo.id).is_none());
-        assert!(
-            !state
-                .cloud_sync
-                .has_pending_v2_note_change(&created.memo.id)
-                .expect("pending change state")
-        );
-        assert!(state
+        assert!(!state
             .cloud_sync
-            .v2_notebook(&notebook.id)
-            .expect("notebook sync state")
-            .expect("enabled notebook")
-            .bootstrap_required);
+            .has_pending_v2_note_change(&created.memo.id)
+            .expect("pending change state"));
+        assert!(
+            state
+                .cloud_sync
+                .v2_notebook(&notebook.id)
+                .expect("notebook sync state")
+                .expect("enabled notebook")
+                .bootstrap_required
+        );
     }
 
     #[test]
@@ -618,8 +627,14 @@ mod tests {
             "cloud API error 429 UPLOAD_RATE_LIMITED: Too many upload reservations"
         ));
         assert!(is_rate_limited_error("request failed with status 429"));
-        assert!(!should_retry_automatically("cloud API error 429 UPLOAD_RATE_LIMITED"));
-        assert!(should_retry_automatically("cloud API error 503 SERVER_ERROR"));
-        assert!(!is_rate_limited_error("cloud API error 500 SERVER_ERROR: failed"));
+        assert!(!should_retry_automatically(
+            "cloud API error 429 UPLOAD_RATE_LIMITED"
+        ));
+        assert!(should_retry_automatically(
+            "cloud API error 503 SERVER_ERROR"
+        ));
+        assert!(!is_rate_limited_error(
+            "cloud API error 500 SERVER_ERROR: failed"
+        ));
     }
 }

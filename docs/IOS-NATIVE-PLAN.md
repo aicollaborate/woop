@@ -60,5 +60,9 @@ cd app/flowix-ios-native
 xcodegen generate --spec project.yml
 xcodebuild -project FlowixIOS.xcodeproj -scheme FlowixIOS \
   -sdk iphonesimulator -configuration Debug \
-  -derivedDataPath .build/DerivedData CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath .build/DerivedData build
 ```
+
+模拟器构建也必须保留本地签名。不要传入 `CODE_SIGNING_ALLOWED=NO`，否则产物不会携带
+`application-identifier` 和 `keychain-access-groups` entitlement，Cloud 登录成功后会因
+refresh token 无法写入 Keychain 而报“无法更新云端登录凭据”。

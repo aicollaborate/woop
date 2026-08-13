@@ -13,6 +13,8 @@ struct AccountView: View {
     private let termsURL = URL(string: "https://flowix-memo.com/cn/terms/")!
 
     var onClose: (() -> Void)? = nil
+    var onHeaderDragChanged: ((CGFloat) -> Void)? = nil
+    var onHeaderDragEnded: ((CGFloat, CGFloat) -> Void)? = nil
     @Environment(\.openURL) private var openURL
     @State private var cloudState: NativeCloudState?
     @State private var cloudNotebooks: [NativeCloudNotebook] = []
@@ -66,6 +68,9 @@ struct AccountView: View {
 
                         footer
                     }
+                    // Keep spacing inside the account sheet. The sheet itself
+                    // is responsible for touching the screen edges; removing
+                    // this padding made the cards look glued to the bezel.
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
                     .padding(.bottom, 22)
@@ -88,26 +93,40 @@ struct AccountView: View {
     }
 
     private var header: some View {
-        HStack {
+        ZStack {
             Text("账号与云同步")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Color.flowixMobileForeground)
-            Spacer()
-            if let onClose {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 18, weight: .medium))
-                        .frame(width: 48, height: 48)
-                        .foregroundStyle(Color.flowixMobileForeground)
-                        .background(Color.white, in: Circle())
-                        .shadow(color: .black.opacity(0.045), radius: 7, y: 3)
+
+            HStack {
+                Spacer()
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(Color.flowixMobileForeground)
+                    }
+                    .buttonStyle(NativeCircleButtonStyle())
+                    .accessibilityLabel("关闭账号面板")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭账号面板")
             }
         }
         .padding(.horizontal, 18)
         .frame(minHeight: 62)
+        .zIndex(1)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { value in
+                    guard value.translation.height > 0 else { return }
+                    onHeaderDragChanged?(value.translation.height)
+                }
+                .onEnded { value in
+                    let distance = max(value.translation.height, 0)
+                    let predictedDistance = max(value.predictedEndTranslation.height, distance)
+                    onHeaderDragEnded?(distance, predictedDistance)
+                }
+        )
     }
 
     private var localModeCard: some View {
@@ -189,7 +208,7 @@ struct AccountView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.flowixMobileForeground)
             content()
                 .padding(.horizontal, 14)
@@ -494,7 +513,7 @@ struct AccountView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.15"
     }
 
     private func notebookStatus(_ notebook: NativeCloudNotebook) -> String {

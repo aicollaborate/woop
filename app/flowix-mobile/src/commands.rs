@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{
-    cloud_sync_allowed, read_memo_file, MobileState, PendingAttachmentUpload,
-    MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_STORAGE_BYTES,
+    cloud_sync_allowed, read_memo_file, MobileState, PendingAttachmentUpload, MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENT_STORAGE_BYTES,
 };
 
 #[cfg(target_os = "ios")]
@@ -54,7 +54,9 @@ pub fn mobile_sync_notebook_action_buttons(
     {
         let json = serde_json::to_string(&buttons).map_err(|error| error.to_string())?;
         let json = std::ffi::CString::new(json).map_err(|error| error.to_string())?;
-        unsafe { flowix_sync_notebook_action_buttons(json.as_ptr()); }
+        unsafe {
+            flowix_sync_notebook_action_buttons(json.as_ptr());
+        }
     }
     #[cfg(not(target_os = "ios"))]
     let _ = buttons;
@@ -86,7 +88,9 @@ pub fn mobile_show_notebook_actions(id: String, name: String) -> Result<(), Stri
     {
         let id = CString::new(id).map_err(|_| "笔记本 ID 包含无效字符".to_string())?;
         let name = CString::new(name).map_err(|_| "笔记本名称包含无效字符".to_string())?;
-        unsafe { flowix_show_notebook_actions(id.as_ptr(), name.as_ptr()); }
+        unsafe {
+            flowix_show_notebook_actions(id.as_ptr(), name.as_ptr());
+        }
         return Ok(());
     }
 
@@ -213,7 +217,10 @@ pub(crate) fn emit_sync_status(
     );
 }
 
-fn notebook_from_config(state: &MobileState, config: flowix_core::memo_file::NotebookConfig) -> Notebook {
+fn notebook_from_config(
+    state: &MobileState,
+    config: flowix_core::memo_file::NotebookConfig,
+) -> Notebook {
     let path = format!("{}/", state.notebook_dir(&config.id).display());
     Notebook {
         id: config.id,
@@ -290,7 +297,10 @@ fn delete_local_notebook(state: &MobileState, id: &str) -> Result<bool, String> 
             // The notebook is already unregistered, so preserve its delete
             // semantics and let a later app cleanup remove this private
             // staging directory instead of reporting a false rollback.
-            eprintln!("mobile notebook cleanup deferred for {}: {error}", staged.display());
+            eprintln!(
+                "mobile notebook cleanup deferred for {}: {error}",
+                staged.display()
+            );
         }
     }
     Ok(true)
@@ -646,9 +656,8 @@ fn build_mobile_library_snapshot(
     // A deleted/restored notebook can make the preferred id fall back to the
     // first library entry. Never carry that old notebook's tag filter into
     // the replacement notebook.
-    let selected_tag_id = selected_tag_id.filter(|_| {
-        preferred_notebook_id.as_deref() == selected_notebook_id.as_deref()
-    });
+    let selected_tag_id = selected_tag_id
+        .filter(|_| preferred_notebook_id.as_deref() == selected_notebook_id.as_deref());
     let notebooks = configs
         .into_iter()
         .map(|config| {
@@ -688,7 +697,11 @@ fn build_mobile_library_snapshot(
         .map(|notebook_id| {
             memo_file.read_all_memos_filtered_for_notebook_id(
                 Some(notebook_id),
-                if selected_tag_id.is_some() { "tagged" } else { "all" },
+                if selected_tag_id.is_some() {
+                    "tagged"
+                } else {
+                    "all"
+                },
                 "updatedAt",
                 selected_tag_id.as_deref(),
             )
@@ -927,7 +940,11 @@ fn search_memos_in_notebook(
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !index.is_loaded() || index.current_notebook() != Some(notebook_id) {
-            flowix_core::search::rebuild_index_from_store(&mut index, memo_file, notebook_id.to_string());
+            flowix_core::search::rebuild_index_from_store(
+                &mut index,
+                memo_file,
+                notebook_id.to_string(),
+            );
         }
     }
     let hit_ids = state
@@ -967,7 +984,13 @@ pub fn mobile_search_memos(
 ) -> Result<MemoListResponse, String> {
     let memo_file = read_memo_file(&state);
     Ok(MemoListResponse {
-        memos: search_memos_in_notebook(state.inner(), &memo_file, &notebook_id, tag_id.as_deref(), &query)?,
+        memos: search_memos_in_notebook(
+            state.inner(),
+            &memo_file,
+            &notebook_id,
+            tag_id.as_deref(),
+            &query,
+        )?,
     })
 }
 
@@ -1109,7 +1132,10 @@ fn valid_attachment_mime_type(value: &str) -> bool {
         && !minor.contains('/')
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric()
-                || matches!(byte, b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'-' | b'.' | b'+' | b'/')
+                || matches!(
+                    byte,
+                    b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'-' | b'.' | b'+' | b'/'
+                )
         })
 }
 
@@ -1129,7 +1155,8 @@ fn directory_size(path: &Path) -> Result<u64, String> {
         if kind.is_dir() {
             total = total.saturating_add(directory_size(&entry.path())?);
         } else if kind.is_file() {
-            total = total.saturating_add(entry.metadata().map_err(|error| error.to_string())?.len());
+            total =
+                total.saturating_add(entry.metadata().map_err(|error| error.to_string())?.len());
         }
     }
     Ok(total)
@@ -1140,7 +1167,9 @@ fn attachment_storage_bytes(state: &MobileState) -> Result<u64, String> {
         .read_notebook_configs()
         .map_err(|error| error.to_string())?;
     configs.into_iter().try_fold(0_u64, |total, notebook| {
-        Ok(total.saturating_add(directory_size(&state.notebook_dir(&notebook.id).join("attachments"))?))
+        Ok(total.saturating_add(directory_size(
+            &state.notebook_dir(&notebook.id).join("attachments"),
+        )?))
     })
 }
 
@@ -1169,9 +1198,9 @@ fn begin_attachment_upload(
         .attachment_uploads
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let reserved_bytes = uploads
-        .values()
-        .fold(0_u64, |total, upload| total.saturating_add(upload.expected_bytes));
+    let reserved_bytes = uploads.values().fold(0_u64, |total, upload| {
+        total.saturating_add(upload.expected_bytes)
+    });
     if attachment_storage_bytes(state)?
         .saturating_add(reserved_bytes)
         .saturating_add(size_bytes)
@@ -1261,10 +1290,7 @@ pub fn mobile_write_attachment_chunk(
     write_attachment_chunk(uploadId, content, state.inner())
 }
 
-fn finish_attachment_upload(
-    upload_id: String,
-    state: &MobileState,
-) -> Result<String, String> {
+fn finish_attachment_upload(upload_id: String, state: &MobileState) -> Result<String, String> {
     let upload = {
         let mut uploads = state
             .attachment_uploads
@@ -1505,7 +1531,13 @@ mod tests {
         let saved = finish_attachment_upload(upload.upload_id, &state).expect("finish upload");
 
         assert_eq!(std::fs::read(&saved).expect("attachment bytes"), b"abc");
-        assert!(state.data_dir.join(".uploads").read_dir().expect("uploads directory").next().is_none());
+        assert!(state
+            .data_dir
+            .join(".uploads")
+            .read_dir()
+            .expect("uploads directory")
+            .next()
+            .is_none());
         assert!(std::path::Path::new(&saved)
             .starts_with(state.notebook_dir(&notebook_id).join("attachments")));
     }
@@ -1527,7 +1559,13 @@ mod tests {
             finish_attachment_upload(upload.upload_id, &state).unwrap_err(),
             "ATTACHMENT_UPLOAD_SIZE_MISMATCH"
         );
-        assert!(state.data_dir.join(".uploads").read_dir().expect("uploads directory").next().is_none());
+        assert!(state
+            .data_dir
+            .join(".uploads")
+            .read_dir()
+            .expect("uploads directory")
+            .next()
+            .is_none());
     }
 
     #[test]
@@ -1544,7 +1582,10 @@ mod tests {
         let snapshot = build_mobile_library_snapshot(Some(notebook_id.clone()), None, &state)
             .expect("library snapshot");
 
-        assert_eq!(snapshot.selected_notebook_id.as_deref(), Some(notebook_id.as_str()));
+        assert_eq!(
+            snapshot.selected_notebook_id.as_deref(),
+            Some(notebook_id.as_str())
+        );
         assert_eq!(snapshot.notebooks.len(), 1);
         assert_eq!(snapshot.notebooks[0].memo_count, 1);
         assert_eq!(snapshot.memos[0].id, memo_id);
@@ -1570,9 +1611,13 @@ mod tests {
             )
             .expect("create memo");
 
-        let results = search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "独特关键词")
-            .expect("search memos");
-        assert_eq!(results.iter().map(|memo| &memo.id).collect::<Vec<_>>(), vec![&created.memo.id]);
+        let results =
+            search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "独特关键词")
+                .expect("search memos");
+        assert_eq!(
+            results.iter().map(|memo| &memo.id).collect::<Vec<_>>(),
+            vec![&created.memo.id]
+        );
     }
 
     #[test]
@@ -1588,9 +1633,11 @@ mod tests {
         let memo_file = read_memo_file(&state);
 
         // The first search builds the notebook index once.
-        assert!(search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "missing")
-            .expect("initial search")
-            .is_empty());
+        assert!(
+            search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "missing")
+                .expect("initial search")
+                .is_empty()
+        );
         let created = MemoService::new(&memo_file)
             .create_memo_named_with_tag(
                 Some(&notebook_id),
@@ -1614,9 +1661,11 @@ mod tests {
             .delete_memo(&created.memo.id)
             .expect("delete memo");
         remove_search_entry(&state, &created.memo.id);
-        assert!(search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "缓存索引")
-            .expect("search after delete")
-            .is_empty());
+        assert!(
+            search_memos_in_notebook(&state, &memo_file, &notebook_id, None, "缓存索引")
+                .expect("search after delete")
+                .is_empty()
+        );
     }
 
     #[test]

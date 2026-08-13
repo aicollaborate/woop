@@ -3,8 +3,8 @@
 //! ## v3 模块拆分 (2026/06 重构)
 //!
 //! - [`mod@types`]       — 公开 DTO (Memo / Notebook / TodoItem / MemoTag /
-//!                         NotebookConfig / MemoIndexFile / MemoIndexEntry /
-//!                         MemoTodoEntry / MemoMetadataFile)
+//!   NotebookConfig / MemoIndexFile / MemoIndexEntry / MemoTodoEntry /
+//!   MemoMetadataFile)
 //! - [`mod@frontmatter`] — YAML frontmatter 解析 (`extract_body_content`)
 //! - [`mod@derivation`]  — 派生字段 (preview / tags / todos) 提取
 //! - [`mod@time`]        — 列表过滤 (thisWeek / thisMonth) 用的时间边界
@@ -12,9 +12,9 @@
 //! - [`mod@index_store`]  — `memo index` / `todo metadata` IO + sync 维护
 //! - [`mod@content`]     — .md 文件读取 + 列表过滤 (只读 API)
 //! - [`mod@ops`]         — Memo CRUD 原语 (`create_memo` / `rename_memo` /
-//!                         `write_memo` / `delete_memo` / `register_*` /
-//!                         `reconcile_with_disk` / `reconcile_with_disk_bidirectional` /
-//!                         `reload_memo_from_disk`)
+//!   `write_memo` / `delete_memo` / `register_*` /
+//!   `reconcile_with_disk` / `reconcile_with_disk_bidirectional` /
+//!   `reload_memo_from_disk`)
 //! - [`mod@registration`] — 占位, 实现全部在 [`mod@ops`]
 //!
 //! ## v3 — `filename` 作为磁盘文件名
@@ -83,7 +83,7 @@ pub use versions::{
 /// 字段:
 /// - `config_dir`: 用户配置目录 (`~/.flowix/`). 笔记本注册表 + memo index
 ///   + todo metadata 都存放在 `<config_dir>/index.db` 关联的 SQLite 文件里
-///   (分别走 [`MemoFile::get_index_db_path`] / `<notebook>/.metadata/` 派生)。
+///     (分别走 [`MemoFile::get_index_db_path`] / `<notebook>/.metadata/` 派生)。
 /// - `current_notebook_id`: 当前活跃 notebook id, `None` 表示走默认。
 /// - `index_cache`: 当前 notebook memo index 的内存缓存。读路径先查询 SQLite
 ///   `memo_index_state.last_updated`，只有版本一致才复用，保证其他进程写入可见。
@@ -148,6 +148,7 @@ impl MemoFile {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(false)
             .open(self.config_dir.join(".memo-write.lock"))?;
         fs2::FileExt::lock_exclusive(&file)?;
         Ok(CrossProcessWriteGuard { file })

@@ -3,6 +3,7 @@ import UIKit
 
 struct DocumentView: View {
     let memo: MemoPreview
+    var onClose: (() -> Void)?
     var onEditorReady: () -> Void = {}
     var runBridgeSmokeTest = false
     @Environment(\.dismiss) private var dismiss
@@ -27,14 +28,20 @@ struct DocumentView: View {
     @State private var conflictRemoteContent = ""
     @State private var showingConflictResolution = false
     @State private var isLoaded = false
+    @State private var backSwipeOffset: CGFloat = 0
+    @State private var backSwipeActive = false
+    @State private var isClosingFromSwipe = false
+    @State private var backSwipePageWidth = UIScreen.main.bounds.width
 
     init(
         memo: MemoPreview,
         runBridgeSmokeTest: Bool = false,
+        onClose: (() -> Void)? = nil,
         onEditorReady: @escaping () -> Void = {}
     ) {
         self.memo = memo
         self.runBridgeSmokeTest = runBridgeSmokeTest
+        self.onClose = onClose
         self.onEditorReady = onEditorReady
         _content = State(initialValue: memo.content)
         _originalContent = State(initialValue: memo.content)
@@ -73,6 +80,20 @@ struct DocumentView: View {
         // native EditorWebView toolbar independently follows its keyboard guide.
         .ignoresSafeArea(.container, edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .offset(x: backSwipeOffset)
+        .shadow(
+            color: backSwipeActive ? Color.black.opacity(0.12) : .clear,
+            radius: 14,
+            x: -6
+        )
+        .overlay {
+            NativeDocumentBackSwipeBridge(
+                enabled: backSwipeEnabled,
+                onChanged: updateBackSwipe,
+                onEnded: finishBackSwipe
+            )
+            .allowsHitTesting(false)
+        }
         .background(NativeMotionProbe(name: "documentPage"))
         .navigationBarHidden(true)
         .task {
@@ -148,10 +169,10 @@ struct DocumentView: View {
             } label: {
                 Image(systemName: "arrow.left")
                     .font(.system(size: 21, weight: .medium))
-                    .frame(width: 48, height: 48)
-                    .foregroundStyle(Color.flowixSecondary)
+                    .foregroundStyle(Color(red: 0.122, green: 0.161, blue: 0.216))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NativeCircleButtonStyle())
+            .disabled(isClosingFromSwipe)
             .accessibilityLabel("返回列表")
             Spacer()
             HStack(spacing: 4) {
@@ -171,17 +192,13 @@ struct DocumentView: View {
             }
             .padding(.horizontal, 8)
         }
-        // 48px control + 5px vertical inset mirrors the WebView's 58px
-        // document top bar inside the already-safe SwiftUI viewport.
-        .padding(.horizontal, 6)
+        // Match the library top bar's 48px leading action and surrounding
+        // spacing so navigation controls share one visual rhythm.
+        .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(Color.white)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.flowixMobileHairline)
-                .frame(height: 1)
-        }
         .background(NativeMotionProbe(name: "documentTopBar"))
+        .zIndex(1)
     }
 
     @ViewBuilder
@@ -286,13 +303,88 @@ struct DocumentView: View {
     }
 
     private func closeDocument() async {
-        guard isLoaded else {
-            dismiss()
+        guard !isClosingFromSwipe else { return }
+        if isLoaded {
+            guard await save() else { return }
+        }
+        await animateDocumentClosed(pageWidth: backSwipePageWidth)
+    }
+
+    private var backSwipeEnabled: Bool {
+        !isClosingFromSwipe
+            && !showingDraftRecovery
+            && !showingConflictResolution
+            && saveError == nil
+            && editorOperationError == nil
+            && noticeMessage == nil
+    }
+
+    private func updateBackSwipe(_ translation: CGFloat, _ pageWidth: CGFloat) {
+        guard !isClosingFromSwipe else { return }
+        backSwipePageWidth = pageWidth
+        if !backSwipeActive {
+            backSwipeActive = true
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil,
+                from: nil,
+                for: nil
+            )
+        }
+        backSwipeOffset = min(max(translation, 0), max(pageWidth, 1))
+    }
+
+    private func finishBackSwipe(
+        _ translation: CGFloat,
+        _ velocity: CGFloat,
+        _ pageWidth: CGFloat,
+        _ cancelled: Bool
+    ) {
+        guard backSwipeActive else { return }
+        let width = max(pageWidth, 1)
+        let projectedOffset = max(translation, 0) + max(velocity, 0) * 0.16
+        let shouldClose = !cancelled
+            && (backSwipeOffset >= width * 0.28 || projectedOffset >= width * 0.48)
+
+        guard shouldClose else {
+            resetBackSwipe()
             return
         }
-        if await save() {
+
+        isClosingFromSwipe = true
+        withAnimation(.easeOut(duration: 0.14)) {
+            backSwipeOffset = max(backSwipeOffset, width * 0.34)
+        }
+        Task {
+            if await save() {
+                await animateDocumentClosed(pageWidth: width)
+            } else {
+                resetBackSwipe()
+            }
+        }
+    }
+
+    private func animateDocumentClosed(pageWidth: CGFloat) async {
+        let width = max(pageWidth, UIScreen.main.bounds.width, 1)
+        isClosingFromSwipe = true
+        backSwipeActive = true
+        withAnimation(.easeOut(duration: 0.2)) {
+            backSwipeOffset = width
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        if let onClose {
+            onClose()
+        } else {
             dismiss()
         }
+    }
+
+    private func resetBackSwipe() {
+        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.88)) {
+            backSwipeOffset = 0
+        }
+        backSwipeActive = false
+        isClosingFromSwipe = false
     }
 
     @discardableResult
@@ -390,6 +482,137 @@ struct DocumentView: View {
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled else { return }
             await save()
+        }
+    }
+}
+
+/// Installs a native left-edge gesture above WKWebView's recognizers. Restricting
+/// the gesture to the screen edge keeps horizontal selections, tables, and code
+/// blocks inside the editor untouched.
+private struct NativeDocumentBackSwipeBridge: UIViewRepresentable {
+    let enabled: Bool
+    let onChanged: (CGFloat, CGFloat) -> Void
+    let onEnded: (CGFloat, CGFloat, CGFloat, Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChanged: onChanged, onEnded: onEnded)
+    }
+
+    func makeUIView(context: Context) -> BridgeView {
+        let view = BridgeView(coordinator: context.coordinator)
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: BridgeView, context: Context) {
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
+        context.coordinator.setEnabled(enabled)
+        context.coordinator.attachIfNeeded(to: view)
+    }
+
+    static func dismantleUIView(_ view: BridgeView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class BridgeView: UIView {
+        let coordinator: Coordinator
+
+        init(coordinator: Coordinator) {
+            self.coordinator = coordinator
+            super.init(frame: .zero)
+            backgroundColor = .clear
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            coordinator.attachIfNeeded(to: self)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onChanged: (CGFloat, CGFloat) -> Void
+        var onEnded: (CGFloat, CGFloat, CGFloat, Bool) -> Void
+        private weak var hostWindow: UIWindow?
+        private var edgeGesture: UIScreenEdgePanGestureRecognizer?
+        private var enabled = true
+
+        init(
+            onChanged: @escaping (CGFloat, CGFloat) -> Void,
+            onEnded: @escaping (CGFloat, CGFloat, CGFloat, Bool) -> Void
+        ) {
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func setEnabled(_ enabled: Bool) {
+            self.enabled = enabled
+            edgeGesture?.isEnabled = enabled
+        }
+
+        func attachIfNeeded(to view: BridgeView) {
+            guard let window = view.window else {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view else { return }
+                    self.attachIfNeeded(to: view)
+                }
+                return
+            }
+            guard hostWindow !== window else { return }
+
+            if let edgeGesture, let hostWindow {
+                hostWindow.removeGestureRecognizer(edgeGesture)
+            }
+            let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
+            gesture.edges = .left
+            gesture.delegate = self
+            gesture.cancelsTouchesInView = false
+            gesture.isEnabled = enabled
+            window.addGestureRecognizer(gesture)
+            hostWindow = window
+            edgeGesture = gesture
+        }
+
+        func detach() {
+            if let edgeGesture, let hostWindow {
+                hostWindow.removeGestureRecognizer(edgeGesture)
+            }
+            edgeGesture = nil
+            hostWindow = nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        @objc private func handleEdgePan(_ recognizer: UIScreenEdgePanGestureRecognizer) {
+            guard let window = hostWindow else { return }
+            let translation = recognizer.translation(in: window).x
+            let velocity = recognizer.velocity(in: window).x
+            let width = window.bounds.width
+
+            switch recognizer.state {
+            case .began, .changed:
+                onChanged(translation, width)
+            case .ended:
+                onEnded(translation, velocity, width, false)
+            case .cancelled, .failed:
+                onEnded(translation, velocity, width, true)
+            default:
+                break
+            }
+        }
+
+        deinit {
+            detach()
         }
     }
 }

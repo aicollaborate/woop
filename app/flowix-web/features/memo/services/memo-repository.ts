@@ -1,4 +1,4 @@
-import { memos, notebooks, type FilterType, type NotebookSortEntry, type SortType } from '@platform/tauri/client';
+import { memos, notebooks, plugins, type FilterType, type NotebookSortEntry, type SortType } from '@platform/tauri/client';
 import type { MemoColor, Notebook } from '@features/memo';
 
 export type { FilterType, SortType } from '@platform/tauri/client';
@@ -9,7 +9,9 @@ export const memoRepository = {
     filter?: FilterType;
     sort?: SortType;
     tagId?: string;
+    pluginId?: string;
   }) => memos.getMemos(params),
+  listPluginNotes: (pluginId: string, notebookId: string) => plugins.listNotes(pluginId, notebookId),
   create: (tag?: string, notebookId?: string) => memos.addDocument(tag, notebookId),
   delete: (id: string) => memos.deleteMemo(id),
   favorite: (id: string) => memos.favoriteMemo(id),

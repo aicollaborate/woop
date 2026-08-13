@@ -25,7 +25,7 @@ struct NativeNotebookIcon: UIViewRepresentable {
     }
 
     private func load(icon: String, name: String, isSelected: Bool, in webView: WKWebView) {
-        let tint = isSelected ? "#AD5138" : "#3F3F46"
+        let tint = isSelected ? "#D1785B" : "#E5E1D8"
         let fallback = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1)).uppercased()
         let markup: String
 

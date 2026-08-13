@@ -5,10 +5,7 @@ use tokio::io::BufReader;
 fn canonical_message_identity_is_shared_and_idempotent() {
     for agent_type in ["codex", "claude", "hermes", "opencode"] {
         let id = canonical_message_id(agent_type, "run-1", "assistant", "source-1");
-        assert_eq!(
-            id,
-            format!("msg:{agent_type}:run-1:assistant:source-1")
-        );
+        assert_eq!(id, format!("msg:{agent_type}:run-1:assistant:source-1"));
         assert_eq!(
             canonical_message_id(agent_type, "run-1", "assistant", &id),
             id

@@ -17,6 +17,7 @@ use crate::config::AgentAccessStore;
 use crate::config::SecurityBookmarkStore;
 use crate::events as dispatcher;
 use crate::open_target;
+use crate::plugin;
 use crate::runtime_log;
 use crate::system_data::SystemData;
 use crate::watcher::MemoWatcher;
@@ -54,6 +55,9 @@ pub fn run() {
 
     let user_config_dir = get_user_config_dir(&home_dir);
     std::fs::create_dir_all(&user_config_dir).ok();
+    if let Err(error) = plugin::ensure_builtin_plugins() {
+        tracing::warn!("[startup] failed to initialize plugins: {error}");
+    }
     let thread_db_path = user_config_dir.join("thread.db");
     let user_config = Arc::new(user_config::UserConfigStore::new(home_dir.clone()));
     let cloud_sync = Arc::new(
@@ -271,6 +275,7 @@ pub fn run() {
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),
                 security_bookmarks: security_bookmarks_for_state.clone(),
+                plugin_runs: crate::plugin::PluginRunCoordinator::default(),
             };
             app.manage(app_state);
             // 注入 AppHandle 给 agent 工具链，使其 delete 等 memo 写入工具能
@@ -483,6 +488,16 @@ pub fn run() {
             commands::product::get_diagnostics,
             commands::product::check_product_update_notice,
             commands::product::open_log_dir,
+            commands::plugin::plugin_list,
+            commands::plugin::plugin_refresh,
+            commands::plugin::plugin_install,
+            commands::plugin::plugin_uninstall,
+            commands::plugin::plugin_get,
+            commands::plugin::plugin_prepare_prompt,
+            commands::plugin::plugin_run,
+            commands::plugin::plugin_run_stop,
+            commands::plugin::plugin_list_notes,
+            commands::plugin::plugin_resolve_note,
             commands::settings::get_preference,
             commands::settings::set_preference,
             commands::settings::get_ai_config,
@@ -611,6 +626,7 @@ pub fn run() {
             commands::thread::thread_get,
             commands::thread::thread_get_page,
             commands::thread::agent_conversation_list,
+            commands::thread::agent_conversation_count_by_notebook,
             commands::thread::agent_conversation_get,
             commands::thread::agent_conversation_find_by_thread,
             commands::thread::agent_conversation_upsert,

@@ -10,6 +10,8 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var cloudState: NativeCloudState?
     @Published private(set) var errorMessage: String?
     @Published private(set) var isSyncing = false
+    @Published private(set) var isInitialLoading = false
+    @Published private(set) var hasCompletedInitialLoad = false
 
     var canSync: Bool {
         guard let state = cloudState else { return false }
@@ -20,6 +22,12 @@ final class LibraryModel: ObservableObject {
     }
 
     func load() async {
+        guard !isInitialLoading else { return }
+        isInitialLoading = true
+        defer {
+            isInitialLoading = false
+            hasCompletedInitialLoad = true
+        }
         do {
             try await FlowixAPI.shared.initializeAsync()
             await refresh()
@@ -52,7 +60,8 @@ final class LibraryModel: ObservableObject {
         }
     }
 
-    func refresh() async {
+    @discardableResult
+    func refresh() async -> Bool {
         do {
             let snapshot = try await FlowixAPI.shared.librarySnapshotAsync()
             notebooks = snapshot.notebooks
@@ -60,8 +69,10 @@ final class LibraryModel: ObservableObject {
             selectedNotebookId = snapshot.selectedNotebookId
             memos = snapshot.memos.map(MemoPreview.init(nativeMemo:))
             errorMessage = nil
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -122,13 +133,22 @@ final class LibraryModel: ObservableObject {
 }
 
 struct LibraryView: View {
+    private enum DepartingPage {
+        case navigation
+        case memos
+    }
+
     @StateObject private var model = LibraryModel()
     @State private var searchOpen = false
     @State private var searchText = ""
     @State private var selectedTagId: String?
     @State private var navigationPageOpen = false
     @State private var pageDragOffset: CGFloat = 0
+    @State private var departingPage: DepartingPage = .navigation
     @State private var accountOpen = false
+    @State private var accountPresented = false
+    @State private var accountDragOffset: CGFloat = 0
+    @State private var accountDragActive = false
     @State private var openActionsID: String?
     @State private var selectedMemo: MemoPreview?
     @State private var showingNewNotebook = false
@@ -164,26 +184,33 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Color.flowixBackground.ignoresSafeArea()
+            Color.flowixLibrarySurface.ignoresSafeArea()
 
             GeometryReader { proxy in
+                let navigationProgress = navigationTransitionProgress(width: proxy.size.width)
+                // GeometryReader stays inside the system safe area, so the
+                // fixed chrome is always laid out below the Dynamic Island.
+                // Only the chrome background is extended into the status-bar
+                // region; controls must never derive an inset after applying
+                // ignoresSafeArea, because that inset can collapse to zero.
+                let chromeHeight: CGFloat = 60
+
                 HStack(spacing: 0) {
                     NativeNavigationPage(
                         notebooks: model.notebooks,
                         tags: model.tags,
                         selectedNotebookId: model.selectedNotebookId,
                         selectedTagId: selectedTagId,
-                        cloudState: model.cloudState,
-                        onOpenAccount: { accountOpen = true },
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.28)) {
-                                navigationPageOpen = false
-                            }
-                        },
+                        contentTopInset: chromeHeight,
+                        accountName: navigationAccountName,
+                        accountSubtitle: navigationAccountSubtitle,
+                        accountAuthenticated: model.cloudState?.authenticated == true,
+                        onOpenAccount: openAccountOverlay,
                         onSelectNotebook: { id in
                             Task {
                                 await model.selectNotebook(id)
                                 selectedTagId = nil
+                                departingPage = .navigation
                                 withAnimation(.easeInOut(duration: 0.28)) {
                                     navigationPageOpen = false
                                 }
@@ -191,6 +218,7 @@ struct LibraryView: View {
                         },
                         onSelectTag: { id in
                             selectedTagId = id
+                            departingPage = .navigation
                             withAnimation(.easeInOut(duration: 0.28)) {
                                 navigationPageOpen = false
                             }
@@ -209,14 +237,8 @@ struct LibraryView: View {
                     )
                     .frame(width: proxy.size.width, height: proxy.size.height)
 
-                    VStack(spacing: 0) {
-                        if searchOpen {
-                            searchBar
-                        } else {
-                            topBar
-                        }
-                        memoList
-                    }
+                    memoList
+                        .padding(.top, chromeHeight)
                     .frame(width: proxy.size.width, height: proxy.size.height)
                 }
                 .frame(width: proxy.size.width * 2, height: proxy.size.height, alignment: .leading)
@@ -233,6 +255,7 @@ struct LibraryView: View {
                         guard abs(value.translation.width) > abs(value.translation.height) else { return }
 
                         let width = max(proxy.size.width, 1)
+                        departingPage = navigationPageOpen ? .navigation : .memos
                         let translation = value.translation.width
                         let allowedTranslation = navigationPageOpen
                             ? min(0, translation)
@@ -263,18 +286,39 @@ struct LibraryView: View {
                         }
                     }
                 )
+                .overlay(alignment: .topLeading) {
+                    sharedNavigationChrome(
+                        progress: navigationProgress
+                    )
+                    // The pager is two pages wide. Its window chrome is not:
+                    // constrain the overlay to one viewport so the centered
+                    // title and trailing actions do not land on page two.
+                    .frame(width: proxy.size.width)
+                }
+                .overlay(alignment: .topLeading) {
+                    fullScreenDepartureShade(
+                        progress: navigationProgress,
+                        width: proxy.size.width
+                    )
+                    // Draw through both safe-area bands so the transition
+                    // reads as one uninterrupted sheet from top to bottom.
+                    .ignoresSafeArea(edges: .vertical)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The pages paint their own bottom safe-area backgrounds. Clipping
             // the slider to GeometryReader's safe-area height exposes the
             // presenting root background as a separate strip at the bottom.
             .overlay(alignment: .bottomTrailing) {
-                if !navigationPageOpen && !accountOpen {
+                if !navigationPageOpen && !accountPresented {
                     fab
                 }
             }
 
-            if let errorMessage = model.errorMessage, model.memos.isEmpty {
+            if let errorMessage = model.errorMessage,
+               model.memos.isEmpty,
+               model.hasCompletedInitialLoad,
+               !model.isInitialLoading {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 25))
@@ -284,34 +328,75 @@ struct LibraryView: View {
                         .font(.system(size: 12))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(Color.flowixSecondary)
+                    Button("重新加载") {
+                        Task { await model.load() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 6)
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.flowixBackground)
             }
-        }
-        // UIKit owns the sheet's pan recognizer.  Unlike a SwiftUI gesture
-        // layered on a ScrollView, it hands a downward drag from the content
-        // to the sheet exactly when the content reaches its top edge.
-        .sheet(isPresented: $accountOpen, onDismiss: refreshAfterAccountDismissal) {
-            AccountView(onClose: { accountOpen = false })
-                .presentationDetents([.fraction(0.8)])
-                .presentationDragIndicator(.visible)
-        }
-        .navigationBarHidden(true)
-        .navigationDestination(
-            isPresented: Binding(
-                get: { selectedMemo != nil },
-                set: { if !$0 { selectedMemo = nil } }
-            )
-        ) {
+
             if let selectedMemo {
-                DocumentView(memo: selectedMemo)
-                    .navigationBarHidden(true)
-            } else {
-                EmptyView()
+                DocumentView(
+                    memo: selectedMemo,
+                    onClose: closeDocumentOverlay
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.white)
+                .transition(.move(edge: .trailing))
+                .zIndex(10)
+            }
+
+            if accountPresented {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: closeAccountOverlay)
+                    .transition(.opacity)
+
+                GeometryReader { proxy in
+                    AccountView(
+                        onClose: closeAccountOverlay,
+                        onHeaderDragChanged: { translation in
+                            accountDragActive = true
+                            accountDragOffset = min(max(translation, 0), proxy.size.height * 0.92)
+                        },
+                        onHeaderDragEnded: { distance, predictedDistance in
+                            finishAccountDrag(
+                                distance: distance,
+                                predictedDistance: predictedDistance,
+                                sheetHeight: proxy.size.height * 0.8
+                            )
+                        }
+                    )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: proxy.size.height * 0.8)
+                        .background(Color.flowixMobileBackground)
+                        .clipShape(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: 24,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 24
+                            )
+                        )
+                        .offset(y: accountDragOffset)
+                        .shadow(
+                            color: .black.opacity(accountDragActive ? 0.12 : 0.16),
+                            radius: 22,
+                            y: -8
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
+                .ignoresSafeArea()
+                .transition(.move(edge: .bottom))
+                .zIndex(20)
             }
         }
+        .navigationBarHidden(true)
         .task { await model.load() }
         .alert("新建笔记本", isPresented: $showingNewNotebook) {
             TextField("笔记本名称", text: $newNotebookName)
@@ -366,24 +451,25 @@ struct LibraryView: View {
 
             HStack(spacing: 8) {
                 Button {
+                    departingPage = .memos
                     withAnimation(.easeInOut(duration: 0.28)) { navigationPageOpen = true }
                 } label: {
                     NativeMobileSVGIconView(icon: .menu, color: "#1F2937")
                         .frame(width: 21, height: 21)
                 }
-                .buttonStyle(NativeCircleButtonStyle(size: 48))
+                .buttonStyle(NativeCircleButtonStyle())
                 .accessibilityLabel("打开导航")
 
                 Spacer(minLength: 0)
 
-                // Cloud and search are two independent 44pt circular actions;
+                // Cloud and search are two independent 46pt circular actions;
                 // keep a normal visual gap between their touch targets.
                 HStack(spacing: 8) {
                     Button {
                         if model.canSync {
                             Task { await model.syncNow() }
                         } else {
-                            accountOpen = true
+                            openAccountOverlay()
                         }
                     } label: {
                         NativeCloudStatusIcon(status: cloudStatus)
@@ -409,7 +495,85 @@ struct LibraryView: View {
         // Keep the library chrome on the exact same opaque surface as the
         // memo rows below; the translucent top bar was creating a visible
         // color shift against the content background.
-        .background(Color.flowixBackground)
+        .background(Color.flowixLibrarySurface)
+        // Paint the controls above the following scroll surface so their
+        // shadows are not covered at the header/content boundary.
+        .zIndex(1)
+    }
+
+    /// Both pages deliberately share this overlay. Keeping it outside the
+    /// horizontally translated HStack means the controls remain anchored to
+    /// the window while their ownership cross-fades with the interactive drag.
+    private func sharedNavigationChrome(progress: CGFloat) -> some View {
+        ZStack {
+            Group {
+                if searchOpen {
+                    searchBar
+                } else {
+                    topBar
+                }
+            }
+            .opacity(1 - progress)
+            .offset(x: -12 * progress)
+            .allowsHitTesting(progress < 0.01)
+
+            navigationChrome
+                .opacity(progress)
+                .offset(x: 12 * (1 - progress))
+                .allowsHitTesting(progress > 0.99)
+        }
+        .frame(height: 60, alignment: .top)
+        .clipped()
+        .background {
+            ZStack {
+                Color.flowixLibrarySurface
+                Color.flowixSidebarBackground.opacity(progress)
+            }
+            .ignoresSafeArea(edges: .top)
+        }
+        .animation(nil, value: progress)
+    }
+
+    private var navigationChrome: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+
+            Button {
+                departingPage = .navigation
+                withAnimation(.easeInOut(duration: 0.28)) {
+                    navigationPageOpen = false
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Color.flowixAccent)
+            }
+            .buttonStyle(NativeCircleButtonStyle())
+            .accessibilityLabel("返回笔记列表")
+        }
+        .padding(.horizontal, 9)
+        .padding(.top, 5)
+        .padding(.bottom, 5)
+    }
+
+    private var navigationAccountName: String {
+        guard model.cloudState?.authenticated == true else { return "未登录" }
+        let displayName = model.cloudState?.account?.user.displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return displayName.isEmpty ? (model.cloudState?.account?.user.email ?? "Flowix 账号") : displayName
+    }
+
+    private var navigationAccountSubtitle: String {
+        guard model.cloudState?.authenticated == true else { return "点击登录并云同步" }
+        let membership = model.cloudState?.membership
+        return "\(formatStorage(membership?.usedBytes)) / \(formatStorage(membership?.quotaBytes))"
+    }
+
+    private func formatStorage(_ bytes: Int64?) -> String {
+        guard let bytes, bytes > 0 else { return "0MB" }
+        let megabytes = Double(bytes) / (1024 * 1024)
+        if megabytes < 10 { return String(format: "%.1f MB", megabytes) }
+        return "\(Int(megabytes.rounded())) MB"
     }
 
     private func refreshAfterAccountDismissal() {
@@ -417,6 +581,89 @@ struct LibraryView: View {
             await model.refresh()
             await model.refreshCloudState()
         }
+    }
+
+    private func closeAccountOverlay() {
+        guard accountPresented else { return }
+        withAnimation(.easeOut(duration: 0.22)) {
+            accountDragOffset = 900
+            accountOpen = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+            accountPresented = false
+            accountDragOffset = 0
+            accountDragActive = false
+            refreshAfterAccountDismissal()
+        }
+    }
+
+    private func openAccountOverlay() {
+        accountDragOffset = 0
+        accountDragActive = false
+        withAnimation(.easeOut(duration: 0.24)) {
+            accountPresented = true
+            accountOpen = true
+        }
+    }
+
+    private func finishAccountDrag(
+        distance: CGFloat,
+        predictedDistance: CGFloat,
+        sheetHeight: CGFloat
+    ) {
+        let height = max(sheetHeight, 1)
+        let currentDistance = max(distance, 0)
+        let projectedDistance = max(predictedDistance, currentDistance)
+        let shouldClose = currentDistance >= height * 0.25
+            || projectedDistance >= height * 0.48
+        accountDragActive = false
+
+        if shouldClose {
+            closeAccountOverlay()
+        } else {
+            withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+                accountDragOffset = 0
+            }
+        }
+    }
+
+    private func navigationTransitionProgress(width: CGFloat) -> CGFloat {
+        let width = max(width, 1)
+        let progress = navigationPageOpen
+            ? 1 + pageDragOffset / width
+            : pageDragOffset / width
+        return min(1, max(0, progress))
+    }
+
+    private func departureGradient(darkEdge: Edge) -> some View {
+        LinearGradient(
+            colors: darkEdge == .leading
+                ? [.black.opacity(0.14), .black.opacity(0.045), .clear]
+                : [.clear, .black.opacity(0.045), .black.opacity(0.14)],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// A window-level shade that stays attached to whichever page is leaving.
+    /// Keeping it above the shared chrome prevents the header/status-area band
+    /// from remaining bright while the body of the page is already dimmed.
+    private func fullScreenDepartureShade(progress: CGFloat, width: CGFloat) -> some View {
+        let pageWidth = max(width, 1)
+        let shadeOpacity = departingPage == .navigation ? 1 - progress : progress
+        let shadeOffset = departingPage == .navigation
+            ? -(1 - progress) * pageWidth
+            : progress * pageWidth
+
+        return departureGradient(
+            darkEdge: departingPage == .navigation ? .trailing : .leading
+        )
+        .frame(width: pageWidth)
+        .offset(x: shadeOffset)
+        .opacity(shadeOpacity)
+        .allowsHitTesting(false)
     }
 
     private var searchBar: some View {
@@ -457,34 +704,50 @@ struct LibraryView: View {
             await model.refresh()
         }) {
             LazyVStack(spacing: 0) {
-                if visibleMemos.isEmpty {
+                if !model.hasCompletedInitialLoad
+                    || (model.isInitialLoading && model.memos.isEmpty) {
+                    NativeLibraryInitialLoading()
+                } else if visibleMemos.isEmpty {
                     NativeEmptyState(searching: !searchText.isEmpty)
                 } else {
-                    ForEach(visibleMemos) { memo in
-                        NativeMemoSwipeRow(
-                            memo: memo,
-                            actionsOpen: openActionsID == memo.id,
-                            onOpenActions: { id in openActionsID = id },
-                            onOpen: {
-                                openActionsID = nil
-                                selectedMemo = memo
-                            },
-                            onDelete: {
-                                openActionsID = nil
-                                Task { await model.deleteMemo(memo) }
-                            },
-                            onToggleFavorite: {
-                                openActionsID = nil
-                                Task { await model.toggleFavorite(memo) }
-                            }
-                        )
+                    LazyVStack(spacing: 10) {
+                        ForEach(visibleMemos) { memo in
+                            NativeMemoSwipeRow(
+                                memo: memo,
+                                actionsOpen: openActionsID == memo.id,
+                                onOpenActions: { id in openActionsID = id },
+                                onOpen: {
+                                    openActionsID = nil
+                                    withAnimation(.easeOut(duration: 0.24)) {
+                                        selectedMemo = memo
+                                    }
+                                },
+                                onDelete: {
+                                    openActionsID = nil
+                                    Task { await model.deleteMemo(memo) }
+                                },
+                                onToggleFavorite: {
+                                    openActionsID = nil
+                                    Task { await model.toggleFavorite(memo) }
+                                }
+                            )
+                        }
                     }
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 14)
             .padding(.bottom, 100)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.flowixLibrarySurface)
+    }
+
+    private func closeDocumentOverlay() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            selectedMemo = nil
+        }
     }
 
     private var fab: some View {
@@ -519,11 +782,11 @@ struct LibraryView: View {
 /// swipe rows. Keeping the refresh control on the actual UIScrollView gives
 /// UIKit ownership of the vertical pan, bounce and refresh threshold.
 private struct NativeRefreshableScrollView<Content: View>: UIViewRepresentable {
-    let onRefresh: () async -> Void
+    let onRefresh: () async -> Bool
     let content: Content
 
     init(
-        onRefresh: @escaping () async -> Void,
+        onRefresh: @escaping () async -> Bool,
         @ViewBuilder content: () -> Content
     ) {
         self.onRefresh = onRefresh
@@ -542,10 +805,11 @@ private struct NativeRefreshableScrollView<Content: View>: UIViewRepresentable {
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.backgroundColor = .clear
+        scrollView.delegate = context.coordinator
 
         let refreshControl = UIRefreshControl()
-        // Keep UIKit's refresh threshold and accessibility behavior, but use
-        // the same restrained loading treatment as the native document view.
+        // UIKit continues to own the refresh threshold and content inset. The
+        // custom indicator only reflects the interaction and result states.
         refreshControl.tintColor = .clear
         let refreshIndicator = NativeRefreshIndicator()
         refreshIndicator.translatesAutoresizingMaskIntoConstraints = false
@@ -553,8 +817,8 @@ private struct NativeRefreshableScrollView<Content: View>: UIViewRepresentable {
         NSLayoutConstraint.activate([
             refreshIndicator.centerXAnchor.constraint(equalTo: refreshControl.centerXAnchor),
             refreshIndicator.centerYAnchor.constraint(equalTo: refreshControl.centerYAnchor),
-            refreshIndicator.widthAnchor.constraint(equalToConstant: 24),
-            refreshIndicator.heightAnchor.constraint(equalToConstant: 24),
+            refreshIndicator.widthAnchor.constraint(equalToConstant: 34),
+            refreshIndicator.heightAnchor.constraint(equalToConstant: 34),
         ])
         context.coordinator.refreshIndicator = refreshIndicator
         refreshControl.addTarget(
@@ -595,24 +859,53 @@ private struct NativeRefreshableScrollView<Content: View>: UIViewRepresentable {
         scrollView.setNeedsLayout()
     }
 
-    final class Coordinator: NSObject {
-        var onRefresh: () async -> Void
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var onRefresh: () async -> Bool
         var hostingController: UIHostingController<Content>?
         weak var refreshIndicator: NativeRefreshIndicator?
         private var refreshTask: Task<Void, Never>?
 
-        init(onRefresh: @escaping () async -> Void) {
+        init(onRefresh: @escaping () async -> Bool) {
             self.onRefresh = onRefresh
         }
 
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard scrollView.isDragging,
+                  scrollView.refreshControl?.isRefreshing != true else { return }
+            let pullDistance = max(
+                0,
+                -(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+            )
+            let progress = min(pullDistance / 72, 1)
+            refreshIndicator?.showPullProgress(progress, armed: progress >= 1)
+        }
+
+        func scrollViewDidEndDragging(
+            _ scrollView: UIScrollView,
+            willDecelerate decelerate: Bool
+        ) {
+            guard scrollView.refreshControl?.isRefreshing != true else { return }
+            refreshIndicator?.reset(animated: true)
+        }
+
         @objc func handleRefresh(_ sender: UIRefreshControl) {
-            refreshTask?.cancel()
-            refreshIndicator?.startAnimating()
+            guard refreshTask == nil else { return }
+            refreshIndicator?.showRefreshing()
             let action = onRefresh
             refreshTask = Task { @MainActor [weak self, weak sender] in
-                await action()
-                self?.refreshIndicator?.stopAnimating()
+                let clock = ContinuousClock()
+                let startedAt = clock.now
+                let succeeded = await action()
+                let elapsed = startedAt.duration(to: clock.now)
+                if elapsed < .milliseconds(650) {
+                    try? await Task.sleep(for: .milliseconds(650) - elapsed)
+                }
+                guard !Task.isCancelled else { return }
+                self?.refreshIndicator?.showResult(succeeded: succeeded)
+                try? await Task.sleep(for: .milliseconds(520))
+                guard !Task.isCancelled else { return }
                 sender?.endRefreshing()
+                self?.refreshIndicator?.reset(animated: true)
                 self?.refreshTask = nil
             }
         }
@@ -623,19 +916,32 @@ private struct NativeRefreshableScrollView<Content: View>: UIViewRepresentable {
     }
 }
 
-/// A three-quarter circular refresh indicator. UIRefreshControl still owns
-/// the pull threshold; this view only replaces UIKit's default glyph.
+/// Complete pull-to-refresh feedback: progressive pull, release threshold,
+/// indeterminate work, result confirmation, then a quiet reset.
 private final class NativeRefreshIndicator: UIView {
     private let shapeLayer = CAShapeLayer()
+    private let resultLayer = CAShapeLayer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
+        accessibilityIdentifier = "libraryRefreshIndicator"
         shapeLayer.fillColor = UIColor.clear.cgColor
         shapeLayer.strokeColor = UIColor(Color.flowixMobileForeground).cgColor
         shapeLayer.lineWidth = 2.2
         shapeLayer.lineCap = .round
+        shapeLayer.strokeEnd = 0
         layer.addSublayer(shapeLayer)
+
+        resultLayer.fillColor = UIColor.clear.cgColor
+        resultLayer.strokeColor = UIColor(Color.flowixMobileSuccess).cgColor
+        resultLayer.lineWidth = 2.2
+        resultLayer.lineCap = .round
+        resultLayer.lineJoin = .round
+        resultLayer.opacity = 0
+        layer.addSublayer(resultLayer)
+
+        reset(animated: false)
     }
 
     required init?(coder: NSCoder) {
@@ -644,9 +950,10 @@ private final class NativeRefreshIndicator: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        let iconBounds = CGRect(x: 0, y: 2, width: 30, height: 30)
         let inset = shapeLayer.lineWidth / 2
-        let radius = min(bounds.width, bounds.height) / 2 - inset
-        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let radius = min(iconBounds.width, iconBounds.height) / 2 - inset
+        let center = CGPoint(x: iconBounds.width / 2, y: iconBounds.height / 2)
         let path = UIBezierPath(
             arcCenter: center,
             radius: max(0, radius),
@@ -654,11 +961,31 @@ private final class NativeRefreshIndicator: UIView {
             endAngle: .pi,
             clockwise: true
         )
-        shapeLayer.frame = bounds
+        shapeLayer.frame = iconBounds
         shapeLayer.path = path.cgPath
+        resultLayer.frame = iconBounds
     }
 
-    func startAnimating() {
+    func showPullProgress(_ progress: CGFloat, armed: Bool) {
+        guard shapeLayer.animation(forKey: "flowix.refresh.rotation") == nil else { return }
+        resultLayer.opacity = 0
+        shapeLayer.opacity = Float(min(max(progress * 1.7, 0), 1))
+        shapeLayer.strokeEnd = 0.18 + 0.57 * min(max(progress, 0), 1)
+        shapeLayer.setAffineTransform(CGAffineTransform(rotationAngle: progress * .pi * 0.9))
+        alpha = progress > 0.02 ? 1 : 0
+        accessibilityLabel = armed ? "松开即可刷新" : "下拉刷新"
+    }
+
+    func showRefreshing() {
+        alpha = 1
+        resultLayer.opacity = 0
+        shapeLayer.opacity = 1
+        shapeLayer.strokeEnd = 0.75
+        shapeLayer.setAffineTransform(.identity)
+        accessibilityLabel = "正在刷新笔记"
+        UIAccessibility.post(notification: .announcement, argument: "正在刷新")
+
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
         guard shapeLayer.animation(forKey: "flowix.refresh.rotation") == nil else { return }
         let animation = CABasicAnimation(keyPath: "transform.rotation")
         animation.fromValue = 0
@@ -669,8 +996,49 @@ private final class NativeRefreshIndicator: UIView {
         shapeLayer.add(animation, forKey: "flowix.refresh.rotation")
     }
 
-    func stopAnimating() {
+    func showResult(succeeded: Bool) {
         shapeLayer.removeAnimation(forKey: "flowix.refresh.rotation")
+        shapeLayer.opacity = 0
+        resultLayer.strokeColor = UIColor(
+            succeeded ? Color.flowixMobileSuccess : Color.flowixMobileDestructive
+        ).cgColor
+        resultLayer.path = succeeded ? checkmarkPath.cgPath : failurePath.cgPath
+        resultLayer.opacity = 1
+        accessibilityLabel = succeeded ? "刷新完成" : "刷新失败"
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: succeeded ? "刷新完成" : "刷新失败"
+        )
+    }
+
+    func reset(animated: Bool) {
+        shapeLayer.removeAnimation(forKey: "flowix.refresh.rotation")
+        shapeLayer.setAffineTransform(.identity)
+        shapeLayer.strokeEnd = 0
+        shapeLayer.opacity = 0
+        resultLayer.opacity = 0
+        if animated && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.2) { self.alpha = 0 }
+        } else {
+            alpha = 0
+        }
+    }
+
+    private var checkmarkPath: UIBezierPath {
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 7, y: 17))
+        path.addLine(to: CGPoint(x: 12, y: 22))
+        path.addLine(to: CGPoint(x: 23, y: 10))
+        return path
+    }
+
+    private var failurePath: UIBezierPath {
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 8, y: 9))
+        path.addLine(to: CGPoint(x: 22, y: 23))
+        path.move(to: CGPoint(x: 22, y: 9))
+        path.addLine(to: CGPoint(x: 8, y: 23))
+        return path
     }
 }
 
@@ -820,37 +1188,59 @@ private struct NativeHorizontalSwipeBridge: UIViewRepresentable {
     }
 }
 
-/// The shared circular icon treatment used by the mobile list actions.
-/// Keep the hit target at Apple's recommended minimum while the visual icon
-/// remains optically smaller inside the circle.
-private struct NativeCircleButtonStyle: ButtonStyle {
-    let size: CGFloat
-
-    init(size: CGFloat = 44) {
-        self.size = size
-    }
-
+/// The shared iOS 26 Liquid Glass treatment for circular navigation actions.
+/// The system owns the glass highlight, touch expansion, and spring response.
+struct NativeCircleButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .frame(width: size, height: size)
-            .background(
-                configuration.isPressed
-                    ? Color.flowixMobileMuted
-                    : Color.flowixMobileCard,
-                in: Circle()
-            )
-            .overlay {
-                Circle()
-                    .strokeBorder(Color.white.opacity(0.82), lineWidth: 1)
+        Button(action: configuration.trigger) {
+            configuration.label
+                .frame(width: 46, height: 46, alignment: .center)
+                .contentShape(Circle())
+                .background(Color.flowixNavigationButtonBackground, in: Circle())
+                .glassEffect(.clear.interactive(), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 46, height: 46)
+        // Keep the shadow outside the Liquid Glass render surface. Applying
+        // it to the label can make the glass layer mask the blur at its edge.
+        .shadow(color: .black.opacity(0.09), radius: 8, y: 3)
+    }
+}
+
+private struct NativeLibraryInitialLoading: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var highlighted = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<4, id: \.self) { index in
+                VStack(alignment: .leading, spacing: 11) {
+                    Capsule()
+                        .frame(width: index.isMultiple(of: 2) ? 176 : 218, height: 18)
+                    Capsule()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 13)
+                    Capsule()
+                        .frame(width: 138, height: 13)
+                }
+                .foregroundStyle(Color.flowixMobileMuted)
+                .opacity(reduceMotion ? 0.78 : (highlighted ? 0.94 : 0.48))
+                .padding(.vertical, 20)
+
+                if index < 3 {
+                    Divider().overlay(Color.flowixMobileHairline)
+                }
             }
-            .shadow(
-                color: Color.black.opacity(configuration.isPressed ? 0.025 : 0.07),
-                radius: configuration.isPressed ? 2 : 6,
-                y: configuration.isPressed ? 1 : 3
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .contentShape(Circle())
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        }
+        .frame(maxWidth: .infinity, minHeight: 480, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("正在加载笔记")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                highlighted = true
+            }
+        }
     }
 }
 
@@ -896,6 +1286,7 @@ private struct NativeMemoSwipeRow: View {
     private let commitDistance: CGFloat = 48
     private let maxOvershoot: CGFloat = 24
     private let settleDuration: Double = 0.22
+    private let previewFontSize: CGFloat = 16
 
     let memo: MemoPreview
     let actionsOpen: Bool
@@ -971,18 +1362,17 @@ private struct NativeMemoSwipeRow: View {
             } label: {
                 memoContent
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.flowixBackground)
+                    .background(Color.flowixLibrarySurface)
             }
             .buttonStyle(.plain)
             .zIndex(0)
             .offset(x: offset)
         }
-        .frame(minHeight: 104)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.black.opacity(0.07))
-                .frame(height: 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.flowixMobileHairline, lineWidth: 1)
         }
         .onChange(of: actionsOpen) { open in
             guard !isSwiping && !isSettling else { return }
@@ -1080,34 +1470,38 @@ private struct NativeMemoSwipeRow: View {
 
     private var memoContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Matches .mobile-memo-row__title strong: 17px, semibold
+            // Matches the mobile memo title treatment: 18pt, semibold
             // (the closest native system weight to WebView's 650), tight
             // tracking and a 1.35 line height.
             Text(memo.title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.flowixForeground)
                 .tracking(-0.2)
                 .lineSpacing(3)
                 .lineLimit(2)
 
-            // WebView: margin-top 6px, 15px text, 1.5 line height.
+            // Keep the preview at an explicit 1.6x line height.
             Text(memo.preview.isEmpty ? "记录自己的想法" : memo.preview)
-                .font(.system(size: 15))
+                .font(.system(size: previewFontSize))
                 .foregroundStyle(Color.flowixSecondary)
-                .lineSpacing(4)
+                .lineSpacing(
+                    previewFontSize * 1.6
+                        - UIFont.systemFont(ofSize: previewFontSize).lineHeight
+                )
                 .lineLimit(2)
                 .padding(.top, 6)
 
             if let thumbnail = memo.thumbnail {
                 NativeThumbnail(value: thumbnail)
-                    .frame(width: 120, height: 67.5)
-                    .background(Color.flowixMobileMuted, in: RoundedRectangle(cornerRadius: 9))
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1.55, contentMode: .fit)
+                    .background(Color.flowixMobileMuted, in: RoundedRectangle(cornerRadius: 11))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9)
+                        RoundedRectangle(cornerRadius: 11)
                             .stroke(Color.flowixMobileHairline, lineWidth: 1)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
-                    .padding(.top, 10)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .padding(.top, 12)
             }
 
             // WebView: metadata starts 9px after the preview/thumbnail and
@@ -1115,13 +1509,13 @@ private struct NativeMemoSwipeRow: View {
             VStack(alignment: .leading, spacing: 10) {
                 if !memo.tags.isEmpty {
                     HStack(spacing: 5) {
-                        ForEach(memo.tags.prefix(3), id: \.self) { tag in
+                        ForEach(memo.tags.prefix(2), id: \.self) { tag in
                             Text("#" + tag)
                                 .font(.system(size: 13))
                                 .foregroundStyle(Color.flowixSecondary)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
-                                .frame(minHeight: 20)
+                                .frame(minHeight: 22)
                                 .background(Color.black.opacity(0.05), in: Capsule())
                         }
                     }
@@ -1138,10 +1532,15 @@ private struct NativeMemoSwipeRow: View {
                 }
                 .foregroundStyle(Color.flowixMobileMutedForeground.opacity(0.82))
             }
-            .padding(.top, 9)
+            .padding(.top, 12)
         }
+        .padding(.horizontal, 14)
         .padding(.vertical, 15)
         .contentShape(Rectangle())
+        .background(
+            Color.flowixMobileAccountCard,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
     }
 }
 
@@ -1181,9 +1580,11 @@ private struct NativeNavigationPage: View {
     let tags: [NativeTag]
     let selectedNotebookId: String?
     let selectedTagId: String?
-    let cloudState: NativeCloudState?
+    let contentTopInset: CGFloat
+    let accountName: String
+    let accountSubtitle: String
+    let accountAuthenticated: Bool
     let onOpenAccount: () -> Void
-    let onClose: () -> Void
     let onSelectNotebook: (String) -> Void
     let onSelectTag: (String?) -> Void
     let onCreateNotebook: () -> Void
@@ -1193,100 +1594,74 @@ private struct NativeNavigationPage: View {
     private let columns = [GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
-        VStack(spacing: 0) {
-            navigationTopBar
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    notebookSection
-                    tagSection
-                }
-                .padding(.top, 11)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 28)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                accountCard
+                notebookSection
+                tagSection
             }
-            .scrollIndicators(.hidden)
+            .padding(.top, contentTopInset + 11)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 28)
         }
+        .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.flowixMobileBackground)
-        .ignoresSafeArea(edges: .bottom)
+        .background(Color.flowixSidebarBackground)
     }
 
-    private var navigationTopBar: some View {
-        HStack(spacing: 8) {
-            Button(action: onOpenAccount) {
-                HStack(spacing: 10) {
-                    Image(systemName: cloudState?.authenticated == true ? "person.crop.circle.fill" : "person.crop.circle")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color.flowixMobileBrand)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(accountName)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(Color.flowixMobileForeground)
-                            .lineLimit(1)
-                        Text(accountSubtitle)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.flowixMobileMutedForeground)
-                            .lineLimit(1)
-                    }
+    private var accountCard: some View {
+        Button(action: onOpenAccount) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(accountName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.flowixSidebarForeground)
+                        .lineLimit(1)
+
+                    Text(accountSubtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.flowixSidebarMutedForeground)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 10)
-                .frame(minHeight: 48, alignment: .leading)
-                .contentShape(RoundedRectangle(cornerRadius: 13))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(cloudState?.authenticated == true ? "账号：\(accountName)，\(accountSubtitle)" : "未登录，点击登录并云同步")
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            Button {
-                withAnimation(.easeInOut(duration: 0.28), onClose)
-            } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 48)
-                    .foregroundStyle(Color.flowixAccent)
-                    .background(Color.white, in: Circle())
-                    .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.flowixSidebarMutedForeground)
             }
-            .accessibilityLabel("返回笔记列表")
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+            .background(
+                Color.flowixSidebarCard,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.flowixSidebarHairline, lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .padding(.horizontal, 9)
-        .padding(.top, 5)
-        .padding(.bottom, 5)
-        .background(Color.flowixMobileBackground.opacity(0.96))
-    }
-
-    private var accountName: String {
-        guard cloudState?.authenticated == true else { return "未登录" }
-        let displayName = cloudState?.account?.user.displayName.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return displayName.isEmpty ? (cloudState?.account?.user.email ?? "Flowix 账号") : displayName
-    }
-
-    private var accountSubtitle: String {
-        guard cloudState?.authenticated == true else { return "点击登录并云同步" }
-        let membership = cloudState?.membership
-        return "\(formatStorage(membership?.usedBytes)) / \(formatStorage(membership?.quotaBytes))"
-    }
-
-    private func formatStorage(_ bytes: Int64?) -> String {
-        guard let bytes, bytes > 0 else { return "0MB" }
-        let megabytes = Double(bytes) / (1024 * 1024)
-        if megabytes < 10 { return String(format: "%.1f MB", megabytes) }
-        return "\(Int(megabytes.rounded())) MB"
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            accountAuthenticated
+                ? "账号：\(accountName)，\(accountSubtitle)"
+                : "未登录，点击登录并云同步"
+        )
     }
 
     private var notebookSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("笔记本")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.flowixMobileMutedForeground)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.flowixSidebarForeground)
                 Spacer()
                 Button(action: onCreateNotebook) {
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 40, height: 40)
-                        .foregroundStyle(Color.flowixMobileMutedForeground)
+                        .foregroundStyle(Color.flowixSidebarMutedForeground)
                 }
                 .accessibilityLabel("新建笔记本")
             }
@@ -1305,20 +1680,23 @@ private struct NativeNavigationPage: View {
                                         isSelected: notebook.id == selectedNotebookId
                                     )
                                     .frame(width: 34, height: 34)
-                                    .background(Color.flowixMobileMuted, in: RoundedRectangle(cornerRadius: 10))
+                                    .background(Color.flowixSidebarMuted, in: RoundedRectangle(cornerRadius: 10))
                                     Spacer()
                                 }
                                 VStack(alignment: .leading, spacing: 3) {
                                     // WebView: 15px / 650 / 1.25 line height.
                                     Text(notebook.name)
-                                        .font(.system(size: 15, weight: .semibold))
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(Color.flowixSidebarForeground)
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                    // WebView: 12px / 500 / 1.2 line height.
+                                    // Keep the notebook subtitle on an explicit
+                                    // 28pt row; lineSpacing does not affect a
+                                    // single-line SwiftUI Text view.
                                     Text(String(notebook.memoCount) + " 篇")
                                         .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(Color.flowixMobileMutedForeground)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .foregroundStyle(Color.flowixSidebarMutedForeground)
+                                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                                 }
                             }
                             .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
@@ -1327,16 +1705,16 @@ private struct NativeNavigationPage: View {
                             .padding(.bottom, 12)
                             .background(
                                 notebook.id == selectedNotebookId
-                                    ? Color.flowixMobileBrand.opacity(0.09)
-                                    : Color.flowixMobileNotebookCard,
+                                    ? Color.flowixSidebarBrand.opacity(0.24)
+                                    : Color.flowixSidebarNotebookCard,
                                 in: RoundedRectangle(cornerRadius: 16)
                             )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 16)
                                     .stroke(
                                         notebook.id == selectedNotebookId
-                                            ? Color.flowixMobileBrand.opacity(0.24)
-                                            : Color.flowixMobileHairline,
+                                            ? Color.flowixSidebarBrand.opacity(0.72)
+                                            : Color.flowixSidebarHairline,
                                         lineWidth: 1
                                     )
                             }
@@ -1358,7 +1736,7 @@ private struct NativeNavigationPage: View {
                             Image(systemName: "ellipsis")
                                 .font(.system(size: 18, weight: .medium))
                                 .frame(width: 40, height: 40)
-                                .foregroundStyle(Color.flowixMobileMutedForeground.opacity(0.33))
+                                .foregroundStyle(Color.flowixSidebarMutedForeground.opacity(0.62))
                         }
                         .menuStyle(.borderlessButton)
                         .padding(.top, 7)
@@ -1372,10 +1750,10 @@ private struct NativeNavigationPage: View {
     private var tagSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("标签")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.flowixMobileMutedForeground)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Color.flowixSidebarForeground)
                 .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             tagButton(title: "全部", icon: "square.grid.2x2", selected: selectedTagId == nil) {
                 onSelectTag(nil)
             }
@@ -1405,19 +1783,22 @@ private struct NativeNavigationPage: View {
                     .font(.system(size: 14, weight: .medium))
                     .frame(width: 28, height: 28)
                     .background(
-                        selected ? Color.flowixMobileBrand.opacity(0.14) : Color.flowixMobileMuted,
+                        selected ? Color.flowixSidebarBrand.opacity(0.26) : Color.flowixSidebarMuted,
                         in: RoundedRectangle(cornerRadius: 9)
                     )
                 Text(title)
                     // WebView drawer rows use 17px / 500 text.
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(selected ? Color.flowixMobileForeground : Color.flowixForeground)
+                    .foregroundStyle(Color.flowixSidebarForeground)
                     .lineLimit(1)
                 Spacer()
             }
             .padding(.horizontal, 12)
             .frame(height: 44)
-            .background(selected ? Color.flowixMobileMuted : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .background(
+                selected ? Color.flowixSidebarBrand.opacity(0.20) : .clear,
+                in: RoundedRectangle(cornerRadius: 12)
+            )
         }
         .buttonStyle(.plain)
     }

@@ -45,6 +45,11 @@ impl Default for WhitelistConfig {
                 "node_modules".into(),
                 ".cache".into(),
                 ".trash".into(),
+                // Plugin artifacts are implementation files, not notebook
+                // notes. Their Markdown must never be registered by the
+                // generic watcher; the plugin pointer note is the user-facing
+                // entry in the notebook root.
+                ".plugin-output".into(),
                 // 附件�?��: 用户从附件选择器选了一�?.md 文件�? 后�?
                 // save_attachment / save_attachment_content 浼氭妸鏂囦欢澶嶅埗
                 // �?<notebook>/attachments/<name>.md. 该目录下�?.md �?                // �?memo, 不应�?watcher 解析为新笔�? (会污染列�?
@@ -249,6 +254,15 @@ mod tests {
         w.skip_dirs.push("attachments-cache".into());
         assert_eq!(
             w.allows(Path::new("/x/attachments-cache/1.png")),
+            Err(DropReason::PathBlacklisted)
+        );
+    }
+
+    #[test]
+    fn default_skips_plugin_output_directory() {
+        let w = WhitelistConfig::default();
+        assert_eq!(
+            w.allows(Path::new("/x/.plugin-output/mindmap/output.md")),
             Err(DropReason::PathBlacklisted)
         );
     }

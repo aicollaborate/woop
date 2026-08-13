@@ -230,6 +230,10 @@ fn clap_to_cli_error(err: clap::Error) -> CliError {
     CliError::Usage(err.to_string())
 }
 
+#[allow(
+    clippy::collapsible_match,
+    reason = "Each command needs a fall-through path after its independent missing-argument check."
+)]
 fn preflight_usage_errors(args: &[String]) -> Result<(), CliError> {
     let command = first_command(args);
     match command.as_deref() {

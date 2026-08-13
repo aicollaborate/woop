@@ -3,7 +3,7 @@ name: FlowixIOS
 options:
   bundleIdPrefix: com.flowix.app
   deploymentTarget:
-    iOS: 16.2
+    iOS: 26.0
   createIntermediateGroups: true
 
 configs:
@@ -25,12 +25,14 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Flowix
-        PRODUCT_BUNDLE_IDENTIFIER: com.flowix.app.ios-native
+        PRODUCT_BUNDLE_IDENTIFIER: com.flowix.app.mobile
+        CODE_SIGN_ENTITLEMENTS: FlowixIOS/Flowix.entitlements
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 1.0.0
+        MARKETING_VERSION: 1.1.15
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: FlowixIOS/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(inherited)"

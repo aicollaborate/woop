@@ -9,6 +9,7 @@ export function getCurrentThreadCardSource(): AgentConversationSource {
       kind: "thread-card",
       documentPath: session?.path ?? documentState.currentDocumentPath ?? null,
       memoId: session?.memoId ?? null,
+      notebookId: session?.notebookId ?? null,
     };
   }
   if (documentState.currentDocumentSource === "external") {
@@ -16,6 +17,7 @@ export function getCurrentThreadCardSource(): AgentConversationSource {
       kind: "thread-card",
       documentPath: documentState.currentDocumentPath ?? null,
       memoId: null,
+      notebookId: null,
     };
   }
   return { kind: "thread-card" };

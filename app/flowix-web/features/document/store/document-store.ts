@@ -5,7 +5,11 @@ import {
 } from '@features/document/store/document-session-service';
 import { canonicalPath } from '@/lib/path';
 import type { DocumentIdentity } from '@features/document/store/document-identity';
-import { useDocumentHistoryStore, type MemoHistoryEntry } from '@features/document/store/document-history-store';
+import {
+  useDocumentHistoryStore,
+  type DocumentHistoryEntry,
+  type MemoHistoryEntry,
+} from '@features/document/store/document-history-store';
 
 
 export type DocumentSource = 'memo' | 'external';
@@ -54,8 +58,8 @@ interface DocumentStore {
     history?: 'push' | 'skip';
     initialContent?: string;
   }) => Promise<void>;
-  openExternalDocument: (path: string | null) => Promise<void>;
-  openAgentConversation: (instanceId: string) => Promise<void>;
+  openExternalDocument: (path: string | null, options?: { history?: 'push' | 'skip' }) => Promise<void>;
+  openAgentConversation: (instanceId: string, options?: { history?: 'push' | 'skip' }) => Promise<void>;
   closeAgentConversation: () => void;
   clearDocument: () => Promise<void>;
   discardMemoDocument: (memoId: string) => Promise<void>;
@@ -100,6 +104,25 @@ function memoHistoryEntryFromSession(session: MemoDocumentSession): MemoHistoryE
     path: session.path,
     openedAt: session.openedAt,
   };
+}
+
+function activeHistoryEntry(state: DocumentStore): DocumentHistoryEntry | null {
+  if (state.activeMemoSession) return memoHistoryEntryFromSession(state.activeMemoSession);
+  if (state.activeExternalSession) {
+    return {
+      kind: 'external',
+      path: state.activeExternalSession.path,
+      openedAt: state.activeExternalSession.openedAt,
+    };
+  }
+  if (state.activeAgentConversationId) {
+    return {
+      kind: 'agent-conversation',
+      instanceId: state.activeAgentConversationId,
+      openedAt: Date.now(),
+    };
+  }
+  return null;
 }
 
 function isSameMemoTarget(
@@ -212,8 +235,8 @@ export const useDocumentStore = create<DocumentStore>()(
             return;
           }
 
+          const previousHistoryEntry = activeHistoryEntry(get());
           const prev = get().activeMemoSession ?? get().activeExternalSession;
-          const prevMemo = get().activeMemoSession;
           if (prev) {
             const flushStartedAt = performance.now();
             // Flush pending edits on the outgoing document before
@@ -228,11 +251,10 @@ export const useDocumentStore = create<DocumentStore>()(
           }
           if (
             history === 'push' &&
-            prevMemo &&
-            canonicalNewPath &&
-            (prevMemo.memoId !== memoId || prevMemo.path !== canonicalNewPath)
+            previousHistoryEntry &&
+            canonicalNewPath
           ) {
-            useDocumentHistoryStore.getState().pushBack(memoHistoryEntryFromSession(prevMemo));
+            useDocumentHistoryStore.getState().pushBack(previousHistoryEntry);
           }
           if (canonicalNewPath && initialContent !== undefined) {
             stageDocumentSnapshot(
@@ -273,7 +295,7 @@ export const useDocumentStore = create<DocumentStore>()(
         }
       });
     },
-    openExternalDocument: async (path) => {
+    openExternalDocument: async (path, { history = 'push' } = {}) => {
       const canonicalNewPath = path ? canonicalPath(path) : null;
       if (isSameExternalTarget(get(), canonicalNewPath)) {
         return;
@@ -288,10 +310,14 @@ export const useDocumentStore = create<DocumentStore>()(
             return;
           }
 
+          const previousHistoryEntry = activeHistoryEntry(get());
           const prev = get().activeMemoSession ?? get().activeExternalSession;
           if (prev) {
             const flushed = await flushDocumentPath(sessionIdentity(prev), prev.path);
             if (!flushed) throw new Error('Document switch cancelled because saving did not complete');
+          }
+          if (history === 'push' && previousHistoryEntry && canonicalNewPath) {
+            useDocumentHistoryStore.getState().pushBack(previousHistoryEntry);
           }
           set(() => {
             if (!canonicalNewPath) return documentState(null, null);
@@ -316,15 +342,19 @@ export const useDocumentStore = create<DocumentStore>()(
         }
       });
     },
-    openAgentConversation: async (instanceId) => {
+    openAgentConversation: async (instanceId, { history = 'push' } = {}) => {
       const normalizedInstanceId = instanceId.trim();
       if (!normalizedInstanceId || get().activeAgentConversationId === normalizedInstanceId) return;
 
       return enqueueTransition(async () => {
+        const previousHistoryEntry = activeHistoryEntry(get());
         const prev = get().activeMemoSession ?? get().activeExternalSession;
         if (prev) {
           const flushed = await flushDocumentPath(sessionIdentity(prev), prev.path);
           if (!flushed) throw new Error('Conversation switch cancelled because saving did not complete');
+        }
+        if (history === 'push' && previousHistoryEntry) {
+          useDocumentHistoryStore.getState().pushBack(previousHistoryEntry);
         }
         set({
           ...documentState(null, null),

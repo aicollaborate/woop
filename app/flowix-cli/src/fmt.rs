@@ -97,12 +97,11 @@ pub fn print_notebooks(configs: &[NotebookConfig], note_counts: &HashMap<String,
     let notes_w = "NOTES".len();
 
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  UPDATED",
         pad_right("NAME", name_w),
         pad_right("ID", id_w),
         pad_right("PATH", path_w),
-        pad_right("NOTES", notes_w),
-        "UPDATED"
+        pad_right("NOTES", notes_w)
     );
     println!(
         "{}  {}  {}  {}  {}",
@@ -179,12 +178,10 @@ pub fn print_notes(entries: &[MemoIndexEntry]) {
         .clamp(4, 16);
 
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  FAV  UPDATED",
         pad_right("ID", id_w),
         pad_right("TITLE", title_w),
-        pad_right("TAGS", tags_w),
-        "FAV",
-        "UPDATED"
+        pad_right("TAGS", tags_w)
     );
     println!(
         "{}  {}  {}  ---  -------------------",

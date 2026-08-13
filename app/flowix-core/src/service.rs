@@ -17,6 +17,8 @@ use crate::search::{self, NotebookSearchResults};
 
 const MAX_SEARCH_LIMIT: usize = 200;
 
+type TagUsageSummary = (Vec<String>, Vec<(String, usize)>, usize, usize, usize);
+
 #[derive(Debug, Error)]
 pub enum FlowixError {
     #[error("{0}")]
@@ -435,7 +437,7 @@ impl<'a> MemoService<'a> {
     pub fn tag_usage_summary(
         &mut self,
         notebook_id: Option<&str>,
-    ) -> Result<(Vec<String>, Vec<(String, usize)>, usize, usize, usize), FlowixError> {
+    ) -> Result<TagUsageSummary, FlowixError> {
         self.memo_file
             .read_tag_usage_summary_for_notebook_id(notebook_id)
             .map_err(FlowixError::Io)
@@ -608,7 +610,7 @@ mod tests {
                 icon: None,
                 path: format!("{}/", notebook_path.display()),
                 is_default: true,
-            sort: 0,
+                sort: 0,
                 created_at: 1,
                 updated_at: 1,
             }])
@@ -618,8 +620,8 @@ mod tests {
 
     #[test]
     fn service_covers_memo_lifecycle_and_filename_resolution() {
-        let (_temp, mut memo_file) = service_fixture();
-        let mut service = MemoService::new(&mut memo_file);
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
         let created = service
             .create_memo("Work Notes", "# Service note\n\nold text\n")
             .unwrap();
@@ -675,8 +677,8 @@ mod tests {
 
     #[test]
     fn exact_edit_reports_typed_conflicts() {
-        let (_temp, mut memo_file) = service_fixture();
-        let mut service = MemoService::new(&mut memo_file);
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
         let created = service
             .create_memo("work", "# Conflict\n\nrepeat repeat\n")
             .unwrap();
@@ -688,8 +690,8 @@ mod tests {
 
     #[test]
     fn desktop_service_preserves_explicit_titles_empty_content_and_metadata() {
-        let (_temp, mut memo_file) = service_fixture();
-        let mut service = MemoService::new(&mut memo_file);
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
 
         let preview = service
             .preview_create_path(Some("work"), "Imported title")
@@ -723,8 +725,8 @@ mod tests {
         use std::sync::{Arc, Barrier};
         use std::thread;
 
-        let (temp, mut memo_file) = service_fixture();
-        let created = MemoService::new(&mut memo_file)
+        let (temp, memo_file) = service_fixture();
+        let created = MemoService::new(&memo_file)
             .create_memo("work", "# Shared\n\nalpha beta\n")
             .unwrap();
         let memo_id = created.memo.id;

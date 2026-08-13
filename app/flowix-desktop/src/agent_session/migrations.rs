@@ -10,7 +10,7 @@ use rusqlite::{params, Connection};
 
 use super::error::ThreadError;
 
-const THREAD_DB_SCHEMA_VERSION: i64 = 3;
+pub(super) const THREAD_DB_SCHEMA_VERSION: i64 = 4;
 
 impl super::store::ThreadManager {
     pub(super) fn run_migrations(conn: &mut Connection) -> Result<(), ThreadError> {
@@ -76,6 +76,7 @@ impl super::store::ThreadManager {
                 source_kind TEXT NOT NULL DEFAULT 'thread-card',
                 source_document_path TEXT,
                 source_memo_id TEXT,
+                source_notebook_id TEXT,
                 role_memo_id TEXT,
                 role_name TEXT,
                 created_at INTEGER NOT NULL,
@@ -109,6 +110,7 @@ impl super::store::ThreadManager {
         // thread store.
         Self::ensure_external_session_metadata_column(conn)?;
         Self::ensure_agent_conversation_frozen_cwd_column(conn)?;
+        Self::ensure_agent_conversation_notebook_id_column(conn)?;
         Self::ensure_agent_conversation_schema(conn)?;
         Self::migrate_agent_external_events_table(conn)?;
         Self::ensure_agent_external_event_key_column(conn)?;
@@ -218,6 +220,29 @@ impl super::store::ThreadManager {
                 params![migrated_cwd, cleaned_config, instance_id],
             )?;
         }
+        Ok(())
+    }
+
+    /// Add `source_notebook_id` so conversation instances remember the owning
+    /// notebook of their source note and the conversation list can be scoped per
+    /// notebook. Idempotent: fresh databases already declare the column in
+    /// `CREATE TABLE`; only databases created before this column take the
+    /// `ALTER TABLE` path. No data backfill is possible — pre-column rows
+    /// simply read back as `None` and remain visible in every notebook.
+    fn ensure_agent_conversation_notebook_id_column(conn: &Connection) -> Result<(), ThreadError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(agent_conversation_instances)")?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        if columns.iter().any(|column| column == "source_notebook_id") {
+            return Ok(());
+        }
+        conn.execute(
+            "ALTER TABLE agent_conversation_instances ADD COLUMN source_notebook_id TEXT",
+            [],
+        )?;
         Ok(())
     }
 
@@ -344,6 +369,7 @@ impl super::store::ThreadManager {
                 source_kind TEXT NOT NULL DEFAULT 'thread-card',
                 source_document_path TEXT,
                 source_memo_id TEXT,
+                source_notebook_id TEXT,
                 role_memo_id TEXT,
                 role_name TEXT,
                 created_at INTEGER NOT NULL,
@@ -353,12 +379,12 @@ impl super::store::ThreadManager {
 
             INSERT INTO agent_conversation_instances (
                 instance_id, agent_type, thread_id, runtime_config, frozen_cwd,
-                source_kind, source_document_path, source_memo_id,
+                source_kind, source_document_path, source_memo_id, source_notebook_id,
                 role_memo_id, role_name, created_at, updated_at
             )
             SELECT
                 instance_id, agent_type, thread_id, runtime_config, frozen_cwd,
-                source_kind, source_document_path, source_memo_id,
+                source_kind, source_document_path, source_memo_id, source_notebook_id,
                 role_memo_id, role_name, created_at, updated_at
             FROM agent_conversation_instances_legacy;
 

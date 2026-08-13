@@ -16,11 +16,17 @@ use super::helpers::*;
 
 #[tauri::command]
 pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
+    let artifact_path = match crate::plugin::artifact_path_for_note(&id, &state.memo_file) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(memo_id = %id, "refuse to delete plugin pointer note: {error}");
+            return false;
+        }
+    };
     try_index_remove(state.inner(), &id);
     let before = read_memo_or_none(state.inner(), &id);
     let notebook_id = notebook_id_for_memo(state.inner(), &id);
     let abs_path = abs_path_for(state.inner(), &id);
-    // Mark before deleting so the watcher suppresses our own remove event.
     if !abs_path.is_empty() {
         mark_self_write_for(&app, Path::new(&abs_path));
     }
@@ -28,7 +34,18 @@ pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
         .delete_memo(&id)
         .map(|deleted| deleted.file_removed)
         .unwrap_or(false);
-    if ok {
+    if !ok {
+        return false;
+    }
+    if let Some(artifact_path) = artifact_path {
+        if let Err(error) = crate::plugin::remove_artifact_path(&artifact_path) {
+            // Keep the memo deletion successful and leave a recoverable orphan
+            // rather than deleting the pointer while an artifact removal is
+            // still uncertain. A future cleanup pass can remove this file.
+            tracing::warn!(path = %artifact_path.display(), "plugin artifact cleanup failed: {error}");
+        }
+    }
+    {
         let derived_changed = before
             .as_ref()
             .map(MemoDerivedChanged::from_deleted)
@@ -44,7 +61,7 @@ pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
             },
         );
     }
-    ok
+    true
 }
 
 #[tauri::command]
@@ -55,6 +72,17 @@ pub fn clear_memos(notebook_id: Option<String>, state: State<AppState>, app: App
             .list_memos_filtered(notebook_id.as_deref(), "all", "createdAt", None);
         let mut success = true;
         for memo in memos {
+            let artifact_path = match crate::plugin::artifact_path_for_note(
+                &memo.id,
+                &state.memo_file,
+            ) {
+                Ok(path) => path,
+                Err(error) => {
+                    tracing::warn!(memo_id = %memo.id, "refuse to clear plugin pointer note: {error}");
+                    success = false;
+                    continue;
+                }
+            };
             let (abs_path, resolved_notebook_id) =
                 MemoService::new(&read_lock(&state.memo_file, "memo_file"))
                     .resolve_memo(&memo.id)
@@ -70,6 +98,11 @@ pub fn clear_memos(notebook_id: Option<String>, state: State<AppState>, app: App
             {
                 success = false;
                 continue;
+            }
+            if let Some(artifact_path) = artifact_path {
+                if let Err(error) = crate::plugin::remove_artifact_path(&artifact_path) {
+                    tracing::warn!(path = %artifact_path.display(), "plugin artifact cleanup failed: {error}");
+                }
             }
             let deleted_notebook_id = notebook_id.clone().unwrap_or(resolved_notebook_id);
             let derived_changed = MemoDerivedChanged::from_deleted(&memo);

@@ -796,7 +796,9 @@ fn cancel_attachment_upload(upload_id: String, store: &mut NativeStore) {
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_initialize(data_dir: *const c_char) -> *mut c_char {
+/// # Safety
+/// `data_dir` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_initialize(data_dir: *const c_char) -> *mut c_char {
     let data_dir = match unsafe { input(data_dir) } {
         Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
         Ok(_) => return error("DATA_DIR_EMPTY"),
@@ -817,7 +819,9 @@ pub extern "C" fn flowix_native_cloud_state() -> *mut c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_cloud_login(
+/// # Safety
+/// `email` and `password` must be valid, NUL-terminated UTF-8 C strings for this call.
+pub unsafe extern "C" fn flowix_native_cloud_login(
     email: *const c_char,
     password: *const c_char,
 ) -> *mut c_char {
@@ -855,7 +859,9 @@ pub extern "C" fn flowix_native_cloud_login(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_cloud_restore(refresh_token: *const c_char) -> *mut c_char {
+/// # Safety
+/// `refresh_token` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_cloud_restore(refresh_token: *const c_char) -> *mut c_char {
     let refresh_token = match unsafe { input(refresh_token) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1040,7 +1046,11 @@ pub extern "C" fn flowix_native_library_snapshot() -> *mut c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_set_current_notebook(notebook_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// When non-null, `notebook_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_set_current_notebook(
+    notebook_id: *const c_char,
+) -> *mut c_char {
     let notebook_id = if notebook_id.is_null() {
         None
     } else {
@@ -1072,7 +1082,9 @@ pub extern "C" fn flowix_native_set_current_notebook(notebook_id: *const c_char)
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_create_notebook(name: *const c_char) -> *mut c_char {
+/// # Safety
+/// `name` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_create_notebook(name: *const c_char) -> *mut c_char {
     let name = match unsafe { input(name) } {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
         Ok(_) => return error("INVALID_NAME"),
@@ -1135,7 +1147,9 @@ pub extern "C" fn flowix_native_create_notebook(name: *const c_char) -> *mut c_c
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_rename_notebook(
+/// # Safety
+/// `notebook_id` and `name` must be valid, NUL-terminated UTF-8 C strings for this call.
+pub unsafe extern "C" fn flowix_native_rename_notebook(
     notebook_id: *const c_char,
     name: *const c_char,
 ) -> *mut c_char {
@@ -1182,7 +1196,9 @@ pub extern "C" fn flowix_native_rename_notebook(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_delete_notebook(notebook_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// `notebook_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_delete_notebook(notebook_id: *const c_char) -> *mut c_char {
     let notebook_id = match unsafe { input(notebook_id) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1234,7 +1250,9 @@ pub extern "C" fn flowix_native_delete_notebook(notebook_id: *const c_char) -> *
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_create_memo(
+/// # Safety
+/// `notebook_id`, `title`, and `content` must be valid, NUL-terminated UTF-8 C strings for this call.
+pub unsafe extern "C" fn flowix_native_create_memo(
     notebook_id: *const c_char,
     title: *const c_char,
     content: *const c_char,
@@ -1281,7 +1299,9 @@ pub extern "C" fn flowix_native_create_memo(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_delete_memo(memo_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// `memo_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_delete_memo(memo_id: *const c_char) -> *mut c_char {
     let memo_id = match unsafe { input(memo_id) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1309,7 +1329,9 @@ pub extern "C" fn flowix_native_delete_memo(memo_id: *const c_char) -> *mut c_ch
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_set_memo_favorited(
+/// # Safety
+/// `memo_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_set_memo_favorited(
     memo_id: *const c_char,
     favorited: bool,
 ) -> *mut c_char {
@@ -1346,7 +1368,9 @@ pub extern "C" fn flowix_native_set_memo_favorited(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_open_memo(memo_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// `memo_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_open_memo(memo_id: *const c_char) -> *mut c_char {
     let memo_id = match unsafe { input(memo_id) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1370,7 +1394,9 @@ pub extern "C" fn flowix_native_open_memo(memo_id: *const c_char) -> *mut c_char
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_write_document(
+/// # Safety
+/// All string pointers must be valid, NUL-terminated UTF-8 C strings for this call; `expected_content` may be null.
+pub unsafe extern "C" fn flowix_native_write_document(
     memo_id: *const c_char,
     content: *const c_char,
     expected_content: *const c_char,
@@ -1430,7 +1456,9 @@ pub extern "C" fn flowix_native_write_document(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_begin_attachment_upload(
+/// # Safety
+/// All string pointers must be valid, NUL-terminated UTF-8 C strings for this call.
+pub unsafe extern "C" fn flowix_native_begin_attachment_upload(
     file_name: *const c_char,
     mime_type: *const c_char,
     size_bytes: u64,
@@ -1462,7 +1490,9 @@ pub extern "C" fn flowix_native_begin_attachment_upload(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_write_attachment_chunk(
+/// # Safety
+/// `upload_id` and `content` must be valid, NUL-terminated UTF-8 C strings for this call.
+pub unsafe extern "C" fn flowix_native_write_attachment_chunk(
     upload_id: *const c_char,
     content: *const c_char,
 ) -> *mut c_char {
@@ -1485,7 +1515,11 @@ pub extern "C" fn flowix_native_write_attachment_chunk(
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_finish_attachment_upload(upload_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// `upload_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_finish_attachment_upload(
+    upload_id: *const c_char,
+) -> *mut c_char {
     let upload_id = match unsafe { input(upload_id) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1501,7 +1535,11 @@ pub extern "C" fn flowix_native_finish_attachment_upload(upload_id: *const c_cha
 }
 
 #[no_mangle]
-pub extern "C" fn flowix_native_cancel_attachment_upload(upload_id: *const c_char) -> *mut c_char {
+/// # Safety
+/// `upload_id` must be a valid, NUL-terminated UTF-8 C string for this call.
+pub unsafe extern "C" fn flowix_native_cancel_attachment_upload(
+    upload_id: *const c_char,
+) -> *mut c_char {
     let upload_id = match unsafe { input(upload_id) } {
         Ok(value) => value,
         Err(message) => return error(message),
@@ -1517,6 +1555,8 @@ pub extern "C" fn flowix_native_cancel_attachment_upload(upload_id: *const c_cha
 }
 
 #[no_mangle]
+/// # Safety
+/// `value` must be a non-null pointer returned by this library that has not already been freed.
 pub unsafe extern "C" fn flowix_native_free_string(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));
@@ -1535,7 +1575,7 @@ mod tests {
     fn initialize_and_read_empty_library() {
         let directory = tempfile::tempdir().expect("temp directory");
         let path = CString::new(directory.path().to_string_lossy().as_bytes()).unwrap();
-        let result = flowix_native_initialize(path.as_ptr());
+        let result = unsafe { flowix_native_initialize(path.as_ptr()) };
         let json = unsafe { CStr::from_ptr(result) }
             .to_str()
             .unwrap()
@@ -1563,8 +1603,9 @@ mod tests {
         let notebook = CString::new(notebook_id).unwrap();
         let title = CString::new("FFI smoke test").unwrap();
         let content = CString::new("# FFI smoke test\n\nbody").unwrap();
-        let created =
-            flowix_native_create_memo(notebook.as_ptr(), title.as_ptr(), content.as_ptr());
+        let created = unsafe {
+            flowix_native_create_memo(notebook.as_ptr(), title.as_ptr(), content.as_ptr())
+        };
         let created_json = unsafe { CStr::from_ptr(created) }
             .to_str()
             .unwrap()
@@ -1577,7 +1618,7 @@ mod tests {
         let memo_id = created["memo"]["id"].as_str().unwrap().to_owned();
 
         let memo = CString::new(memo_id.clone()).unwrap();
-        let favorite = flowix_native_set_memo_favorited(memo.as_ptr(), true);
+        let favorite = unsafe { flowix_native_set_memo_favorited(memo.as_ptr(), true) };
         let favorite_json = unsafe { CStr::from_ptr(favorite) }
             .to_str()
             .unwrap()
@@ -1587,7 +1628,7 @@ mod tests {
         }
         assert!(favorite_json.contains("\"ok\":true"));
 
-        let deleted = flowix_native_delete_memo(memo.as_ptr());
+        let deleted = unsafe { flowix_native_delete_memo(memo.as_ptr()) };
         let deleted_json = unsafe { CStr::from_ptr(deleted) }
             .to_str()
             .unwrap()

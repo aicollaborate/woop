@@ -5,6 +5,7 @@ use crate::agent_external_config::AgentExternalConfig;
 use crate::agent_flowix::AgentManager;
 use crate::agent_session::ThreadManager;
 use crate::config::{AgentAccessStore, SecurityBookmarkStore, UserConfigStore};
+use crate::plugin::PluginRunCoordinator;
 use crate::system_data::SystemData;
 use flowix_core::memo_file::MemoFile;
 use flowix_core::search::MemoIndex;
@@ -35,4 +36,5 @@ pub struct AppState {
     /// �?`allowed_roots` �?`available_dirs` 工具的过滤�?
     pub agent_access: Arc<AgentAccessStore>,
     pub security_bookmarks: Arc<SecurityBookmarkStore>,
+    pub plugin_runs: PluginRunCoordinator,
 }

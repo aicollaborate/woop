@@ -330,9 +330,7 @@ fn canonical_chunk_metadata(
     let (role, fallback_source) = match chunk {
         AgentChunk::Text { .. } => ("assistant", "stream".to_string()),
         AgentChunk::Reasoning { .. } => ("reasoning", "stream".to_string()),
-        AgentChunk::ToolCall { id, .. } | AgentChunk::ToolResult { id, .. } => {
-            ("tool", id.clone())
-        }
+        AgentChunk::ToolCall { id, .. } | AgentChunk::ToolResult { id, .. } => ("tool", id.clone()),
         AgentChunk::Error { .. } => ("error", "error".to_string()),
         _ => return canonical,
     };
