@@ -127,7 +127,7 @@ fi
 
 cd "$REPO_ROOT"
 
-# Keep the marketing version at 1.1.15 while giving every TestFlight upload a
+# Keep the marketing version at 1.1.16 while giving every TestFlight upload a
 # monotonically new CFBundleVersion. Override this when reproducing a build.
 IOS_BUILD_NUMBER="${IOS_BUILD_NUMBER:-$(date +%s)}"
 if [[ ! "$IOS_BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then

@@ -513,7 +513,7 @@ struct AccountView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.15"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.16"
     }
 
     private func notebookStatus(_ notebook: NativeCloudNotebook) -> String {

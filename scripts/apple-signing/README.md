@@ -278,7 +278,7 @@ The native SwiftUI client has an independent target and App Store Connect app:
 - Project: `app/flowix-ios-native/FlowixIOS.xcodeproj`
 - Scheme: `FlowixIOS`
 - Bundle ID: `com.flowix.app.mobile` (same as the existing Tauri TestFlight app)
-- Marketing version: `1.1.15`
+- Marketing version: `1.1.16`
 - Provisioning variable: `IOS_NATIVE_MOBILE_PROVISION_PATH`
 
 Reuse the existing `com.flowix.app.mobile` App ID and App Store provisioning profile. The native binary is uploaded as an update to the existing Tauri TestFlight app. Then run:

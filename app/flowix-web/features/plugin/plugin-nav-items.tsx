@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 import { plugins, type PluginDescriptor } from '@platform/tauri/client';
 import { listenToPluginCatalogChanges } from '@platform/tauri/client/plugin';
 
+const HIDDEN_SIDEBAR_PLUGIN_IDS = new Set(['mindmap']);
+
 export function PluginNavItems({
   activePluginId,
   onOpenPlugin,
@@ -18,7 +20,12 @@ export function PluginNavItems({
   useEffect(() => {
     let active = true;
     const load = () => plugins.list().then((next) => {
-      if (active) setItems(next.filter((item) => item.manifest.ui.placement === 'sidebar'));
+      if (active) {
+        setItems(next.filter(
+          (item) => item.manifest.ui.placement === 'sidebar'
+            && !HIDDEN_SIDEBAR_PLUGIN_IDS.has(item.manifest.id),
+        ));
+      }
     }).catch((error) => console.warn('[PluginNavItems] failed to load plugins', error));
     void load();
     const unlisten = listenToPluginCatalogChanges(() => { void load(); });
@@ -29,7 +36,7 @@ export function PluginNavItems({
   return (
     // Sidebar plugins are part of the same top-level navigation group as the
     // memo filters (all / conversations / todos). Keep this wrapper borderless
-    // so the built-in mindmap entry is not visually separated into its own group.
+    // so plugin entries remain visually part of the same navigation group.
     <div className="space-y-0.5">
       {items.map((plugin) => (
         <div

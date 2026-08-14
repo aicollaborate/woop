@@ -438,7 +438,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../.build/native-api/sim",
 				);
-				MARKETING_VERSION = 1.1.15;
+				MARKETING_VERSION = 1.1.16;
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"-lflowix_native_api",
@@ -477,7 +477,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../.build/native-api/sim",
 				);
-				MARKETING_VERSION = 1.1.15;
+				MARKETING_VERSION = 1.1.16;
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"-lflowix_native_api",
