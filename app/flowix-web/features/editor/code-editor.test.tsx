@@ -53,7 +53,26 @@ describe('CodeEditor', () => {
     ));
 
     expect(editorRef.current?.flushPendingChanges()).toBe('hello\n');
-    expect(container.querySelector('.cm-content')?.textContent).toBe('hello');
+    const content = container.querySelector('.cm-content');
+    expect(content?.textContent).toBe('hello');
+    expect(content?.classList.contains('cm-lineWrapping')).toBe(true);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('renders language tokens with stable stylesheet classes', async () => {
+    await act(async () => root.render(
+      <CodeEditor
+        filePath="/project/example.js"
+        content={'const answer = "yes";'}
+        onChange={vi.fn()}
+      />
+    ));
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('.cm-code-keyword')?.textContent).toBe('const');
+        expect(container.querySelector('.cm-code-string')?.textContent).toBe('"yes"');
+      });
+    });
   });
 });

@@ -3,7 +3,7 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import { displayTitleFromFilename } from '@/lib/utils';
 import { ListTodo, MoreHorizontal } from 'lucide-react';
-import { PushPin } from '@phosphor-icons/react';
+import { FileTextIcon, PushPin } from '@phosphor-icons/react';
 import { MEMO_COLOR_HEX, type MemoColor, type MemoItem } from '@features/memo';
 import { cn } from '@/lib/utils';
 import { getAgentType } from '@/lib/agent-types';
@@ -57,6 +57,7 @@ interface MemoCardBodyProps {
 
 interface MemoCardShellProps {
   memo: MemoItem;
+  variant: MemoCardVariant;
   isSelected: boolean;
   isDropdownOpen: boolean;
   moreLabel: string;
@@ -129,7 +130,6 @@ function ColorDots({ colors, limit, className }: { colors: MemoItem['colors']; l
 function MemoCardMoreMenu({
   memo,
   isDropdownOpen,
-  isSelected,
   moreLabel,
   onOpenDropdown,
   onFavoriteToggle,
@@ -137,7 +137,7 @@ function MemoCardMoreMenu({
   onColorsChange,
 }: Pick<
   MemoCardShellProps,
-  'memo' | 'isDropdownOpen' | 'isSelected' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
+  'memo' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
 >) {
   return (
     <div className="absolute right-3 z-100 shrink-0 items-center gap-1">
@@ -152,17 +152,9 @@ function MemoCardMoreMenu({
           <button
             type="button"
             aria-label={moreLabel}
-            className={cn(
-              'rounded p-1 opacity-0 transition-[opacity,background-color] group-hover:opacity-100',
-              // 背景与外层 memo card 同步: 选中 = accent (与选中卡片同色,
-              // 视觉上与卡片融为一体); 未选中 = card (与列表底色一致,
-              // 视觉上"浮"在卡片之上)。仅 hover memo card 时才显形。
-              isSelected
-                ? 'bg-[var(--accent)]'
-                : 'bg-[var(--card)]',
-            )}
+            className="rounded p-1 text-[var(--muted-foreground)] opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-[var(--foreground)]"
           >
-            <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
+            <MoreHorizontal className="h-4 w-4" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-[180px] space-y-1 px-1 py-1.5">
@@ -194,6 +186,7 @@ function MemoCardMoreMenu({
 
 function MemoCardShell({
   memo,
+  variant,
   isSelected,
   isDropdownOpen,
   moreLabel,
@@ -212,7 +205,9 @@ function MemoCardShell({
           onClick={() => onSelect(memo)}
           onDoubleClick={() => onOpenInWindow?.(memo)}
           className={cn(
-            'group memo-card relative cursor-pointer rounded-lg px-2 py-3 transition-all',
+            'group memo-card relative cursor-pointer rounded-lg px-2 transition-all',
+            variant === 'compact' ? 'py-[9px]' : 'py-3',
+            variant === 'compact' && !isSelected && 'hover:bg-[var(--muted)]',
             isSelected && 'bg-[var(--accent)]',
           )}
         >
@@ -223,7 +218,6 @@ function MemoCardShell({
             <MemoCardMoreMenu
               memo={memo}
               isDropdownOpen={isDropdownOpen}
-              isSelected={isSelected}
               moreLabel={moreLabel}
               onOpenDropdown={onOpenDropdown}
               onFavoriteToggle={onFavoriteToggle}
@@ -260,6 +254,7 @@ function CompactMemoCardBody({
           runningAgentType={runningAgentType}
         />
       )}
+      <FileTextIcon weight="duotone" className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
       {memo.favorited && (
         <PushPin weight="fill" className="h-3.5 w-3.5 shrink-0 text-[var(--foreground)]" />
       )}
@@ -319,7 +314,22 @@ function DetailedMemoCardBody({
         </p>
       </div>
       <div className="flex w-full items-center justify-between gap-2 pt-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+        <div className="flex shrink-0 items-center gap-1">
+          <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
+            {timeLabel}
+          </span>
+          {(memo.favorited || hasTodos) && (
+            <span className="inline-flex items-center gap-1">
+              {memo.favorited && (
+                <PushPin weight="fill" className="h-3.5 w-3.5 text-[var(--foreground)]" />
+              )}
+              {hasTodos && (
+                <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+              )}
+            </span>
+          )}
+        </div>
+        <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden">
           {memo.tags && memo.tags.length > 0 && (
             <>
               {memo.tags.slice(0, 2).map((tagId) => {
@@ -342,20 +352,7 @@ function DetailedMemoCardBody({
               )}
             </>
           )}
-          {(memo.favorited || hasTodos) && (
-            <span className="inline-flex shrink-0 items-center gap-1">
-              {memo.favorited && (
-                <PushPin weight="fill" className="h-3.5 w-3.5 text-[var(--foreground)]" />
-              )}
-              {hasTodos && (
-                <ListTodo className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
-              )}
-            </span>
-          )}
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-[var(--muted-foreground)]">
-          {timeLabel}
-        </span>
       </div>
     </>
   );
@@ -403,6 +400,7 @@ export function MemoCardImpl({
   return (
     <MemoCardShell
       memo={memo}
+      variant={variant}
       isSelected={isSelected}
       isDropdownOpen={isDropdownOpen}
       moreLabel={t('document.titlebar.moreTooltip')}

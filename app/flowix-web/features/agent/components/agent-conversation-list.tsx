@@ -227,7 +227,7 @@ export function AgentConversationList() {
         ) : (
           <div className="flex flex-col gap-1">
             {conversationGroups.map((group, index) => (
-              <div key={group.key} className={cn('flex flex-col gap-1', index > 0 && 'mt-3')}>
+              <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
                 <h3 className="px-2 text-xs font-medium text-[var(--muted-foreground)]">
                   {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
                 </h3>

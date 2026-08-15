@@ -10,12 +10,16 @@ const frontendRoot = resolve(__dirname, "app/flowix-web");
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const isMobile = mode === "mobile";
   const isEditorWebView = mode === "editor-webview";
 
   return {
-    base: isEditorWebView ? "./" : "/",
+    // Packaged Tauri pages are served from an application protocol rather
+    // than an HTTP origin. Keep every emitted asset URL relative in builds so
+    // CSS, fonts, and lazy chunks resolve beside index.html in the installed
+    // app. The dev server still needs an origin-root base for HMR.
+    base: command === "build" || isEditorWebView ? "./" : "/",
     // 前端入口: app/flowix-web/ 作为 Vite 根, 让 index.html / entrypoints /
     // public 都在同一目录, 避免 Tauri / Vite 路径互相穿越。
     root: frontendRoot,

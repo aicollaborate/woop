@@ -10,12 +10,11 @@ import {
 import { basicSetup } from 'codemirror';
 import { Compartment, EditorState } from '@codemirror/state';
 import {
-  HighlightStyle,
   LanguageDescription,
   syntaxHighlighting,
 } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { tags } from '@lezer/highlight';
+import { tagHighlighter, tags } from '@lezer/highlight';
 import { EditorView } from '@codemirror/view';
 import {
   closeSearchPanel,
@@ -130,15 +129,18 @@ const codeEditorTheme = EditorView.theme({
   },
 });
 
-const codeHighlightStyle = HighlightStyle.define([
-  { tag: tags.comment, color: 'var(--muted-foreground)', fontStyle: 'italic' },
-  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: 'var(--primary)' },
-  { tag: [tags.string, tags.special(tags.string)], color: 'var(--success)' },
-  { tag: [tags.number, tags.bool, tags.null], color: 'var(--warning)' },
-  { tag: [tags.function(tags.variableName), tags.labelName], color: 'var(--document-link)' },
-  { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--brand)' },
-  { tag: [tags.regexp, tags.escape], color: 'var(--memo-color-orange)' },
-  { tag: tags.invalid, color: 'var(--destructive)' },
+// Fixed class names keep syntax colors in the compiled application CSS.
+// HighlightStyle.define() emits a runtime <style> sheet with generated class
+// names, which can be absent during packaged WebView startup.
+const codeHighlighter = tagHighlighter([
+  { tag: tags.comment, class: 'cm-code-comment' },
+  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], class: 'cm-code-keyword' },
+  { tag: [tags.string, tags.special(tags.string)], class: 'cm-code-string' },
+  { tag: [tags.number, tags.bool, tags.null], class: 'cm-code-constant' },
+  { tag: [tags.function(tags.variableName), tags.labelName], class: 'cm-code-function' },
+  { tag: [tags.typeName, tags.className, tags.namespace], class: 'cm-code-type' },
+  { tag: [tags.regexp, tags.escape], class: 'cm-code-regexp' },
+  { tag: tags.invalid, class: 'cm-code-invalid' },
 ]);
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor({
@@ -180,7 +182,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       extensions: [
         basicSetup,
         codeEditorTheme,
-        syntaxHighlighting(codeHighlightStyle),
+        syntaxHighlighting(codeHighlighter),
         EditorView.lineWrapping,
         languageCompartment.of([]),
         EditorView.contentAttributes.of({
@@ -260,5 +262,5 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     };
   }, [filePath, languageCompartment]);
 
-  return <div ref={mountRef} className={cn('h-full w-full min-w-0', className)} />;
+  return <div ref={mountRef} className={cn('code-editor h-full w-full min-w-0', className)} />;
 });

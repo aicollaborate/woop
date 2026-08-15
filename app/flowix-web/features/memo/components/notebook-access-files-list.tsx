@@ -217,7 +217,8 @@ export function NotebookAccessFilesList({
       <div className="agent-thread-card__access-section-label">
         {t('memo.navigation.files')}
       </div>
-      {folderItems.map((item) => {
+      <div className="space-y-0.5">
+        {folderItems.map((item) => {
         const isWorkspace = primaryFolderPath === item.path;
         // 设为主空间 / 取消主空间 ── 真正的判别是 `isWorkspace`, 不是 folder
         // 个数: 单 folder 在 workspace=null 时 (用户显式取消) 也允许"设为主空间"
@@ -283,7 +284,7 @@ export function NotebookAccessFilesList({
                 {isWorkspace && (
                   <Star
                     aria-label={t('agent.access.workspaceBadge')}
-                    className="agent-thread-card__access-workspace-star h-3.5 w-3.5 shrink-0 text-[var(--primary)]"
+                    className="agent-thread-card__access-workspace-star h-3 w-3 shrink-0 text-[var(--primary)]"
                     fill="currentColor"
                   />
                 )}
@@ -321,21 +322,22 @@ export function NotebookAccessFilesList({
             </ContextMenuContent>
           </ContextMenu>
         );
-      })}
-      <Tooltip content={t('agent.access.addFolderHint')} side="right" align="start">
-        <button
-          type="button"
-          onClick={handleAddFolder}
-          className="group relative flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
-        >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]">
-            <Plus className="h-3.5 w-3.5" />
-          </span>
-          <span className="min-w-0 flex-1 truncate">
-            {t('memo.navigation.addFolder')}
-          </span>
-        </button>
-      </Tooltip>
+        })}
+        <Tooltip content={t('agent.access.addFolderHint')} side="right" align="start">
+          <button
+            type="button"
+            onClick={handleAddFolder}
+            className="group relative flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]">
+              <Plus className="h-3.5 w-3.5" />
+            </span>
+            <span className="min-w-0 flex-1 truncate">
+              {t('memo.navigation.addFolder')}
+            </span>
+          </button>
+        </Tooltip>
+      </div>
     </div>
   );
 }

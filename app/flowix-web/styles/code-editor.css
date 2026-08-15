@@ -1,0 +1,141 @@
+/*
+ * CodeMirror normally mounts its structural CSS through style-mod at runtime.
+ * Keep the essential layout in the application stylesheet as well: packaged
+ * WebViews can restore a page before the injected sheet is ready, and a
+ * rejected inline sheet must not turn a loaded document into an unstyled or
+ * apparently empty surface.
+ */
+.code-editor > .cm-editor {
+	height: 100%;
+	position: relative !important;
+	display: flex !important;
+	flex-direction: column;
+	box-sizing: border-box;
+	color: var(--document-foreground, var(--foreground, #1f2937));
+	background: transparent;
+	font-size: 13px;
+}
+
+.code-editor > .cm-editor.cm-focused {
+	outline: none;
+}
+
+.code-editor .cm-scroller {
+	display: flex !important;
+	align-items: flex-start !important;
+	height: 100%;
+	overflow-x: hidden;
+	overflow-y: auto;
+	position: relative;
+	z-index: 0;
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	line-height: 1.65;
+	overflow-anchor: none;
+}
+
+.code-editor .cm-content {
+	display: block;
+	min-height: 100%;
+	margin: 0;
+	padding: 14px 0 28px;
+	box-sizing: border-box;
+	flex-grow: 2;
+	flex-shrink: 0;
+	white-space: pre;
+	word-wrap: normal;
+	outline: none;
+	color: var(--document-foreground, var(--foreground, #1f2937));
+	caret-color: var(--foreground, #1f2937);
+}
+
+/* Mirror EditorView.lineWrapping with enough specificity to win over the
+ * non-wrapping structural fallback above. Long lines stay constrained to the
+ * editor viewport and never introduce a horizontal scrollbar. */
+.code-editor .cm-content.cm-lineWrapping {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	white-space: break-spaces;
+	word-break: break-word;
+	overflow-wrap: anywhere;
+	flex-shrink: 1;
+}
+
+.code-editor .cm-line {
+	display: block;
+	max-width: 100%;
+	padding: 0 20px 0 10px;
+	color: var(--document-foreground, var(--foreground, #1f2937));
+}
+
+.code-editor .cm-gutters {
+	display: flex;
+	height: 100%;
+	box-sizing: border-box;
+	padding-left: 8px;
+	border: 0;
+	color: var(--muted-foreground, #6b7280);
+	background: var(--document-bg, #fff);
+}
+
+.code-editor .cm-gutter {
+	display: flex !important;
+	flex-direction: column;
+	flex-shrink: 0;
+	box-sizing: border-box;
+	min-height: 100%;
+	overflow: hidden;
+}
+
+.code-editor .cm-gutterElement {
+	box-sizing: border-box;
+}
+
+.code-editor .cm-lineNumbers .cm-gutterElement {
+	min-width: 20px;
+	padding: 0 3px 0 5px;
+	text-align: right;
+	white-space: nowrap;
+	color: color-mix(in oklch, var(--muted-foreground, #6b7280) 40%, transparent);
+}
+
+.code-editor .cm-cursor,
+.code-editor .cm-dropCursor {
+	border-left-color: var(--foreground, #1f2937);
+}
+
+/* Syntax highlighting uses stable classes from codeHighlighter. Keeping
+ * these declarations in the compiled stylesheet makes highlighting work in
+ * packaged WebViews without CodeMirror's runtime-generated style sheet. */
+.code-editor .cm-code-comment {
+	color: var(--muted-foreground, #6b7280);
+	font-style: italic;
+}
+
+.code-editor .cm-code-keyword {
+	color: var(--primary, #7c3aed);
+}
+
+.code-editor .cm-code-string {
+	color: var(--success, #16803c);
+}
+
+.code-editor .cm-code-constant {
+	color: var(--warning, #b45309);
+}
+
+.code-editor .cm-code-function {
+	color: var(--document-link, #2563eb);
+}
+
+.code-editor .cm-code-type {
+	color: var(--brand, #7c3aed);
+}
+
+.code-editor .cm-code-regexp {
+	color: var(--memo-color-orange, #c2410c);
+}
+
+.code-editor .cm-code-invalid {
+	color: var(--destructive, #dc2626);
+}
