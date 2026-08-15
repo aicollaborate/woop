@@ -44,7 +44,7 @@ interface CodeEditorProps {
 const codeEditorTheme = EditorView.theme({
   '&': {
     height: '100%',
-    color: 'var(--foreground)',
+    color: 'var(--document-foreground, var(--foreground, #1f2937))',
     backgroundColor: 'transparent',
     fontSize: '13px',
   },
@@ -59,10 +59,15 @@ const codeEditorTheme = EditorView.theme({
   '.cm-content': {
     minHeight: '100%',
     padding: '14px 0 28px',
+    // Keep the document text color on the actual content layer. Relying on
+    // inheritance from `.cm-editor` makes text disappear in WebKit when a
+    // theme variable is unavailable during the production-app startup.
+    color: 'var(--document-foreground, var(--foreground, #1f2937))',
     caretColor: 'var(--foreground)',
   },
   '.cm-line': {
     padding: '0 20px 0 10px',
+    color: 'var(--document-foreground, var(--foreground, #1f2937))',
   },
   '.cm-gutters': {
     paddingLeft: '8px',
@@ -242,6 +247,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     void description.load().then((support) => {
       if (disposed || viewRef.current !== view) return;
       view.dispatch({ effects: languageCompartment.reconfigure(support) });
+    }).catch((error: unknown) => {
+      if (disposed) return;
+      console.error('[CodeEditor] Failed to load language support', {
+        filePath,
+        language: description.name,
+        error,
+      });
     });
     return () => {
       disposed = true;

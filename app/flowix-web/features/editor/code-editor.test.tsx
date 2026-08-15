@@ -27,7 +27,7 @@ describe('CodeEditor', () => {
     reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
   });
 
-  it('renders empty text files and synchronizes authoritative content without emitting an edit', async () => {
+  it('renders text content and synchronizes authoritative content without emitting an edit', async () => {
     const editorRef = createRef<CodeEditorHandle>();
     const onChange = vi.fn();
 
@@ -53,6 +53,7 @@ describe('CodeEditor', () => {
     ));
 
     expect(editorRef.current?.flushPendingChanges()).toBe('hello\n');
+    expect(container.querySelector('.cm-content')?.textContent).toBe('hello');
     expect(onChange).not.toHaveBeenCalled();
   });
 });
