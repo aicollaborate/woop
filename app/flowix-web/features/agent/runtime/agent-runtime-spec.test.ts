@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildAgentRuntimeConfig,
   getAgentAccessOptions,
+  getAgentRuntimeSpec,
   normalizeCodexPermissionMode,
+  normalizeDshPermissionMode,
   supportsAgentEmptySettings,
+  supportsAgentRuntimeSetting,
 } from "@features/agent/runtime/agent-runtime-spec";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -141,10 +144,53 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(result.codex?.reasoningEffort).toBe("high");
   });
 
+  it("DeepSeek Harness exposes mode before permission and sends the card mode", () => {
+    const result = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/notebook",
+      permissionMode: "workspace-write",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+      instanceRuntimeConfig: {
+        deepseekHarness: { mode: "code" },
+      },
+    });
+
+    expect(result.deepseekHarness?.mode).toBe("code");
+    expect(getAgentRuntimeSpec("deepseek-harness").emptySettings).toEqual([
+      "mode",
+      "permission",
+    ]);
+  });
+
+  it("DeepSeek Harness 始终使用配置模型, 不序列化卡片模型", () => {
+    const inherited = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "workspace-write",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+    });
+    expect(inherited.deepseekHarness?.model).toBeUndefined();
+
+    const selected = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "workspace-write",
+      codexModel: "deepseek-v4-pro",
+      codexReasoningEffort: "medium",
+    });
+    expect(selected.deepseekHarness?.model).toBeUndefined();
+  });
+
   it("flowix supports empty-card runtime settings for files (空状态设置区仍可用)", () => {
     expect(supportsAgentEmptySettings("flowix")).toBe(false);
     expect(supportsAgentEmptySettings("codex")).toBe(true);
     expect(supportsAgentEmptySettings("claude")).toBe(true);
+    expect(supportsAgentEmptySettings("deepseek-harness")).toBe(true);
+    expect(supportsAgentRuntimeSetting("deepseek-harness", "model")).toBe(false);
+    expect(supportsAgentRuntimeSetting("deepseek-harness", "mode")).toBe(true);
+    expect(supportsAgentRuntimeSetting("deepseek-harness", "permission")).toBe(true);
   });
 
   it("exposes yolo on Codex and Claude access options", () => {
@@ -179,5 +225,75 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     });
 
     expect(result.claude?.permissionMode).toBe("yolo");
+  });
+
+  it("DeepSeek Harness 默认 fail closed 到 workspace-write, 不复用 Codex 兜底", () => {
+    expect(normalizeDshPermissionMode(undefined)).toBe("workspace-write");
+    expect(normalizeDshPermissionMode("inherit")).toBe("workspace-write");
+    expect(normalizeDshPermissionMode("yolo")).toBe("workspace-write");
+    expect(normalizeDshPermissionMode("unknown" as never)).toBe(
+      "workspace-write",
+    );
+    expect(normalizeDshPermissionMode("read-only")).toBe("read-only");
+    expect(normalizeDshPermissionMode("workspace-write")).toBe(
+      "workspace-write",
+    );
+    expect(normalizeDshPermissionMode("danger-full-access")).toBe(
+      "danger-full-access",
+    );
+  });
+
+  it("DeepSeek Harness 前端全局默认 danger-full-access 不被继承", () => {
+    // 全局 sessionMeta 默认是 danger-full-access (Codex 语义); DSH 卡片
+    // 未显式选权限时使用自己的 workspace-write 默认, 不静默继承完全访问。
+    const result = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "danger-full-access",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+    });
+    expect(result.deepseekHarness?.permissionMode).toBe("workspace-write");
+
+    // inherit / yolo 归一化到 workspace-write
+    const inherited = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "inherit",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+    });
+    expect(inherited.deepseekHarness?.permissionMode).toBe("workspace-write");
+
+    const yolo = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "yolo",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+    });
+    expect(yolo.deepseekHarness?.permissionMode).toBe("workspace-write");
+  });
+
+  it("DeepSeek Harness 卡片显式选择的权限仍生效", () => {
+    const explicit = buildAgentRuntimeConfig({
+      typeKey: "deepseek-harness",
+      notebookPath: "/tmp/project",
+      permissionMode: "workspace-write",
+      codexModel: "inherit",
+      codexReasoningEffort: "medium",
+      instanceRuntimeConfig: {
+        access: { sandbox: "read-only" },
+      },
+    });
+    expect(explicit.deepseekHarness?.permissionMode).toBe("read-only");
+  });
+
+  it("DeepSeek Harness 权限选项不含 yolo", () => {
+    expect(getAgentAccessOptions("deepseek-harness").map((o) => o.id)).toEqual([
+      "workspace-write",
+      "read-only",
+      "danger-full-access",
+    ]);
   });
 });

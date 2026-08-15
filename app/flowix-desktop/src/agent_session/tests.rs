@@ -840,6 +840,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deepseek_harness_history_normalizes_legacy_think_text() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "deepseek-harness-legacy-think";
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-1","text":"inspect","run_id":"run-1"}"#,
+            r#"{"kind":"text","message_id":"msg:deepseek-harness:run-1:assistant:stream","content_mode":"delta","text":"<think>plan carefully</think>answer","run_id":"run-1"}"#,
+            r#"{"kind":"stream_end","run_id":"run-1"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "deepseek-harness".to_string(),
+                    thread_id: thread_id.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(400 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let page = manager
+            .get_external_event_messages_page("deepseek-harness", thread_id, None, 10)
+            .await
+            .unwrap()
+            .expect("database history should materialize");
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.content.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "inspect"),
+                ("reasoning", "plan carefully"),
+                ("assistant", "answer"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn deepseek_harness_history_splits_legacy_assistant_segments_after_tools() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "deepseek-harness-legacy-tool-boundary";
+        let payloads = [
+            r#"{"kind":"user_message","id":"user-1","text":"inspect","run_id":"run-1"}"#,
+            r#"{"kind":"text","message_id":"msg:deepseek-harness:run-1:assistant:stream","content_mode":"delta","text":"before","run_id":"run-1"}"#,
+            r#"{"kind":"tool_call","id":"call-1","message_id":"msg:deepseek-harness:run-1:tool:call-1","name":"shell","input":{"command":"pwd"},"run_id":"run-1"}"#,
+            r#"{"kind":"tool_result","id":"call-1","message_id":"msg:deepseek-harness:run-1:tool:call-1","name":"shell","result":"ok","run_id":"run-1"}"#,
+            r#"{"kind":"text","message_id":"msg:deepseek-harness:run-1:assistant:stream","content_mode":"delta","text":"after","run_id":"run-1"}"#,
+            r#"{"kind":"stream_end","run_id":"run-1"}"#,
+        ];
+        for (index, payload) in payloads.iter().enumerate() {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "deepseek-harness".to_string(),
+                    thread_id: thread_id.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(500 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let page = manager
+            .get_external_event_messages_page("deepseek-harness", thread_id, None, 10)
+            .await
+            .unwrap()
+            .expect("database history should materialize");
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.content.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "inspect"),
+                ("assistant", "before"),
+                ("tool", "ok"),
+                ("assistant", "after"),
+            ]
+        );
+        assert_ne!(page.messages[1].id, page.messages[3].id);
+    }
+
+    #[tokio::test]
     async fn agent_external_event_pruning_persists_truncation_sentinel() {
         let manager = ThreadManager::for_tests();
         let thread_id = "thread-pruned-history";

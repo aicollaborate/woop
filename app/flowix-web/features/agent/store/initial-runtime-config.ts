@@ -27,6 +27,9 @@ export function buildInitialInstanceRuntimeConfig(
     ...(defaultRuntime?.reasoningEffort
       ? { reasoningEffort: defaultRuntime.reasoningEffort }
       : {}),
+    ...(defaultRuntime?.mode
+      ? { deepseekHarness: { mode: defaultRuntime.mode } }
+      : {}),
     notebookId,
   };
 }

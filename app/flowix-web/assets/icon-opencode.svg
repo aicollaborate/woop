@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#1f2937" fill-rule="evenodd">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#6b7280" fill-rule="evenodd">
   <title>opencode</title>
   <!--
-    hardcoded 深灰填充 (#1f2937) ── 浅色主题下在浅底上清晰可见。
+    hardcoded 中灰填充 (#6b7280) ── 浅色主题下在浅底上清晰可见。
     深色主题下 dark.css 的 [data-theme="dark"] img[data-agent-icon="opencode"]
     通过 CSS filter (brightness(0) invert(1)) 反相成白色。
     单一来源 (dark.css) 控制深色适配, 不在 SVG 内嵌 prefers-color-scheme

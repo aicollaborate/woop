@@ -13,6 +13,7 @@ use futures::future::join_all;
 
 use super::claude::{ClaudeCliManager, AGENT_TYPE as CLAUDE_AGENT_TYPE};
 use super::codex::{CodexCliManager, AGENT_TYPE as CODEX_AGENT_TYPE};
+use super::deepseek_harness::{DeepSeekHarnessManager, AGENT_TYPE as DSH_AGENT_TYPE};
 use super::hermes::HermesCliManager;
 use super::opencode::{OpenCodeAcpManager, AGENT_TYPE as OPENCODE_AGENT_TYPE};
 use crate::agent_flowix::{AgentUserMessage, RunInfo};
@@ -94,6 +95,7 @@ macro_rules! impl_external_runtime {
 
 impl_external_runtime!(CodexCliManager, CODEX_AGENT_TYPE);
 impl_external_runtime!(ClaudeCliManager, CLAUDE_AGENT_TYPE);
+impl_external_runtime!(DeepSeekHarnessManager, DSH_AGENT_TYPE);
 impl_external_runtime!(HermesCliManager, HERMES_AGENT_TYPE);
 impl_external_runtime!(OpenCodeAcpManager, OPENCODE_AGENT_TYPE);
 
@@ -107,12 +109,14 @@ impl ExternalRuntimeRegistry {
         claude: Arc<ClaudeCliManager>,
         hermes: Arc<HermesCliManager>,
         opencode: Arc<OpenCodeAcpManager>,
+        deepseek_harness: Arc<DeepSeekHarnessManager>,
     ) -> Self {
         let runtimes: Vec<Box<dyn ExternalCliRuntime>> = vec![
             Box::new(codex),
             Box::new(claude),
             Box::new(hermes),
             Box::new(opencode),
+            Box::new(deepseek_harness),
         ];
         debug_assert_eq!(
             runtimes
@@ -183,24 +187,34 @@ impl ExternalRuntimeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_external_config::EXTERNAL_AGENT_KEYS;
     use crate::agent_session::ThreadManager;
+    use crate::config::UserConfigStore;
 
     #[test]
     fn registry_contains_every_external_runtime_once() {
         let threads = ThreadManager::for_tests();
+        let temp = tempfile::tempdir().unwrap();
+        let user_config = Arc::new(UserConfigStore::new(temp.path().to_path_buf()));
         let registry = ExternalRuntimeRegistry::new(
             Arc::new(CodexCliManager::new(threads.clone())),
             Arc::new(ClaudeCliManager::new(threads.clone())),
             Arc::new(HermesCliManager::new(threads.clone())),
-            Arc::new(OpenCodeAcpManager::new(threads)),
+            Arc::new(OpenCodeAcpManager::new(threads.clone())),
+            Arc::new(DeepSeekHarnessManager::new(
+                threads,
+                user_config,
+                temp.path().join("dsh-sessions"),
+            )),
         );
 
         let keys = registry
             .iter()
             .map(ExternalCliRuntime::key)
             .collect::<Vec<_>>();
-        assert_eq!(keys, EXTERNAL_AGENT_KEYS);
+        assert_eq!(
+            keys,
+            ["codex", "claude", "hermes", "opencode", "deepseek-harness"]
+        );
         for key in &keys {
             assert_eq!(registry.get(key).map(ExternalCliRuntime::key), Some(*key));
         }

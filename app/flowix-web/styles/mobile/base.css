@@ -22,7 +22,7 @@
     --radius: 0.625rem;
 
     --font-heading: var(--font-sans);
-    --font-sans: 'PingFang SC', -apple-system, 'Nunito Sans', 'Inter', 'Segoe UI', sans-serif;
+    --font-sans: 'Inter', -apple-system, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     --font-nav: 'SF Mono';
 
     --app-font-family: var(--font-sans);
@@ -37,6 +37,7 @@
     margin: 0;
     background: var(--background);
     color: var(--foreground);
+    font-family: var(--font-sans);
   }
 
   html, body {

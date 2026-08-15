@@ -1,7 +1,7 @@
 let renderCounter = 0;
 let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
 
-const MERMAID_FONT_FAMILY = 'Nunito Sans, Inter, -apple-system, Segoe UI, sans-serif';
+const MERMAID_FONT_FAMILY = 'Inter, -apple-system, Segoe UI, PingFang SC, sans-serif';
 const FLOWCHART_PADDING = 6;
 const FLOWCHART_NODE_SPACING = 28;
 const FLOWCHART_RANK_SPACING = 36;

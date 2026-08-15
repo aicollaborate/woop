@@ -46,6 +46,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 资料文件树的子树展开/收起: 用 grid 行高从 0fr 过渡到 1fr,
+ * 这样收起时子节点不会瞬间从 DOM 消失, 高度和内容能一起顺滑收回。 */
+.folder-file-tree__subtree {
+	display: grid;
+	grid-template-rows: 0fr;
+	transition: grid-template-rows 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.folder-file-tree__subtree[data-expanded='true'] {
+	grid-template-rows: 1fr;
+}
+
+.folder-file-tree__subtree-inner {
+	position: relative;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* 每个展开目录拥有自己的层级引导线。位置由渲染层按目录 depth 写入，
+ * 因而嵌套目录展开后会保留所有祖先层级的线，而不会依赖固定层数。 */
+.folder-file-tree__subtree[data-expanded='true'] > .folder-file-tree__subtree-inner::before {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: var(--folder-file-tree-guide-left);
+	width: 1px;
+	background: color-mix(in srgb, var(--border) 72%, transparent);
+	content: '';
+	pointer-events: none;
+}
+
+.folder-file-tree__subtree-items {
+	padding-top: 1px;
+	animation: folder-file-tree-subtree-in 180ms ease-out both;
+}
+
+.folder-file-tree__items > .folder-file-tree__item:not(:first-child),
+.folder-file-tree__subtree-items > .folder-file-tree__item:not(:first-child) {
+	margin-top: 1px;
+}
+
+.folder-file-tree__subtree[data-expanded='false'] .folder-file-tree__subtree-items {
+	animation: none;
+}
+
+@keyframes folder-file-tree-subtree-in {
+	from {
+		opacity: 0;
+		transform: translateY(-3px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.folder-file-tree__subtree {
+		transition-duration: 0ms;
+	}
+
+	.folder-file-tree__subtree-items {
+		animation: none;
+	}
+}
+
 :root {
 	--flowix-hand-check-mask: url("data:image/svg+xml,%3Csvg viewBox='-1 -1 16 13' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M1.15 5.9c.16-.22.44-.28.72-.16 1.32.56 2.42 1.2 3.36 2.06C6.72 5.38 9.12 2.86 12.35.88c.32-.2.72-.16.9.09.18.24.05.6-.26.84-3.45 2.76-5.56 5.4-7.1 8.23-.14.25-.41.4-.71.4-.28 0-.53-.13-.68-.35-.88-1.18-1.95-2.12-3.19-3.12-.29-.23-.38-.75-.16-1.07Z'/%3E%3C/svg%3E");
 }
@@ -70,7 +136,7 @@
 		--radius: 0.625rem;
 
 		--font-heading: var(--font-sans);
-		--font-sans: 'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont;
+		--font-sans: 'Inter', -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 		--font-nav: 'SF Mono';
 
 		/* User-configurable typography (Preferences → Format).
@@ -114,6 +180,7 @@
 	body {
 		background: var(--background);
 		color: var(--foreground);
+		font-family: var(--font-sans);
 	}
 	html, body {
 		overscroll-behavior: none;

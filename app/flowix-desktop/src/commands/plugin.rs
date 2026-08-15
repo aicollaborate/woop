@@ -153,6 +153,7 @@ pub async fn plugin_run(
                 permission_mode: None,
                 model: None,
                 reasoning_effort: None,
+                mode: None,
             }),
             ..Default::default()
         }),

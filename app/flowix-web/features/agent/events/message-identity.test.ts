@@ -5,7 +5,7 @@ import {
 } from "@features/agent/events/message-identity";
 
 describe("canonical agent message identity", () => {
-  it.each(["codex", "claude", "hermes", "opencode"] as const)(
+  it.each(["codex", "claude", "hermes", "opencode", "deepseek-harness"] as const)(
     "uses the shared rule for %s",
     (agentType) => {
       expect(
@@ -25,5 +25,8 @@ describe("canonical agent message identity", () => {
       canonicalAgentMessageId("codex", "run-1", "assistant", canonical),
     ).toBe(canonical);
     expect(completedRunUserMessageId("flowix", "run-1")).toBe("user-run-1");
+    expect(completedRunUserMessageId("deepseek-harness", "run-1")).toBe(
+      "msg:deepseek-harness:run-1:user:user-run-1",
+    );
   });
 });

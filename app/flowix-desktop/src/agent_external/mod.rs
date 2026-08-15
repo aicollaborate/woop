@@ -11,6 +11,7 @@
 pub mod claude;
 pub mod cli_resolver;
 pub mod codex;
+pub mod deepseek_harness;
 pub mod hermes;
 pub mod lifecycle;
 pub mod node;

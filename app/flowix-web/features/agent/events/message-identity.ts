@@ -5,6 +5,7 @@ const CANONICAL_EXTERNAL_AGENTS = new Set<AgentTypeKey>([
   "claude",
   "hermes",
   "opencode",
+  "deepseek-harness",
 ]);
 
 export function canonicalAgentMessageId(

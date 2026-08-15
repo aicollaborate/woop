@@ -6,7 +6,7 @@ import { formatChord, resolveBinding, useShortcutsContext } from '@/lib/shortcut
 /**
  * 平台感知的快捷键展示 — 统一视觉基础。
  *
- * 视觉规范 (system UI 字体 + 18px 行高 + 0.05em tracking) 在 Tooltip、命令
+ * 视觉规范 (Inter 字体 + 18px 行高 + 0.05em tracking) 在 Tooltip、命令
  * 面板、偏好设置行、ShortcutRecorder 之间保持一致 — 全部走 `<Kbd>` 渲染。
  *
  * **颜色 / 透明度不写在这里** — Tooltip Popup 是 inverse 背景, 需要
@@ -14,8 +14,8 @@ import { formatChord, resolveBinding, useShortcutsContext } from '@/lib/shortcut
  * 调用方通过 `className` 注入具体颜色, 这里只保证布局 / 字体 / 大小稳定。
  *
  * 历史: 早期 mono+border 风格 (现 KbdChord 旧实现) 在 Mac 上 ⌘ / ⇧ 修饰符
- * glyph 偏小 (mono 字体把这些符号压成 0.6em), 改成 system UI 字体后符号与
- * 字符同尺寸。三个调用点统一收敛到这条基线。
+ * glyph 偏小 (mono 字体把这些符号压成 0.6em), 改成 Inter 后符号与字符同尺寸。
+ * 三个调用点统一收敛到这条基线。
  */
 export interface KbdProps {
   /** 已格式化好的 chord 字符串 (e.g. 'Mod+K', 'Alt+ArrowLeft')。 */
@@ -27,7 +27,7 @@ export function Kbd({ chord, className }: KbdProps) {
   return (
     <kbd
       className={cn(
-        "inline-flex h-[18px] select-none items-center rounded text-xs font-medium tracking-[0.05em] font-['SF_Pro_Text',_'SF_Pro_Display',_'Segoe_UI',_'Segoe_UI_Variable',sans-serif]",
+        'inline-flex h-[18px] select-none items-center rounded text-xs font-medium tracking-[0.05em] font-sans',
         className,
       )}
     >

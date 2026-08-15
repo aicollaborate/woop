@@ -946,6 +946,7 @@ async fn runtime_config_applies_for_non_persisted_local_thread() {
                 permission_mode: Some("workspace-write".to_string()),
                 model: Some("claude-sonnet-5".to_string()),
                 reasoning_effort: Some("high".to_string()),
+                mode: None,
             }),
             ..AgentRuntimeConfig::default()
         }),

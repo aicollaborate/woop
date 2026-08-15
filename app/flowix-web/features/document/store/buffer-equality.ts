@@ -1,4 +1,5 @@
 import YAML from 'yaml';
+import type { DocumentIdentity } from '@features/document/store/document-identity';
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
 
@@ -53,4 +54,25 @@ export function normalizeForEquality(content: string): string {
 export function isContentSemanticallyEqual(a: string, b: string): boolean {
   if (a === b) return true;
   return normalizeForEquality(a) === normalizeForEquality(b);
+}
+
+function isMarkdownExternalPath(path: string): boolean {
+  const extension = path.split('.').pop()?.toLowerCase();
+  return extension === 'md' || extension === 'markdown';
+}
+
+/**
+ * Memo and external Markdown editors normalize harmless Markdown formatting.
+ * Code/text documents must stay byte-sensitive because whitespace can be
+ * meaningful source content.
+ */
+export function isDocumentContentEqual(
+  identity: DocumentIdentity,
+  a: string,
+  b: string,
+): boolean {
+  if (identity.kind === 'external' && !isMarkdownExternalPath(identity.path)) {
+    return a === b;
+  }
+  return isContentSemanticallyEqual(a, b);
 }

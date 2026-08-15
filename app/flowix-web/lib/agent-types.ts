@@ -15,6 +15,7 @@ import iconGeminiCli from '@/assets/icon-gemini-cli.svg';
 import iconHermesAgent from '@/assets/icon-hermes-agent.svg';
 import iconOpenClaw from '@/assets/icon-openclaw.svg';
 import iconOpenCode from '@/assets/icon-opencode.svg';
+import iconDeepSeek from '@/assets/icon-deepseek.svg';
 
 export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'flowix';
 
@@ -47,6 +48,15 @@ const SIMPLE_CLI_CAPABILITIES: AgentRuntimeCapabilities = {
 };
 
 export const AGENT_TYPES: AgentType[] = [
+  {
+    key: 'deepseek-harness',
+    icon: iconDeepSeek,
+    name: 'DeepSeek Harness',
+    desc: 'Use the bundled DeepSeek Harness SDK',
+    nameKey: 'agent.types.deepseekHarness.name',
+    descKey: 'agent.types.deepseekHarness.desc',
+    capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
+  },
   {
     key: 'codex',
     icon: iconCodex,

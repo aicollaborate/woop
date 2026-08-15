@@ -109,6 +109,21 @@ function createOpenCodeHistoryAdapter(): AgentHistoryAdapter {
   };
 }
 
+function createDeepSeekHarnessHistoryAdapter(): AgentHistoryAdapter {
+  return {
+    typeKey: "deepseek-harness",
+    externalSessionBacked: true,
+    listThreads: () => agentClient.listDeepSeekHarnessThreads(),
+    async getFullHistory(threadId) {
+      return (await agentClient.getDeepSeekHarnessThread(threadId)).messages;
+    },
+    getInitialHistory: (threadId, limit) =>
+      agentClient.getDeepSeekHarnessThreadPage(threadId, null, limit),
+    getPage: (threadId, beforeSequence, limit) =>
+      agentClient.getDeepSeekHarnessThreadPage(threadId, beforeSequence, limit),
+  };
+}
+
 const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
   flowix: createFlowixHistoryAdapter(),
   // Codex history is materialized by the backend from compact DB snapshots.
@@ -119,6 +134,7 @@ const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
   // OpenCode 的唯一历史源是紧凑的 agent_external_events。后端以完整用户
   // 回合分页并将 snapshot events 物化为消息，前端不重放流式 delta。
   opencode: createOpenCodeHistoryAdapter(),
+  "deepseek-harness": createDeepSeekHarnessHistoryAdapter(),
 };
 
 export function getAgentHistoryAdapter(typeKey: AgentTypeKey): AgentHistoryAdapter {

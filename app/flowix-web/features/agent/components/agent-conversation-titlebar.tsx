@@ -1,7 +1,7 @@
 'use client';
 
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { ArrowUpRightIcon } from '@phosphor-icons/react';
+import { FileTextIcon } from '@phosphor-icons/react';
 
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
@@ -114,14 +114,14 @@ export function AgentConversationTitlebar({
               toast.error(t('status.agent.originUnavailable'));
             })}
             aria-label={t('status.agent.openRun')}
-            className={`flex h-8 shrink-0 items-center justify-center gap-1.5 px-2 text-xs text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-35 ${
+            className={`flex h-8 shrink-0 items-center justify-center gap-0 px-2 text-xs text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-35 ${
               isWindows
                 ? 'rounded-lg'
                 : 'rounded-xl border border-[var(--border)] bg-[var(--bg-titlebar)]'
             }`}
           >
+            <FileTextIcon className="h-4 w-4" />
             <span>{t('document.agent.viewInNote')}</span>
-            <ArrowUpRightIcon className="h-4 w-4" />
           </button>
         </Tooltip>
       </div>

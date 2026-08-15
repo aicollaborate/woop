@@ -160,6 +160,42 @@ describe("reduceProjection / text streaming lifecycle", () => {
     expect(p.messages).toHaveLength(1);
   });
 
+  it("a new user turn starts a new assistant message even without a prior stream_end", () => {
+    let p = emptyProjection();
+    p = reduceProjection(p, streamStart("r1"));
+    p = reduceProjection(p, textDelta("first", "assistant-r1"));
+    p = reduceProjection(
+      p,
+      event("user_message", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "r2",
+        timestamp: 2500,
+        text: "second question",
+        id: "msg:deepseek-harness:r2:user:user-r2",
+      }),
+    );
+    p = reduceProjection(
+      p,
+      event("text_delta", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "r2",
+        timestamp: 2600,
+        text: "second",
+        messageId: "msg:deepseek-harness:r2:assistant:stream",
+        messagePhase: "updated",
+        contentMode: "delta",
+      }),
+    );
+
+    expect(p.messages.map((message) => [message.role, message.content])).toEqual([
+      ["assistant", "first"],
+      ["user", "second question"],
+      ["assistant", "second"],
+    ]);
+  });
+
   it("reasoning_delta before text_delta closes reasoning when text lands", () => {
     let p = emptyProjection();
     p = reduceProjection(p, streamStart("r1"));
@@ -212,6 +248,69 @@ describe("reduceProjection / text streaming lifecycle", () => {
 });
 
 describe("reduceProjection / tool call cycle", () => {
+  it("keeps harness assistant segments separate while the run is still streaming", () => {
+    const harnessText = (text: string, messageId: string) =>
+      event("text_delta", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "r1",
+        timestamp: 2000,
+        text,
+        messageId,
+        messagePhase: "updated",
+        contentMode: "delta",
+      });
+    const harnessToolCall = event("tool_call", {
+      agentType: "deepseek-harness",
+      threadId: "t1",
+      runId: "r1",
+      timestamp: 3000,
+      toolCallId: "msg:deepseek-harness:r1:tool-call:c1",
+      name: "read",
+      input: { file_path: "README.md" },
+      messageId: "msg:deepseek-harness:r1:tool:c1",
+    });
+    const harnessToolResult = event("tool_result", {
+      agentType: "deepseek-harness",
+      threadId: "t1",
+      runId: "r1",
+      timestamp: 4000,
+      toolCallId: "msg:deepseek-harness:r1:tool-call:c1",
+      name: "read",
+      result: "ok",
+      messageId: "msg:deepseek-harness:r1:tool:c1",
+    });
+    let p = emptyProjection();
+    p = reduceProjection(p, streamStart("r1"));
+    p = reduceProjection(
+      p,
+      harnessText(
+        "before tool",
+        "msg:deepseek-harness:r1:assistant:assistant-stream-0",
+      ),
+    );
+    p = reduceProjection(p, harnessToolCall);
+    p = reduceProjection(p, harnessToolResult);
+    p = reduceProjection(
+      p,
+      harnessText(
+        "after tool",
+        "msg:deepseek-harness:r1:assistant:assistant-stream-1",
+      ),
+    );
+
+    expect(
+      p.messages.map((message) => [message.role, message.content]),
+    ).toEqual([
+      ["assistant", "before tool"],
+      ["tool", '"ok"'],
+      ["assistant", "after tool"],
+    ]);
+    expect(p.pending.assistantId).toBe(
+      "msg:deepseek-harness:r1:assistant:assistant-stream-1",
+    );
+  });
+
   it("tool_call then tool_result completes the tool row without losing prior assistant", () => {
     let p = emptyProjection();
     p = reduceProjection(p, streamStart("r1"));

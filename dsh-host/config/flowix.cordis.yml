@@ -1,0 +1,137 @@
+# Flowix-owned DeepSeek Harness runtime. Stdout belongs exclusively to the SDK
+# JSON-RPC server; diagnostics must use stderr.
+- id: sdk-jsonrpc-server
+  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+
+- id: agent-core
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    # The spine always wires goal/skill/jobs/bash/workspaceContext services
+    # into the root context, and each preset mounts its own model-facing
+    # consumers under an `isolate` realm. Without a gate the spine-side
+    # consumers stay visible to every preset — leaking `read`/`write`/`edit`/
+    # `goal`/`skill`/`jobs` into `minimal` even though its composition
+    # declares only `bash` + `str_replace_editor`. Gate each spine-side
+    # consumer by preset: `minimal` runs without the full tool suite, the
+    # other presets still need it (their composition mounts `dsh-tool-goal`/
+    # `dsh-tool-skill`/`dsh-tool-jobs`/`dsh-tool-bash`, all of which `inject`
+    # the matching root-side service). Using `!!js` keeps the gate declarative
+    # inside cordis.yml; the resolved value is set per child runtime from
+    # `DSH_AGENT_PRESET`.
+    goals: !!js "process.env.DSH_AGENT_PRESET === 'minimal' ? false : ({})"
+    toolBash: !!js "process.env.DSH_AGENT_PRESET === 'minimal' ? false : ({})"
+    toolJobs: !!js "process.env.DSH_AGENT_PRESET === 'minimal' ? false : ({})"
+    skills:
+      enabled: !!js "process.env.DSH_AGENT_PRESET !== 'minimal'"
+    workspaceContext: !!js "process.env.DSH_AGENT_PRESET === 'minimal' ? false : ({ maxBytes: 65536 })"
+    tools:
+      mode: native
+    persona: |
+      You are a coding assistant running inside Flowix. Work in {{cwd}} and
+      respect the active sandbox policy. Verify changes and report concisely.
+
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      # Flowix owns the provider credentials and selects the wire protocol.
+      # Harness sees one stable route while each runtime process receives its
+      # actual model/endpoint through the trusted child environment.
+      flowix:
+        displayName: !!js process.env.DSH_PROVIDER_NAME ?? 'Flowix'
+        apiKeyEnv: !!js process.env.DSH_API_KEY_ENV
+        api: !!js process.env.DSH_API_PROTOCOL ?? 'openai-completions'
+        baseURL: !!js process.env.DSH_BASE_URL
+        models:
+          - id: !!js process.env.DSH_MODEL ?? 'flowix-model'
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT
+
+- id: code-runtime
+  name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+
+- id: user-questions
+  name: '@deepseek-ai/dsh-user-questions'
+
+- id: commands
+  name: '@deepseek-ai/dsh-commands'
+
+- id: token-meter
+  name: '@deepseek-ai/dsh-token-meter'
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+
+- id: subagents
+  name: '@deepseek-ai/dsh-subagent'
+
+- id: subagent-spawn
+  name: '@deepseek-ai/dsh-subagent-spawn-in-process'
+  config:
+    providerName: spawn
+
+- id: subagent-fork
+  name: '@deepseek-ai/dsh-subagent-fork-in-process'
+  config:
+    providerName: fork
+
+- id: workflow
+  name: '@deepseek-ai/dsh-workflow'
+
+- id: cordis-host-runner
+  name: '@deepseek-ai/dsh-cordis-host-runner'
+
+- id: agent-presets
+  name: '@deepseek-ai/dsh-agent-presets'
+  config:
+    default: !!js process.env.DSH_AGENT_PRESET ?? 'standard'
+    roots:
+      - path: !!js process.env.DSH_AGENT_PRESET_ROOT
+        trust: system
+    includeUserRoot: false
+
+- id: session-checkpoints
+  name: '@deepseek-ai/dsh-session-checkpoint-policy'
+
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'read-only'
+    workspaceRoot: !!js process.env.DSH_CWD ?? process.cwd()
+    workspaceRoots: !!js JSON.parse(process.env.DSH_WORKSPACE_ROOTS ?? '[]')
+
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+
+- id: bash
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  config:
+    timeoutMs: 60000
+
+# The SDK has no approval response method yet. Never upgrade permissions in
+# the runtime; denied operations stay denied and return to the model.
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: never
+
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-sandbox'
+  config:
+    cwd: !!js process.env.DSH_CWD ?? process.cwd()
+
+- id: fs-observation-policy
+  name: '@deepseek-ai/dsh-fs-observation-policy'
+
+# The agent-presets each mount `@deepseek-ai/dsh-tool-fs` (and
+# `dsh-tool-fs-search`) under their own scope, so a root row here would leak
+# the filesystem surface to the model regardless of preset selection. The
+# minimal preset does not need a filesystem tool, and the other presets ship
+# their own. We therefore skip the root registration; `fs-sandbox` stays as a
+# shared executor that the preset-side `dsh-tool-fs` resolves against.

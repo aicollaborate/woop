@@ -13,6 +13,7 @@ export type MemoHistoryEntry = {
 type ExternalHistoryEntry = {
   kind: 'external';
   path: string;
+  scopePath: string | null;
   openedAt: number;
 };
 

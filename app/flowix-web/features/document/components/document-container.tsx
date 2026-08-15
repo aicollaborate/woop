@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react';
 import { useMemoStore } from '@features/memo';
+import { files } from '@platform/tauri/client';
 import {
   applyLoadedDocumentContent,
   consumeSelfDocumentPathUpdate,
@@ -12,6 +13,7 @@ import {
 } from '@features/document';
 import { getDocumentInstanceKey } from '@/lib/path';
 import { toast } from '@/lib/toast';
+import { openPath } from '@platform/tauri/opener';
 import {
   initialDocumentContainerState,
   type DocumentContainerProps,
@@ -27,8 +29,10 @@ import { useDocumentFinalize } from '@features/document/components/session/use-d
 import { useExternalDocumentChangeWatch } from '@features/document/components/session/use-external-document-change-watch';
 import { useMemoDocumentChangeWatch } from '@features/document/components/session/use-memo-document-change-watch';
 import { LazyDocumentEditor } from '@features/document/components/lazy-document-editor';
+import { LazyCodeEditor } from '@features/document/components/lazy-code-editor';
 import { NotePropertiesDialog } from '@features/document/components/note-properties-dialog';
 import type { MarkdownEditorHandle } from '@features/editor/markdown-editor';
+import { isEditableTextFilePath, isImageFilePath } from '@features/editor/code-file';
 import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
 
@@ -40,6 +44,7 @@ export function DocumentContainer({
   transitionId = null,
   onMetainfoData,
   isExternalDocument = false,
+  externalScopePath = null,
   searchPanelOpen = false,
   onSearchPanelOpenChange,
   toolbarCollapsed = false,
@@ -56,6 +61,11 @@ export function DocumentContainer({
       : { kind: 'external', path: filePath },
     [filePath, isExternalDocument, memoId],
   );
+  const isImagePreview = isExternalDocument && isImageFilePath(filePath);
+  const isUnsupportedExternalFile = isExternalDocument && !isEditableTextFilePath(filePath) && !isImagePreview;
+  // Every text file in the file tree, including Markdown, is source text and
+  // therefore uses CodeMirror. Memo documents retain their rich editor.
+  const usesCodeEditor = isExternalDocument && isEditableTextFilePath(filePath);
   const loadedDocumentInstanceKeyRef = useRef<string | null>(null);
   const prevFilePathRef = useRef<string | null>(null);
   const editorHandleRef = useRef<MarkdownEditorHandle | null>(null);
@@ -72,7 +82,15 @@ export function DocumentContainer({
     state,
     setState,
     reloadDocument,
-  } = useDocumentContent({ identity: documentIdentity, memoId, notebookPath, isExternalDocument, transitionId });
+  } = useDocumentContent({
+    identity: documentIdentity,
+    memoId,
+    notebookPath,
+    isExternalDocument,
+    externalScopePath,
+    skipContentLoad: isImagePreview || isUnsupportedExternalFile,
+    transitionId,
+  });
   const flushPendingEditorChanges = useCallback(() => {
     return editorHandleRef.current?.flushPendingChanges() ?? null;
   }, []);
@@ -86,6 +104,7 @@ export function DocumentContainer({
     identity: documentIdentity,
     memoId,
     isExternalDocument,
+    externalScopePath,
     setState,
     reloadDocument,
     flushPendingContent: flushPendingEditorChanges,
@@ -248,6 +267,7 @@ export function DocumentContainer({
   useExternalDocumentChangeWatch({
     filePath,
     identity: documentIdentity,
+    scopePath: externalScopePath,
     clearSaveTimer,
     reloadDocument,
   });
@@ -335,10 +355,30 @@ export function DocumentContainer({
     );
   }
 
+  if (isUnsupportedExternalFile) {
+    return <UnavailableFileView filePath={filePath} />;
+  }
+
   return (
     <div className="document-container h-full w-full min-w-0 flex flex-col bg-transparent relative overflow-hidden">
       <div className="flex-1 min-h-0 overflow-hidden">
-        {state.fullContent && (
+        {!state.isLoading && isImagePreview && (
+          <ImageFilePreview filePath={filePath} scopePath={externalScopePath} />
+        )}
+        {!state.isLoading && usesCodeEditor && (
+          <LazyCodeEditor
+            ref={editorHandleRef}
+            key={documentInstanceKey}
+            filePath={filePath}
+            content={state.fullContent}
+            onChange={handleChange}
+            onEditorScroll={(scrollTop) => setState(prev => ({ ...prev, isScrolled: scrollTop > 90 }))}
+            onEditingFinished={flushPendingEditorChanges}
+            searchPanelOpen={searchPanelOpen}
+            onSearchPanelOpenChange={onSearchPanelOpenChange}
+          />
+        )}
+        {!state.isLoading && !usesCodeEditor && state.fullContent && (
           <LazyDocumentEditor
             ref={editorHandleRef}
             key={documentInstanceKey}
@@ -393,6 +433,72 @@ export function DocumentContainer({
           }}
         />
       )}
+    </div>
+  );
+}
+
+function UnavailableFileView({ filePath }: { filePath: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-sm text-[var(--muted-foreground)]">
+      <span>{t('document.file.unavailable')}</span>
+      <button
+        type="button"
+        onClick={() => void openPath(parentDirectory(filePath))}
+        className="inline-flex h-8 items-center rounded-lg border border-[var(--border)] px-3 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--muted)]"
+      >
+        {t('document.file.reveal')}
+      </button>
+    </div>
+  );
+}
+
+function parentDirectory(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, '');
+  const separator = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+  if (separator > 0) return normalized.slice(0, separator);
+  return normalized.startsWith('/') ? '/' : normalized;
+}
+
+function ImageFilePreview({ filePath, scopePath }: { filePath: string; scopePath: string | null }) {
+  const { t } = useI18n();
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(null);
+    setLoading(true);
+    setFailed(false);
+    void files.readImage(filePath, scopePath ?? undefined).then((dataUrl) => {
+      if (cancelled) return;
+      setSrc(dataUrl);
+      setFailed(!dataUrl);
+      setLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setFailed(true);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, scopePath]);
+
+  if (loading) {
+    return <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">{t('document.file.loading')}</div>;
+  }
+  if (failed || !src) return <UnavailableFileView filePath={filePath} />;
+
+  return (
+    <div className="flex h-full w-full items-center justify-center overflow-auto bg-[var(--background)] p-6">
+      <img
+        src={src}
+        alt={filePath.split(/[\\/]/).pop() ?? filePath}
+        className="max-h-full max-w-full object-contain"
+        onError={() => setFailed(true)}
+      />
     </div>
   );
 }

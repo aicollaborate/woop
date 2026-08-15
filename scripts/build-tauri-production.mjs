@@ -31,8 +31,12 @@ function run(command, args, options = {}) {
 
 if (targetPlatform === "darwin") {
   run("npm", ["run", "cli:build:macos"]);
+  run("npm", ["run", "dsh:build:macos"]);
 } else {
   run("npm", ["run", "cli:build"]);
+  if (targetPlatform !== "win32") {
+    run("npm", ["run", "dsh:build"]);
+  }
 }
 
 const configPath = run(

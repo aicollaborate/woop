@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouse
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
+import { FolderFileTree } from '@features/memo/components/folder-file-tree';
 import { AgentConversationList } from '@features/agent/components/agent-conversation-list';
 import { AgentConversationTitlebar } from '@features/agent/components/agent-conversation-titlebar';
 import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
@@ -104,6 +105,7 @@ export function MainLayout() {
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const activePluginId = useMemoStore((s) => s.activePluginId);
+  const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const activeSort = useMemoStore((s) => s.activeSort);
   const isAgentConversationView = activeFilter === 'agents';
 
@@ -594,6 +596,7 @@ export function MainLayout() {
               notebookPath: activeMemoSession?.notebookPath ?? null,
               transitionId: activeMemoSession?.transitionId ?? activeExternalSession?.transitionId ?? null,
               isExternalDocument,
+              externalScopePath: activeExternalSession?.scopePath ?? null,
               searchPanelOpen: isSearchPanelOpen,
               onSearchPanelOpenChange: setIsSearchPanelOpen,
               toolbarCollapsed,
@@ -631,6 +634,7 @@ export function MainLayout() {
     },
     sidebar: {
       hidden: isMemoListHidden,
+      noteNavigationVisible,
       onToggle: handleToggleMemoList,
       onPreviewTriggerEnter: handleMemoListPreviewTriggerEnter,
       onPreviewTriggerLeave: handleMemoListPreviewTriggerLeave,
@@ -766,7 +770,18 @@ export function MainLayout() {
                     : 'flex-1 min-h-0'
                 }
               >
-                {isAgentConversationView ? <AgentConversationList /> : <MemoList />}
+                {/* 中间列三态: 资料文件树 → 对话列表 → memo 列表。
+                    activeFileBrowserPath 由侧栏资料行单击置位 (memo-store)。 */}
+                {activeFileBrowserPath ? (
+                  <FolderFileTree
+                    folderPath={activeFileBrowserPath}
+                    folderName={activeFileBrowserPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? activeFileBrowserPath}
+                  />
+                ) : isAgentConversationView ? (
+                  <AgentConversationList />
+                ) : (
+                  <MemoList />
+                )}
               </div>
             </div>
           </div>

@@ -28,10 +28,11 @@ interface UseDocumentAutosaveOptions {
   identity: DocumentIdentity;
   /**
    * 内部 memo 文档的 memoId, 走 `key+channel='internal'` 走 key 反查;
-   * 外部 .md 文件传 null, 走 `channel='external'` 走 path 寻址。
+   * 外部文本文件传 null, 走 `channel='external'` 走 path 寻址。
    */
   memoId: string | null;
   isExternalDocument: boolean;
+  externalScopePath: string | null;
   setState: React.Dispatch<React.SetStateAction<{
     fullContent: string;
     isLoading: boolean;
@@ -55,6 +56,7 @@ export function useDocumentAutosave({
   identity,
   memoId,
   isExternalDocument,
+  externalScopePath,
   setState,
   reloadDocument,
   flushPendingContent,
@@ -109,6 +111,7 @@ export function useDocumentAutosave({
       content,
       channel: isExternalDocument ? 'external' : 'internal',
       key: isExternalDocument ? null : memoId,
+      scopePath: externalScopePath,
       force: options?.force,
       callbacks: {
         onSaved: (writtenPath, writtenContent) => {
@@ -160,7 +163,7 @@ export function useDocumentAutosave({
           buf.pendingContent = null;
           void (async () => {
             const onDisk = await (isExternalDocument
-              ? externalDocuments.read(path)
+              ? externalDocuments.read(path, externalScopePath)
               : memosClient.readDocument(path)).catch(() => null);
             if (!isMountedRef.current) return;
             if (onDisk !== null) {
@@ -189,6 +192,7 @@ export function useDocumentAutosave({
     });
   }, [
     isExternalDocument,
+    externalScopePath,
     identity,
     memoId,
     replaceActiveMemoPath,
@@ -202,7 +206,7 @@ export function useDocumentAutosave({
     let onDisk: string | null = null;
     try {
       onDisk = isExternalDocument
-        ? await externalDocuments.read(path)
+        ? await externalDocuments.read(path, externalScopePath)
         : await memosClient.readDocument(path);
     } catch {
       // IPC 失败: 保守走 saveDoc, 让原 onCasRefused 兜底 (弹 toast + 刷新 CAS 基线)
@@ -234,7 +238,7 @@ export function useDocumentAutosave({
     // reloadDocument 内部 applyLoadedContent 会把 buf 跟 React state
     // 一起对齐到磁盘, 这里不用手动改 buf。
     void reloadDocument(path, { preservePending: false, showLoading: false });
-  }, [identity, isExternalDocument, saveDoc, reloadDocument]);
+  }, [identity, isExternalDocument, externalScopePath, saveDoc, reloadDocument]);
 
 
 

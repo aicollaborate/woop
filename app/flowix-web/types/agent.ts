@@ -18,7 +18,8 @@ export type AgentTypeKey =
   | "gemini"
   | "hermes"
   | "openclaw"
-  | "opencode";
+  | "opencode"
+  | "deepseek-harness";
 
 export interface AgentType {
   key: AgentTypeKey;
@@ -52,6 +53,8 @@ export type AgentPermissionMode =
   | "yolo";
 export type AgentCodexModel = "inherit" | string;
 export type AgentCodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+/** DeepSeek Harness Agent preset / conversation mode. */
+export type AgentHarnessPreset = "standard" | "code" | "minimal" | "cordis";
 
 export interface AgentRuntimeConfigBase {
   cwd?: string;
@@ -62,6 +65,10 @@ export interface CodexRuntimeConfig extends AgentRuntimeConfigBase {
   model?: AgentCodexModel;
   permissionMode?: AgentPermissionMode;
   reasoningEffort?: AgentCodexReasoningEffort;
+}
+
+export interface DeepSeekHarnessRuntimeConfig extends CodexRuntimeConfig {
+  mode?: AgentHarnessPreset;
 }
 
 export interface ClaudeRuntimeConfig extends AgentRuntimeConfigBase {
@@ -84,6 +91,7 @@ export interface AgentRuntimeConfig {
   hermes?: HermesRuntimeConfig;
   openclaw?: SimpleCliRuntimeConfig;
   opencode?: CodexRuntimeConfig;
+  deepseekHarness?: DeepSeekHarnessRuntimeConfig;
   flowix?: FlowixRuntimeConfig;
 }
 
@@ -151,6 +159,8 @@ export interface RuntimeConfig {
    * 三态语义同 model / access：缺失或 null = 走全局；非空 = 锁定。
    */
   reasoningEffort?: AgentCodexReasoningEffort;
+  /** DeepSeek Harness Agent preset, locked per thread card. */
+  deepseekHarness?: Pick<DeepSeekHarnessRuntimeConfig, "mode">;
   /** 预留：工具白名单 */
   tools?: string[];
   /** 旧版 cwd 显式覆盖；历史数据会迁移到 workspaceSnapshot。 */

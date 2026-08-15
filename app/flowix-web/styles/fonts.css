@@ -1,4 +1,10 @@
-/* Nunito Sans - variable font (300-800 weight).
+@import '@fontsource/inter/latin.css';
+@import '@fontsource/inter/latin-ext.css';
+@import '@fontsource/inter/latin-italic.css';
+@import '@fontsource/inter/latin-ext-italic.css';
+
+/* Nunito Sans - variable font (300-800 weight), kept for the optional
+ * document font preference.
  * woff2 + Latin subset (Nunito 不含 CJK 字形, 中文走 font-stack 系统回退).
  * 由 scripts/subset-fonts.sh 从原 TTF (assets/fonts/NunitoSans*.ttf) 转出,
  * 字重 / 字宽 / opsz 轴保留. 原 TTF 留在仓库作为重新生成的源, 不被引用故

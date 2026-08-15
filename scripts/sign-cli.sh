@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sign-cli.sh ── 对 `scripts/build-cli.sh` 编出的 flowix-cli sidecar 走代码签名。
+# sign-cli.sh ── 对 Flowix 打包的所有 sidecar 走代码签名。
 #
 # 用法:
 #   bash scripts/sign-cli.sh --host=<triple>
@@ -57,11 +57,7 @@ fi
 # =================== macOS ===================
 sign_macos() {
   local host="$1"
-  local bin="$BINARIES_DIR/flowix-cli-$host"
-  if [[ ! -f "$bin" ]]; then
-    echo "[sign] skip: $bin not found (run scripts/build-cli.sh first)"
-    return 0
-  fi
+  local names=(flowix-cli dsh-host dsh-host-spawn-helper)
 
   local identity="${APPLE_SIGNING_IDENTITY:-}"
   if [[ -z "$identity" ]]; then
@@ -69,32 +65,34 @@ sign_macos() {
     return 0
   fi
 
-  if [[ "$identity" == "-" ]]; then
-    # ad-hoc 模式 ── 本地调试用, Gatekeeper 会拦截但本地跑得动
-    echo "[sign] macOS ad-hoc signing with entitlements (no Developer ID)"
-    codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$bin"
-    return 0
-  fi
-
-  echo "[sign] codesign --options runtime --timestamp --entitlements $ENTITLEMENTS --sign $identity $bin"
-  # Apple 的 RFC 3161 timestamp 服务 (`http://timestamp.apple.com/ts01` 等)
-  # 会间歇性返回 "A timestamp was expected but was not found" — 这是 Apple
-  # 后端的已知抖动, 不是证书或命令错。重试 N 次 + 短暂 backoff 通常可恢复
-  # (memory `flowix-release-build-detached-timestamp-retry`)。
-  local attempt=1
-  local max_attempts=5
-  while (( attempt <= max_attempts )); do
-    if codesign --force --options runtime --timestamp \
-         --entitlements "$ENTITLEMENTS" --sign "$identity" "$bin"; then
-      break
+  local name bin attempt max_attempts
+  for name in "${names[@]}"; do
+    bin="$BINARIES_DIR/$name-$host"
+    if [[ ! -f "$bin" ]]; then
+      echo "[sign] skip: $bin not found"
+      continue
     fi
-    if (( attempt == max_attempts )); then
-      echo "[sign] codesign --timestamp failed after $max_attempts attempts" >&2
-      return 1
+    if [[ "$identity" == "-" ]]; then
+      echo "[sign] macOS ad-hoc signing $bin"
+      codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$bin"
+      continue
     fi
-    echo "[sign] codesign --timestamp attempt $attempt/$max_attempts failed, retrying in $((attempt * 5))s..." >&2
-    sleep $((attempt * 5))
-    attempt=$((attempt + 1))
+    echo "[sign] codesign --options runtime --timestamp --entitlements $ENTITLEMENTS --sign $identity $bin"
+    attempt=1
+    max_attempts=5
+    while (( attempt <= max_attempts )); do
+      if codesign --force --options runtime --timestamp \
+           --entitlements "$ENTITLEMENTS" --sign "$identity" "$bin"; then
+        break
+      fi
+      if (( attempt == max_attempts )); then
+        echo "[sign] codesign --timestamp failed after $max_attempts attempts: $bin" >&2
+        return 1
+      fi
+      echo "[sign] codesign --timestamp attempt $attempt/$max_attempts failed, retrying in $((attempt * 5))s..." >&2
+      sleep $((attempt * 5))
+      attempt=$((attempt + 1))
+    done
   done
 
   # A raw Mach-O executable is not a distributable container that stapler can
@@ -104,11 +102,7 @@ sign_macos() {
 
 # =================== Windows ===================
 sign_windows() {
-  local bin="$BINARIES_DIR/flowix-cli-x86_64-pc-windows-msvc.exe"
-  if [[ ! -f "$bin" ]]; then
-    echo "[sign] skip: $bin not found (run scripts/build-cli.sh first)"
-    return 0
-  fi
+  local names=(flowix-cli)
 
   if [[ -z "${WINDOWS_CERTIFICATE:-}" ]]; then
     echo "[sign] WINDOWS_CERTIFICATE not set, skip signtool (本地开发)"
@@ -120,12 +114,18 @@ sign_windows() {
   echo "$WINDOWS_CERTIFICATE" | base64 -d > "$pfx"
 
   local ts="${WINDOWS_TIMESTAMP_URL:-http://timestamp.sectigo.com}"
-  echo "[sign] signtool sign /fd sha256 /tr $ts /td sha256 /f $pfx $bin"
-  signtool sign /fd sha256 /tr "$ts" /td sha256 \
-    /f "$pfx" /p "$WINDOWS_CERTIFICATE_PASSWORD" "$bin"
-
-  echo "[sign] signtool verify /pa $bin"
-  signtool verify /pa "$bin"
+  local name bin
+  for name in "${names[@]}"; do
+    bin="$BINARIES_DIR/$name-x86_64-pc-windows-msvc.exe"
+    if [[ ! -f "$bin" ]]; then
+      echo "[sign] skip: $bin not found"
+      continue
+    fi
+    echo "[sign] signtool sign /fd sha256 /tr $ts /td sha256 /f $pfx $bin"
+    signtool sign /fd sha256 /tr "$ts" /td sha256 \
+      /f "$pfx" /p "$WINDOWS_CERTIFICATE_PASSWORD" "$bin"
+    signtool verify /pa "$bin"
+  done
 }
 
 # =================== dispatch ===================

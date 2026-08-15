@@ -68,7 +68,7 @@
 .code-block-language-search,
 .code-block-language-status,
 .code-block-language-dropdown-item {
-  font-family: var(--app-font-family, 'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont);
+  font-family: var(--app-font-family, var(--font-sans));
   font-feature-settings: normal;
   font-variant-numeric: normal;
 }

@@ -1,7 +1,7 @@
 import { scheduleSave } from '@features/document/store/save-queue';
 import { emptyDocumentBuffer, type DocumentBuffer } from '@features/document/store/document-buffer';
 import { canonicalPath } from '@/lib/path';
-import { isContentSemanticallyEqual } from '@features/document/store/buffer-equality';
+import { isDocumentContentEqual } from '@features/document/store/buffer-equality';
 import {
   documentIdentityKey,
   normalizeDocumentIdentity,
@@ -103,7 +103,7 @@ export function hasUnsavedLocalChanges(identity?: DocumentIdentity): boolean {
   if (!target) return false;
   const buf = getBuffer(target);
   if (!buf) return false;
-  return !isContentSemanticallyEqual(buf.content, buf.lastSavedContent);
+  return !isDocumentContentEqual(target, buf.content, buf.lastSavedContent);
 }
 
 export function hasUnsavedLocalChangesForMemo(memoId: string): boolean {
@@ -142,13 +142,14 @@ export async function flushDocument(
   callbacks?: FlushCallbacks & {
     channel?: 'internal' | 'external';
     key?: string | null;
+    scopePath?: string | null;
     force?: boolean;
   },
 ): Promise<boolean> {
   const normalized = normalizeDocumentIdentity(identity);
   const buf = getBuffer(normalized);
   if (!buf) return true;
-  if (!callbacks?.force && isContentSemanticallyEqual(buf.content, buf.lastSavedContent)) {
+  if (!callbacks?.force && isDocumentContentEqual(normalized, buf.content, buf.lastSavedContent)) {
     return true;
   }
 
@@ -162,12 +163,13 @@ export async function flushDocument(
     path: canonicalPath(path),
     channel,
     key,
+    scopePath: callbacks?.scopePath ?? null,
     readExpected: () => buf.lastSavedContent,
     onSaved: (writtenPath, writtenContent) => {
       buf.lastSavedContent = writtenContent;
-      if (isContentSemanticallyEqual(buf.content, writtenContent)) {
+      if (isDocumentContentEqual(normalized, buf.content, writtenContent)) {
         buf.pendingContent = null;
-      } else if (buf.pendingContent !== null && isContentSemanticallyEqual(buf.pendingContent, writtenContent)) {
+      } else if (buf.pendingContent !== null && isDocumentContentEqual(normalized, buf.pendingContent, writtenContent)) {
         buf.pendingContent = null;
       }
       callbacks?.onSaved?.(writtenPath, writtenContent);

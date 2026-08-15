@@ -1,16 +1,22 @@
-//! File IPC —任意 in-notebook 文件�?tree / read / write / create�?//!
-//! �?`memo.rs::read_document` / `write_document` 的区�? 那两�?��单文件路�?//! (`can_access_document_path` 守卫, 包括 `.md` 后缀绕过), 这八�?��
-//! `space_path` 作用�?(`can_access_scoped_file` 守卫, 必须落在声明�?//! notebook 根下)�?
+//! File IPC — 任意 in-notebook 文件 tree / read / write / create。
+//!
+//! 与 `memo.rs::read_document` / `write_document` 的区别: 那两个是单文件路径
+//! (`can_access_document_path` 守卫, 包括 `.md` 后缀绕过), 这八个是
+//! `space_path` 作用域 (`can_access_scoped_file` 守卫, 必须落在声明的
+//! notebook 根下)。侧栏"资料"文件夹 (agent access folder entry) 与注册
+//! 笔记本同权放行, 让文件树视图能浏览用户添加的资料目录。
 use std::fs;
 use std::path::Path;
 
+use base64::Engine;
 use serde::Serialize;
 use tauri::State;
 
 use crate::config::path_is_inside;
 
 use super::helpers::{
-    can_access_scoped_file, is_registered_notebook_path, start_security_bookmark_access,
+    can_access_scoped_file, is_agent_access_folder, is_registered_notebook_path,
+    start_security_bookmark_access,
 };
 use crate::app::state::AppState;
 
@@ -26,7 +32,7 @@ pub struct DocTreeItem {
     pub children: Option<Vec<DocTreeItem>>,
 }
 
-// ==================== 鍩熷唴 helper ====================
+// ==================== 域内 helper ====================
 
 fn generate_stable_id(full_path: &str) -> String {
     format!(
@@ -35,7 +41,10 @@ fn generate_stable_id(full_path: &str) -> String {
     )
 }
 
-fn read_dir_recursive(dir_path: &Path, parent_id: Option<String>) -> Vec<DocTreeItem> {
+/// 单层目录列举 ── 只列直接子项, folder 的 `children` 置空占位, 由前端
+/// 展开时再对子目录调 `get_dir_children` 惰性拉取 (VSCode 风格)。资料
+/// 文夹可能很大, 全量递归会卡首屏; 单层也天然规避符号链接循环。
+fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
     let mut items = Vec::new();
 
     if !dir_path.exists() {
@@ -62,9 +71,9 @@ fn read_dir_recursive(dir_path: &Path, parent_id: Option<String>) -> Vec<DocTree
                 } else {
                     "document".to_string()
                 },
-                parent_id: parent_id.clone(),
+                parent_id: None,
                 children: if is_dir {
-                    Some(read_dir_recursive(&path, None))
+                    Some(Vec::new())
                 } else {
                     None
                 },
@@ -96,20 +105,27 @@ fn read_dir_recursive(dir_path: &Path, parent_id: Option<String>) -> Vec<DocTree
 pub fn get_file_tree(space_path: String, state: State<AppState>) -> Option<Vec<DocTreeItem>> {
     let path = Path::new(&space_path);
     start_security_bookmark_access(&state, path);
-    if !path.exists() || !is_registered_notebook_path(path, &state) {
+    if !path.exists() || !is_browsable_scope(path, &state) {
         return None;
     }
-    Some(read_dir_recursive(path, None))
+    Some(read_dir_single_level(path))
 }
 
 #[tauri::command]
 pub fn get_dir_children(dir_path: String, state: State<AppState>) -> Vec<DocTreeItem> {
     let path = Path::new(&dir_path);
     start_security_bookmark_access(&state, path);
-    if !path.exists() || !is_registered_notebook_path(path, &state) {
+    if !path.exists() || !is_browsable_scope(path, &state) {
         return vec![];
     }
-    read_dir_recursive(path, None)
+    read_dir_single_level(path)
+}
+
+/// 文件树可浏览作用域 ── 注册笔记本根 或 资料文件夹 (agent access
+/// folder entry), 两者都要求 path 本身落在作用域内 (子目录随
+/// `path_is_inside` 一并放行)。
+fn is_browsable_scope(path: &Path, state: &State<AppState>) -> bool {
+    is_registered_notebook_path(path, state) || is_agent_access_folder(path, state)
 }
 
 #[tauri::command]
@@ -124,6 +140,44 @@ pub fn read_file(
     }
     start_security_bookmark_access(&state, Path::new(&file_path));
     fs::read_to_string(&file_path).ok()
+}
+
+fn image_mime_type(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "svg" => Some("image/svg+xml"),
+        "avif" => Some("image/avif"),
+        "ico" => Some("image/x-icon"),
+        "tif" | "tiff" => Some("image/tiff"),
+        "heic" => Some("image/heic"),
+        _ => None,
+    }
+}
+
+/// Read an in-scope image as a data URL so the webview can preview arbitrary
+/// user files without widening the Tauri asset-protocol scope.
+#[tauri::command]
+pub fn read_image_file(
+    file_path: String,
+    space_path: Option<String>,
+    state: State<AppState>,
+) -> Option<String> {
+    let path = Path::new(&file_path);
+    let mime = image_mime_type(path)?;
+    if !can_access_scoped_file(path, space_path.as_deref(), &state) || !path.is_file() {
+        eprintln!("[read_image_file] refused file: {}", file_path);
+        return None;
+    }
+    start_security_bookmark_access(&state, path);
+    let bytes = fs::read(path).ok()?;
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]
@@ -163,7 +217,7 @@ pub fn create_folder(
     state: State<AppState>,
 ) -> Option<DocTreeItem> {
     let target_path = Path::new(&space_path).join(&name);
-    if !is_registered_notebook_path(Path::new(&space_path), &state)
+    if !is_browsable_scope(Path::new(&space_path), &state)
         || !path_is_inside(&target_path, Path::new(&space_path))
     {
         eprintln!(
@@ -198,7 +252,7 @@ pub fn create_document(
         format!("{}.md", name)
     };
     let target_path = Path::new(&space_path).join(&file_name);
-    if !is_registered_notebook_path(Path::new(&space_path), &state)
+    if !is_browsable_scope(Path::new(&space_path), &state)
         || !path_is_inside(&target_path, Path::new(&space_path))
     {
         eprintln!(

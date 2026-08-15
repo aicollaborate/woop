@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTypeKey } from "@/types/agent";
 
+const languageState = vi.hoisted(() => ({ language: "en-US" as "en-US" | "zh-CN" }));
+
 vi.mock("@features/preferences/store/user-settings-store", () => ({
   useUserSettingsStore: {
-    getState: () => ({ settings: { language: "en-US" } }),
+    getState: () => ({ settings: languageState }),
   },
 }));
 
@@ -20,12 +22,14 @@ import {
 describe("thread-titles helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    languageState.language = "en-US";
   });
 
   it("isExternalAgentType returns true for non-flowix", () => {
     expect(isExternalAgentType("flowix")).toBe(false);
     expect(isExternalAgentType("codex")).toBe(true);
     expect(isExternalAgentType("claude")).toBe(true);
+    expect(isExternalAgentType("deepseek-harness")).toBe(true);
     expect(isExternalAgentType("gemini")).toBe(true);
     expect(isExternalAgentType("hermes")).toBe(true);
     expect(isExternalAgentType("openclaw")).toBe(true);
@@ -35,6 +39,7 @@ describe("thread-titles helpers", () => {
     expect(canPersistThreadTitle("flowix")).toBe(true);
     expect(canPersistThreadTitle("codex")).toBe(true);
     expect(canPersistThreadTitle("claude")).toBe(true);
+    expect(canPersistThreadTitle("deepseek-harness")).toBe(true);
     expect(canPersistThreadTitle("hermes")).toBe(true);
     expect(canPersistThreadTitle("gemini")).toBe(true);
     expect(canPersistThreadTitle("openclaw")).toBe(true);
@@ -45,11 +50,14 @@ describe("thread-titles helpers", () => {
     // 注意: Claude agent name 是 "Claude Code" 不是 "Claude", 因此 i18n 词条返回
     // "Claude Code session".
     expect(defaultExternalThreadTitle("claude")).toBe("Claude Code session");
-    // Hermes 在 defaultThreadTitle 路径里有特别分支 ("Hermes session" 不经过 i18n),
-    // defaultExternalThreadTitle 给 Hermes 走到通用分支, 按 agent.name 拼接 "session"。
+    expect(defaultExternalThreadTitle("deepseek-harness")).toBe(
+      "DeepSeek Harness session",
+    );
+    // Session fallback titles are localized per agent type.
     expect(defaultExternalThreadTitle("hermes")).toBe("Hermes session");
-    // 通用 external 用 agent.name 字段拼接 "session"。
     expect(defaultExternalThreadTitle("gemini")).toBe("Gemini CLI session");
+    expect(defaultExternalThreadTitle("opencode")).toBe("OpenCode session");
+    expect(defaultExternalThreadTitle("openclaw")).toBe("OpenClaw session");
   });
 
   it("defaultThreadTitle falls back per agent family", () => {
@@ -57,6 +65,25 @@ describe("thread-titles helpers", () => {
     expect(defaultThreadTitle("hermes")).toBe("Hermes session");
     expect(defaultThreadTitle("codex")).toBe("Codex session");
     expect(defaultThreadTitle("claude")).toBe("Claude Code session");
+    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness Chat");
+    expect(defaultThreadTitle("opencode")).toBe("OpenCode session");
+    expect(defaultThreadTitle("hermes")).toBe("Hermes session");
+    expect(defaultThreadTitle("gemini")).toBe("Gemini CLI session");
+    expect(defaultThreadTitle("openclaw")).toBe("OpenClaw session");
+  });
+
+  it("localizes DeepSeek Harness card and session titles", () => {
+    languageState.language = "zh-CN";
+    expect(defaultExternalThreadTitle("deepseek-harness")).toBe(
+      "DeepSeek Harness 对话",
+    );
+    expect(defaultThreadTitle("deepseek-harness")).toBe(
+      "DeepSeek Harness 对话",
+    );
+    expect(defaultThreadTitle("opencode")).toBe("OpenCode 对话");
+    expect(defaultThreadTitle("hermes")).toBe("Hermes 对话");
+    expect(defaultThreadTitle("gemini")).toBe("Gemini CLI 对话");
+    expect(defaultThreadTitle("openclaw")).toBe("OpenClaw 对话");
   });
 
   it("deriveThreadTitleFromPrompt strips system block, collapses whitespace, truncates", () => {

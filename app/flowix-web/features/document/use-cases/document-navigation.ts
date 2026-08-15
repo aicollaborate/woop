@@ -26,7 +26,12 @@ function currentHistoryEntry(): DocumentHistoryEntry | null {
   }
   const external = state.activeExternalSession;
   if (external) {
-    return { kind: 'external', path: external.path, openedAt: external.openedAt };
+    return {
+      kind: 'external',
+      path: external.path,
+      scopePath: external.scopePath,
+      openedAt: external.openedAt,
+    };
   }
   return state.activeAgentConversationId
     ? {
@@ -125,7 +130,10 @@ async function openHistoryEntry(entry: DocumentHistoryEntry): Promise<void> {
     await useDocumentStore.getState().openAgentConversation(entry.instanceId, { history: 'skip' });
     return;
   }
-  await useDocumentStore.getState().openExternalDocument(entry.path, { history: 'skip' });
+  await useDocumentStore.getState().openExternalDocument(entry.path, {
+    history: 'skip',
+    scopePath: entry.scopePath,
+  });
 }
 
 export async function navigateDocumentHistory(direction: DocumentHistoryDirection): Promise<boolean> {

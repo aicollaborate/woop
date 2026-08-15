@@ -3,7 +3,7 @@ import type { AgentTypeKey } from '@/types/agent';
 
 export type ExternalAgentTypeKey = Extract<
   AgentTypeKey,
-  'codex' | 'claude' | 'hermes' | 'opencode'
+  'codex' | 'claude' | 'hermes' | 'opencode' | 'deepseek-harness'
 >;
 
 export interface ExternalAgentRuntimeAdapter {
@@ -36,6 +36,10 @@ const externalAgentRuntimeAdapters: Record<ExternalAgentTypeKey, ExternalAgentRu
   claude: createPrefixRuntimeAdapter('claude', (threadId) => agent.getClaudeSessionId(threadId)),
   hermes: createPrefixRuntimeAdapter('hermes', (threadId) => agent.getHermesSessionId(threadId)),
   opencode: createPrefixRuntimeAdapter('opencode', (threadId) => agent.getOpenCodeSessionId(threadId)),
+  'deepseek-harness': createPrefixRuntimeAdapter(
+    'deepseek-harness',
+    (threadId) => agent.getDeepSeekHarnessSessionId(threadId),
+  ),
 };
 
 export function getExternalAgentRuntimeAdapter(
@@ -45,7 +49,8 @@ export function getExternalAgentRuntimeAdapter(
     typeKey === 'codex' ||
     typeKey === 'claude' ||
     typeKey === 'hermes' ||
-    typeKey === 'opencode'
+    typeKey === 'opencode' ||
+    typeKey === 'deepseek-harness'
   ) {
     return externalAgentRuntimeAdapters[typeKey];
   }

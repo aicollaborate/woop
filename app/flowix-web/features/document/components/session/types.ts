@@ -36,6 +36,8 @@ export interface DocumentContainerProps {
     frontmatterMeta: Record<string, unknown>;
   }) => void;
   isExternalDocument?: boolean;
+  /** Authorized file-tree root for external code/text files. */
+  externalScopePath?: string | null;
   // Controlled by main-layout so the titlebar button and Ctrl+F share one state.
   searchPanelOpen?: boolean;
   onSearchPanelOpenChange?: (open: boolean) => void;

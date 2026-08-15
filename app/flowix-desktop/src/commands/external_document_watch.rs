@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager};
 
+use crate::app::state::AppState;
+use crate::commands::external_document::exact_existing_external_path;
+
 const EXTERNAL_DOCUMENT_CHANGED_EVENT: &str = "external-document-changed";
 const EVENT_SETTLE_DELAY: Duration = Duration::from_millis(120);
 const REVISION_POLL_INTERVAL: Duration = Duration::from_millis(750);
@@ -67,8 +70,7 @@ impl ExternalDocumentWatchState {
         }
     }
 
-    fn watch(&self, window_label: &str, file_path: &str) -> Result<String, String> {
-        let path = canonical_markdown_path(file_path)?;
+    fn watch(&self, window_label: &str, path: PathBuf) -> Result<String, String> {
         let lease_id = format!(
             "external-watch:{}:{}",
             window_label,
@@ -355,27 +357,6 @@ fn decrement_path_ref_count(registry: &mut WatchRegistry, path: &Path) -> Option
     }
 }
 
-fn canonical_markdown_path(file_path: &str) -> Result<PathBuf, String> {
-    let requested = PathBuf::from(file_path);
-    let extension_is_markdown = requested
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
-        });
-    if !extension_is_markdown {
-        return Err("external document must be a Markdown file".to_string());
-    }
-    if !requested.is_file() {
-        return Err(format!(
-            "external document is unavailable: {}",
-            requested.display()
-        ));
-    }
-    dunce::canonicalize(&requested)
-        .map_err(|error| format!("failed to resolve {}: {error}", requested.display()))
-}
-
 fn event_matches_watched_file(event_path: &Path, watched_path: &Path) -> bool {
     let normalized = dunce::canonicalize(event_path).unwrap_or_else(|_| event_path.to_path_buf());
     normalized == watched_path
@@ -449,10 +430,13 @@ fn file_revision(path: &Path) -> String {
 #[tauri::command]
 pub fn watch_external_document(
     window: tauri::WebviewWindow,
-    state: tauri::State<'_, ExternalDocumentWatchState>,
+    watches: tauri::State<'_, ExternalDocumentWatchState>,
+    app_state: tauri::State<'_, AppState>,
     file_path: String,
+    #[allow(non_snake_case)] scopePath: Option<String>,
 ) -> Result<String, String> {
-    state.watch(window.label(), &file_path)
+    let path = exact_existing_external_path(&file_path, scopePath.as_deref(), &app_state)?;
+    watches.watch(window.label(), path)
 }
 
 #[tauri::command]
@@ -481,25 +465,6 @@ mod tests {
             Some(path.clone())
         );
         assert!(!registry.path_ref_counts.contains_key(&path));
-    }
-
-    #[test]
-    fn canonical_markdown_path_rejects_non_markdown_files() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        assert!(canonical_markdown_path(file.path().to_string_lossy().as_ref()).is_err());
-    }
-
-    #[test]
-    fn canonical_markdown_path_accepts_nested_external_document() {
-        let directory = tempfile::tempdir().unwrap();
-        let nested = directory.path().join("docs").join("Reference.md");
-        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
-        std::fs::write(&nested, "# Reference\n").unwrap();
-
-        assert_eq!(
-            canonical_markdown_path(nested.to_string_lossy().as_ref()).unwrap(),
-            dunce::canonicalize(nested).unwrap(),
-        );
     }
 
     #[test]

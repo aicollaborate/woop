@@ -12,7 +12,11 @@ import { CODEX_ACCESS_OPTIONS } from "@features/agent/config/codex-options";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 
-export type AgentRuntimeSettingKind = "model" | "reasoning" | "permission";
+export type AgentRuntimeSettingKind =
+  | "model"
+  | "reasoning"
+  | "mode"
+  | "permission";
 
 export interface AgentAccessOption {
   id: AgentPermissionMode;
@@ -50,6 +54,15 @@ const HERMES_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
   { id: "danger-full-access", label: "Full Access" },
 ];
 
+// DSH 的 SDK 沙箱只有 read-only / workspace-write / danger-full-access 三档
+// (没有 yolo), 且 inherit / 未知值须 fail closed 到 workspace-write ── 不能
+// 复用 Codex 的 danger-full-access 兜底, 否则会绕过 Harness 进程沙箱。
+const DSH_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
+  { id: "workspace-write", label: "Workspace Write" },
+  { id: "read-only", label: "Read Only" },
+  { id: "danger-full-access", label: "Full Access" },
+];
+
 const CLAUDE_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
   { id: "yolo", label: "YOLO" },
   { id: "danger-full-access", label: "Full Access" },
@@ -68,6 +81,22 @@ export function normalizeCodexPermissionMode(
     mode === "yolo"
     ? mode
     : "danger-full-access";
+}
+
+/**
+ * DeepSeek Harness 专属归一化: `yolo` 是 Codex CLI 的语义, DSH SDK 沙箱
+ * 不存在该档位; `inherit` / 未知值 fail closed 到 `workspace-write`
+ * (Host 侧 manager.rs 对 None/unknown 已兜底 read-only, 这里保证前端
+ * 显式传出的值永远不会静默升级到 danger-full-access)。
+ */
+export function normalizeDshPermissionMode(
+  mode: AgentPermissionMode | undefined,
+): AgentPermissionMode {
+  return mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "danger-full-access"
+    ? mode
+    : "workspace-write";
 }
 
 const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
@@ -139,6 +168,20 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
       opencode: { cwd, workspacePaths, permissionMode },
     }),
   },
+  "deepseek-harness": {
+    typeKey: "deepseek-harness",
+    // DSH always follows the Flowix provider/model configuration. Its tool
+    // Agent preset and per-card permission mode are configurable here.
+    emptySettings: ["mode", "permission"],
+    accessOptions: DSH_ACCESS_OPTIONS,
+    buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
+      deepseekHarness: {
+        cwd,
+        workspacePaths,
+        permissionMode: normalizeDshPermissionMode(permissionMode),
+      },
+    }),
+  },
 };
 
 export function getAgentRuntimeSpec(typeKey: AgentTypeKey): AgentRuntimeSpec {
@@ -205,17 +248,27 @@ export function buildAgentRuntimeConfig({
         new Set([...folderPaths, ...(notebookPathNorm ? [notebookPathNorm] : [])]),
       );
 
+  // DSH 不继承 Codex 系的全局权限默认 (danger-full-access): 无卡片级 /
+  // 类型级显式选择时使用自己的 workspace-write 默认。全局 permissionMode
+  // 只对 Codex 语义的 agent 生效。
+  const instancePermission = instanceRuntimeConfig?.access?.sandbox;
   const effectivePermissionMode =
-    instanceRuntimeConfig?.access?.sandbox ?? permissionMode;
+    instancePermission ??
+    (typeKey === "deepseek-harness" ? "workspace-write" : permissionMode);
   const effectiveModel =
     instanceRuntimeConfig?.model?.key ?? codexModel;
   const effectiveReasoningEffort =
     instanceRuntimeConfig?.reasoningEffort ?? codexReasoningEffort;
-  return getAgentRuntimeSpec(typeKey).buildRuntimeConfig({
+  const runtimeConfig = getAgentRuntimeSpec(typeKey).buildRuntimeConfig({
     cwd: primaryWorkspace,
     workspacePaths,
     permissionMode: effectivePermissionMode,
     codexModel: effectiveModel,
     codexReasoningEffort: effectiveReasoningEffort,
   });
+  if (typeKey === "deepseek-harness" && runtimeConfig.deepseekHarness) {
+    runtimeConfig.deepseekHarness.mode =
+      instanceRuntimeConfig?.deepseekHarness?.mode ?? "standard";
+  }
+  return runtimeConfig;
 }

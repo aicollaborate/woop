@@ -158,15 +158,18 @@ export type ExternalDocumentWriteOutcome =
   | { status: 'error'; message: string };
 
 export const externalDocuments = {
-  read: (filePath: string) => invoke<string>('read_external_document', { filePath }),
+  read: (filePath: string, scopePath?: string | null) =>
+    invoke<string>('read_external_document', { filePath, scopePath: scopePath ?? null }),
   write: (params: {
     filePath: string;
     content: string;
     expectedContent?: string;
+    scopePath?: string | null;
   }) => invoke<ExternalDocumentWriteOutcome>('write_external_document', {
     filePath: params.filePath,
     content: params.content,
     expectedContent: params.expectedContent,
+    scopePath: params.scopePath ?? null,
   }),
 };
 

@@ -72,6 +72,8 @@ production.bundle ??= {};
 
 if (targetPlatform === "win32") {
   production.bundle.targets = ["nsis"];
+  production.bundle.externalBin = (production.bundle.externalBin ?? [])
+    .filter((binary) => !binary.startsWith("binaries/dsh-"));
   production.bundle.windows ??= {};
   if (production.bundle.macOS) {
     delete production.bundle.macOS.signingIdentity;
@@ -109,6 +111,10 @@ if (targetPlatform === "win32") {
   }
   production.bundle.macOS.entitlements = "entitlements.plist";
   production.bundle.macOS.hardenedRuntime = true;
+  production.bundle.externalBin ??= [];
+  if (!production.bundle.externalBin.includes("binaries/dsh-host-spawn-helper")) {
+    production.bundle.externalBin.push("binaries/dsh-host-spawn-helper");
+  }
 } else {
   if (production.bundle.windows) {
     delete production.bundle.windows.certificateThumbprint;

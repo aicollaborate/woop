@@ -182,7 +182,21 @@ pub(crate) fn can_access_scoped_file(
         return false;
     };
     let root = Path::new(space_path);
-    is_registered_notebook_path(root, state) && path_is_inside(file_path, root)
+    (is_registered_notebook_path(root, state) || is_agent_access_folder(root, state))
+        && path_is_inside(file_path, root)
+}
+
+/// 侧栏"资料"文件夹作用域 ── agent access 配置里登记的 folder entry。
+/// `get_file_tree` / `read_file` 等文件树 IPC 用它放行用户添加的资料
+/// 文件夹 (这些目录不在注册笔记本列表里, `is_registered_notebook_path`
+/// 对它们返回 false)。
+pub(crate) fn is_agent_access_folder(path: &Path, state: &State<AppState>) -> bool {
+    let config = state.agent_access.get_config();
+    config.entries.iter().any(|entry| {
+        entry.kind == crate::config::AgentAccessKind::Folder
+            && entry.enabled
+            && path_is_inside(path, Path::new(&entry.path))
+    })
 }
 
 pub(crate) fn synthesize_minimal_memo(id: &str) -> flowix_core::memo_file::Memo {

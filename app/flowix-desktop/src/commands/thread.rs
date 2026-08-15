@@ -401,6 +401,87 @@ pub async fn hermes_thread_session_id(
 }
 
 #[tauri::command]
+pub async fn deepseek_harness_thread_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<ThreadInfo>, String> {
+    state
+        .thread_manager
+        .list_external_threads("deepseek-harness")
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_thread_get(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<GetThreadResponse, String> {
+    let mut page = state
+        .thread_manager
+        .get_external_event_messages_page("deepseek-harness", &thread_id, None, 50)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or(ThreadMessagesPage {
+            messages: Vec::new(),
+            oldest_sequence: None,
+            has_more: false,
+        });
+    let mut messages = page.messages;
+    while page.has_more {
+        page = state
+            .thread_manager
+            .get_external_event_messages_page(
+                "deepseek-harness",
+                &thread_id,
+                page.oldest_sequence,
+                50,
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or(ThreadMessagesPage {
+                messages: Vec::new(),
+                oldest_sequence: None,
+                has_more: false,
+            });
+        let mut combined = page.messages;
+        combined.extend(messages);
+        messages = combined;
+    }
+    Ok(GetThreadResponse { messages })
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_thread_get_page(
+    thread_id: String,
+    before_sequence: Option<i64>,
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<ThreadMessagesPage, String> {
+    Ok(state
+        .thread_manager
+        .get_external_event_messages_page("deepseek-harness", &thread_id, before_sequence, limit)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or(ThreadMessagesPage {
+            messages: Vec::new(),
+            oldest_sequence: None,
+        has_more: false,
+    }))
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_thread_session_id(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    state
+        .thread_manager
+        .get_external_session(&thread_id, "deepseek-harness")
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn opencode_thread_session_id(
     thread_id: String,
     state: State<'_, AppState>,

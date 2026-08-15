@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { Folder } from '@phosphor-icons/react';
-import { Plus } from 'lucide-react';
+import { Plus, Star } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
@@ -10,7 +10,7 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@shared/ui/tooltip';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
-import { NotebookIcon, type Notebook } from '@features/memo';
+import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
 
 /**
  * 选中笔记本的"可访问文件夹"展示 ── 渲染该 notebook 下 agent 的默认
@@ -47,9 +47,8 @@ import { NotebookIcon, type Notebook } from '@features/memo';
  *   二次确认 (单 folder 删除, 走 toast 即足够; 若需撤销, 后续可接 toast.action)。
  *   原 hover Trash 按钮已移除 (决策 2), 删除入口仅在右键菜单。
  *
- * 行不再挂 onClick ── 主空间切换改由右键菜单承担, 避免与 ContextMenuTrigger
- * 抢事件流; 但保留键盘 Enter/Space 触发 `setOrUnsetWorkspace`, 让键盘用户
- * 也能切换主空间 (单 folder 不挂交互, 仅展示)。
+ * 行 onClick = 在中间列打开该文件夹的 VSCode 风格文件树 (浏览资料),
+ * 主空间切换完全由右键菜单承担; missing 行不挂交互, 仅展示。
  */
 interface NotebookAccessFilesListProps {
   notebook: Notebook | undefined;
@@ -69,6 +68,8 @@ export function NotebookAccessFilesList({
   const config = useAgentAccessStore((s) => s.config);
   const addFolderFromPicker = useAgentAccessStore((s) => s.addFolderFromPicker);
   const setDefaultFiles = useAgentAccessStore((s) => s.setDefaultFiles);
+  const setActiveFileBrowserPath = useMemoStore((s) => s.setActiveFileBrowserPath);
+  const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
 
   // 只展示该 notebook 自己的默认 folders, 不 fallback 全局兜底 ── 全局默认
   // 与本笔记本无关, 展示会造成混淆。 未在本笔记本的卡片里勾选过 (无
@@ -215,48 +216,45 @@ export function NotebookAccessFilesList({
         // (恢复主空间标识); missing 路径永远不能当主空间, 两项均藏。
         const isWorkspaceable = !item.missing;
         const rowTitle = item.missing ? t('agent.access.pathMissing') : item.path;
-        // 键盘 Enter/Space 切换主空间的入口条件 ── 与右键菜单项对齐:
-        // `isWorkspaceable` 行整行 role=button, 让键盘用户也能切 / 恢复主空间。
-        const canRowActivate = isWorkspaceable;
+        // 单击 = 在中间列打开该文件夹的文件树 (浏览), 主空间切换完全走右键
+        // 菜单 ── 消除"单击切主空间"的隐藏语义。missing 行不可浏览。
+        const canBrowse = !item.missing;
+        const isBrowsing = canBrowse && activeFileBrowserPath === item.path;
         return (
           <ContextMenu key={item.path}>
             <ContextMenuTrigger asChild>
               <div
-                role={canRowActivate ? 'button' : undefined}
-                tabIndex={canRowActivate ? 0 : undefined}
+                role={canBrowse ? 'button' : undefined}
+                tabIndex={canBrowse ? 0 : undefined}
                 title={rowTitle}
-                aria-label={
-                  isWorkspace
-                    ? t('agent.access.workspaceBadge')
-                    : isWorkspaceable
-                      ? t('agent.access.setWorkspace')
-                      : undefined
-                }
-                aria-pressed={canRowActivate ? isWorkspace : undefined}
+                aria-label={isWorkspace ? t('agent.access.workspaceBadge') : undefined}
+                aria-current={isBrowsing ? 'true' : undefined}
                 onClick={
-                  canRowActivate
-                    ? () => handleSetWorkspace(item.path)
+                  canBrowse
+                    ? () => setActiveFileBrowserPath(item.path)
                     : undefined
                 }
                 onKeyDown={
-                  canRowActivate
+                  canBrowse
                     ? (event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          handleSetWorkspace(item.path);
+                          setActiveFileBrowserPath(item.path);
                         }
                       }
                     : undefined
                 }
                 className={cn(
-                  'group relative flex h-8 w-full select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
-                  canRowActivate && 'cursor-pointer hover:bg-[var(--muted)]',
+                  'relative flex h-8 w-full select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
+                  canBrowse && 'cursor-pointer',
+                  isBrowsing && 'bg-[var(--muted)]',
                   item.missing && 'opacity-70',
                 )}
+                style={{ paddingLeft: 6 }}
               >
                 <span
                   aria-label={isWorkspace ? t('agent.access.workspaceBadge') : undefined}
-                  className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md text-[var(--foreground)] opacity-90"
+                  className="relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 overflow-hidden rounded-md text-[var(--foreground)] opacity-90"
                 >
                   {item.missing ? (
                     <NotebookIcon
@@ -268,18 +266,19 @@ export function NotebookAccessFilesList({
                   ) : (
                     <Folder className="h-3.5 w-3.5" weight="fill" />
                   )}
-                  {isWorkspace && (
-                    <span
-                      className="agent-thread-card__access-workspace-mark"
-                      aria-hidden="true"
-                    />
-                  )}
                 </span>
                 <div className="flex-1 min-w-0 flex items-center gap-1.5">
                   <span className={cn('min-w-0 truncate', item.missing && 'text-[var(--muted-foreground)]')}>
                     {item.name}
                   </span>
                 </div>
+                {isWorkspace && (
+                  <Star
+                    aria-label={t('agent.access.workspaceBadge')}
+                    className="agent-thread-card__access-workspace-mark h-3.5 w-3.5 shrink-0 text-[var(--primary)]"
+                    fill="currentColor"
+                  />
+                )}
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent className="w-[160px] space-y-1 px-1 py-1.5">

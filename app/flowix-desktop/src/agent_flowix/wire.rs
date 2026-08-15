@@ -23,6 +23,8 @@ pub struct RuntimePathConfig {
     /// 推理 effort("low" / "medium" / "high" / "xhigh")�?
     /// 通用 metadata 协�?字�?,Provider 不支持时�?None�?
     pub reasoning_effort: Option<String>,
+    /// DeepSeek Harness conversation preset: standard / code / minimal / cordis.
+    pub mode: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -33,6 +35,7 @@ pub struct AgentRuntimeConfig {
     pub claude: Option<RuntimePathConfig>,
     pub hermes: Option<RuntimePathConfig>,
     pub opencode: Option<RuntimePathConfig>,
+    pub deepseek_harness: Option<RuntimePathConfig>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -69,6 +72,7 @@ impl AgentUserMessage {
             "claude" => config.claude.as_ref(),
             "hermes" => config.hermes.as_ref(),
             "opencode" => config.opencode.as_ref(),
+            "deepseek-harness" => config.deepseek_harness.as_ref(),
             _ => None,
         }
     }
@@ -116,6 +120,11 @@ impl AgentUserMessage {
         self.runtime_config_for(runtime)
             .and_then(|config| config.reasoning_effort.as_deref())
             .or(self.codex_reasoning_effort.as_deref())
+    }
+
+    pub fn mode_for_runtime(&self, runtime: &str) -> Option<&str> {
+        self.runtime_config_for(runtime)
+            .and_then(|config| config.mode.as_deref())
     }
 }
 

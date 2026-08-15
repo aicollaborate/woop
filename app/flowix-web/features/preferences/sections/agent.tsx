@@ -57,7 +57,8 @@ const CODING_PLAN_PROVIDER_IDS = [
 
 /** Base URL 由后端固定 / 不允许在前端编辑的供应商 ——
  *  DeepSeek 的接口走 OpenAI Chat Completions，Base URL
- *  锁死为官方 endpoint (`https://api.deepseek.com/chat/completions`)。
+ *  锁死为官方根地址 (`https://api.deepseek.com`)。Harness/SDK 会在请求时
+ *  追加 `/chat/completions`；Flowix 内置 provider 也兼容这个 base URL。
  *  与 CODING_PLAN_PROVIDER_IDS 的差别是这里**展示**该字段，仅禁用编辑。 */
 const LOCKED_BASE_URL_PROVIDER_IDS = [
   'DeepSeek',
@@ -96,7 +97,7 @@ const PROVIDER_DEFAULTS: Record<string, Pick<AgentConfig, 'model' | 'apiUrl'>> =
   Anthropic: { model: 'claude-opus-4-8', apiUrl: '' },
   Gemini: { model: 'gemini-3.1-pro-preview', apiUrl: '' },
   Ollama: { model: 'qwen3.6', apiUrl: 'http://localhost:11434' },
-  DeepSeek: { model: 'deepseek-v4-pro', apiUrl: 'https://api.deepseek.com/chat/completions' },
+  DeepSeek: { model: 'deepseek-v4-flash', apiUrl: 'https://api.deepseek.com' },
   OpenRouter: { model: 'openai/gpt-5.5', apiUrl: '' },
   OpenAI: { model: 'gpt-5.5', apiUrl: '' },
   'OpenAI Compatible': { model: 'gpt-5.5', apiUrl: 'https://api.openai.com/v1' },
@@ -111,7 +112,7 @@ const PROVIDER_BASE_URL_HINTS: Record<string, string> = {
   Anthropic: 'https://api.anthropic.com/v1',
   Gemini: 'https://generativelanguage.googleapis.com',
   Ollama: 'http://localhost:11434',
-  DeepSeek: 'https://api.deepseek.com/chat/completions',
+  DeepSeek: 'https://api.deepseek.com',
   OpenRouter: 'https://openrouter.ai/api/v1',
   'OpenAI Compatible': 'https://api.openai.com/v1',
 };

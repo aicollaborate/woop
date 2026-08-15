@@ -24,6 +24,8 @@ pub struct AgentRuntimeStatus {
     claude: AgentRuntimeAvailability,
     hermes: AgentRuntimeAvailability,
     opencode: AgentRuntimeAvailability,
+    #[serde(rename = "deepseek-harness")]
+    deepseek_harness: AgentRuntimeAvailability,
 }
 
 fn executable_available(path: &Path) -> bool {
@@ -73,6 +75,17 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
     let claude = external_availability(cfg.get_entry("claude"), "Claude Code CLI");
     let hermes = external_availability(cfg.get_entry("hermes"), "Hermes Agent CLI");
     let opencode = external_availability(cfg.get_entry("opencode"), "OpenCode CLI");
+    let deepseek_harness =
+        match crate::agent_external::deepseek_harness::resolve_runtime_config(&ai_config, None) {
+            Ok(_) => AgentRuntimeAvailability {
+                available: true,
+                reason: None,
+            },
+            Err(reason) => AgentRuntimeAvailability {
+                available: false,
+                reason: Some(reason),
+            },
+        };
 
     AgentRuntimeStatus {
         flowix: AgentRuntimeAvailability {
@@ -83,6 +96,7 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
         claude,
         hermes,
         opencode,
+        deepseek_harness,
     }
 }
 

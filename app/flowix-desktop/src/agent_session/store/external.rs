@@ -8,7 +8,7 @@ use crate::agent_session::types::{
 use crate::agent_types::AgentId;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const MAX_EXTERNAL_EVENTS_PER_THREAD: i64 = 10_000;
@@ -675,8 +675,13 @@ impl ThreadManager {
             |row| row.get::<_, bool>(0),
         )?;
 
+        let messages = materialize_external_messages(events);
         Ok(ThreadMessagesPage {
-            messages: materialize_external_messages(events),
+            messages: if runtime == "deepseek-harness" {
+                normalize_legacy_deepseek_thinking(messages)
+            } else {
+                messages
+            },
             oldest_sequence: Some(cutoff_id),
             has_more,
         })
@@ -687,6 +692,12 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
     let mut messages = Vec::new();
     let mut tool_indexes = HashMap::<String, usize>::new();
     let mut message_indexes = HashMap::<String, usize>::new();
+    // Older DSH events reused `assistant:stream` across an assistant -> tool
+    // -> assistant sequence. Keep a history-only cursor so those rows can be
+    // split without changing the already-persisted event log.
+    let mut dsh_pending_assistant_segment = HashSet::<String>::new();
+    let mut dsh_assistant_segment_counts = HashMap::<String, usize>::new();
+    let mut dsh_current_assistant_ids = HashMap::<String, String>::new();
     for event in events {
         let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.normalized_json) else {
             continue;
@@ -727,8 +738,26 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 } else {
                     "assistant"
                 };
-                let message_id =
+                let mut message_id =
                     external_run_scoped_id(&event.runtime, &payload, role, &message_id);
+                if event.runtime == "deepseek-harness" {
+                    if let Some(run_key) = external_event_run_key(&event.runtime, &payload) {
+                        let segment_key = format!("{run_key}:{message_id}");
+                        let current_id = dsh_current_assistant_ids
+                            .entry(segment_key.clone())
+                            .or_insert_with(|| message_id.clone());
+                        if dsh_pending_assistant_segment.remove(&run_key)
+                            && message_indexes.contains_key(current_id)
+                        {
+                            let count = dsh_assistant_segment_counts
+                                .entry(segment_key)
+                                .and_modify(|value| *value += 1)
+                                .or_insert(1);
+                            *current_id = format!("{message_id}:segment:{count}");
+                        }
+                        message_id = current_id.clone();
+                    }
+                }
                 let content = payload
                     .get("text")
                     .and_then(serde_json::Value::as_str)
@@ -768,6 +797,11 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 messages.push(message);
             }
             Some("tool_call") => {
+                if event.runtime == "deepseek-harness" {
+                    if let Some(run_key) = external_event_run_key(&event.runtime, &payload) {
+                        dsh_pending_assistant_segment.insert(run_key);
+                    }
+                }
                 let raw_tool_call_id = payload
                     .get("id")
                     .and_then(serde_json::Value::as_str)
@@ -796,6 +830,11 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 messages.push(message);
             }
             Some("tool_result") => {
+                if event.runtime == "deepseek-harness" {
+                    if let Some(run_key) = external_event_run_key(&event.runtime, &payload) {
+                        dsh_pending_assistant_segment.insert(run_key);
+                    }
+                }
                 let Some(raw_tool_call_id) = payload
                     .get("id")
                     .and_then(serde_json::Value::as_str)
@@ -838,6 +877,70 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
     messages
 }
 
+/// Older DSH runs could receive reasoning as ordinary text wrapped in
+/// `<think>...</think>` (some OpenAI-compatible providers do this instead of
+/// sending `reasoning_content`). Convert those already-persisted rows so a
+/// history reload does not change the message's visual role.
+fn normalize_legacy_deepseek_thinking(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut normalized = Vec::with_capacity(messages.len());
+    for message in messages {
+        if message.role != "assistant"
+            || (!message.content.contains("<think>") && !message.content.contains("</think>"))
+        {
+            normalized.push(message);
+            continue;
+        }
+
+        let segments = split_legacy_thinking_text(&message.content);
+        let mut reasoning_index = 0usize;
+        let mut text_index = 0usize;
+        for (is_reasoning, content) in segments {
+            if content.is_empty() {
+                continue;
+            }
+            let mut segment = message.clone();
+            segment.content = content;
+            if is_reasoning {
+                segment.role = "reasoning".to_string();
+                segment.id = format!("{}:reasoning:{reasoning_index}", message.id);
+                segment.is_completed = Some(true);
+                reasoning_index += 1;
+            } else {
+                segment.role = "assistant".to_string();
+                segment.id = if text_index == 0 {
+                    message.id.clone()
+                } else {
+                    format!("{}:text:{text_index}", message.id)
+                };
+                text_index += 1;
+            }
+            normalized.push(segment);
+        }
+    }
+    normalized
+}
+
+fn split_legacy_thinking_text(value: &str) -> Vec<(bool, String)> {
+    let mut segments = Vec::new();
+    let mut rest = value;
+    let mut reasoning = false;
+    loop {
+        let marker = if reasoning { "</think>" } else { "<think>" };
+        let Some(index) = rest.find(marker) else {
+            if !rest.is_empty() {
+                segments.push((reasoning, rest.to_string()));
+            }
+            break;
+        };
+        if index > 0 {
+            segments.push((reasoning, rest[..index].to_string()));
+        }
+        rest = &rest[index + marker.len()..];
+        reasoning = !reasoning;
+    }
+    segments
+}
+
 fn external_run_scoped_id(
     runtime: &str,
     payload: &serde_json::Value,
@@ -852,6 +955,14 @@ fn external_run_scoped_id(
         return crate::agent_external::canonical_message_id(runtime, run_id, role, item_id);
     }
     item_id.to_string()
+}
+
+fn external_event_run_key(runtime: &str, payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(|run_id| format!("{runtime}:{run_id}"))
 }
 
 fn external_history_message(

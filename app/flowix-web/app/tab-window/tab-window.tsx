@@ -550,6 +550,7 @@ export function TabWindow() {
       ?? activeExternalSession?.transitionId
       ?? null,
     isExternalDocument: activeTab.target.kind === 'external_markdown',
+    externalScopePath: activeExternalSession?.scopePath ?? null,
     searchPanelOpen: isSearchPanelOpen,
     onSearchPanelOpenChange: setIsSearchPanelOpen,
     toolbarCollapsed,
@@ -571,6 +572,7 @@ export function TabWindow() {
     },
     sidebar: {
       hidden: false,
+      noteNavigationVisible: false,
       onToggle: NOOP,
     },
     navigation: {

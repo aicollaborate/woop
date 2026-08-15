@@ -1,5 +1,6 @@
 use crate::agent_external::claude::ClaudeCliManager;
 use crate::agent_external::codex::CodexCliManager;
+use crate::agent_external::deepseek_harness::DeepSeekHarnessManager;
 use crate::agent_external::hermes::HermesCliManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
@@ -222,11 +223,17 @@ pub fn run() {
     let claude_cli_manager = Arc::new(ClaudeCliManager::new(thread_manager_arc.clone()));
     let hermes_cli_manager = Arc::new(HermesCliManager::new(thread_manager_arc.clone()));
     let opencode_acp_manager = Arc::new(OpenCodeAcpManager::new(thread_manager_arc.clone()));
+    let deepseek_harness_manager = Arc::new(DeepSeekHarnessManager::new(
+        thread_manager_arc.clone(),
+        user_config.clone(),
+        user_config_dir.join("dsh-sessions"),
+    ));
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
         codex_cli_manager,
         claude_cli_manager,
         hermes_cli_manager,
         opencode_acp_manager,
+        deepseek_harness_manager,
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
@@ -585,6 +592,7 @@ pub fn run() {
             commands::file::get_file_tree,
             commands::file::get_dir_children,
             commands::file::read_file,
+            commands::file::read_image_file,
             commands::file::write_file,
             commands::file::delete_file,
             commands::file::create_folder,
@@ -647,6 +655,10 @@ pub fn run() {
             commands::thread::hermes_thread_get,
             commands::thread::hermes_thread_get_page,
             commands::thread::hermes_thread_session_id,
+            commands::thread::deepseek_harness_thread_list,
+            commands::thread::deepseek_harness_thread_get,
+            commands::thread::deepseek_harness_thread_get_page,
+            commands::thread::deepseek_harness_thread_session_id,
             commands::thread::opencode_thread_session_id,
             commands::thread::opencode_thread_list,
             commands::thread::opencode_thread_get_page,

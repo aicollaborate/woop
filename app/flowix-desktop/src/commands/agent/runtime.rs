@@ -13,6 +13,7 @@ pub(super) enum AgentRuntime {
     Claude,
     Hermes,
     OpenCode,
+    DeepSeekHarness,
 }
 
 impl AgentRuntime {
@@ -27,6 +28,7 @@ impl AgentRuntime {
             "claude" => Self::Claude,
             "hermes" => Self::Hermes,
             "opencode" => Self::OpenCode,
+            "deepseek-harness" | "deepseek_harness" | "dsh" => Self::DeepSeekHarness,
             _ => Self::Flowix,
         }
     }
@@ -42,6 +44,7 @@ impl AgentRuntime {
             Self::Claude => "claude",
             Self::Hermes => "hermes",
             Self::OpenCode => "opencode",
+            Self::DeepSeekHarness => "deepseek-harness",
         }
     }
 }
@@ -181,6 +184,7 @@ mod tests {
             ("Claude", AgentRuntime::Claude),
             ("HERMES", AgentRuntime::Hermes),
             ("opencode", AgentRuntime::OpenCode),
+            ("DEEPSEEK-HARNESS", AgentRuntime::DeepSeekHarness),
         ];
 
         for (agent_type, expected) in cases {

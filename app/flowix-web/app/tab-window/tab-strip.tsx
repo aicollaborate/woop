@@ -297,7 +297,7 @@ export function TabStrip({
       context.stroke();
 
       context.fillStyle = foreground;
-      context.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      context.font = '12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       context.textBaseline = 'middle';
       context.save();
       context.beginPath();

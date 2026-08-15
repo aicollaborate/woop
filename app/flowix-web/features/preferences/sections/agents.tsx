@@ -24,7 +24,8 @@ type CollapsibleAgentKey =
   | 'gemini'
   | 'hermes'
   | 'openclaw'
-  | 'opencode';
+  | 'opencode'
+  | 'deepseek-harness';
 
 /// "使用自定义模型" 文档链接, codex/claude 的"查看"按钮跳转此处。
 const CUSTOM_MODEL_DOCS_URL = 'https://flowix-memo.com/docs/ai-access/';
@@ -87,7 +88,8 @@ export function AgentsSection() {
       typeKey === 'gemini' ||
       typeKey === 'hermes' ||
       typeKey === 'openclaw' ||
-      typeKey === 'opencode';
+      typeKey === 'opencode' ||
+      typeKey === 'deepseek-harness';
     if (!isCollapsible) {
       return null;
     }
@@ -169,6 +171,14 @@ export function AgentsSection() {
             // 供应商/模型/key 的表单, 不用跳到独立 tab。
             return renderCollapsible(
               'flowix',
+              <div className="border-t border-[var(--divider)] py-3">
+                <AgentSection />
+              </div>,
+            );
+          }
+          if (typeKey === 'deepseek-harness') {
+            return renderCollapsible(
+              'deepseek-harness',
               <div className="border-t border-[var(--divider)] py-3">
                 <AgentSection />
               </div>,

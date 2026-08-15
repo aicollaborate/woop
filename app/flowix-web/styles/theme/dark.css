@@ -120,7 +120,7 @@
 }
 
 /* OpenCode 图标 (assets/icon-opencode.svg) 在通过 <img> 标签加载时,
- * SVG 内 hardcoded 深灰填充 (#1f2937) 在暗底 (L≈0.173) 上对比度不足。
+ * SVG 内 hardcoded 中灰填充 (#6b7280) 在暗底 (L≈0.173) 上对比度不足。
  * 渲染点 (agent-runtime-status-list.tsx 两处 + slash-menu-dropdown.tsx)
  * 会在 <img> 上加 data-agent-icon="opencode", 这里用 brightness(0) 把
  * 原有色彩抹平, invert(1) 反相成白色, 让图标的方形轮廓在暗底上反向

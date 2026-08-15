@@ -18,6 +18,7 @@ import {
 interface UseExternalDocumentChangeWatchOptions {
   filePath: string;
   identity: DocumentIdentity;
+  scopePath: string | null;
   clearSaveTimer: () => void;
   reloadDocument: (path: string, options?: { preservePending?: boolean; showLoading?: boolean }) => Promise<void>;
 }
@@ -30,6 +31,7 @@ const logger = createLogger('external-document-watch');
 export function useExternalDocumentChangeWatch({
   filePath,
   identity,
+  scopePath,
   clearSaveTimer,
   reloadDocument,
 }: UseExternalDocumentChangeWatchOptions) {
@@ -82,7 +84,7 @@ export function useExternalDocumentChangeWatch({
         unlisten = null;
         return;
       }
-      leaseId = await windows.watchExternalDocument(filePath);
+      leaseId = await windows.watchExternalDocument(filePath, scopePath);
       logger.debug('registered', {
         leaseId,
         windowLabel: getCurrentWindow().label,
@@ -100,5 +102,5 @@ export function useExternalDocumentChangeWatch({
       unlisten?.();
       if (leaseId) void windows.unwatchExternalDocument(leaseId);
     };
-  }, [filePath, identity, clearSaveTimer, reloadDocument]);
+  }, [filePath, identity, scopePath, clearSaveTimer, reloadDocument]);
 }

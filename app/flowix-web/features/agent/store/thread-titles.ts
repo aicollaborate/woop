@@ -1,7 +1,6 @@
 import type { AgentTypeKey } from "@/types/agent";
 import type { ThreadListItem } from "@/types";
-import { getAgentType } from "@/lib/agent-types";
-import { translate, type AppLanguage } from "@/lib/i18n";
+import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
 import { stripSystemBlock } from "@features/agent/message";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
 
@@ -14,19 +13,40 @@ function isExternalAgentType(type: AgentTypeKey): boolean {
   return type !== "flowix";
 }
 
+// Keep runtime/session fallback titles separate from the thread-card title.
+// DeepSeek Harness intentionally uses “session” for the runtime fallback but
+// “Chat” for a newly inserted card, matching the product wording in each
+// surface. The exhaustive Record makes adding a new agent type fail here until
+// its title has been reviewed and localized.
+const AGENT_SESSION_TITLE_KEYS: Record<AgentTypeKey, I18nKey> = {
+  flowix: "agent.chat.unnamedConversation",
+  codex: "agent.codexSession.title",
+  claude: "agent.claudeSession.title",
+  gemini: "agent.geminiSession.title",
+  hermes: "agent.hermesSession.title",
+  openclaw: "agent.openclawSession.title",
+  opencode: "agent.opencodeSession.title",
+  "deepseek-harness": "agent.deepseekHarnessSession.title",
+};
+
+const AGENT_THREAD_CARD_TITLE_KEYS: Record<AgentTypeKey, I18nKey> = {
+  ...AGENT_SESSION_TITLE_KEYS,
+  "deepseek-harness": "agent.deepseekHarnessChat.title",
+};
+
+function translateAgentTitle(
+  type: AgentTypeKey,
+  titleKeys: Record<AgentTypeKey, I18nKey>,
+): string {
+  return translate(getLanguage(), titleKeys[type]);
+}
+
 function defaultExternalThreadTitle(type: AgentTypeKey): string {
-  if (type === "codex")
-    return translate(getLanguage(), "agent.codexSession.title");
-  if (type === "claude")
-    return translate(getLanguage(), "agent.claudeSession.title");
-  return `${getAgentType(type).name} session`;
+  return translateAgentTitle(type, AGENT_SESSION_TITLE_KEYS);
 }
 
 function defaultThreadTitle(type: AgentTypeKey): string {
-  if (type === "flowix")
-    return translate(getLanguage(), "agent.chat.unnamedConversation");
-  if (type === "hermes") return "Hermes session";
-  return defaultExternalThreadTitle(type);
+  return translateAgentTitle(type, AGENT_THREAD_CARD_TITLE_KEYS);
 }
 
 /**

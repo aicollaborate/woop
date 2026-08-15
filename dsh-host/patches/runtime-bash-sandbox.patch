@@ -1,0 +1,26 @@
+diff --git a/python/sdk-runtime/package.json b/python/sdk-runtime/package.json
+index 8c70c5f..b600768 100644
+--- a/python/sdk-runtime/package.json
++++ b/python/sdk-runtime/package.json
+@@ -18,6 +18,7 @@
+     "@deepseek-ai/dsh-agent-spine-demo": "workspace:^",
+     "@deepseek-ai/dsh-app-boot": "workspace:^",
+     "@deepseek-ai/dsh-attachment": "workspace:^",
++    "@deepseek-ai/dsh-bash-sandbox": "workspace:^",
+     "@deepseek-ai/dsh-shell": "workspace:^",
+     "@deepseek-ai/dsh-shell-env": "workspace:^",
+     "@deepseek-ai/dsh-bash-local": "workspace:^",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index daec901..08a2248 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -8344,6 +8344,9 @@ importers:
+       '@deepseek-ai/dsh-attachment':
+         specifier: workspace:^
+         version: link:../../packages/attachment/attachment
++      '@deepseek-ai/dsh-bash-sandbox':
++        specifier: workspace:^
++        version: link:../../packages/shell/bash-sandbox
+       '@deepseek-ai/dsh-bash-local':
+         specifier: workspace:^
+         version: link:../../packages/shell/bash-local

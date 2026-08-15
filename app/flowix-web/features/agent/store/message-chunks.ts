@@ -46,8 +46,10 @@ export function applyUserMessageChunk(
     };
     return {
       messages,
-      pendingAssistantId: st.pendingAssistantId,
-      pendingReasoningId: st.pendingReasoningId,
+      // A user row starts a new turn. Never let a late/missed stream_end make
+      // the next assistant delta append to the previous turn's message.
+      pendingAssistantId: null,
+      pendingReasoningId: null,
     };
   }
 
@@ -61,8 +63,8 @@ export function applyUserMessageChunk(
       sourceSequence: metadata.sourceSequence,
       sourceSubsequence: metadata.sourceSubsequence,
     }),
-    pendingAssistantId: st.pendingAssistantId,
-    pendingReasoningId: st.pendingReasoningId,
+    pendingAssistantId: null,
+    pendingReasoningId: null,
   };
 }
 

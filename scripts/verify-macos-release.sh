@@ -45,7 +45,7 @@ verify_team_identifier() {
 }
 
 verify_dmg_contents() (
-  local mount_dir mounted_app cli_binary file_description
+  local mount_dir mounted_app binary file_description
   mount_dir="$(mktemp -d)"
   cleanup() {
     hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
@@ -60,28 +60,23 @@ verify_dmg_contents() (
     return 1
   fi
 
-  cli_binary="$mounted_app/Contents/MacOS/flowix-cli"
-  if [ ! -f "$cli_binary" ]; then
-    echo "ERROR: packaged CLI is missing: $cli_binary" >&2
-    return 1
-  fi
-  if [ ! -x "$cli_binary" ]; then
-    echo "ERROR: packaged CLI is not executable: $cli_binary" >&2
-    stat -f '       mode=%Sp' "$cli_binary" >&2 || true
-    return 1
-  fi
-
-  file_description="$(file -b "$cli_binary")"
-  if [[ "$file_description" != *"$EXPECTED_ARCH"* ]]; then
-    echo "ERROR: packaged CLI architecture mismatch: expected $EXPECTED_ARCH, got $file_description" >&2
-    return 1
-  fi
-
-  codesign --verify --strict --verbose=2 "$cli_binary"
+  for name in flowix-cli dsh-host dsh-host-spawn-helper; do
+    binary="$mounted_app/Contents/MacOS/$name"
+    if [ ! -x "$binary" ]; then
+      echo "ERROR: packaged sidecar is missing or not executable: $binary" >&2
+      return 1
+    fi
+    file_description="$(file -b "$binary")"
+    if [[ "$file_description" != *"$EXPECTED_ARCH"* ]]; then
+      echo "ERROR: packaged sidecar architecture mismatch for $name: expected $EXPECTED_ARCH, got $file_description" >&2
+      return 1
+    fi
+    codesign --verify --strict --verbose=2 "$binary"
+    verify_team_identifier "$binary"
+  done
   codesign --verify --deep --strict --verbose=2 "$mounted_app"
-  verify_team_identifier "$cli_binary"
   verify_team_identifier "$mounted_app"
-  echo "==> Verified DMG contents: executable $EXPECTED_ARCH CLI + valid nested signatures"
+  echo "==> Verified DMG contents: all $EXPECTED_ARCH sidecars + valid nested signatures"
 )
 
 verify_dmg_contents

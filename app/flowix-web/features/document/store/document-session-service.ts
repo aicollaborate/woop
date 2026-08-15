@@ -10,7 +10,7 @@ import {
   setCurrentDocument,
   type FlushCallbacks,
 } from '@features/document/store/buffer-registry';
-import { isContentSemanticallyEqual } from '@features/document/store/buffer-equality';
+import { isDocumentContentEqual } from '@features/document/store/buffer-equality';
 import type { DocumentBuffer } from '@features/document/store/document-buffer';
 import {
   documentIdentityKey,
@@ -65,7 +65,7 @@ interface SaveDocumentContentOptions {
   identity: DocumentIdentity;
   content: string;
   /**
-   * `internal` (内部 memo 文档) 或 `external` (外部 .md 文件)。后端
+   * `internal` (内部 memo 文档) 或 `external` (外部文本文件)。后端
    * 据此分流: 内部走 key 反查 + 派生改名 + memo index 同步, 外部只
    * 做 fs::write + CAS, 不改名不动 memo index。
    */
@@ -75,6 +75,8 @@ interface SaveDocumentContentOptions {
    * 拿当前 entry.filename, 走新路径写。外部文件可传 null。
    */
   key: string | null;
+  /** Authorized file-tree root for external code/text documents. */
+  scopePath?: string | null;
   force?: boolean;
   callbacks?: FlushCallbacks;
 }
@@ -122,7 +124,7 @@ export function getActiveDocumentDraft(): DocumentDraftSnapshot | null {
  */
 export function recordDocumentEdit(identity: DocumentIdentity, content: string): DocumentEditResult {
   const buffer = getOrCreateBuffer(identity);
-  if (isContentSemanticallyEqual(content, buffer.lastSavedContent)) {
+  if (isDocumentContentEqual(identity, content, buffer.lastSavedContent)) {
     buffer.content = content;
     buffer.pendingContent = null;
     notifyDocumentBufferChanged(identity, 'edited');
@@ -146,6 +148,7 @@ export async function saveDocumentContent({
   content,
   channel,
   key,
+  scopePath,
   force,
   callbacks,
 }: SaveDocumentContentOptions): Promise<boolean> {
@@ -157,11 +160,15 @@ export async function saveDocumentContent({
     buffer.pendingContent = content;
   }
 
-  return flushDocument(identity, path, { key, channel, force, ...callbacks });
+  return flushDocument(identity, path, { key, channel, scopePath, force, ...callbacks });
 }
 
-export function flushDocumentPath(identity: DocumentIdentity, path: string): Promise<boolean> {
-  return flushDocument(identity, path);
+export function flushDocumentPath(
+  identity: DocumentIdentity,
+  path: string,
+  scopePath: string | null = null,
+): Promise<boolean> {
+  return flushDocument(identity, path, { scopePath });
 }
 
 export function getDocumentBuffer(identity: DocumentIdentity): DocumentBuffer {

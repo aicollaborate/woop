@@ -149,6 +149,7 @@ export interface AgentRuntimeStatus {
   hermes: AgentRuntimeAvailability;
   openclaw: AgentRuntimeAvailability;
   opencode: AgentRuntimeAvailability;
+  'deepseek-harness': AgentRuntimeAvailability;
 }
 
 export type AgentExternalSource = 'auto' | 'user';
@@ -288,8 +289,24 @@ export const agent = {
       oldestSequence: number | null;
       hasMore: boolean;
     }>('hermes_thread_get_page', { threadId, beforeSequence, limit }),
+  listDeepSeekHarnessThreads: () =>
+    invoke<ThreadInfo[]>('deepseek_harness_thread_list'),
+  getDeepSeekHarnessThread: (threadId: string) =>
+    invoke<{ messages: ChatMessage[] }>('deepseek_harness_thread_get', { threadId }),
+  getDeepSeekHarnessThreadPage: (
+    threadId: string,
+    beforeSequence: number | null,
+    limit: number,
+  ) =>
+    invoke<{
+      messages: ChatMessage[];
+      oldestSequence: number | null;
+      hasMore: boolean;
+    }>('deepseek_harness_thread_get_page', { threadId, beforeSequence, limit }),
   getHermesSessionId: (threadId: string) =>
     invoke<string | null>('hermes_thread_session_id', { threadId }),
+  getDeepSeekHarnessSessionId: (threadId: string) =>
+    invoke<string | null>('deepseek_harness_thread_session_id', { threadId }),
   getOpenCodeSessionId: (threadId: string) =>
     invoke<string | null>('opencode_thread_session_id', { threadId }),
   listOpenCodeThreads: () =>

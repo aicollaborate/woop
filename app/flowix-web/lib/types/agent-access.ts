@@ -9,6 +9,7 @@
 
 import type {
   AgentCodexReasoningEffort,
+  AgentHarnessPreset,
   AgentPermissionMode,
   AgentTypeKey,
   FilesConfig,
@@ -45,6 +46,8 @@ export interface AgentAccessDefaultRuntime {
   model?: { key: string };
   access?: { sandbox: AgentPermissionMode };
   reasoningEffort?: AgentCodexReasoningEffort;
+  /** DeepSeek Harness tool presentation mode. */
+  mode?: AgentHarnessPreset;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isContentSemanticallyEqual } from './buffer-equality';
+import { isContentSemanticallyEqual, isDocumentContentEqual } from './buffer-equality';
 
 describe('document buffer semantic equality', () => {
   it('ignores line endings and YAML key order', () => {
@@ -19,5 +19,16 @@ describe('document buffer semantic equality', () => {
     const left = '---\ntags: [product\n---\nbody\n';
     const right = '---\ntags: [design\n---\nbody\n';
     expect(isContentSemanticallyEqual(left, right)).toBe(false);
+  });
+
+  it('keeps code and plain-text whitespace byte-sensitive', () => {
+    const identity = { kind: 'external' as const, path: '/project/src/main.ts' };
+    expect(isDocumentContentEqual(identity, 'const value = 1;\n', 'const value = 1;')).toBe(false);
+    expect(isDocumentContentEqual(identity, '\nconst value = 1;', 'const value = 1;')).toBe(false);
+  });
+
+  it('retains semantic comparison for external Markdown', () => {
+    const identity = { kind: 'external' as const, path: '/notes/readme.md' };
+    expect(isDocumentContentEqual(identity, 'body\n', 'body')).toBe(true);
   });
 });

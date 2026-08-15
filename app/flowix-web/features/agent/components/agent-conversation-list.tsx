@@ -177,13 +177,17 @@ export function AgentConversationList() {
 
   return (
     <section className="flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('document.agent.conversationsTitle')}>
-      <div className="flex h-8 shrink-0 items-center gap-2 px-4">
-        <h2 className="text-sm font-semibold text-[var(--foreground)]">
-          {t('document.agent.conversationsTitle')}
-        </h2>
+      {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
+          左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
+      <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
+        <div className="min-w-0 flex-1">
+          <span className="block min-w-0 truncate py-0.5 pl-1 pr-2 text-[15px] font-medium text-[var(--foreground)]">
+            {t('document.agent.conversationsTitle')}
+          </span>
+        </div>
         {activeAgentTypes.length >= 2 && (
           <div
-            className="ml-auto flex items-center gap-1"
+            className="flex items-center gap-1 shrink-0"
             role="group"
             aria-label={t('document.agent.filterByAgent')}
           >
@@ -249,7 +253,7 @@ export function AgentConversationList() {
                       <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]">
                         <img src={agent.icon} alt="" className="h-full w-full object-contain" draggable={false} />
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      <span className="min-w-0 flex-1 truncate text-sm font-normal">
                         {instance.title?.trim() || t('common.untitled')}
                       </span>
                       <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.updatedAt).toISOString()}>

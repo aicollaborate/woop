@@ -29,7 +29,7 @@
   box-sizing: border-box;
   padding: 0 2.5rem 10rem 2.5rem;
   outline: none;
-  font-family: var(--app-font-family, 'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont);
+  font-family: var(--app-font-family, var(--font-sans));
   font-size: var(--app-font-size, 15px);
   line-height: var(--app-line-height, 1.6);
   color: var(--document-foreground);

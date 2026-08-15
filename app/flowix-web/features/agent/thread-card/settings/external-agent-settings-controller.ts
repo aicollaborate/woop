@@ -3,6 +3,7 @@ import { translate } from "@/lib/i18n";
 import type {
   AgentCodexModel,
   AgentCodexReasoningEffort,
+  AgentHarnessPreset,
   AgentPermissionMode,
   AgentTypeKey,
 } from "@/types/agent";
@@ -46,6 +47,16 @@ const CLAUDE_MODEL_OPTIONS: AgentModelOption[] = [
   { id: "claude-haiku-4-5", label: "claude-haiku-4-5" },
 ];
 
+const DEEPSEEK_HARNESS_MODE_OPTIONS: readonly {
+  id: AgentHarnessPreset;
+  labelKey: I18nKey;
+}[] = [
+  { id: "standard", labelKey: "agent.mode.standard" },
+  { id: "code", labelKey: "agent.mode.code" },
+  { id: "minimal", labelKey: "agent.mode.minimal" },
+  { id: "cordis", labelKey: "agent.mode.cordis" },
+];
+
 export interface ExternalAgentSettingsControllerOptions {
   popover: HTMLDivElement;
   getTypeKey: () => AgentTypeKey;
@@ -73,6 +84,7 @@ export class ExternalAgentSettingsController {
 
   private modelButton: HTMLButtonElement | null = null;
   private reasoningButton: HTMLButtonElement | null = null;
+  private modeButton: HTMLButtonElement | null = null;
   private permissionButton: HTMLButtonElement | null = null;
   private anchor: HTMLButtonElement | null = null;
   private kind: AgentRuntimeSettingKind | null = null;
@@ -105,7 +117,9 @@ export class ExternalAgentSettingsController {
    * 注意：fallback 不写回 instance.runtimeConfig ── 仅"显示"，不修改快照。
    * 发消息时若 instance 没显式设置，也会走全局 fallback。
    */
-  private readRuntimeSetting<K extends "model" | "permission" | "reasoning">(
+  private readRuntimeSetting<
+    K extends "model" | "permission" | "reasoning" | "mode",
+  >(
     kind: K,
   ): string | undefined {
     const instanceId = this.getInstanceId();
@@ -125,6 +139,9 @@ export class ExternalAgentSettingsController {
         if (kind === "reasoning" && runtimeConfig.reasoningEffort) {
           return runtimeConfig.reasoningEffort;
         }
+        if (kind === "mode" && runtimeConfig.deepseekHarness?.mode) {
+          return runtimeConfig.deepseekHarness.mode;
+        }
       }
     }
     const typeDefault =
@@ -137,9 +154,16 @@ export class ExternalAgentSettingsController {
       if (kind === "reasoning" && typeDefault.reasoningEffort) {
         return typeDefault.reasoningEffort;
       }
+      if (kind === "mode" && typeDefault.mode) return typeDefault.mode;
     }
     if (kind === "model") return settings.agentCodexModel;
-    if (kind === "permission") return settings.agentPermissionMode;
+    // DSH 不继承 Codex 系的全局权限默认 (danger-full-access) ── 无显式
+    // 选择时显示并落自己的 workspace-write 默认。
+    if (kind === "permission") {
+      return this.getTypeKey() === "deepseek-harness"
+        ? "workspace-write"
+        : settings.agentPermissionMode;
+    }
     if (kind === "reasoning") return settings.agentCodexReasoningEffort;
     return undefined;
   }
@@ -149,7 +173,7 @@ export class ExternalAgentSettingsController {
    * instanceId 不存在（编辑器临时态）时退化为全局 setAgent*, 保持现有 fallback 行为。
    */
   private writeRuntimeSetting(
-    kind: "model" | "permission" | "reasoning",
+    kind: "model" | "permission" | "reasoning" | "mode",
     value: string,
   ): void {
     const instanceId = this.getInstanceId();
@@ -171,6 +195,15 @@ export class ExternalAgentSettingsController {
         });
         void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
           access: { sandbox: value as AgentPermissionMode },
+        });
+        return;
+      }
+      if (kind === "mode") {
+        instanceStore.setRuntimeConfig(instanceId, {
+          deepseekHarness: { mode: value as AgentHarnessPreset },
+        });
+        void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
+          mode: value as AgentHarnessPreset,
         });
         return;
       }
@@ -208,6 +241,12 @@ export class ExternalAgentSettingsController {
       }));
       void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
         access: { sandbox: value as AgentPermissionMode },
+      });
+      return;
+    }
+    if (kind === "mode") {
+      void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
+        mode: value as AgentHarnessPreset,
       });
       return;
     }
@@ -303,6 +342,13 @@ export class ExternalAgentSettingsController {
         )
       : null;
     this.reasoningButton = null;
+    this.modeButton = this.supportsRuntimeSetting("mode")
+      ? this.createEmptyControl(
+          "mode",
+          this.t("agent.mode.title"),
+          this.getCurrentHarnessModeLabel(),
+        )
+      : null;
     this.permissionButton = this.supportsRuntimeSetting("permission")
       ? this.createEmptyControl(
           "permission",
@@ -313,6 +359,7 @@ export class ExternalAgentSettingsController {
     for (const button of [
       this.modelButton,
       this.reasoningButton,
+      this.modeButton,
       this.permissionButton,
     ]) {
       if (button) empty.append(button);
@@ -331,6 +378,12 @@ export class ExternalAgentSettingsController {
       updateExternalAgentEmptyControl(
         this.permissionButton,
         this.getCurrentPermissionLabel(),
+      );
+    }
+    if (this.modeButton) {
+      updateExternalAgentEmptyControl(
+        this.modeButton,
+        this.getCurrentHarnessModeLabel(),
       );
     }
     if (this.reasoningButton) {
@@ -399,7 +452,11 @@ export class ExternalAgentSettingsController {
       const title = document.createElement("div");
       title.className = "agent-thread-card__codex-settings-title";
       title.textContent = this.t(
-        kind === "reasoning" ? "agent.reasoning.title" : "agent.permission.title",
+        kind === "reasoning"
+          ? "agent.reasoning.title"
+          : kind === "mode"
+            ? "agent.mode.title"
+            : "agent.permission.title",
       );
       this.popover.append(title);
     }
@@ -410,6 +467,10 @@ export class ExternalAgentSettingsController {
     }
     if (kind === "reasoning") {
       this.renderReasoningSettings();
+      return;
+    }
+    if (kind === "mode") {
+      this.renderHarnessModeSettings();
       return;
     }
     this.renderPermissionSettings();
@@ -453,6 +514,10 @@ export class ExternalAgentSettingsController {
       "aria-expanded",
       open && kind === "permission" ? "true" : "false",
     );
+    this.modeButton?.setAttribute(
+      "aria-expanded",
+      open && kind === "mode" ? "true" : "false",
+    );
     this.reasoningButton?.setAttribute(
       "aria-expanded",
       open && kind === "reasoning" ? "true" : "false",
@@ -464,6 +529,10 @@ export class ExternalAgentSettingsController {
     this.permissionButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
       open && kind === "permission",
+    );
+    this.modeButton?.classList.toggle(
+      "agent-thread-card__empty-control--open",
+      open && kind === "mode",
     );
     this.reasoningButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
@@ -575,10 +644,25 @@ export class ExternalAgentSettingsController {
   }
 
   private getCurrentPermissionLabel(): string {
-    const mode =
-      this.readRuntimeSetting("permission") ??
-      useAgentSessionStore.getState().sessionMeta.settings.agentPermissionMode;
+    const mode = this.readRuntimeSetting("permission");
     return this.getPermissionLabel(mode as AgentPermissionMode);
+  }
+
+  private getCurrentHarnessMode(): AgentHarnessPreset {
+    const mode = this.readRuntimeSetting("mode");
+    return DEEPSEEK_HARNESS_MODE_OPTIONS.some((option) => option.id === mode)
+      ? (mode as AgentHarnessPreset)
+      : "standard";
+  }
+
+  private getCurrentHarnessModeLabel(): string {
+    const mode = this.getCurrentHarnessMode();
+    return (
+      this.t(
+        DEEPSEEK_HARNESS_MODE_OPTIONS.find((option) => option.id === mode)
+          ?.labelKey ?? "agent.mode.standard",
+      )
+    );
   }
 
   private supportsRuntimeSetting(kind: AgentRuntimeSettingKind): boolean {
@@ -633,10 +717,24 @@ export class ExternalAgentSettingsController {
     });
   }
 
+  private renderHarnessModeSettings(): void {
+    const current = this.getCurrentHarnessMode();
+    DEEPSEEK_HARNESS_MODE_OPTIONS.forEach((option) => {
+      this.popover.append(
+        createCodexSettingsItem(
+          this.t(option.labelKey),
+          option.id === current,
+          () => {
+            this.writeRuntimeSetting("mode", option.id);
+            this.setSettingsPopoverOpen(false);
+          },
+        ),
+      );
+    });
+  }
+
   private renderPermissionSettings(): void {
-    const current =
-      this.readRuntimeSetting("permission") ??
-      useAgentSessionStore.getState().sessionMeta.settings.agentPermissionMode;
+    const current = this.readRuntimeSetting("permission");
     this.getAccessOptionsForType().forEach((option) => {
       this.popover.append(
         createCodexSettingsItem(option.label, option.id === current, () => {

@@ -14,6 +14,7 @@ export const files = {
   getTree: (spacePath: string) => invoke<DocTreeItem[] | null>('get_file_tree', { spacePath }),
   getDirChildren: (dirPath: string) => invoke<DocTreeItem[]>('get_dir_children', { dirPath }),
   read: (filePath: string, spacePath?: string) => invoke<string | null>('read_file', { filePath, spacePath }),
+  readImage: (filePath: string, spacePath?: string) => invoke<string | null>('read_image_file', { filePath, spacePath }),
   write: (filePath: string, content: string, skipValidation?: boolean, spacePath?: string) =>
     invoke<boolean>('write_file', { filePath, content, skipValidation, spacePath }),
   delete: (filePath: string, spacePath?: string) => invoke<boolean>('delete_file', { filePath, spacePath }),
@@ -100,8 +101,8 @@ export const windows = {
     invoke<void>('open_external_markdown_tab', { filePath }),
   openMarkdownPathTab: (filePath: string) =>
     invoke<void>('open_markdown_path_tab', { filePath }),
-  watchExternalDocument: (filePath: string) =>
-    invoke<string>('watch_external_document', { filePath }),
+  watchExternalDocument: (filePath: string, scopePath?: string | null) =>
+    invoke<string>('watch_external_document', { filePath, scopePath: scopePath ?? null }),
   unwatchExternalDocument: (leaseId: string) =>
     invoke<void>('unwatch_external_document', { leaseId }),
   tabWindowReady: () => invoke<WindowTab[]>('tab_window_ready'),

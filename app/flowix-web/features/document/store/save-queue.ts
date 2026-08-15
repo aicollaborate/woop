@@ -46,10 +46,12 @@ export interface SaveContext {
   path: string;
   /**
    * `internal` (内部 memo 文档, 走 `key` 反查) 或 `external`
-   * (外部 .md 文件, 走 `path` 寻址 + CAS)。后端 write_document 据此
+   * (外部文本文件, 走 `path` 寻址 + CAS)。后端 write_document 据此
    * 分流: 内部走派生改名 + memo index 同步, 外部只做 fs::write。
    */
   channel: 'internal' | 'external';
+  /** Authorized file-tree root for non-Markdown external text files. */
+  scopePath: string | null;
   /**
    * 内部 memo 用 ── memo id (6 位 shortid)。closure 期间稳定, 不受
    * rename / path 漂移影响, 后端用它反查 memo index 拿当前 entry.filename
@@ -179,6 +181,7 @@ async function runOne(ctx: SaveContext, content: string): Promise<boolean> {
           filePath: ctx.path,
           content,
           expectedContent: expected,
+          scopePath: ctx.scopePath,
         });
       if (result.status === 'saved') {
         ctx.onSaved(result.path, result.content);

@@ -263,7 +263,7 @@ function CompactMemoCardBody({
       {memo.favorited && (
         <PushPin weight="fill" className="h-3.5 w-3.5 shrink-0 text-[var(--foreground)]" />
       )}
-      <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">
+      <h3 className="min-w-0 flex-1 truncate text-sm font-normal text-[var(--foreground)]">
         {title}
       </h3>
       <ColorDots colors={memo.colors} limit={1} className="mr-1" />

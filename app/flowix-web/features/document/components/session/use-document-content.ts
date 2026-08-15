@@ -29,6 +29,9 @@ interface UseDocumentContentOptions {
   memoId: string | null;
   notebookPath?: string | null;
   isExternalDocument: boolean;
+  externalScopePath: string | null;
+  /** Non-text external files are rendered by a dedicated preview surface. */
+  skipContentLoad?: boolean;
   transitionId: number | null;
 }
 
@@ -59,6 +62,8 @@ export function useDocumentContent({
   memoId,
   notebookPath,
   isExternalDocument,
+  externalScopePath,
+  skipContentLoad = false,
   transitionId,
 }: UseDocumentContentOptions) {
   const [state, setState] = useState<DocumentContainerState>(initialDocumentContainerState);
@@ -118,6 +123,21 @@ export function useDocumentContent({
       // target the right buffer.
       setActiveDocumentPath(identity, path);
       const currentLoadId = ++counter.current;
+      if (skipContentLoad) {
+        setState((prev) => ({
+          ...prev,
+          fullContent: '',
+          isLoading: false,
+          error: null,
+          isScrolled: false,
+          charCount: 0,
+          tokenCount: 0,
+        }));
+        if (transitionId !== null) {
+          useDocumentStore.getState().finishDocumentTransition(transitionId);
+        }
+        return;
+      }
       const stagedContent = consumeStagedDocumentSnapshot(identity, path);
       if (stagedContent !== null) {
         applyLoadedContent(path, stagedContent, { preservePending: false });
@@ -150,7 +170,7 @@ export function useDocumentContent({
         const readStartedAt = performance.now();
         let readPath = path;
         let fullContent = isExternalDocument
-          ? await externalDocuments.read(readPath)
+          ? await externalDocuments.read(readPath, externalScopePath)
           : await memosClient.readDocument(readPath);
         if (
           (fullContent === null || fullContent === undefined) &&
@@ -216,7 +236,7 @@ export function useDocumentContent({
         }
       }
     },
-    [applyLoadedContent, identity, isExternalDocument, memoId, notebookPath, transitionId],
+    [applyLoadedContent, identity, isExternalDocument, externalScopePath, memoId, notebookPath, skipContentLoad, transitionId],
   );
 
   return {

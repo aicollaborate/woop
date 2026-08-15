@@ -159,6 +159,12 @@ export interface FontFamilyOption {
 
 export const FONT_FAMILY_OPTIONS: FontFamilyOption[] = [
   {
+    id: 'inter',
+    label: 'Inter',
+    value: "'Inter', -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    source: 'bundled',
+  },
+  {
     id: 'nunito-sans',
     label: 'Nunito Sans',
     value: "'Nunito Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif, BlinkMacSystemFont",
@@ -175,12 +181,6 @@ export const FONT_FAMILY_OPTIONS: FontFamilyOption[] = [
     label: 'Noto Serif',
     value: "'Noto Serif SC', 'Songti SC', 'SimSun', Georgia, serif",
     source: 'downloadable',
-  },
-  {
-    id: 'inter',
-    label: 'Inter',
-    value: "'Inter', -apple-system, 'Segoe UI', sans-serif",
-    source: 'system',
   },
   {
     id: 'pingfang-sc',

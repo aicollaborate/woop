@@ -138,6 +138,10 @@ export interface MemoStore {
   // UI filter/sort
   activeFilter: ExtendedFilterType;
   activePluginId: string | null;
+  // 资料文件夹浏览态 ── 非 null 时中间列渲染 VSCode 风格文件树 (替代
+  // MemoList / AgentConversationList), 值为资料文件夹根路径。置 null 恢复
+  // 普通 memo 列表。与 activeFilter 互斥: 任一切换都清掉对方。
+  activeFileBrowserPath: string | null;
   activeSort: SortType;
   // 'color' 二级弹窗用的具体颜色值。'any'/'none'/具体颜色 (MEMO_COLORS)。
   // 当 activeFilter !== 'color' 时此值仍然保留, 切回颜色筛选时恢复。
@@ -158,6 +162,8 @@ export interface MemoStore {
   reorderNotebooks: (nextOrderIds: string[]) => Promise<void>;
   setActiveFilter: (filter: ExtendedFilterType) => void;
   setActivePluginId: (pluginId: string | null) => void;
+  /** 打开 / 关闭资料文件夹文件树视图。打开时清 activeFilter 互斥态。 */
+  setActiveFileBrowserPath: (path: string | null) => void;
   setActiveSort: (sort: SortType) => void;
   setColorFilter: (color: ColorFilterValue) => void;
   triggerRefresh: () => void;
@@ -212,6 +218,7 @@ export const useMemoStore = create<MemoStore>()(
       selectedNotebook: null,
       activeFilter: 'all',
       activePluginId: null,
+      activeFileBrowserPath: null,
       activeSort: 'createdAt',
       colorFilter: 'any',
       refreshTrigger: 0,
@@ -229,13 +236,52 @@ export const useMemoStore = create<MemoStore>()(
         const nextNotebookId = notebook?.id ?? null;
         if (currentNotebookId !== nextNotebookId) {
           useTagStore.getState().setSelectedTagId(null);
-          set({ selectedNotebook: notebook, activeFilter: 'all', activePluginId: null });
+          set({ selectedNotebook: notebook, activeFilter: 'all', activePluginId: null, activeFileBrowserPath: null });
           return;
         }
         set({ selectedNotebook: notebook });
       },
-      setActiveFilter: (filter) => set({ activeFilter: filter, activePluginId: null }),
-      setActivePluginId: (pluginId) => set({ activePluginId: pluginId }),
+      // 中间列五种入口互斥单选 ── 全集: 全部 / 对话 / 待办 / 标签 /
+      // 文件夹浏览。每条 setter 都把其他状态归位, 避免点标签时文件树还
+      // 霸着中间列。null 时按目标值回退 (activeFilter 的 null 暂未出现,
+      // 留 API 留作未来 reset 入口用)。
+      setActiveFilter: (filter) => {
+        const previous = get();
+        if (previous.activeFilter === filter && previous.activeFileBrowserPath === null) return;
+        set({
+          activeFilter: filter,
+          activePluginId: null,
+          activeFileBrowserPath: null,
+          // 离开 'tagged' 时清掉标签选中, 避免下次再切回 'tagged' 时拿
+          // 到陈旧 tagId (此前由调用方手动清, 现在统一收敛)。
+          ...(filter !== 'tagged' ? {} : {}),
+        });
+        if (filter !== 'tagged') {
+          useTagStore.getState().setSelectedTagId(null);
+        }
+      },
+      setActivePluginId: (pluginId) => set({
+        activePluginId: pluginId,
+        activeFileBrowserPath: null,
+      }),
+      // 打开文件树时把 filter / plugin 归位 (中间列被文件树接管); 关闭
+      // (传 null) 时回到 'all' 列表。同值重复 set 直接 no-op，保持单选
+      // 控件的语义；打开任意资料项时清掉标签选择，避免状态残留。
+      setActiveFileBrowserPath: (path) => {
+        const previous = get();
+        if (previous.activeFileBrowserPath === path) return;
+        set({
+          activeFileBrowserPath: path,
+          ...(path
+            ? { activeFilter: 'all' as const, activePluginId: null }
+            : path === null && previous.activeFileBrowserPath !== null
+              ? { activeFilter: 'all' as const }
+              : {}),
+        });
+        if (path !== null || previous.activeFileBrowserPath !== null) {
+          useTagStore.getState().setSelectedTagId(null);
+        }
+      },
       setActiveSort: (sort) => set({ activeSort: sort }),
       setColorFilter: (color) => set({ colorFilter: color }),
       triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),

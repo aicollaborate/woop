@@ -1,11 +1,12 @@
 use serde::Serialize;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::app::state::AppState;
 use crate::commands::external_document_watch::ExternalDocumentWatchState;
-use crate::commands::helpers::start_security_bookmark_access;
+use crate::commands::helpers::{can_access_scoped_file, start_security_bookmark_access};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -16,7 +17,7 @@ pub enum ExternalDocumentWriteOutcome {
     Error { message: String },
 }
 
-fn markdown_extension(path: &Path) -> bool {
+pub(crate) fn is_markdown_document_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -24,17 +25,146 @@ fn markdown_extension(path: &Path) -> bool {
         })
 }
 
-fn exact_existing_markdown_path(file_path: &str, state: &AppState) -> Result<PathBuf, String> {
-    let requested = PathBuf::from(file_path);
-    if !requested.is_absolute() || !markdown_extension(&requested) {
-        return Err("external document must be an absolute Markdown path".to_string());
+fn supported_text_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown"
+                    | "txt"
+                    | "text"
+                    | "log"
+                    | "json"
+                    | "jsonc"
+                    | "json5"
+                    | "yaml"
+                    | "yml"
+                    | "toml"
+                    | "xml"
+                    | "html"
+                    | "htm"
+                    | "css"
+                    | "scss"
+                    | "sass"
+                    | "less"
+                    | "js"
+                    | "jsx"
+                    | "mjs"
+                    | "cjs"
+                    | "ts"
+                    | "tsx"
+                    | "mts"
+                    | "cts"
+                    | "vue"
+                    | "svelte"
+                    | "py"
+                    | "pyw"
+                    | "rs"
+                    | "go"
+                    | "java"
+                    | "kt"
+                    | "kts"
+                    | "c"
+                    | "cc"
+                    | "cpp"
+                    | "cxx"
+                    | "h"
+                    | "hh"
+                    | "hpp"
+                    | "hxx"
+                    | "cs"
+                    | "swift"
+                    | "php"
+                    | "rb"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "fish"
+                    | "sql"
+                    | "graphql"
+                    | "gql"
+                    | "lua"
+                    | "r"
+                    | "dart"
+                    | "scala"
+                    | "ex"
+                    | "exs"
+                    | "erl"
+                    | "hrl"
+                    | "fs"
+                    | "fsx"
+                    | "vb"
+                    | "pl"
+                    | "pm"
+                    | "proto"
+                    | "ini"
+                    | "conf"
+                    | "cfg"
+                    | "properties"
+                    | "gradle"
+            )
+        })
+}
+
+/// Extensionless files do not carry enough information in their name to
+/// classify them. Probe a small prefix before allowing them into the text
+/// editor: UTF-8 text is safe for `read_to_string`, while a NUL byte is a
+/// strong binary-file signal. The complete read still validates UTF-8 later.
+fn looks_like_utf8_text_file(path: &Path) -> bool {
+    const PROBE_SIZE: usize = 8192;
+
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
     }
-    start_security_bookmark_access(state, &requested);
+
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buffer = [0_u8; PROBE_SIZE];
+    let Ok(bytes_read) = file.read(&mut buffer) else {
+        return false;
+    };
+    let sample = &buffer[..bytes_read];
+    !sample.contains(&0) && std::str::from_utf8(sample).is_ok()
+}
+
+pub(crate) fn supported_text_document_path(path: &Path) -> bool {
+    if supported_text_extension(path) {
+        return true;
+    }
+
+    // A missing extension is intentionally accepted only after inspecting the
+    // file contents. Files with an explicit unknown extension remain blocked.
+    path.extension().is_none() && looks_like_utf8_text_file(path)
+}
+
+pub(crate) fn exact_existing_external_path(
+    file_path: &str,
+    scope_path: Option<&str>,
+    state: &State<'_, AppState>,
+) -> Result<PathBuf, String> {
+    let requested = PathBuf::from(file_path);
+    if !requested.is_absolute() {
+        return Err("external document must be an absolute path".to_string());
+    }
     if !requested.is_file() {
         return Err(format!(
             "external document is unavailable: {}",
             requested.display()
         ));
+    }
+    if !is_markdown_document_path(&requested)
+        && !can_access_scoped_file(&requested, scope_path, state)
+    {
+        return Err("external code document is outside its authorized file-tree scope".to_string());
+    }
+    start_security_bookmark_access(state.inner(), &requested);
+    if !supported_text_document_path(&requested) {
+        return Err("external document is not a supported text file".to_string());
     }
     dunce::canonicalize(&requested)
         .map_err(|error| format!("failed to resolve {}: {error}", requested.display()))
@@ -43,9 +173,10 @@ fn exact_existing_markdown_path(file_path: &str, state: &AppState) -> Result<Pat
 #[tauri::command]
 pub fn read_external_document(
     file_path: String,
+    #[allow(non_snake_case)] scopePath: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let path = exact_existing_markdown_path(&file_path, state.inner())?;
+    let path = exact_existing_external_path(&file_path, scopePath.as_deref(), &state)?;
     fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))
 }
 
@@ -63,10 +194,11 @@ pub fn write_external_document(
     file_path: String,
     content: String,
     expectedContent: Option<String>,
+    scopePath: Option<String>,
     state: State<'_, AppState>,
     watches: State<'_, ExternalDocumentWatchState>,
 ) -> ExternalDocumentWriteOutcome {
-    let path = match exact_existing_markdown_path(&file_path, state.inner()) {
+    let path = match exact_existing_external_path(&file_path, scopePath.as_deref(), &state) {
         Ok(path) => path,
         Err(_) if !Path::new(&file_path).is_file() => return ExternalDocumentWriteOutcome::Missing,
         Err(message) => return ExternalDocumentWriteOutcome::Error { message },
@@ -122,7 +254,7 @@ mod tests {
 
         assert!(!missing.exists());
         assert_ne!(missing, root);
-        assert!(markdown_extension(&missing));
+        assert!(is_markdown_document_path(&missing));
     }
 
     #[test]
@@ -137,11 +269,26 @@ mod tests {
     }
 
     #[test]
-    fn markdown_extension_is_case_insensitive_and_strict() {
-        assert!(markdown_extension(Path::new("/tmp/notes.MD")));
-        assert!(markdown_extension(Path::new("/tmp/notes.Markdown")));
-        assert!(!markdown_extension(Path::new("/tmp/notes.txt")));
-        assert!(!markdown_extension(Path::new("/tmp/notes")));
-        assert!(!markdown_extension(Path::new("/tmp/.md")));
+    fn supported_text_extension_is_case_insensitive_and_strict() {
+        assert!(is_markdown_document_path(Path::new("/tmp/notes.MD")));
+        assert!(is_markdown_document_path(Path::new("/tmp/notes.Markdown")));
+        assert!(supported_text_document_path(Path::new("/tmp/notes.txt")));
+        assert!(supported_text_document_path(Path::new("/tmp/main.TSX")));
+        assert!(supported_text_document_path(Path::new("/tmp/config.toml")));
+        assert!(!supported_text_document_path(Path::new("/tmp/image.png")));
+        assert!(!supported_text_document_path(Path::new("/tmp/notes")));
+        assert!(!supported_text_document_path(Path::new("/tmp/.md")));
+    }
+
+    #[test]
+    fn extensionless_utf8_files_are_supported_but_binary_files_are_not() {
+        let directory = tempfile::tempdir().unwrap();
+        let license = directory.path().join("LICENSE");
+        let binary = directory.path().join("blob");
+        fs::write(&license, "Permission is hereby granted...\n").unwrap();
+        fs::write(&binary, [0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]).unwrap();
+
+        assert!(supported_text_document_path(&license));
+        assert!(!supported_text_document_path(&binary));
     }
 }
