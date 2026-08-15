@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { StarFourIcon } from '@phosphor-icons/react';
-import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings, Puzzle } from 'lucide-react';
+import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
 import {
 	useUserSettings,
 	useUserSettingsActions,
@@ -13,6 +13,7 @@ import {
 	ThemeSection,
 	NoteSettingsSection,
 	AgentsSection,
+	DshSettingsSection,
 	ShortcutsSection,
 	CliSection,
 	McpSection,
@@ -32,6 +33,7 @@ import { PreferencesTitlebarWin } from '@features/preferences/preferences-titleb
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { getCurrentWindow } from '@platform/tauri/window';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
+import iconDeepseek from '@/assets/icon-deepseek.svg';
 
 function isWindowsPlatform(): boolean {
 	return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -50,12 +52,16 @@ const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 			{ id: 'shortcuts', labelKey: 'preferences.tabs.shortcuts', icon: <Keyboard className="w-4 h-4" /> },
 			{ id: 'history', labelKey: 'preferences.tabs.history', icon: <History className="w-4 h-4" /> },
 			{ id: 'cloudSync', labelKey: 'preferences.tabs.cloudSync', icon: <Cloud className="w-4 h-4" /> },
-			{ id: 'plugins', labelKey: 'preferences.tabs.plugins', icon: <Puzzle className="w-4 h-4" /> },
 		],
 	},
 	{
 		labelKey: 'preferences.groups.ai',
 		tabs: [
+			{
+				id: 'dsh',
+				labelKey: 'preferences.tabs.dsh',
+				icon: <img src={iconDeepseek} alt="" aria-hidden className="h-4 w-4 object-contain" draggable={false} />,
+			},
 			// 模型配置整段塞到 aiAgent 的 Flowix 卡片里, 不再独立成 tab。
 			{ id: 'aiAgent', labelKey: 'preferences.tabs.aiAgent', icon: <StarFourIcon className="w-4 h-4" weight="regular" /> },
 			{ id: 'cli', labelKey: 'preferences.tabs.cli', icon: <SquareTerminal className="w-4 h-4" /> },
@@ -190,7 +196,11 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 				{/* Right content */}
 				<div className="flex-1 flex flex-col min-w-0">
 					<div className="flex-1 flex justify-center p-6 overflow-y-auto [scrollbar-gutter:stable]">
-						<div className="w-full max-w-[500px]">
+						{/* DSH 页信息密度更高(模型/插件/预设卡片), 放宽到 680px, 其余 tab 保持 500px。
+
+						    底部间距放在这个子元素上 (mb), 不放在外层滚动容器的 pb ──
+						    WKWebView 会忽略 flex 滚动容器的 padding-bottom, margin 则正常生效 */}
+						<div className={cn('mb-10 w-full', activeTab === 'dsh' ? 'max-w-[680px]' : 'max-w-[500px]')}>
 							{activeTab === 'general' && (
 								<GeneralSettingsSection />
 							)}
@@ -202,6 +212,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 							)}
 							{activeTab === 'noteSettings' && <NoteSettingsSection />}
 							{activeTab === 'aiAgent' && <AgentsSection />}
+							{activeTab === 'dsh' && <DshSettingsSection />}
 							{activeTab === 'shortcuts' && <ShortcutsSection />}
 							{activeTab === 'cli' && <CliSection />}
 							{activeTab === 'mcp' && <McpSection />}

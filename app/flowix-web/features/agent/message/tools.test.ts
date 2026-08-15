@@ -78,6 +78,38 @@ describe("Codex tool-family metadata", () => {
   });
 });
 
+describe("DeepSeek Harness tool metadata", () => {
+  it.each([
+    ["pwsh", "运行", TOOL_ICON_PATHS.terminal],
+    ["subagent", "智能体", TOOL_ICON_PATHS.globe],
+    ["subagent_fork", "智能体", TOOL_ICON_PATHS.globe],
+    ["ralph", "智能体", TOOL_ICON_PATHS.globe],
+    ["workflow", "智能体", TOOL_ICON_PATHS.globe],
+    ["send_message", "发送消息", TOOL_ICON_PATHS.chatCircleText],
+    ["interrupt_agent", "中断智能体", TOOL_ICON_PATHS.pause],
+    ["list_agents", "智能体列表", TOOL_ICON_PATHS.usersThree],
+    ["skill", "加载技能", TOOL_ICON_PATHS.fileText],
+    ["get_goal", "查看目标", TOOL_ICON_PATHS.checks],
+    ["exit_plan_mode", "提交计划", TOOL_ICON_PATHS.fileText],
+    ["job_list", "后台任务列表", TOOL_ICON_PATHS.arrowsClockwise],
+    ["job_output", "读取后台任务", TOOL_ICON_PATHS.arrowsClockwise],
+    ["job_kill", "停止后台任务", TOOL_ICON_PATHS.pause],
+    ["cordis_define", "Cordis 插件", TOOL_ICON_PATHS.plug],
+    ["cordis_run", "Cordis 插件", TOOL_ICON_PATHS.plug],
+    ["cordis_inspect_self", "Cordis 插件", TOOL_ICON_PATHS.plug],
+  ] as const)("maps %s to label and icon via wildcard", (toolName, label, iconPath) => {
+    const lookup = { agentType: "deepseek-harness" as const, toolName };
+    expect(getToolLabel(lookup, "zh-CN")).toBe(label);
+    expect(getToolIconPath(lookup)).toBe(iconPath);
+  });
+
+  it("keeps the codex-specific get_goal entry winning for codex", () => {
+    expect(getToolMeta({ agentType: "codex", toolName: "get_goal" })?.name)
+      .toBe("get_goal");
+    expect(getToolMeta("get_goal")?.name).toBe("get_goal");
+  });
+});
+
 describe("Codex function-tool metadata", () => {
   it("uses 查看图片 as the Chinese view_image label", () => {
     expect(
@@ -125,7 +157,9 @@ describe("Codex function-tool metadata", () => {
   });
 
   it("keeps Codex-specific function names scoped", () => {
-    expect(getToolMeta("get_goal")).toBeUndefined();
+    // get_goal 起初是 Codex 专属, DeepSeek Harness goal 工具族上线后改为
+    // 通配条目 ── 通配与 codex 专属记录的 label/icon 相同, 两条都命中。
+    expect(getToolMeta("get_goal")?.labelKey).toBe("agent.tools.getGoal");
     expect(getToolMeta({ agentType: "codex", toolName: "get_goal" })?.name)
       .toBe("get_goal");
   });

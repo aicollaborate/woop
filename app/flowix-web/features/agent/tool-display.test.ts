@@ -151,6 +151,105 @@ describe("Codex protocol tool summaries", () => {
   });
 });
 
+describe("DeepSeek Harness (DSH) tool displays", () => {
+  const dsh = (toolName: string, input: unknown) =>
+    createAgentToolDisplay({ agentType: "deepseek-harness", toolName, input });
+
+  it.each([
+    ["read", { file_path: "/tmp/a/main.rs" }, "main.rs", "file"],
+    ["write", { file_path: "/tmp/a/new.ts" }, "new.ts", "file"],
+    ["edit", { file_path: "/tmp/a/edit.ts" }, "edit.ts", "file"],
+    ["read_image", { file_path: "/tmp/a/shot.png" }, "shot.png", "file"],
+    [
+      "grep",
+      { pattern: "AgentChunk", path: "/tmp/a/src" },
+      "AgentChunk",
+      "search",
+    ],
+    ["glob", { pattern: "**/*.rs" }, "**/*.rs", "search"],
+    [
+      "bash",
+      { command: "cargo test", description: "run tests" },
+      "cargo test",
+      "command",
+    ],
+    [
+      "web_search",
+      { query: "tauri 2 sidecar docs" },
+      "tauri 2 sidecar docs",
+      "search",
+    ],
+  ] as const)("renders %s tool display", (toolName, input, summary, kind) => {
+    expect(dsh(toolName, input)).toMatchObject({ summary, kind });
+  });
+
+  it.each([
+    [
+      "subagent",
+      { description: "搜索测试用例", prompt: "…" },
+      "搜索测试用例",
+    ],
+    [
+      "subagent_fork",
+      { description: "并行审查", prompt: "…" },
+      "并行审查",
+    ],
+    ["send_message", { subagent_id: "sa-12", message: "继续跑" }, "sa-12 · 继续跑"],
+    ["interrupt_agent", { agent_id: "ag-7" }, "ag-7"],
+    ["ralph", { objective: "修完所有 lint 报错" }, "修完所有 lint 报错"],
+    ["create_goal", { objective: "发布 1.1.17" }, "发布 1.1.17"],
+    ["update_goal", { action: "complete" }, "action: complete"],
+    ["workflow", { script: "…", meta: { name: "migrate-lint" } }, "migrate-lint"],
+    ["skill", { name: "dataviz" }, "dataviz"],
+    ["exit_plan_mode", { plan: "# 迁移方案\n1. …" }, "迁移方案"],
+    ["job_output", { job_id: "job-3" }, "job-3"],
+    ["job_kill", { job_id: "job-3", reason: "stale" }, "job-3"],
+    ["cordis_define", { plugin: { kind: "new", idPrefix: "memo" } }, "memo"],
+    [
+      "cordis_run",
+      { pluginId: "memo-01", packageId: "memo-01-a", mode: "run" },
+      "memo-01",
+    ],
+    [
+      "cordis_inspect_query",
+      { platform: "host", provider: "svc", method: "listService" },
+      "svc",
+    ],
+  ] as const)("renders %s summary", (toolName, input, summary) => {
+    expect(dsh(toolName, input)).toMatchObject({ summary });
+  });
+
+  it("renders todo_write as a live plan summary", () => {
+    expect(
+      dsh("todo_write", {
+        todos: [
+          { content: "定位问题", status: "completed" },
+          { content: "修复渲染", status: "in_progress" },
+        ],
+      }),
+    ).toMatchObject({ summary: "1/2 · 修复渲染", kind: "todo" });
+  });
+
+  it("renders ask_user_question like Codex request_user_input", () => {
+    expect(
+      dsh("ask_user_question", {
+        questions: [
+          { id: "q1", header: "确认", question: "继续?", options: [{ label: "是" }] },
+        ],
+      }),
+    ).toMatchObject({ summary: "确认", kind: "question" });
+  });
+
+  it.each([
+    ["list_agents", {}],
+    ["job_list", {}],
+    ["get_goal", {}],
+    ["cordis_inspect_list", {}],
+  ] as const)("keeps bare %s summary empty", (toolName, input) => {
+    expect(dsh(toolName, input)).toBeUndefined();
+  });
+});
+
 describe("parseAgentCommandInput", () => {
   it("splits command chains into display items without losing operators", () => {
     const r = parseAgentCommandInput({

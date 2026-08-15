@@ -286,7 +286,7 @@ describe("NotebookAccessFilesList — 右键菜单与主空间派生", () => {
     });
   });
 
-  it("workspace=null (显式取消): 2×设为主空间 + 0×取消主空间 + 2×删除; 任何行无 workspace-mark", () => {
+  it("workspace=null (显式取消): 2×设为主空间 + 0×取消主空间 + 2×删除; 任何行无 star", () => {
     activeHandle = mountNotebookAccessFilesList(
       makeNotebook({ path: "/Users/notes/main" }),
       ["/folder-a", "/folder-b"],
@@ -299,12 +299,12 @@ describe("NotebookAccessFilesList — 右键菜单与主空间派生", () => {
     expect(countMenuItems(host, "Delete")).toBe(2);
 
     const workspaceMarks = host.querySelectorAll(
-      ".agent-thread-card__access-workspace-mark",
+      ".agent-thread-card__access-workspace-star",
     );
     expect(workspaceMarks.length).toBe(0);
   });
 
-  it("workspace=folder-a: 角标只出现在 folder-a 行 (1 个 workspace-mark)", () => {
+  it("workspace=folder-a: star 只出现在 folder-a 行 (1 个)", () => {
     activeHandle = mountNotebookAccessFilesList(
       makeNotebook(),
       ["/folder-a", "/folder-b"],
@@ -313,9 +313,22 @@ describe("NotebookAccessFilesList — 右键菜单与主空间派生", () => {
     const { host } = activeHandle;
 
     const workspaceMarks = host.querySelectorAll(
-      ".agent-thread-card__access-workspace-mark",
+      ".agent-thread-card__access-workspace-star",
     );
     expect(workspaceMarks.length).toBe(1);
+  });
+
+  it("workspace 与 folder 路径格式略有差异时, 仍在对应行显示 star", () => {
+    activeHandle = mountNotebookAccessFilesList(
+      makeNotebook(),
+      ["/folder-a/"],
+      "/folder-a",
+    );
+    const { host } = activeHandle;
+
+    expect(
+      host.querySelectorAll(".agent-thread-card__access-workspace-star").length,
+    ).toBe(1);
   });
 
   it("触发 '取消主空间' 后, setDefaultFiles 被以 workspace=null 调用, folders 保留", async () => {

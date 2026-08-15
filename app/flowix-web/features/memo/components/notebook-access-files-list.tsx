@@ -60,6 +60,12 @@ interface ResolvedItem {
   missing: boolean;
 }
 
+// Agent-access paths can come from older config files or different platform
+// path spellings. Use the same comparison semantics as the access-defaults
+// resolver so the visual badge follows the persisted workspace value.
+const comparablePath = (path: string): string =>
+  path.trim().replace(/[\\/]+$/, '').toLowerCase();
+
 export function NotebookAccessFilesList({
   notebook,
 }: NotebookAccessFilesListProps) {
@@ -79,23 +85,11 @@ export function NotebookAccessFilesList({
     : undefined;
   const folderPaths = defaultFiles?.folders ?? [];
   const workspace = defaultFiles?.workspace;
-  // 主空间派生 ── 与 `resolvePrimaryWorkspace` 保持一致:
-  //   1. workspace (string 命中 folders) → 用 workspace
-  //   2. workspace === null → notebook.path (显式取消)
-  //   3. workspace === undefined + folders[0] → folders[0] (legacy 兜底)
-  //   4. 都空 → notebook.path
-  // 统一 fallback 到 notebook.path; legacy folders[0] 兜底保留, 防止老
-  // instance 突然失去 cwd (见 primary-workspace.ts:1b-3 注释)。
-  const notebookPath = notebook?.path;
-  const legacyFoldersFirst = workspace === undefined ? folderPaths[0] : undefined;
-  const effectiveWorkspace =
-    (workspace && folderPaths.includes(workspace) ? workspace : undefined) ??
-    legacyFoldersFirst ??
-    notebookPath;
-
   const entries = config.entries;
   const resolveItem = (path: string): ResolvedItem => {
-    const found = entries.find((e) => e.kind === 'folder' && e.path === path);
+    const found = entries.find(
+      (e) => e.kind === 'folder' && comparablePath(e.path) === comparablePath(path),
+    );
     if (found) return { path, name: found.name, missing: found.missing };
     // 默认里存了 path 但全局 entries 已没有 (folder 被删): 按缺失处理,
     // name 用路径末段兜底, 让用户仍能认出是哪个目录。
@@ -105,6 +99,22 @@ export function NotebookAccessFilesList({
   };
 
   const folderItems = folderPaths.map(resolveItem);
+
+  // Keep the actual folder path for the badge/delete logic. Comparing the raw
+  // strings made the star disappear when one side had a trailing slash (or
+  // different casing), even though it referred to the selected folder.
+  const explicitWorkspacePath =
+    typeof workspace === 'string'
+      ? folderItems.find(
+          (item) =>
+            !item.missing && comparablePath(item.path) === comparablePath(workspace),
+        )?.path
+      : undefined;
+  const legacyWorkspacePath =
+    workspace === undefined
+      ? folderItems.find((item) => !item.missing)?.path
+      : undefined;
+  const primaryFolderPath = explicitWorkspacePath ?? legacyWorkspacePath;
 
   const handleAddFolder = useCallback(async () => {
     const result = await addFolderFromPicker();
@@ -124,8 +134,6 @@ export function NotebookAccessFilesList({
     // latest notebook defaults instead of appending to a stale render closure.
     const latestConfig = useAgentAccessStore.getState().config;
     const latestFiles = normalizeFilesDefaults(latestConfig.defaults?.files)[notebookId];
-    const comparablePath = (path: string) =>
-      path.trim().replace(/[\\/]+$/, '').toLowerCase();
     if (
       (latestFiles?.folders ?? []).some(
         (path) => comparablePath(path) === comparablePath(result.entry.path),
@@ -187,7 +195,7 @@ export function NotebookAccessFilesList({
     async (path: string) => {
       if (!notebookId) return;
       const nextFolders = folderPaths.filter((p) => p !== path);
-      const wasWorkspace = effectiveWorkspace === path;
+      const wasWorkspace = primaryFolderPath === path;
       const saved = await setDefaultFiles(notebookId, {
         workspace: wasWorkspace ? null : workspace ?? null,
         folders: nextFolders,
@@ -200,7 +208,7 @@ export function NotebookAccessFilesList({
       const item = folderItems.find((it) => it.path === path);
       toast.success(t('agent.access.folderDeleted', { name: item?.name ?? path }));
     },
-    [notebookId, effectiveWorkspace, workspace, folderPaths, defaultFiles, folderItems, setDefaultFiles, t],
+    [notebookId, primaryFolderPath, workspace, folderPaths, defaultFiles, folderItems, setDefaultFiles, t],
   );
 
   // 资料组 ── 外侧容器, pt-1 提供组上方留白 (与标签组对称, 用 padding 而非 margin); pb-4 是滚动列表末尾底部留白。
@@ -210,7 +218,7 @@ export function NotebookAccessFilesList({
         {t('memo.navigation.files')}
       </div>
       {folderItems.map((item) => {
-        const isWorkspace = effectiveWorkspace === item.path;
+        const isWorkspace = primaryFolderPath === item.path;
         // 设为主空间 / 取消主空间 ── 真正的判别是 `isWorkspace`, 不是 folder
         // 个数: 单 folder 在 workspace=null 时 (用户显式取消) 也允许"设为主空间"
         // (恢复主空间标识); missing 路径永远不能当主空间, 两项均藏。
@@ -275,7 +283,7 @@ export function NotebookAccessFilesList({
                 {isWorkspace && (
                   <Star
                     aria-label={t('agent.access.workspaceBadge')}
-                    className="agent-thread-card__access-workspace-mark h-3.5 w-3.5 shrink-0 text-[var(--primary)]"
+                    className="agent-thread-card__access-workspace-star h-3.5 w-3.5 shrink-0 text-[var(--primary)]"
                     fill="currentColor"
                   />
                 )}

@@ -102,6 +102,14 @@ export function getSlashMenuItemSection(item: SlashMenuItem, language: AppLangua
 
 export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   {
+    id: 'agent-thread-deepseek-harness',
+    label: getAgentType('deepseek-harness').name,
+    description: 'AI Agent',
+    keywords: ['dsh', 'deepseek', 'harness', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
+    icon: getAgentType('deepseek-harness').icon,
+    sectionKey: 'editor.slash.section.agent',
+  },
+  {
     id: 'agent-thread-codex',
     label: getAgentType('codex').name,
     description: 'AI Agent',
@@ -131,14 +139,6 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     description: 'AI Agent',
     keywords: ['ai', 'agent', 'thread', 'chat', 'duihua', 'flowix', '任务', 'renwu', 'task'],
     icon: getAgentType('flowix').icon,
-    sectionKey: 'editor.slash.section.agent',
-  },
-  {
-    id: 'agent-thread-deepseek-harness',
-    label: getAgentType('deepseek-harness').name,
-    description: 'AI Agent',
-    keywords: ['dsh', 'deepseek', 'harness', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
-    icon: getAgentType('deepseek-harness').icon,
     sectionKey: 'editor.slash.section.agent',
   },
   {

@@ -703,11 +703,12 @@ export function AgentSection() {
       : t('preferences.agent.apiKey.description');
 
   return (
-    <div className="space-y-3 pb-3">
+    <div className="space-y-2 pb-3">
       <SectionHeader
         title={t('preferences.agent.title')}
-        size="compact"
+        className="flex h-8 items-center border-b-0 pb-0"
       />
+      <div className="border-b border-[var(--divider)]" />
 
       <div className="space-y-4">
         {/* 1. 供应商 */}

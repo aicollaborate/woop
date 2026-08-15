@@ -511,6 +511,11 @@
     transform 120ms ease;
 }
 
+.agent-thread-card__codex-settings-popover--mode {
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(520px, calc(100vh - 16px));
+}
+
 .agent-thread-card__codex-settings-popover:not([hidden]) {
   opacity: 1;
   transform: scale(1);
@@ -570,6 +575,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-thread-card__codex-settings-item-content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-thread-card__codex-settings-item-description {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .agent-thread-card__codex-settings-item .agent-thread-card__copy-icon {

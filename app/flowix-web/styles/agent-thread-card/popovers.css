@@ -318,6 +318,15 @@
   pointer-events: none;
 }
 
+/* The notebook sidebar uses a right-aligned star, which is a different
+ * affordance from the legacy avatar-side workspace mark above. Keep it in the
+ * row's flex flow so it stays at the far right after the flexible name cell. */
+.agent-thread-card__access-workspace-star {
+  position: static;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
 /* 可点击 avatar ── 非 workspace + 非 missing 的 entry (folder 或 notebook)
  * avatar 本身是 <button>, 点击 setWorkspace。 不再有 star 按钮覆盖层: hover
  * 只给一层 primary 薄底提示 "这个图标可点", 视觉重量与普通 avatar 一致。
@@ -421,5 +430,4 @@
   flex: 0 0 auto;
   color: currentColor;
 }
-
 

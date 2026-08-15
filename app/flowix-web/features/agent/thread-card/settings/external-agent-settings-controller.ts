@@ -50,11 +50,28 @@ const CLAUDE_MODEL_OPTIONS: AgentModelOption[] = [
 const DEEPSEEK_HARNESS_MODE_OPTIONS: readonly {
   id: AgentHarnessPreset;
   labelKey: I18nKey;
+  descriptionKey: I18nKey;
 }[] = [
-  { id: "standard", labelKey: "agent.mode.standard" },
-  { id: "code", labelKey: "agent.mode.code" },
-  { id: "minimal", labelKey: "agent.mode.minimal" },
-  { id: "cordis", labelKey: "agent.mode.cordis" },
+  {
+    id: "standard",
+    labelKey: "agent.mode.standard",
+    descriptionKey: "agent.mode.standard.description",
+  },
+  {
+    id: "code",
+    labelKey: "agent.mode.code",
+    descriptionKey: "agent.mode.code.description",
+  },
+  {
+    id: "minimal",
+    labelKey: "agent.mode.minimal",
+    descriptionKey: "agent.mode.minimal.description",
+  },
+  {
+    id: "cordis",
+    labelKey: "agent.mode.cordis",
+    descriptionKey: "agent.mode.cordis.description",
+  },
 ];
 
 export interface ExternalAgentSettingsControllerOptions {
@@ -413,6 +430,10 @@ export class ExternalAgentSettingsController {
     this.kind = open ? kind : null;
     this.anchor = open ? anchor : null;
     this.popover.hidden = !open;
+    this.popover.classList.toggle(
+      "agent-thread-card__codex-settings-popover--mode",
+      open && kind === "mode",
+    );
     this.syncControlOpenState(open, kind);
 
     if (open && kind && anchor) {
@@ -728,6 +749,7 @@ export class ExternalAgentSettingsController {
             this.writeRuntimeSetting("mode", option.id);
             this.setSettingsPopoverOpen(false);
           },
+          this.t(option.descriptionKey),
         ),
       );
     });

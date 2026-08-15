@@ -274,6 +274,95 @@ function agentDisplay(
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ *  DeepSeek Harness (DSH) 工具 formatter
+ *
+ *  DSH tool.started 事件的 input 即工具 parameters 原文 (dsh-host adapter
+ *  原样透传), 字段名与 vendor harness 的 defineTool schema 一致:
+ *    subagent / subagent_fork  { description, prompt, run_in_background? }
+ *    send_message              { subagent_id, message }
+ *    interrupt_agent           { agent_id }
+ *    job_output / job_kill     { job_id, ... }
+ *    create_goal               { objective }
+ *    update_goal               { action, objective? }
+ *    ralph                     { objective, maxRounds? }
+ *    workflow                  { script, meta: { name } }
+ *    exit_plan_mode            { plan }
+ *    cordis_*                  { pluginId / plugin.idPrefix ... }
+ * ════════════════════════════════════════════════════════════════════════ */
+
+function subagentDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const prompt = stringField(input, ["description", "prompt"]);
+  return display(prompt, "generic");
+}
+
+function sendMessageDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const id = stringField(input, ["subagent_id", "agent_id"]);
+  const message = stringField(input, ["message"]);
+  const summary = id && message ? `${id} · ${truncate(message, 40)}` : id ?? message;
+  return display(summary, "generic", id);
+}
+
+function idDisplay(
+  keys: readonly string[],
+): (input: Record<string, unknown>) => AgentToolDisplay | undefined {
+  return (input) => {
+    const id = stringField(input, keys);
+    return display(id, "generic");
+  };
+}
+
+function goalDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const objective = stringField(input, ["objective"]);
+  const action = stringField(input, ["action"]);
+  const summary = objective ?? (action ? `action: ${action}` : undefined);
+  return display(summary, "todo");
+}
+
+function planMarkdownDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const plan = stringField(input, ["plan"]);
+  if (!plan) return undefined;
+  // plan 是 "# 标题\n正文" 的 markdown, 取首个 # 行做 summary
+  const heading = plan.match(/^#\s+(.+)$/m)?.[1];
+  return display(heading ? truncate(heading, 60) : truncate(plan, 60), "todo");
+}
+
+function workflowDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const meta = input.meta;
+  const name =
+    (meta && typeof meta === "object"
+      ? stringField(meta as Record<string, unknown>, ["name"])
+      : undefined) ?? stringField(input, ["name"]);
+  return display(name, "generic");
+}
+
+function cordisDisplay(
+  input: Record<string, unknown>,
+): AgentToolDisplay | undefined {
+  const plugin = input.plugin;
+  const prefix =
+    plugin && typeof plugin === "object"
+      ? stringField(plugin as Record<string, unknown>, [
+          "idPrefix",
+          "pluginId",
+        ])
+      : undefined;
+  const id =
+    prefix ??
+    stringField(input, ["pluginId", "provider", "method", "platform"]);
+  return display(id, "generic");
+}
+
 function urlDisplay(
   input: Record<string, unknown>,
 ): AgentToolDisplay | undefined {
@@ -591,6 +680,7 @@ function todoDisplay(
 const FORMATTERS: Record<string, ToolDisplayFormatter> = {
   "*:read": fileDisplay,
   "*:read_file": fileDisplay,
+  "*:read_image": fileDisplay,
   "*:write": fileDisplay,
   "*:write_file": fileDisplay,
   "*:create_file": fileDisplay,
@@ -650,6 +740,7 @@ const FORMATTERS: Record<string, ToolDisplayFormatter> = {
   "*:update_todo_list": todoDisplay,
   "*:todo_list": todoDisplay,
   "*:todowrite": todoDisplay,
+  "*:todo_write": todoDisplay,
   "*:todolist": todoDisplay,
   "*:todo": todoDisplay,
   "*:plan": todoDisplay,
@@ -665,6 +756,31 @@ const FORMATTERS: Record<string, ToolDisplayFormatter> = {
   "codex:apply_patch": patchDisplay,
   "*:request_user_input": requestUserInputDisplay,
   "codex:request_user_input": requestUserInputDisplay,
+  "*:ask_user_question": requestUserInputDisplay,
+  // DeepSeek Harness (DSH) 工具 ── input 字段见上方 formatter 注释
+  "*:pwsh": commandDisplay,
+  "*:subagent": subagentDisplay,
+  "*:subagent_fork": subagentDisplay,
+  "*:send_message": sendMessageDisplay,
+  "*:interrupt_agent": idDisplay(["agent_id", "subagent_id"]),
+  "*:list_agents": () => undefined,
+  "*:workflow": workflowDisplay,
+  "*:ralph": goalDisplay,
+  "*:skill": skillDisplay,
+  "*:get_goal": () => undefined,
+  "*:create_goal": goalDisplay,
+  "*:update_goal": goalDisplay,
+  "*:exit_plan_mode": planMarkdownDisplay,
+  "*:job_list": () => undefined,
+  "*:job_output": idDisplay(["job_id"]),
+  "*:job_kill": idDisplay(["job_id"]),
+  "*:cordis_define": cordisDisplay,
+  "*:cordis_run": cordisDisplay,
+  "*:cordis_stop": cordisDisplay,
+  "*:cordis_undefine": cordisDisplay,
+  "*:cordis_inspect_list": () => undefined,
+  "*:cordis_inspect_query": cordisDisplay,
+  "*:cordis_inspect_self": cordisDisplay,
 };
 
 function formatterKeys(

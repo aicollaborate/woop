@@ -62,6 +62,7 @@ export function createCodexSettingsItem(
   label: string,
   selected: boolean,
   onSelect: () => void,
+  description?: string,
 ): HTMLElement {
   const item = document.createElement("button");
   item.type = "button";
@@ -72,10 +73,19 @@ export function createCodexSettingsItem(
     event.stopPropagation();
     onSelect();
   });
+  const content = document.createElement("span");
+  content.className = "agent-thread-card__codex-settings-item-content";
   const text = document.createElement("span");
   text.className = "agent-thread-card__codex-settings-item-label";
   text.textContent = label;
-  item.append(text);
+  content.append(text);
+  if (description) {
+    const descriptionEl = document.createElement("span");
+    descriptionEl.className = "agent-thread-card__codex-settings-item-description";
+    descriptionEl.textContent = description;
+    content.append(descriptionEl);
+  }
+  item.append(content);
   if (selected) item.append(createCheckIcon());
   return item;
 }

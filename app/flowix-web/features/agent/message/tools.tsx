@@ -346,6 +346,80 @@ export const TOOLS: readonly AgentToolMeta[] = [
     labelKey: "agent.tools.explored",
     iconPath: TOOL_ICON_PATHS.magnifyPlus,
   },
+  // DeepSeek Harness (DSH) 工具 ── 名称来自 vendor harness defineTool 注册,
+  // 走通配 agentType (其他 runtime 撞名时同样受益)。
+  {
+    name: "pwsh",
+    labelKey: "agent.tools.bash",
+    iconPath: TOOL_ICON_PATHS.terminal,
+  },
+  {
+    name: "subagent",
+    aliases: ["subagent_fork", "ralph", "workflow"],
+    labelKey: "agent.tools.subAgent",
+    iconPath: TOOL_ICON_PATHS.globe,
+  },
+  {
+    name: "send_message",
+    labelKey: "agent.tools.sendMessage",
+    iconPath: TOOL_ICON_PATHS.chatCircleText,
+  },
+  {
+    name: "interrupt_agent",
+    labelKey: "agent.tools.interruptAgent",
+    iconPath: TOOL_ICON_PATHS.pause,
+  },
+  {
+    name: "list_agents",
+    labelKey: "agent.tools.listAgents",
+    iconPath: TOOL_ICON_PATHS.usersThree,
+  },
+  {
+    name: "skill",
+    aliases: ["load_skill"],
+    labelKey: "agent.tools.loadSkill",
+    iconPath: TOOL_ICON_PATHS.fileText,
+  },
+  {
+    // DSH 的 get/create/update goal 与 Codex goal 系列同族;
+    // codex 专属条目在前, 通配条目兜底其他 runtime。
+    name: "get_goal",
+    labelKey: "agent.tools.getGoal",
+    iconPath: TOOL_ICON_PATHS.checks,
+  },
+  {
+    name: "exit_plan_mode",
+    labelKey: "agent.tools.exitPlanMode",
+    iconPath: TOOL_ICON_PATHS.fileText,
+  },
+  {
+    name: "job_list",
+    labelKey: "agent.tools.jobList",
+    iconPath: TOOL_ICON_PATHS.arrowsClockwise,
+  },
+  {
+    name: "job_output",
+    labelKey: "agent.tools.jobOutput",
+    iconPath: TOOL_ICON_PATHS.arrowsClockwise,
+  },
+  {
+    name: "job_kill",
+    labelKey: "agent.tools.jobKill",
+    iconPath: TOOL_ICON_PATHS.pause,
+  },
+  {
+    name: "cordis_define",
+    aliases: [
+      "cordis_run",
+      "cordis_stop",
+      "cordis_undefine",
+      "cordis_inspect_list",
+      "cordis_inspect_query",
+      "cordis_inspect_self",
+    ],
+    labelKey: "agent.tools.cordis",
+    iconPath: TOOL_ICON_PATHS.plug,
+  },
 ] as const;
 
 /* ── 派生索引 ── 把所有 aliases 摊平到一个 Map, O(1) 查询 ──────
