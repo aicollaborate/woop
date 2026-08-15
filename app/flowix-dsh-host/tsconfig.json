@@ -1,0 +1,20 @@
+{
+  "extends": "./vendor/deepseek-harness/tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "noEmit": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@deepseek-ai/dsh-sdk-client": ["./src/types/sdk-client.ts"],
+      "@deepseek-ai/dsh-llm": ["./vendor/deepseek-harness/packages/llm/llm/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-llm/*": ["./vendor/deepseek-harness/packages/llm/llm/lib/types/*.d.ts"],
+      "@earendil-works/pi-ai": ["./vendor/deepseek-harness/node_modules/.pnpm/node_modules/@earendil-works/pi-ai/dist/index.d.ts"],
+      "@earendil-works/pi-ai/*": ["./vendor/deepseek-harness/node_modules/.pnpm/node_modules/@earendil-works/pi-ai/dist/*.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

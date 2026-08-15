@@ -1,6 +1,11 @@
 import type { HostEvent, RunEndReason } from '../protocol/v1.ts'
 import { isRecord } from '../protocol/validation.ts'
 
+export interface RunFailure {
+  message: string
+  code?: string
+}
+
 export function adaptHarnessNotification(notification: unknown): HostEvent[] {
   if (!isRecord(notification) || notification.method !== 'session.event') return []
   const params = notification.params
@@ -59,7 +64,56 @@ export function endReasonFromNotifications(notifications: unknown[]): RunEndReas
       default: return 'protocol_error'
     }
   }
-  return 'completed'
+  // A resolved notification list without a terminal turn/end is not a
+  // successful empty answer. Treat it as a protocol failure so the desktop
+  // can surface the missing terminal event instead of silently closing the
+  // run with no assistant message.
+  return 'protocol_error'
+}
+
+/**
+ * Preserve the provider failure attached to a completed Harness turn.
+ *
+ * pi-ai reports the failure twice in the persisted notification stream: the
+ * assistant finish chunk carries `reason.failure`, while the authoritative
+ * `turn/end` event carries `reason.error`. The latter is preferred because it
+ * is the terminal turn result, but the former keeps this adapter useful when a
+ * caller receives a truncated notification list.
+ */
+export function failureFromNotifications(notifications: readonly unknown[]): RunFailure | undefined {
+  for (let index = notifications.length - 1; index >= 0; index--) {
+    const event = sessionEvent(notifications[index])
+    if (event === undefined) continue
+
+    if (event.type === 'turn/end' && isRecord(event.data) && isRecord(event.data.reason)
+      && event.data.reason.kind === 'error') {
+      return normalizeFailure(event.data.reason.error, 'DeepSeek Harness turn failed')
+    }
+
+    if (event.type === 'assistant/chunk' && isRecord(event.data) && isRecord(event.data.chunk)
+      && event.data.chunk.type === 'finish' && isRecord(event.data.chunk.reason)
+      && event.data.chunk.reason.kind === 'error') {
+      return normalizeFailure(event.data.chunk.reason.failure, 'DeepSeek Harness model request failed')
+    }
+  }
+  return undefined
+}
+
+function sessionEvent(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value) || value.method !== 'session.event' || !isRecord(value.params)
+    || !isRecord(value.params.event)) return undefined
+  return value.params.event
+}
+
+function normalizeFailure(value: unknown, fallback: string): RunFailure {
+  if (!isRecord(value)) return { message: fallback, code: 'HARNESS_TURN_FAILED' }
+  const message = typeof value.message === 'string' && value.message.trim() !== ''
+    ? value.message.trim()
+    : fallback
+  const code = typeof value.code === 'string' && value.code.trim() !== ''
+    ? value.code.trim()
+    : undefined
+  return code === undefined ? { message } : { message, code }
 }
 
 function adaptStreamChunk(value: unknown): HostEvent[] {
@@ -113,4 +167,3 @@ function contentResult(value: unknown): unknown {
   if (value.length === 1 && isRecord(value[0]) && value[0].type === 'text') return value[0].text ?? ''
   return value
 }
-

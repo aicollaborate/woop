@@ -198,6 +198,7 @@ const zhCN = {
     "preferences.agent.provider.minimaxCodingPlan": "MiniMax Coding Plan",
     "preferences.agent.provider.glmCodingPlan": "GLM Coding Plan",
     "preferences.agent.modelId.title": "模型 ID",
+    "preferences.agent.modelId.discover": "获取模型列表",
     "preferences.agent.modelId.placeholder":
       "如 deepseek-v4-flash、deepseek-v4-pro、gpt-5.5",
     "preferences.agent.baseUrl.title": "Base URL",
@@ -556,6 +557,8 @@ const zhCN = {
     "agent.claudeSession.title": "Claude Code 会话",
     "agent.deepseekHarnessSession.title": "DeepSeek Harness 对话",
     "agent.deepseekHarnessChat.title": "DeepSeek Harness 对话",
+    "agent.deepseekHarness.reconnectFailed": "DeepSeek Harness 重连失败",
+    "agent.deepseekHarness.failureReason": "失败原因：{reason}",
     "agent.opencodeSession.title": "OpenCode 对话",
     "agent.hermesSession.title": "Hermes 对话",
     "agent.geminiSession.title": "Gemini CLI 对话",

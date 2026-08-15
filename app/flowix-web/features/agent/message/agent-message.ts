@@ -2,7 +2,11 @@ import type { ChatMessage } from "@/types";
 import { getToolLabel } from "@features/agent/message/tools";
 import { stripSystemBlock } from "@features/agent/message/system";
 import { isEmptyAssistantMessage } from "@features/agent/message/empty";
-import { formatAgentErrorMessage } from "@features/agent/message/error-format";
+import {
+  formatAgentErrorMessage,
+  formatDeepSeekHarnessReconnectError,
+  isDeepSeekHarnessReconnectError,
+} from "@features/agent/message/error-format";
 import { translate, type AppLanguage } from "@/lib/i18n";
 import { getAgentToolInputSummary as getFallbackAgentToolInputSummary } from "@features/agent/tool-display";
 
@@ -79,6 +83,9 @@ export function getAgentMessageVisibleContent(
   // 出的错误) 可能夹带 `Raw response: {json}`, 展示前收敛成 message; 普通
   // assistant 文本没有该标记, 原样返回。
   if (message.role === "assistant") {
+    if (isDeepSeekHarnessReconnectError(message)) {
+      return formatDeepSeekHarnessReconnectError(message, language);
+    }
     return formatAgentErrorMessage(message.content || "");
   }
 

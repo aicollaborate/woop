@@ -69,6 +69,30 @@ impl DshHostClient {
             client.kill().await;
             return Err("dsh-host protocol version mismatch".to_string());
         }
+        let capabilities = result
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                "dsh-host is outdated: host.initialize did not advertise capabilities".to_string()
+            });
+        let capabilities = match capabilities {
+            Ok(value) => value,
+            Err(error) => {
+                client.kill().await;
+                return Err(error);
+            }
+        };
+        for required in ["model-catalog", "model-discovery"] {
+            if !capabilities
+                .iter()
+                .any(|value| value.as_str() == Some(required))
+            {
+                client.kill().await;
+                return Err(format!(
+                    "dsh-host is outdated: missing {required} capability; rebuild the host"
+                ));
+            }
+        }
         Ok(client)
     }
 
@@ -204,8 +228,16 @@ async fn fail_all(client: &DshHostClient, message: String) {
 }
 
 fn resolve_host_command() -> Result<(Command, PathBuf), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source_root = root.join("app/flowix-dsh-host");
     if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
-        return command_for_host_path(configured);
+        return command_for_host_path_with_root(configured, Some(source_root.clone()));
+    }
+    if cfg!(debug_assertions) {
+        let script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
+        if script.is_file() {
+            return command_for_host_path_with_root(script, Some(source_root.clone()));
+        }
     }
     if let Some(parent) = std::env::current_exe()
         .ok()
@@ -220,15 +252,21 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
             return command_for_host_path(candidate);
         }
     }
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let script = root.join("dsh-host/dist/dsh-host.cjs");
+    let script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
     if script.is_file() {
-        return command_for_host_path(script);
+        return command_for_host_path_with_root(script, Some(source_root));
     }
-    Err("dsh-host is not built; run `npm --prefix dsh-host run build`".to_string())
+    Err("dsh-host is not built; run `npm --prefix app/flowix-dsh-host run build`".to_string())
 }
 
 fn command_for_host_path(path: PathBuf) -> Result<(Command, PathBuf), String> {
+    command_for_host_path_with_root(path, None)
+}
+
+fn command_for_host_path_with_root(
+    path: PathBuf,
+    source_root: Option<PathBuf>,
+) -> Result<(Command, PathBuf), String> {
     let canonical = dunce::canonicalize(&path)
         .map_err(|error| format!("invalid dsh-host path {}: {error}", path.display()))?;
     let is_node_script = matches!(
@@ -236,10 +274,12 @@ fn command_for_host_path(path: PathBuf) -> Result<(Command, PathBuf), String> {
         Some("mjs" | "cjs" | "js")
     );
     let host_root = if is_node_script {
-        canonical
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
+        source_root.or_else(|| {
+            canonical
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+        })
     } else {
         canonical.parent().map(Path::to_path_buf)
     }

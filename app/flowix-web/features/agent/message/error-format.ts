@@ -1,3 +1,33 @@
+import type { ChatMessage } from "@/types";
+import { translate, type AppLanguage } from "@/lib/i18n";
+
+const DEEPSEEK_HARNESS_ERROR_ID =
+  /^msg:deepseek-harness:[^:]+:error:/;
+
+/**
+ * DeepSeek Harness error events are materialized as assistant messages by
+ * both the live reducer and the external-event history loader. The notice
+ * field covers live events; the canonical id keeps already-persisted history
+ * recognizable after reload.
+ */
+export function isDeepSeekHarnessReconnectError(message: ChatMessage): boolean {
+  return (
+    message.notice === "deepseek-harness-reconnect-failed" ||
+    DEEPSEEK_HARNESS_ERROR_ID.test(message.id)
+  );
+}
+
+export function formatDeepSeekHarnessReconnectError(
+  message: ChatMessage,
+  language: AppLanguage,
+): string {
+  const reason = formatAgentErrorMessage(message.content || "");
+  return [
+    translate(language, "agent.deepseekHarness.reconnectFailed"),
+    translate(language, "agent.deepseekHarness.failureReason", { reason }),
+  ].join("\n\n");
+}
+
 /**
  * 把 agent 错误消息里夹带的原始 JSON 收敛成人类可读的 message。
  *

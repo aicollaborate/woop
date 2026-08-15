@@ -78,6 +78,10 @@ const codeEditorTheme = EditorView.theme({
     color: 'color-mix(in oklch, var(--muted-foreground) 40%, transparent)',
   },
   '.cm-foldGutter .cm-gutterElement > span': {
+    opacity: 0,
+    transition: 'opacity 120ms ease',
+  },
+  '.cm-gutters:hover .cm-foldGutter .cm-gutterElement > span': {
     opacity: 0.5,
   },
   '.cm-foldGutter .cm-gutterElement > span[title="Fold line"]': {

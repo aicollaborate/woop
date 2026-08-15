@@ -72,11 +72,7 @@ fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
                     "document".to_string()
                 },
                 parent_id: None,
-                children: if is_dir {
-                    Some(Vec::new())
-                } else {
-                    None
-                },
+                children: if is_dir { Some(Vec::new()) } else { None },
             };
 
             items.push(item);

@@ -8,6 +8,10 @@ import { normalizeBackendInstance } from '@features/agent/store/conversation-sli
 import { useDocumentStore } from '@features/document';
 import { useMemoStore } from '@features/memo';
 import { agentClient } from '@features/agent/store/agent-client';
+import {
+  isAgentConversationRunning,
+  useConversationRunIndex,
+} from '@features/agent/store/conversation-run-index';
 import { AGENT_TYPES, getAgentType, isAgentTypeSelectable } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { formatTimeAgo } from '@/lib/format-time-ago';
@@ -79,6 +83,14 @@ export function AgentConversationList() {
     }
     return Object.values(merged).sort((a, b) => b.updatedAt - a.updatedAt);
   }, [instances, persistedInstances]);
+
+  // 运行态来自 canonical thread projections；使用合并后的列表作为索引输入，
+  // 这样后端持久化列表中的对话也能在运行时显示外框 loading。
+  const conversationInstances = useMemo(
+    () => Object.fromEntries(conversations.map((instance) => [instance.instanceId, instance])),
+    [conversations],
+  );
+  const conversationRunIndex = useConversationRunIndex(conversationInstances);
 
   // 按当前笔记本圈定对话列表 —— 与中间列 MemoList 同口径。归属当前笔记本的对话
   // 全部展示；没有笔记本归属 (source.notebookId 为空，例如从独立对话面板发起，或
@@ -235,6 +247,7 @@ export function AgentConversationList() {
                   const agent = getAgentType(instance.agentType);
                   const canOpen = Boolean(instance.threadId);
                   const selected = instance.instanceId === selectedInstanceId;
+                  const running = isAgentConversationRunning(instance, conversationRunIndex);
                   return (
                     <button
                       key={instance.instanceId}
@@ -250,8 +263,11 @@ export function AgentConversationList() {
                         !canOpen && 'cursor-not-allowed opacity-55',
                       )}
                     >
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]">
-                        <img src={agent.icon} alt="" className="h-full w-full object-contain" draggable={false} />
+                      <span className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
+                        running && 'agent-conversation-list__icon--running',
+                      )}>
+                        <img src={agent.icon} alt="" className="h-3 w-3 object-contain" draggable={false} />
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm font-normal">
                         {instance.title?.trim() || t('common.untitled')}

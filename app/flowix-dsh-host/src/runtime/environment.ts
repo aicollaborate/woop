@@ -63,7 +63,14 @@ export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: strin
   return {
     command: process.execPath,
     args: ['--import', tsxLoader, bin, cordisConfigPath()],
-    env: runtimeEnvironment(spec),
+    // The agent runs with the user's workspace as cwd, but the vendored
+    // Harness source tree owns the TS path aliases for all @deepseek-ai/*
+    // workspace packages. Without this explicit config, tsx resolves from
+    // the user's cwd and the child exits before the first model request.
+    env: {
+      ...runtimeEnvironment(spec),
+      TSX_TSCONFIG_PATH: join(root, 'vendor/deepseek-harness/tsconfig.json'),
+    },
   }
 }
 

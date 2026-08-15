@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const repo = resolve(root, '..')
+const repo = resolve(root, '../..')
 const vendor = resolve(root, 'vendor/deepseek-harness')
-const outdir = resolve(root, 'dist')
+const outdir = resolve(repo, '.build/flowix-dsh-host')
 const tauriBins = resolve(repo, 'app/flowix-desktop/binaries')
 const FLOWIX_RUNTIME_ROOTS = [
   '@deepseek-ai/dsh-sdk-jsonrpc-demo',

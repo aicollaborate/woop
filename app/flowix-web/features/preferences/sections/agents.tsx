@@ -10,7 +10,11 @@ import { useI18n } from '@/lib/i18n';
 import { FieldRow, SectionHeader } from '@features/preferences/sections/primitives';
 import { AgentSection } from '@features/preferences/sections/agent';
 import { ExternalPathRow } from '@features/preferences/sections/external-path-row';
-import { agent, type AgentExternalEntry } from '@platform/tauri/client';
+import {
+  agent,
+  deepseekHarness,
+  type AgentExternalEntry,
+} from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';
 import { AGENT_TYPES } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
@@ -180,7 +184,10 @@ export function AgentsSection() {
             return renderCollapsible(
               'deepseek-harness',
               <div className="border-t border-[var(--divider)] py-3">
-                <AgentSection />
+                <AgentSection
+                  testConnection={deepseekHarness.testConnection}
+                  modelDirectory={deepseekHarness}
+                />
               </div>,
             );
           }

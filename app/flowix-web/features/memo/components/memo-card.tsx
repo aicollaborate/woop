@@ -129,6 +129,7 @@ function ColorDots({ colors, limit, className }: { colors: MemoItem['colors']; l
 
 function MemoCardMoreMenu({
   memo,
+  variant,
   isDropdownOpen,
   moreLabel,
   onOpenDropdown,
@@ -137,7 +138,7 @@ function MemoCardMoreMenu({
   onColorsChange,
 }: Pick<
   MemoCardShellProps,
-  'memo' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
+  'memo' | 'variant' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
 >) {
   return (
     <div className="absolute right-3 z-100 shrink-0 items-center gap-1">
@@ -152,7 +153,10 @@ function MemoCardMoreMenu({
           <button
             type="button"
             aria-label={moreLabel}
-            className="rounded p-1 text-[var(--muted-foreground)] opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-[var(--foreground)]"
+            className={cn(
+              'rounded p-1 text-[var(--muted-foreground)] opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-[var(--foreground)]',
+              variant === 'compact' && 'bg-[var(--accent)]',
+            )}
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
@@ -217,6 +221,7 @@ function MemoCardShell({
             </div>
             <MemoCardMoreMenu
               memo={memo}
+              variant={variant}
               isDropdownOpen={isDropdownOpen}
               moreLabel={moreLabel}
               onOpenDropdown={onOpenDropdown}
@@ -254,10 +259,10 @@ function CompactMemoCardBody({
           runningAgentType={runningAgentType}
         />
       )}
-      <FileTextIcon weight="duotone" className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
       {memo.favorited && (
         <PushPin weight="fill" className="h-3.5 w-3.5 shrink-0 text-[var(--foreground)]" />
       )}
+      <FileTextIcon weight="duotone" className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
       <h3 className="min-w-0 flex-1 truncate text-sm font-normal text-[var(--foreground)]">
         {title}
       </h3>

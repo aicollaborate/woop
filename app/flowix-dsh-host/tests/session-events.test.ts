@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { adaptSessionEvent, endReasonFromNotifications } from '../src/adapter/session-events.ts'
+import {
+  adaptSessionEvent,
+  endReasonFromNotifications,
+  failureFromNotifications,
+} from '../src/adapter/session-events.ts'
 
 test('maps text, reasoning and usage chunks', () => {
   assert.deepEqual(adaptSessionEvent({ type: 'assistant/chunk', data: { chunk: { type: 'text-delta', text: 'hi' } } }), [
@@ -30,3 +34,40 @@ test('maps terminal turn reason', () => {
   }]), 'max_tokens')
 })
 
+test('does not turn a notification stream without turn/end into a silent success', () => {
+  assert.equal(endReasonFromNotifications([]), 'protocol_error')
+})
+
+test('preserves terminal Harness failure details', () => {
+  assert.deepEqual(failureFromNotifications([{
+    method: 'session.event',
+    params: {
+      event: {
+        type: 'turn/end',
+        data: {
+          reason: {
+            kind: 'error',
+            error: { message: 'Request timed out.', code: 'TIMEOUT' },
+          },
+        },
+      },
+    },
+  }]), { message: 'Request timed out.', code: 'TIMEOUT' })
+})
+
+test('falls back to the assistant finish failure when turn end is unavailable', () => {
+  assert.deepEqual(failureFromNotifications([{
+    method: 'session.event',
+    params: {
+      event: {
+        type: 'assistant/chunk',
+        data: {
+          chunk: {
+            type: 'finish',
+            reason: { kind: 'error', failure: { message: 'bad gateway', code: 'SERVER' } },
+          },
+        },
+      },
+    },
+  }]), { message: 'bad gateway', code: 'SERVER' })
+})

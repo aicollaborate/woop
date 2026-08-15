@@ -593,6 +593,10 @@
   animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
 }
 
+.agent-conversation-list__icon--running {
+  animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
+}
+
 .agent-thread-navigator__trigger-icon {
   display: inline-flex;
   align-items: center;
@@ -623,6 +627,11 @@
   }
 
   .agent-thread-navigator__icon--running {
+    animation: none;
+    border-color: color-mix(in oklch, var(--brand) 50%, transparent);
+  }
+
+  .agent-conversation-list__icon--running {
     animation: none;
     border-color: color-mix(in oklch, var(--brand) 50%, transparent);
   }

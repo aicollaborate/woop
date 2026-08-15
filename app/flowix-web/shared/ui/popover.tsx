@@ -221,11 +221,13 @@ function PopoverContent({
 		};
 	}, [open, present, side, sideOffset, align]);
 
-	// Close on click outside
+	// Close on pointerdown outside. Capture matches DropdownMenu's behavior and
+	// makes the close reliable when an ancestor stops propagation (for example
+	// the native drag-region handling in the desktop title bar).
 	React.useEffect(() => {
 		if (!open) return;
 
-		const handleClickOutside = (e: MouseEvent) => {
+		const handlePointerDownOutside = (e: PointerEvent) => {
 			const target = e.target as Node;
 			if (
 				contentRef.current?.contains(target) ||
@@ -239,8 +241,8 @@ function PopoverContent({
 			}
 		};
 
-		document.addEventListener("mousedown", handleClickOutside);
-		return () => document.removeEventListener("mousedown", handleClickOutside);
+		document.addEventListener("pointerdown", handlePointerDownOutside, true);
+		return () => document.removeEventListener("pointerdown", handlePointerDownOutside, true);
 	}, [open, setOpen]);
 
 	// Close on escape

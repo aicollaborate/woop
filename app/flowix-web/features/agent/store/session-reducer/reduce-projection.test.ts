@@ -245,6 +245,27 @@ describe("reduceProjection / text streaming lifecycle", () => {
     expect(p.runs.lastRun?.status).toBe("failed");
     expect(p.runs.isLoading).toBe(false);
   });
+
+  it("marks DeepSeek Harness errors as reconnect failures and preserves the reason", () => {
+    let p = emptyProjection();
+    p = reduceProjection(
+      p,
+      event("error", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "r1",
+        timestamp: 9500,
+        messageId: "msg:deepseek-harness:r1:error:error",
+        message: "Request timed out.",
+      }),
+    );
+
+    expect(p.messages[p.messages.length - 1]).toMatchObject({
+      id: "msg:deepseek-harness:r1:error:error",
+      content: "Request timed out.",
+      notice: "deepseek-harness-reconnect-failed",
+    });
+  });
 });
 
 describe("reduceProjection / tool call cycle", () => {

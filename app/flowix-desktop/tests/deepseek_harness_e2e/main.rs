@@ -16,7 +16,8 @@
 //! 在 macOS 也不暴露, 因此本测试在 `main()` 里持有主线程并手工驱动断言。
 //!
 //! 运行前置:
-//!   * `npm --prefix dsh-host run build` 已产出 `dsh-host/dist/dsh-host.cjs`
+//!   * `npm --prefix app/flowix-dsh-host run build` 已产出
+//!     `.build/flowix-dsh-host/dsh-host.cjs`
 //!     (缺失时本测试直接 fail 并提示, 不静默跳过 —— 见 `require_host`).
 //!   * dsh-host 的 vendored 开发 runtime 已安装
 //!     (`vendor/deepseek-harness/node_modules`), host 会在没有
@@ -41,7 +42,7 @@ use flowix_desktop::config::UserConfigStore;
 fn main() {
     // 1. dsh-host 产物必须在位 —— 缺失时给出可操作的提示而不是panic堆栈。
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let host_script = repo_root.join("dsh-host/dist/dsh-host.cjs");
+    let host_script = repo_root.join(".build/flowix-dsh-host/dsh-host.cjs");
     require_host(&host_script);
     // Runtime 用打包的 sidecar (与 sidecar-e2e 同路径, 等价于生产布局)。
     // Rust 侧 DshHostClient::spawn 会 env_clear, FLOWIX_DSH_RUNTIME_PATH 只能
@@ -64,15 +65,17 @@ fn main() {
     // set_ai_config 会把 key 挪进 secret store, get_ai_config 再 hydrate 回来 ——
     // 与生产路径一致, 因此走 setter 而不是直接改内存。
     user_config
-        .set_ai_config(serde_json::from_value(json!({
-            "model": {
-                "provider": "DeepSeek",
-                "model": "deepseek-e2e-model",
-                "apiUrl": provider.base_url(),
-                "apiKeys": { "DeepSeek": "e2e-secret" },
-            }
-        }))
-        .expect("valid AiConfigFile"))
+        .set_ai_config(
+            serde_json::from_value(json!({
+                "model": {
+                    "provider": "DeepSeek",
+                    "model": "deepseek-e2e-model",
+                    "apiUrl": provider.base_url(),
+                    "apiKeys": { "DeepSeek": "e2e-secret" },
+                }
+            }))
+            .expect("valid AiConfigFile"),
+        )
         .expect("persist ai config");
 
     // 4. host 解析顺序: FLOWIX_DSH_HOST_PATH 优先于 exe 同目录探测 —— 用它把
@@ -143,11 +146,7 @@ fn main() {
                 .await
                 .expect("list events")
                 .iter()
-                .any(|event| {
-                    event
-                        .normalized_json
-                        .contains("\"kind\":\"stream_end\"")
-                });
+                .any(|event| event.normalized_json.contains("\"kind\":\"stream_end\""));
             if ended {
                 break;
             }
@@ -179,7 +178,7 @@ fn require_host(host_script: &Path) {
         return;
     }
     panic!(
-        "dsh-host is not built: {} is missing; run `npm --prefix dsh-host run build` first",
+        "dsh-host is not built: {} is missing; run `npm --prefix app/flowix-dsh-host run build` first",
         host_script.display()
     );
 }
@@ -200,7 +199,9 @@ fn stage_packaged_runtime(repo_root: &Path) -> Option<PathBuf> {
     } else {
         return None;
     };
-    let source = repo_root.join(format!("app/flowix-desktop/binaries/dsh-host-{triple}{suffix}"));
+    let source = repo_root.join(format!(
+        "app/flowix-desktop/binaries/dsh-host-{triple}{suffix}"
+    ));
     if !source.is_file() {
         eprintln!(
             "note: packaged dsh-host sidecar not found at {}; falling back to the vendored dev runtime",
@@ -208,10 +209,7 @@ fn stage_packaged_runtime(repo_root: &Path) -> Option<PathBuf> {
         );
         return None;
     }
-    let target_dir = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .to_path_buf();
+    let target_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let target = target_dir.join(format!("dsh-host{suffix}"));
     std::fs::copy(&source, &target).ok()?;
     #[cfg(unix)]
@@ -222,10 +220,7 @@ fn stage_packaged_runtime(repo_root: &Path) -> Option<PathBuf> {
     Some(target)
 }
 
-async fn dump_diagnostics(
-    thread_manager: &Arc<ThreadManager>,
-    emitted: &Arc<Mutex<Vec<Value>>>,
-) {
+async fn dump_diagnostics(thread_manager: &Arc<ThreadManager>, emitted: &Arc<Mutex<Vec<Value>>>) {
     let events = thread_manager
         .list_agent_external_events_by_thread("thread-e2e-1", None, 1000)
         .await
@@ -420,9 +415,7 @@ impl MockProvider {
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                     .await
                     .expect("bind mock provider");
-                let address = listener
-                    .local_addr()
-                    .expect("mock provider address");
+                let address = listener.local_addr().expect("mock provider address");
                 ready_tx
                     .send(format!("http://{address}"))
                     .expect("report provider base url");
@@ -431,7 +424,9 @@ impl MockProvider {
                         accepted = listener.accept() => accepted,
                         _ = shutdown_rx.changed() => break,
                     };
-                    let Ok((stream, _address)) = accepted else { continue };
+                    let Ok((stream, _address)) = accepted else {
+                        continue;
+                    };
                     let requests = requests_for_thread.clone();
                     tokio::spawn(async move {
                         serve_connection(stream, requests).await;
@@ -544,7 +539,9 @@ async fn serve_connection(
         json!({ "choices": [{ "delta": { "content": "hello from mock provider" } }] }),
         json!({ "choices": [{ "delta": { "content": "" }, "finish_reason": "stop" }], "usage": { "prompt_tokens": 12, "completion_tokens": 4 } }),
     ];
-    let mut response = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n");
+    let mut response = String::from(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+    );
     for event in &events {
         response.push_str(&format!("data: {event}\n\n"));
     }

@@ -16,6 +16,7 @@ import { AgentSection } from '@features/preferences/sections/agent';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { deepseekHarness } from '@platform/tauri/client';
 
 type DshTab = 'models' | 'general' | 'plugins' | 'presets';
 
@@ -110,7 +111,12 @@ export function DshSettingsSection() {
       </div>
 
       <div role="tabpanel" aria-label={t(activeTabLabelKey)}>
-        {activeTab === 'models' && <AgentSection />}
+        {activeTab === 'models' && (
+          <AgentSection
+            testConnection={deepseekHarness.testConnection}
+            modelDirectory={deepseekHarness}
+          />
+        )}
         {activeTab === 'general' && <GeneralTab />}
         {activeTab === 'plugins' && <PluginsTab />}
         {activeTab === 'presets' && <PresetsTab />}

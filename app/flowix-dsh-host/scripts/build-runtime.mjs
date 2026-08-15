@@ -3,6 +3,7 @@ import { copyFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
+const repo = resolve(root, '../..')
 const vendor = resolve(root, 'vendor/deepseek-harness')
 const child = spawn('corepack', [
   'pnpm@11.7.0', 'exec', 'tsx', 'scripts/build-exe-for-python-sdk.ts', '--skip-build',
@@ -12,6 +13,6 @@ if (code !== 0) throw new Error(`DeepSeek Harness runtime build failed with exit
 
 const platform = process.platform === 'darwin' ? 'macos' : process.platform
 const upstream = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${process.arch}`)
-const outdir = resolve(root, 'dist')
+const outdir = resolve(repo, '.build/flowix-dsh-host')
 await mkdir(outdir, { recursive: true })
 await copyFile(upstream, resolve(outdir, process.platform === 'win32' ? 'dsh-runtime.exe' : 'dsh-runtime'))

@@ -233,7 +233,7 @@ pub fn run() {
         claude_cli_manager,
         hermes_cli_manager,
         opencode_acp_manager,
-        deepseek_harness_manager,
+        deepseek_harness_manager.clone(),
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
@@ -279,6 +279,7 @@ pub fn run() {
                 search: search_init,
                 agent_manager: agent_manager.clone(),
                 external_runtimes: external_runtimes.clone(),
+                deepseek_harness: deepseek_harness_manager.clone(),
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),
                 security_bookmarks: security_bookmarks_for_state.clone(),
@@ -510,6 +511,9 @@ pub fn run() {
             commands::settings::get_ai_config,
             commands::settings::set_ai_config,
             commands::settings::test_ai_connection,
+            commands::settings::test_deepseek_harness_connection,
+            commands::settings::deepseek_harness_model_catalog,
+            commands::settings::discover_deepseek_harness_models,
             commands::settings::get_watcher_config,
             commands::settings::update_watcher_config,
             commands::boot::get_boot_features,

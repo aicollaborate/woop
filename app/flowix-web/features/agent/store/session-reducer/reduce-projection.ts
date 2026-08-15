@@ -287,7 +287,13 @@ function applyErrorToProjection(
   event: AgentEvent & { kind: "error" },
 ): ThreadProjection {
   const live = projectionToLive(p);
-  const next = applyErrorChunk(live, event.message);
+  const next = applyErrorChunk(live, event.message, {
+    id: event.messageId,
+    notice:
+      event.agentType === "deepseek-harness"
+        ? "deepseek-harness-reconnect-failed"
+        : undefined,
+  });
   const runsNext = applyRunFailed(projectionToRuns(p), event, event.message);
   // pending ids 跟随 run 失败 (applyRunFailed 已清, 但保险起见再次覆盖).
   return {

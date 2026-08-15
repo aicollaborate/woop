@@ -6,6 +6,9 @@ import {
   listenToUserConfigChanges,
   stopListeningToUserConfigChanges,
   type AgentConfig,
+  type DeepSeekHarnessModel,
+  type DeepSeekHarnessModelCatalog,
+  type DeepSeekHarnessModelListing,
   type TestConnectionResult,
   type TestConnectionErrorKind,
 } from '@platform/tauri/client';
@@ -29,6 +32,20 @@ import iconGemini from '@/assets/icon-gemini.svg';
 import iconDeepseek from '@/assets/icon-deepseek.svg';
 import iconOpenrouter from '@/assets/icon-openrouter.svg';
 import iconOllama from '@/assets/icon-ollama.svg';
+
+type TestConnection = (config: AgentConfig) => Promise<TestConnectionResult>;
+
+interface ModelDirectory {
+  modelCatalog: () => Promise<DeepSeekHarnessModelCatalog>;
+  discoverModels: (config: AgentConfig) => Promise<DeepSeekHarnessModelListing>;
+}
+
+interface AgentSectionProps {
+  /** Override only the connectivity probe; save/load remains aiConfig. */
+  testConnection?: TestConnection;
+  /** Optional DeepSeek Harness catalog/discovery surface. */
+  modelDirectory?: ModelDirectory;
+}
 
 /** Common provider presets shown in the dropdown. The stored value is
  *  still a free-form `string` in `AgentConfig.provider`, so users with a
@@ -134,6 +151,26 @@ function providerModelOptions(provider: string): readonly string[] | undefined {
   return PROVIDER_MODEL_OPTIONS[provider];
 }
 
+function catalogProviderFor(provider: string): string | undefined {
+  switch (provider.trim().toLowerCase().replace(/[\s_-]/g, '')) {
+    case 'anthropic':
+    case 'claude':
+      return 'anthropic';
+    case 'deepseek':
+      return 'deepseek';
+    case 'openrouter':
+      return 'openrouter';
+    case 'ollama':
+      return 'ollama';
+    case 'openai':
+    case 'openairesponsesapi':
+    case 'openaichatcompletions':
+      return 'openai';
+    default:
+      return undefined;
+  }
+}
+
 /** Coding-plan 供应商：Base URL 走内置默认，前端不展示该字段。 */
 function isCodingPlanProvider(provider: string): boolean {
   return (CODING_PLAN_PROVIDER_IDS as readonly string[]).includes(provider);
@@ -228,7 +265,10 @@ const DEFAULT_CONFIG: AgentConfig = {
   apiKeys: {},
 };
 
-export function AgentSection() {
+export function AgentSection({
+  testConnection = aiConfig.testConnection,
+  modelDirectory,
+}: AgentSectionProps = {}) {
 	const { t } = useI18n();
 	// Provider 可见性: 按 PROVIDER_OPTIONS[*].region 字段过滤。
 	// region=1 的 (MiniMax/GLM) 大陆用户能看到, 海外看不到。
@@ -263,6 +303,25 @@ export function AgentSection() {
   const [lastTestedSnapshot, setLastTestedSnapshot] = useState<string | null>(null);
   /** 加载阶段出错时记录, 用错误态 UI 替代"加载中..."。 */
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<DeepSeekHarnessModelCatalog | null>(null);
+  const [discoveredModels, setDiscoveredModels] = useState<DeepSeekHarnessModel[]>([]);
+  const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
+  const [modelDiscoveryError, setModelDiscoveryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modelDirectory) return;
+    let cancelled = false;
+    void modelDirectory.modelCatalog()
+      .then((catalog) => {
+        if (!cancelled) setModelCatalog(catalog);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setModelDiscoveryError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelDirectory?.modelCatalog]);
 
   // Refs mirror the latest `localConfig` / `savedConfig` so async callbacks
   // (probe results resolving after the user has typed, the cross-window
@@ -527,7 +586,7 @@ export function AgentSection() {
     snapshot: string,
   ): Promise<TestConnectionResult | null> => {
     try {
-      const result = await aiConfig.testConnection(cfg);
+      const result = await testConnection(cfg);
       // 表单在 probe in-flight 期间被改 → 丢掉这条 stale 结果
       if (snapshot !== JSON.stringify(localConfigRef.current)) {
         return null;
@@ -581,6 +640,8 @@ export function AgentSection() {
       provider,
       ...(defaults ?? {}),
     });
+    setDiscoveredModels([]);
+    setModelDiscoveryError(null);
     setTestStatus((s) => (s === 'testing' ? s : 'idle'));
   };
 
@@ -597,6 +658,20 @@ export function AgentSection() {
       apiKeys: { ...localConfig.apiKeys, [localConfig.provider]: value },
     });
     setTestStatus((s) => (s === 'testing' ? s : 'idle'));
+  };
+
+  const discoverModels = async () => {
+    if (!modelDirectory || !localConfig) return;
+    setModelDiscoveryBusy(true);
+    setModelDiscoveryError(null);
+    try {
+      const result = await modelDirectory.discoverModels(localConfig);
+      setDiscoveredModels(result.models);
+    } catch (error) {
+      setModelDiscoveryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelDiscoveryBusy(false);
+    }
   };
 
   /**
@@ -693,6 +768,17 @@ export function AgentSection() {
 
   const defaults = providerDefaults(localConfig.provider);
   const modelOptions = providerModelOptions(localConfig.provider);
+  const catalogProvider = catalogProviderFor(localConfig.provider);
+  const catalogModels = modelCatalog?.providers.find(
+    (provider) => provider.provider === catalogProvider,
+  )?.models ?? [];
+  const dynamicModels = catalogModels.length > 0 ? catalogModels : discoveredModels;
+  const dynamicModelOptions = dynamicModels.length > 0
+    ? [...new Set([...dynamicModels.map((model) => model.id), localConfig.model])]
+    : undefined;
+  const selectedModel = [...catalogModels, ...discoveredModels].find(
+    (model) => model.id === localConfig.model,
+  );
   const modelPlaceholder = defaults?.model ?? t('preferences.agent.modelId.placeholder');
   const baseUrlPlaceholder = providerBaseUrlHint(localConfig.provider) ?? 'Provider default';
   const hideBaseUrlField = isCodingPlanProvider(localConfig.provider);
@@ -749,7 +835,7 @@ export function AgentSection() {
         {/* 2. 模型 ID(原"模型"字段,语义改为 API 调用时的模型标识符)
               Coding-plan 供应商走固定选项的 Select，其它供应商保持自由文本。 */}
         <Field title={t('preferences.agent.modelId.title')}>
-          {modelOptions ? (
+          {modelOptions || dynamicModelOptions ? (
             <Select
               value={localConfig.model}
               onValueChange={(value) => updateField('model', value)}
@@ -758,7 +844,7 @@ export function AgentSection() {
                 <span>{localConfig.model}</span>
               </SelectTrigger>
               <SelectContent align="start">
-                {modelOptions.map((model) => (
+                {(modelOptions ?? dynamicModelOptions ?? []).map((model) => (
                   <SelectItem key={model} value={model}>
                     {model}
                   </SelectItem>
@@ -773,6 +859,31 @@ export function AgentSection() {
               className={FIELD_INPUT_CLASS}
             />
           )}
+          <div className="mt-1 flex min-h-5 items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+            {selectedModel && (
+              <span>
+                {selectedModel.contextWindow ? `${Math.round(selectedModel.contextWindow / 1024)}K context` : ''}
+                {selectedModel.maxTokens ? ` · ${Math.round(selectedModel.maxTokens / 1024)}K output` : ''}
+              </span>
+            )}
+            {modelDirectory && !catalogModels.length && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-5 px-1.5 text-[11px]"
+                onClick={() => void discoverModels()}
+                disabled={modelDiscoveryBusy}
+              >
+                {modelDiscoveryBusy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                {t('preferences.agent.modelId.discover')}
+              </Button>
+            )}
+            {modelDiscoveryError && (
+              <span className="truncate text-[var(--destructive)]" title={modelDiscoveryError}>
+                {modelDiscoveryError}
+              </span>
+            )}
+          </div>
         </Field>
 
         {/* 3. Base URL(原"API 地址")。

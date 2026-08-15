@@ -11,9 +11,17 @@ const reactActEnvironment = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 
-function TestPopover({ open, onExitComplete }: { open: boolean; onExitComplete?: () => void }) {
+function TestPopover({
+  open,
+  onExitComplete,
+  onOpenChange = vi.fn(),
+}: {
+  open: boolean;
+  onExitComplete?: () => void;
+  onOpenChange?: (open: boolean) => void;
+}) {
   return (
-    <Popover open={open} onOpenChange={vi.fn()}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <button type="button">Toggle</button>
       </PopoverTrigger>
@@ -70,5 +78,18 @@ describe('PopoverContent motion lifecycle', () => {
     await act(async () => vi.advanceTimersByTime(1));
     expect(document.body.querySelector('.flowix-popover-content')).toBeNull();
     expect(onExitComplete).toHaveBeenCalledOnce();
+  });
+
+  it('closes on pointerdown outside the trigger and content', async () => {
+    const onOpenChange = vi.fn();
+    await act(async () => root.render(createElement(TestPopover, { open: true, onOpenChange })));
+
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    await act(async () => {
+      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

@@ -36,6 +36,28 @@ export interface RunStartParams {
   prompt: { text: string }
 }
 
+export interface RuntimeDisposeParams {
+  threadId: string
+}
+
+/** One `models.discover` interrogation: the draft endpoint the user is editing. */
+export interface ModelDiscoverParams {
+  /** Route the draft edits, when it edits a catalog-known one. */
+  provider?: string
+  /** Endpoint to interrogate; required when no catalog route answers. */
+  baseUrl?: string
+  /** Wire protocol the draft names; defaults to OpenAI Chat Completions. */
+  api?: 'openai-completions' | 'openai-responses' | 'anthropic-messages'
+  /** One-shot probe credential; the host never stores it. */
+  apiKey?: string
+}
+
+/** One `models.resolve` query for an exact provider/model route. */
+export interface ModelResolveParams {
+  provider: string
+  model: string
+}
+
 export type HostEvent =
   | { type: 'runtime.started'; sessionId: string }
   | { type: 'runtime.stopped'; reason?: string }

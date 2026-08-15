@@ -8,8 +8,11 @@ import {
   requireRuntimeSpec,
   requireThread,
   requireThreadRun,
+  requireModelDiscover,
+  requireModelResolve,
 } from './protocol/validation.ts'
 import { SessionPool } from './runtime/session-pool.ts'
+import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
 
 let writeChain = Promise.resolve()
 function writeFrame(frame: unknown): void {
@@ -34,7 +37,16 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
         protocolVersion: HOST_PROTOCOL_VERSION,
         host: { name: 'flowix-dsh-host', version: '1.0.0' },
         harness: { commit: '47f943859bef60e4160492346772ded9b24f765a', version: '0.1.0-rc.5' },
-        capabilities: ['streaming', 'reasoning', 'tools', 'usage', 'session-resume', 'cancel-by-restart'],
+        capabilities: [
+          'streaming',
+          'reasoning',
+          'tools',
+          'usage',
+          'session-resume',
+          'cancel-by-restart',
+          'model-catalog',
+          'model-discovery',
+        ],
       }
     case 'host.ping': return { ok: true }
     case 'runtime.ensure': return await pool.ensure(requireRuntimeSpec(request.params))
@@ -46,6 +58,34 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
     case 'run.cancel': {
       const params = requireThreadRun(request.params)
       return { cancelled: await pool.cancel(params.threadId, params.runId) }
+    }
+    case 'models.catalog': return { providers: catalog() }
+    case 'models.discover': {
+      const params = requireModelDiscover(request.params)
+      const models = await discover({
+        ...(params.provider === undefined ? {} : { provider: params.provider }),
+        ...(params.baseUrl === undefined ? {} : { baseURL: params.baseUrl }),
+        ...(params.api === undefined ? {} : { api: params.api }),
+        ...(params.apiKey === undefined ? {} : { apiKey: params.apiKey }),
+      })
+      return { models }
+    }
+    case 'models.resolve': {
+      // Catalog routes resolve synchronously from the same registry that
+      // answers `models.catalog`; an unknown route is a coded failure, not a
+      // protocol one.
+      const params = requireModelResolve(request.params)
+      const hit = resolveCatalogModel(params.provider, params.model)
+      if (hit === undefined) {
+        throw new ProtocolInputError(-32602, `provider "${params.provider}" does not list model "${params.model}" in its catalog`)
+      }
+      return {
+        provider: params.provider,
+        model: hit.id,
+        ...(hit.name === undefined ? {} : { name: hit.name }),
+        ...(hit.contextWindow === undefined ? {} : { contextWindow: hit.contextWindow }),
+        ...(hit.maxTokens === undefined ? {} : { maxTokens: hit.maxTokens }),
+      }
     }
     case 'host.shutdown':
       await pool.close()
@@ -86,4 +126,3 @@ input.on('line', line => {
 input.on('close', () => { void pool.close().finally(() => process.exit(0)) })
 process.on('SIGTERM', () => { void pool.close().finally(() => process.exit(0)) })
 process.on('SIGINT', () => { void pool.close().finally(() => process.exit(130)) })
-

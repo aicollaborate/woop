@@ -63,6 +63,15 @@ pub fn run_start_request(id: u64, thread_id: &str, run_id: &str, prompt: &str) -
     })
 }
 
+pub fn runtime_dispose_request(id: u64, thread_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "runtime.dispose",
+        "params": { "threadId": thread_id }
+    })
+}
+
 pub fn run_cancel_request(id: u64, thread_id: &str, run_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -74,6 +83,27 @@ pub fn run_cancel_request(id: u64, thread_id: &str, run_id: &str) -> Value {
 
 pub fn shutdown_request(id: u64) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "method": "host.shutdown", "params": {} })
+}
+
+pub fn models_catalog_request(id: u64) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "models.catalog", "params": {} })
+}
+
+pub fn models_discover_request(
+    id: u64,
+    provider: Option<&str>,
+    base_url: &str,
+    api: &str,
+    api_key: Option<&str>,
+) -> Value {
+    let mut params = json!({ "baseUrl": base_url, "api": api });
+    if let Some(provider) = provider {
+        params["provider"] = json!(provider);
+    }
+    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
+        params["apiKey"] = json!(api_key);
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "method": "models.discover", "params": params })
 }
 
 pub fn response_result(message: &Value) -> Option<Result<Value, String>> {
@@ -290,11 +320,7 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
         }
         "run.error" => AdaptedEvent::Chunk(AgentChunk::Error {
             thread_id,
-            message: event
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("DeepSeek Harness run failed")
-                .to_string(),
+            message: visible_error_message(event),
         }),
         "run.completed" => AdaptedEvent::Completed(
             event
@@ -303,6 +329,22 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                 .map(str::to_string),
         ),
         _ => AdaptedEvent::Ignore,
+    }
+}
+
+fn visible_error_message(event: &Value) -> String {
+    let message = event
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("DeepSeek Harness run failed");
+    let code = event
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    match code {
+        Some(code) => format!("[{code}] {message}"),
+        None => message.to_string(),
     }
 }
 
@@ -390,6 +432,25 @@ mod tests {
                 }),
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn keeps_run_error_code_visible_to_the_user() {
+        let event = json!({
+            "method": "run.event",
+            "params": {
+                "event": {
+                    "type": "run.error",
+                    "message": "Request timed out.",
+                    "code": "TIMEOUT"
+                }
+            }
+        });
+        assert!(matches!(
+            adapt_event(&event, "thread-1"),
+            AdaptedEvent::Chunk(AgentChunk::Error { message, .. })
+                if message == "[TIMEOUT] Request timed out."
         ));
     }
 }

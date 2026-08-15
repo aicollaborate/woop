@@ -84,6 +84,38 @@ export const aiConfig = {
     invoke<TestConnectionResult>('test_ai_connection', { config }),
 };
 
+/** DeepSeek Harness model probe. This uses dsh-host/runtime and is separate
+ * from the Flowix Agent provider probe above. */
+export const deepseekHarness = {
+  testConnection: (config: AgentConfig) =>
+    invoke<TestConnectionResult>('test_deepseek_harness_connection', { config }),
+  modelCatalog: () =>
+    invoke<DeepSeekHarnessModelCatalog>('deepseek_harness_model_catalog'),
+  discoverModels: (config: AgentConfig) =>
+    invoke<DeepSeekHarnessModelListing>('discover_deepseek_harness_models', { config }),
+};
+
+export interface DeepSeekHarnessModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+export interface DeepSeekHarnessCatalogProvider {
+  provider: string;
+  takesApiKey: boolean;
+  models: DeepSeekHarnessModel[];
+}
+
+export interface DeepSeekHarnessModelCatalog {
+  providers: DeepSeekHarnessCatalogProvider[];
+}
+
+export interface DeepSeekHarnessModelListing {
+  models: DeepSeekHarnessModel[];
+}
+
 // Agent access roots (backend ~/.flowix/agent-access.json).
 // Source of truth is `agent_access::AgentAccessStore`; it mirrors notebooks and user-added folders.
 // 鏁翠唤 set 鏇夸唬閫愭潯 patch, 閬垮厤鍓嶇瀵瑰崟鏉?entry 绠?diff; 鍐欐椂璧颁箰瑙傛洿鏂?
@@ -129,4 +161,3 @@ export const system = {
 };
 
 // Memos
-

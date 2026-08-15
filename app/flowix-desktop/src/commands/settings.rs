@@ -100,3 +100,29 @@ pub fn update_watcher_config(
 pub async fn test_ai_connection(config: AiModelConfig) -> TestConnectionResult {
     probe_chat(&config).await
 }
+
+/// Harness-specific model probe used only by the DeepSeek Harness preferences
+/// page. It intentionally does not replace `test_ai_connection`, which is the
+/// Flowix Agent provider probe.
+#[tauri::command]
+pub async fn test_deepseek_harness_connection(
+    config: AiModelConfig,
+    state: State<'_, AppState>,
+) -> Result<TestConnectionResult, String> {
+    Ok(state.deepseek_harness.test_connection(&config).await)
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_model_catalog(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state.deepseek_harness.model_catalog().await
+}
+
+#[tauri::command]
+pub async fn discover_deepseek_harness_models(
+    config: AiModelConfig,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state.deepseek_harness.discover_models(&config).await
+}

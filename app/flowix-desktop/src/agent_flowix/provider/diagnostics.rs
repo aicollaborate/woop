@@ -1,10 +1,11 @@
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use rllm::chat::{ChatRole, MessageType};
 use rllm::error::LLMError;
 use serde::{Deserialize, Serialize};
 
-use crate::agent_flowix::providers::OpenAICompatibleChatMessage;
+use crate::agent_flowix::providers::{OpenAICompatibleChatMessage, OpenAICompatibleStreamItem};
 use crate::config::AiModelConfig;
 
 #[cfg(test)]
@@ -134,9 +135,9 @@ pub(crate) async fn probe_chat(config: &AiModelConfig) -> TestConnectionResult {
         }
     };
 
-    // 3. Send the smallest possible prompt. `chat_with_tools(..., None)`
-    //    hits the same code path on every backend 鈥?no tool-specific
-    //    routing to worry about.
+    // 3. Send the smallest possible prompt through the streaming path. This
+    //    keeps the probe aligned with the transport used by the agent and
+    //    avoids a false positive from a non-streaming-only gateway.
     let messages = [OpenAICompatibleChatMessage {
         role: ChatRole::User,
         content: "ping".to_string(),
@@ -144,8 +145,37 @@ pub(crate) async fn probe_chat(config: &AiModelConfig) -> TestConnectionResult {
         reasoning: None,
     }];
 
-    let send = provider.chat_with_tools(&messages, None);
-    let outcome = match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), send).await {
+    // The real agent path is streaming. A non-streaming probe can report a
+    // false positive when a gateway accepts `/responses` but does not produce
+    // a usable SSE stream, so consume the complete stream here.
+    let stream = async {
+        let mut stream = provider.chat_stream_tagged(&messages, None).await?;
+        let mut summary = String::new();
+        let mut saw_assistant_output = false;
+        while let Some(item) = stream.next().await {
+            match item? {
+                OpenAICompatibleStreamItem::Text(text)
+                | OpenAICompatibleStreamItem::Reasoning(text) => {
+                    if !text.trim().is_empty() {
+                        saw_assistant_output = true;
+                    }
+                    if summary.chars().count() < 80 {
+                        let remaining = 80 - summary.chars().count();
+                        summary.extend(text.chars().take(remaining));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !saw_assistant_output {
+            return Err(LLMError::ProviderError(
+                "stream ended without assistant output".to_string(),
+            ));
+        }
+        Ok::<String, LLMError>(summary)
+    };
+    let outcome = match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), stream).await
+    {
         Ok(res) => Outcome::Finished(res),
         Err(_elapsed) => Outcome::TimedOut,
     };
@@ -153,19 +183,13 @@ pub(crate) async fn probe_chat(config: &AiModelConfig) -> TestConnectionResult {
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match outcome {
-        Outcome::Finished(Ok(resp)) => {
-            let summary = resp
-                .text()
-                .map(|t| t.chars().take(80).collect::<String>())
-                .unwrap_or_default();
-            TestConnectionResult {
-                ok: true,
-                latency_ms,
-                model_id,
-                summary,
-                error: None,
-            }
-        }
+        Outcome::Finished(Ok(summary)) => TestConnectionResult {
+            ok: true,
+            latency_ms,
+            model_id,
+            summary,
+            error: None,
+        },
         Outcome::Finished(Err(err)) => TestConnectionResult {
             ok: false,
             latency_ms,
@@ -188,9 +212,9 @@ pub(crate) async fn probe_chat(config: &AiModelConfig) -> TestConnectionResult {
     }
 }
 
-/// Internal outcome of the timed-out `chat_with_tools` call.
+/// Internal outcome of the timed-out streaming probe.
 enum Outcome {
-    Finished(Result<Box<dyn rllm::chat::ChatResponse>, LLMError>),
+    Finished(Result<String, LLMError>),
     TimedOut,
 }
 

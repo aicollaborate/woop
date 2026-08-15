@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, RunStartParams, RuntimeSpec } from './v1.ts'
+import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec } from './v1.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -74,6 +74,43 @@ export function requireThreadRun(value: unknown): { threadId: string; runId: str
   return {
     threadId: requireString(params.threadId, 'threadId'),
     runId: requireString(params.runId, 'runId'),
+  }
+}
+
+/** Optional string: absent or empty becomes `undefined`; never trims to a value. */
+function optionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  return value
+}
+
+/** Validate a `models.discover` draft. `discoverModels` re-checks the
+ *  catalog/baseURL pair; here only wire-shape errors are rejected so the
+ *  coded harness failures reach the caller intact. */
+export function requireModelDiscover(value: unknown): ModelDiscoverParams {
+  const params = requireRecord(value, 'models.discover params')
+  if (params.api !== undefined && !['openai-completions', 'openai-responses', 'anthropic-messages'].includes(params.api as string)) {
+    throw new ProtocolInputError(-32602, `unsupported api: ${String(params.api)}`)
+  }
+  const result: ModelDiscoverParams = {}
+  const provider = optionalString(params.provider)
+  const baseUrl = optionalString(params.baseUrl)
+  const api = params.api
+  const apiKey = optionalString(params.apiKey)
+  if (provider !== undefined) result.provider = provider
+  if (baseUrl !== undefined) result.baseUrl = baseUrl
+  if (api !== undefined) {
+    result.api = api as Exclude<ModelDiscoverParams['api'], undefined>
+  }
+  if (apiKey !== undefined) result.apiKey = apiKey
+  return result
+}
+
+/** Validate a `models.resolve` query for an exact route. */
+export function requireModelResolve(value: unknown): { provider: string; model: string } {
+  const params = requireRecord(value, 'models.resolve params')
+  return {
+    provider: requireString(params.provider, 'provider'),
+    model: requireString(params.model, 'model'),
   }
 }
 

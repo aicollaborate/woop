@@ -6,6 +6,7 @@ import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-o
 
 export interface MessageChunkMetadata {
   id?: string;
+  notice?: "deepseek-harness-reconnect-failed";
   phase?: "started" | "updated" | "completed";
   contentMode?: "delta" | "snapshot";
   sourceTimestamp?: number;
@@ -245,6 +246,7 @@ export function applyReasoningChunk(
 export function applyErrorChunk(
   st: LiveMessageState,
   message: string,
+  metadata: Pick<MessageChunkMetadata, "id" | "notice"> = {},
 ): ApplyResult {
   const closedMessages = st.pendingReasoningId
     ? st.messages.map((m) =>
@@ -255,10 +257,11 @@ export function applyErrorChunk(
     messages: [
       ...closedMessages,
       {
-        id: `error-${Date.now()}`,
+        id: metadata.id ?? `error-${Date.now()}`,
         role: "assistant",
         content: message,
         timestamp: new Date().toISOString(),
+        ...(metadata.notice ? { notice: metadata.notice } : {}),
       },
     ],
     pendingAssistantId: null,

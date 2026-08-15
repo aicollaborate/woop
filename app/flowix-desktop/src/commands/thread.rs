@@ -465,8 +465,8 @@ pub async fn deepseek_harness_thread_get_page(
         .unwrap_or(ThreadMessagesPage {
             messages: Vec::new(),
             oldest_sequence: None,
-        has_more: false,
-    }))
+            has_more: false,
+        }))
 }
 
 #[tauri::command]

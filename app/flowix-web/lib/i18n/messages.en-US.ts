@@ -209,6 +209,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.agent.provider.minimaxCodingPlan": "MiniMax Coding Plan",
     "preferences.agent.provider.glmCodingPlan": "GLM Coding Plan",
     "preferences.agent.modelId.title": "Model ID",
+    "preferences.agent.modelId.discover": "Get models",
     "preferences.agent.modelId.placeholder":
       "e.g. deepseek-v4-flash, deepseek-v4-pro, gpt-5.5",
     "preferences.agent.baseUrl.title": "Base URL",
@@ -580,6 +581,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "agent.claudeSession.title": "Claude Code session",
     "agent.deepseekHarnessSession.title": "DeepSeek Harness session",
     "agent.deepseekHarnessChat.title": "DeepSeek Harness Chat",
+    "agent.deepseekHarness.reconnectFailed": "DeepSeek Harness reconnect failed",
+    "agent.deepseekHarness.failureReason": "Failure reason: {reason}",
     "agent.opencodeSession.title": "OpenCode session",
     "agent.hermesSession.title": "Hermes session",
     "agent.geminiSession.title": "Gemini CLI session",

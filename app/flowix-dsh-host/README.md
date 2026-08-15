@@ -18,18 +18,29 @@ The complete pinned upstream snapshot is under
 
 ## Build
 
-Install both dependency closures once:
+Install the root dependency tree and the vendored Harness dependency closure
+once:
 
 ```bash
-npm --prefix dsh-host ci
-npm --prefix dsh-host run vendor:install
+npm install
+npm --prefix app/flowix-dsh-host run vendor:install
 ```
+
+The host package uses the root `esbuild` and `@yao-pkg/pkg` installations.
+The vendored Harness tree intentionally keeps its own pnpm-managed
+`node_modules` because its workspace and runtime package resolution are
+independent from Flowix's root npm tree.
 
 Build and stage native sidecars for the current host:
 
 ```bash
 npm run dsh:build
 ```
+
+Root Tauri builds call the sidecar build once before packaging, while
+`npm run tauri:dev` rebuilds the development host before starting Tauri. This
+prevents an old `target/debug/dsh-host` sidecar from shadowing the current host
+implementation.
 
 On macOS, the production build uses `npm run dsh:build:macos` to stage both
 Apple Silicon and Intel products. The resulting target-triple filenames live
@@ -38,8 +49,9 @@ builder deploys the upstream generic runtime, prunes it to the transitive graph
 rooted at Flowix's Cordis composition, packages the host and runtime roles into one SEA, strips
 local symbols, and signs the final Mach-O.
 
-For host-only development, run `npm --prefix dsh-host run build`. Rust falls
-back to `dsh-host/dist/dsh-host.cjs` when no packaged sidecar is available.
+For host-only development, run `npm --prefix app/flowix-dsh-host run build`.
+The generated host is written to `.build/flowix-dsh-host/dsh-host.cjs`; Rust
+uses it when no packaged sidecar is available.
 The dev Tauri config intentionally does not require DSH externalBin files;
 build `dsh-host` plus the vendored runtime when testing DSH locally. Production
 configs add all target-triple sidecars automatically.
@@ -107,9 +119,9 @@ The Host and runtime environment deliberately do not forward `SSH_AUTH_SOCK`.
 ## Verification
 
 ```bash
-npm --prefix dsh-host run check
-npm --prefix dsh-host run test:e2e
-npm --prefix dsh-host run test:sidecar:e2e
+npm --prefix app/flowix-dsh-host run check
+npm --prefix app/flowix-dsh-host run test:e2e
+npm --prefix app/flowix-dsh-host run test:sidecar:e2e
 cargo test -p flowix-desktop deepseek_harness --lib
 ```
 

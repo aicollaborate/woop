@@ -30,6 +30,7 @@ pub struct AppState {
     pub search: RwLock<MemoIndex>,
     pub agent_manager: Arc<AgentManager>,
     pub external_runtimes: Arc<ExternalRuntimeRegistry>,
+    pub deepseek_harness: Arc<crate::agent_external::deepseek_harness::DeepSeekHarnessManager>,
     pub thread_manager: Arc<ThreadManager>,
     /// Agent �??�?���?(notebook + 用户�?���?folder), 持久化在
     /// `~/.flowix/agent-access.json`。驱�?[`crate::agent_flowix::tools::ToolScope`]

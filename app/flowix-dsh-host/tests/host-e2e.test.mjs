@@ -9,7 +9,7 @@ test('host drives the official SDK client across a runtime process', async () =>
   const root = resolve(import.meta.dirname, '..')
   const fixture = resolve(root, 'tests/fixture-runtime.mjs')
   await chmod(fixture, 0o755)
-  const child = spawn(process.execPath, [resolve(root, 'dist/dsh-host.cjs')], {
+  const child = spawn(process.execPath, [resolve(root, '../../.build/flowix-dsh-host/dsh-host.cjs')], {
     cwd: root,
     env: {
       ...process.env,

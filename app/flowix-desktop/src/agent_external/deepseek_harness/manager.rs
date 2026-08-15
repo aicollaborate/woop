@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
@@ -13,6 +14,9 @@ use crate::agent_external::{
     append_workspace_context, emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
     persist_external_chunk_for_thread_with_metadata, resolve_and_freeze_runtime_cwd,
     AgentChunkMetadata, StreamingEmitBuffer, STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
+};
+use crate::agent_flowix::provider::{
+    TestConnectionError, TestConnectionErrorKind, TestConnectionResult,
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::ThreadManager;
@@ -131,6 +135,21 @@ fn normalize_provider(provider: &str) -> String {
         .collect()
 }
 
+fn catalog_provider_id(provider: &str) -> Option<&'static str> {
+    match normalize_provider(provider).as_str() {
+        "anthropic" | "claude" => Some("anthropic"),
+        "deepseek" => Some("deepseek"),
+        "openrouter" => Some("openrouter"),
+        "ollama" => Some("ollama"),
+        "openai"
+        | "openairesponses"
+        | "openairesponsesapi"
+        | "responsesapi"
+        | "openaichatcompletions" => Some("openai"),
+        _ => None,
+    }
+}
+
 pub struct DeepSeekHarnessManager {
     thread_manager: Arc<ThreadManager>,
     user_config: Arc<UserConfigStore>,
@@ -139,6 +158,8 @@ pub struct DeepSeekHarnessManager {
     host_api_key: Mutex<Option<String>>,
     active: Mutex<HashMap<String, ActiveRun>>,
 }
+
+const HARNESS_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[async_trait::async_trait]
 impl ExternalLifecycleEmitter for DeepSeekHarnessManager {
@@ -193,6 +214,213 @@ impl DeepSeekHarnessManager {
             host_api_key: Mutex::new(None),
             active: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Run the model probe through the actual DeepSeek Harness runtime.
+    ///
+    /// This is intentionally separate from Flowix's provider probe. It uses
+    /// an ephemeral Harness thread with the minimal preset and read-only
+    /// permissions, and never writes the user's model configuration.
+    pub async fn test_connection(&self, config: &AiModelConfig) -> TestConnectionResult {
+        let started = Instant::now();
+        let model_id = config.model.trim().to_string();
+        let runtime_config = match resolve_runtime_config(config, None) {
+            Ok(value) => value,
+            Err(error) => {
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    if error.contains("does not yet support") {
+                        TestConnectionErrorKind::UnsupportedProvider
+                    } else {
+                        TestConnectionErrorKind::BadConfig
+                    },
+                    error,
+                )
+            }
+        };
+
+        let host =
+            match tokio::time::timeout(HARNESS_PROBE_TIMEOUT, self.ensure_host(&runtime_config))
+                .await
+            {
+                Ok(Ok(host)) => host,
+                Ok(Err(error)) => {
+                    return harness_probe_failure(
+                        &model_id,
+                        started,
+                        TestConnectionErrorKind::Other,
+                        error,
+                    )
+                }
+                Err(_) => {
+                    return harness_probe_failure(
+                        &model_id,
+                        started,
+                        TestConnectionErrorKind::NetworkUnreachable,
+                        format!(
+                            "DeepSeek Harness did not start within {}s",
+                            HARNESS_PROBE_TIMEOUT.as_secs()
+                        ),
+                    )
+                }
+            };
+
+        let probe_id = uuid::Uuid::new_v4().to_string();
+        let thread_id = format!("flowix-harness-probe-{probe_id}");
+        let session_id = format!("flowix-harness-probe-session-{probe_id}");
+        let run_id = format!("flowix-harness-probe-run-{probe_id}");
+        let cwd = std::env::temp_dir();
+
+        let ensure = protocol::runtime_ensure_request(
+            host.next_request_id(),
+            &thread_id,
+            &session_id,
+            &cwd.to_string_lossy(),
+            &[],
+            &runtime_config.provider,
+            &runtime_config.provider_name,
+            &runtime_config.api_protocol,
+            &runtime_config.base_url,
+            &runtime_config.model,
+            "minimal",
+            "read-only",
+        );
+        if let Err(error) = timed_host_request(&host, ensure).await {
+            dispose_probe_runtime(&host, &thread_id).await;
+            return harness_probe_failure(
+                &model_id,
+                started,
+                TestConnectionErrorKind::Other,
+                error,
+            );
+        }
+
+        let events = host.subscribe(&thread_id, &run_id).await;
+        let start = protocol::run_start_request(
+            host.next_request_id(),
+            &thread_id,
+            &run_id,
+            "Reply with exactly: HARNESS_OK",
+        );
+        if let Err(error) = timed_host_request(&host, start).await {
+            host.unsubscribe(&thread_id, &run_id).await;
+            dispose_probe_runtime(&host, &thread_id).await;
+            return harness_probe_failure(
+                &model_id,
+                started,
+                TestConnectionErrorKind::Other,
+                error,
+            );
+        }
+
+        let event_thread_id = thread_id.clone();
+        let outcome = tokio::time::timeout(HARNESS_PROBE_TIMEOUT, async move {
+            let mut events = events;
+            let mut summary = String::new();
+            let mut saw_output = false;
+            loop {
+                let Some(value) = events.recv().await else {
+                    return Err("DeepSeek Harness event stream closed".to_string());
+                };
+                match protocol::adapt_event(&value, &event_thread_id) {
+                    AdaptedEvent::Chunk(AgentChunk::Text { text, .. })
+                    | AdaptedEvent::Chunk(AgentChunk::Reasoning { text, .. }) => {
+                        if !text.trim().is_empty() {
+                            saw_output = true;
+                        }
+                        if summary.chars().count() < 80 {
+                            summary.extend(text.chars().take(80 - summary.chars().count()));
+                        }
+                    }
+                    AdaptedEvent::Chunk(AgentChunk::Error { message, .. }) => return Err(message),
+                    AdaptedEvent::Completed(reason) => {
+                        if reason.as_deref().unwrap_or("completed") != "completed" {
+                            return Err(format!(
+                                "DeepSeek Harness run ended: {}",
+                                reason.unwrap_or_else(|| "unknown".to_string())
+                            ));
+                        }
+                        if !saw_output {
+                            return Err("DeepSeek Harness returned no assistant output".to_string());
+                        }
+                        return Ok(summary);
+                    }
+                    AdaptedEvent::Ignore
+                    | AdaptedEvent::Chunk(AgentChunk::UserMessage { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::ToolCall { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::ToolResult { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::StreamStart { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::StreamEnd { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::SessionResolved { .. })
+                    | AdaptedEvent::Chunk(AgentChunk::Usage { .. }) => {}
+                }
+            }
+        })
+        .await;
+
+        host.unsubscribe(&thread_id, &run_id).await;
+        dispose_probe_runtime(&host, &thread_id).await;
+
+        match outcome {
+            Ok(Ok(summary)) => TestConnectionResult {
+                ok: true,
+                latency_ms: started.elapsed().as_millis() as u64,
+                model_id,
+                summary,
+                error: None,
+            },
+            Ok(Err(error)) => {
+                harness_probe_failure(&model_id, started, TestConnectionErrorKind::Other, error)
+            }
+            Err(_) => harness_probe_failure(
+                &model_id,
+                started,
+                TestConnectionErrorKind::NetworkUnreachable,
+                format!(
+                    "DeepSeek Harness did not finish within {}s",
+                    HARNESS_PROBE_TIMEOUT.as_secs()
+                ),
+            ),
+        }
+    }
+
+    /// Return the vendored llm-pi-ai catalog without requiring a configured
+    /// provider or API key. The response is static and contains no secrets.
+    pub async fn model_catalog(&self) -> Result<serde_json::Value, String> {
+        let (host, ephemeral) = self.model_host().await?;
+        let result = timed_host_request(
+            &host,
+            protocol::models_catalog_request(host.next_request_id()),
+        )
+        .await;
+        if ephemeral {
+            host.shutdown().await;
+        }
+        result
+    }
+
+    /// Discover models for the provider draft currently being edited. The key
+    /// is sent only in this one request and is never persisted by the host.
+    pub async fn discover_models(
+        &self,
+        config: &AiModelConfig,
+    ) -> Result<serde_json::Value, String> {
+        let runtime_config = resolve_runtime_config(config, None)?;
+        let provider = catalog_provider_id(&runtime_config.provider_name);
+        let (host, ephemeral) = self.model_host().await?;
+        let request = protocol::models_discover_request(
+            host.next_request_id(),
+            provider,
+            &runtime_config.base_url,
+            &runtime_config.api_protocol,
+            runtime_config.api_key.as_deref(),
+        );
+        let result = timed_host_request(&host, request).await;
+        if ephemeral {
+            host.shutdown().await;
+        }
+        result
     }
 
     pub async fn chat_stream(
@@ -430,6 +658,21 @@ impl DeepSeekHarnessManager {
         Ok(host)
     }
 
+    async fn model_host(&self) -> Result<(Arc<DshHostClient>, bool), String> {
+        if let Some(host) = self
+            .host
+            .lock()
+            .await
+            .as_ref()
+            .filter(|host| !host.is_closed())
+        {
+            return Ok((host.clone(), false));
+        }
+        std::fs::create_dir_all(&self.session_root)
+            .map_err(|error| format!("failed to create DSH session root: {error}"))?;
+        Ok((DshHostClient::spawn(None, &self.session_root).await?, true))
+    }
+
     pub async fn stop_chat(
         &self,
         thread_id: &str,
@@ -554,6 +797,39 @@ fn append_thinking_segments(
                 },
             ),
         }
+    }
+}
+
+async fn timed_host_request(
+    host: &Arc<DshHostClient>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match tokio::time::timeout(HARNESS_PROBE_TIMEOUT, host.request_value(request)).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "DeepSeek Harness request timed out after {}s",
+            HARNESS_PROBE_TIMEOUT.as_secs()
+        )),
+    }
+}
+
+async fn dispose_probe_runtime(host: &Arc<DshHostClient>, thread_id: &str) {
+    let request = protocol::runtime_dispose_request(host.next_request_id(), thread_id);
+    let _ = tokio::time::timeout(Duration::from_secs(2), host.request_value(request)).await;
+}
+
+fn harness_probe_failure(
+    model_id: &str,
+    started: Instant,
+    kind: TestConnectionErrorKind,
+    message: String,
+) -> TestConnectionResult {
+    TestConnectionResult {
+        ok: false,
+        latency_ms: started.elapsed().as_millis() as u64,
+        model_id: model_id.to_string(),
+        summary: String::new(),
+        error: Some(TestConnectionError { kind, message }),
     }
 }
 

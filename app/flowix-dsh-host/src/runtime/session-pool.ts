@@ -1,5 +1,9 @@
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
-import { adaptHarnessNotification, endReasonFromNotifications } from '../adapter/session-events.ts'
+import {
+  adaptHarnessNotification,
+  endReasonFromNotifications,
+  failureFromNotifications,
+} from '../adapter/session-events.ts'
 import type { HostEvent, RunEventNotification, RunStartParams, RuntimeSpec } from '../protocol/v1.ts'
 import { HOST_PROTOCOL_VERSION } from '../protocol/v1.ts'
 import { runtimeLaunch } from './environment.ts'
@@ -118,9 +122,20 @@ export class SessionPool {
         },
       })
       if (!marker.cancelled) {
+        const reason = endReasonFromNotifications(result.notifications)
+        const failure = failureFromNotifications(result.notifications)
+        if (failure !== undefined || reason === 'protocol_error') {
+          this.push(slot, marker.runId, {
+            type: 'run.error',
+            message: failure?.message ?? 'DeepSeek Harness turn ended with a protocol error',
+            ...(failure === undefined
+              ? { code: 'PROTOCOL_ERROR' }
+              : failure.code === undefined ? {} : { code: failure.code }),
+          })
+        }
         this.push(slot, marker.runId, {
           type: 'run.completed',
-          reason: endReasonFromNotifications(result.notifications),
+          reason,
         })
       }
     } catch (error) {

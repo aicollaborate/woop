@@ -201,6 +201,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool" | "reasoning" | "end";
   content: string;
+  /** Display-only notice kind for provider-specific runtime failures. */
+  notice?: "deepseek-harness-reconnect-failed";
   llmContent?: string;
   systemReminderDirectory?: string;
   systemReminderDocumentPath?: string;

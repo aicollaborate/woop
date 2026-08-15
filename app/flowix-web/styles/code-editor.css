@@ -99,6 +99,15 @@
 	color: color-mix(in oklch, var(--muted-foreground, #6b7280) 40%, transparent);
 }
 
+.code-editor .cm-foldGutter .cm-gutterElement > span {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.code-editor .cm-gutters:hover .cm-foldGutter .cm-gutterElement > span {
+	opacity: 0.5;
+}
+
 .code-editor .cm-cursor,
 .code-editor .cm-dropCursor {
 	border-left-color: var(--foreground, #1f2937);

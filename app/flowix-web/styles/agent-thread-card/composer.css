@@ -40,6 +40,11 @@
   gap: 5px;
   align-self: end;
   width: calc(100% - 24px);
+  /* 这是 container 的 grid item; min-width:auto 会把 textarea 的
+   * content-sized min-content 宽度带回 grid，长连续字符串因此可能把
+   * composer 撑出卡片。明确允许它在 grid track 内收缩。 */
+  min-width: 0;
+  max-width: calc(100% - 24px);
   margin: 0 0.8rem 0.6rem;
   padding: 0.4rem 0.4rem 0.4rem 0.8rem;
   border: 1px solid var(--border);
@@ -199,13 +204,20 @@
 .markdown-editor .agent-thread-card__composer textarea {
   display: block;
   flex: 1 1 0;
+  /* field-sizing: content 保留用于纵向自动增高；width:0 让 flex
+   * 从可收缩的基准宽度开始分配空间，避免内容的固有宽度参与横向布局。 */
+  width: 0;
   min-width: 0;
+  max-width: 100%;
   min-height: 1rem;
   max-height: calc(var(--atc-composer-max-h) - 8px - var(--atc-bottom-pad));
   height: auto;
   field-sizing: content;
   resize: none;
+  overflow-x: hidden;
   overflow-y: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -253,4 +265,3 @@
 .agent-thread-card__access-trigger--open {
   color: var(--foreground);
 }
-
