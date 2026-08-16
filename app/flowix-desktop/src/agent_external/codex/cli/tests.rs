@@ -38,6 +38,41 @@ fn formats_empty_codex_failure_without_trailing_separator() {
 }
 
 #[test]
+fn formats_codex_failure_stripping_inline_body_dump() {
+    let message = format_codex_failure(
+        "exit status: 1",
+        "2026-08-16T11:28:20Z ERROR codex_models_manager::manager: failed to refresh available \
+         models: missing field `models` at line 1 column 152907; body: {\"object\":\"list\",\
+         \"data\":[{\"id\":\"alibaba/happyhorse-1.0\",\"name\":\"HappyHorse 1.0\"}]}",
+    );
+
+    assert!(message.contains("failed to refresh available models"));
+    assert!(message.contains("missing field `models`"));
+    assert!(!message.contains("body:"));
+    assert!(!message.contains("\"object\":\"list\""));
+}
+
+#[test]
+fn strip_codex_stderr_dump_keeps_plain_detail() {
+    assert_eq!(
+        strip_codex_stderr_dump("plain stderr line without body"),
+        "plain stderr line without body"
+    );
+}
+
+#[test]
+fn strip_codex_stderr_dump_removes_body_marker_variants() {
+    assert_eq!(
+        strip_codex_stderr_dump("msg failed; body: {\"a\":1}"),
+        "msg failed"
+    );
+    assert_eq!(
+        strip_codex_stderr_dump("msg failed body: {\"a\":1}"),
+        "msg failed"
+    );
+}
+
+#[test]
 fn normalizes_supported_permission_modes() {
     assert_eq!(
         normalized_permission_mode(Some("read-only")),

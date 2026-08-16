@@ -708,6 +708,37 @@ fn maps_new_codex_error_events_to_error_chunks() {
 }
 
 #[test]
+fn unwraps_json_encoded_error_envelope_to_its_message() {
+    let error = serde_json::json!({
+        "type": "turn.failed",
+        "error": {
+            "message": "{\"error\":{\"code\":null,\"message\":\"Invalid 'input[5].id': '06b0914e_msg'. Expected an ID that begins with 'msg'.\",\"param\":null,\"type\":\"invalid_request_error\"}}"
+        }
+    });
+
+    let chunks = codex_event_to_chunks("thread_1", &error);
+    assert!(matches!(
+        chunks.as_slice(),
+        [AgentChunk::Error { message, .. }]
+            if message == "Invalid 'input[5].id': '06b0914e_msg'. Expected an ID that begins with 'msg'."
+    ));
+}
+
+#[test]
+fn leaves_plain_codex_error_messages_untouched() {
+    let error = serde_json::json!({
+        "type": "error",
+        "message": "fatal transport error"
+    });
+
+    let chunks = codex_event_to_chunks("thread_1", &error);
+    assert!(matches!(
+        chunks.as_slice(),
+        [AgentChunk::Error { message, .. }] if message == "fatal transport error"
+    ));
+}
+
+#[test]
 fn maps_codex_token_count_to_usage_chunk() {
     let value = serde_json::json!({
         "type": "event_msg",

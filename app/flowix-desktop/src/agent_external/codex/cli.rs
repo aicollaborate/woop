@@ -389,7 +389,7 @@ impl CodexCliManager {
 }
 
 fn format_codex_failure(status: &str, detail: &str) -> String {
-    let detail = detail.trim();
+    let detail = strip_codex_stderr_dump(detail);
     if detail.is_empty() {
         return format!("Codex CLI exited with status {status}");
     }
@@ -403,6 +403,22 @@ fn format_codex_failure(status: &str, detail: &str) -> String {
         ));
     }
     message
+}
+
+/// Codex CLI 的 stderr 在 models refresh 失败等场景会把上游返回的整段 JSON
+/// 原样 inline 成 `... ; body: {"object":"list","data":[...]}`, 一段就能上百
+/// KB。`body:` 之后是诊断噪音, 不参与用户可读 message, 这里切掉只留前半段。
+fn strip_codex_stderr_dump(detail: &str) -> String {
+    let detail = detail.trim();
+    if detail.is_empty() {
+        return String::new();
+    }
+    // `; body: {json}` 是 codex_models_manager 的固定格式; ` body: {json}` 兜底。
+    let cut = detail
+        .find("; body:")
+        .or_else(|| detail.find(" body: {"))
+        .unwrap_or(detail.len());
+    detail[..cut].trim_end().to_string()
 }
 
 #[cfg(test)]

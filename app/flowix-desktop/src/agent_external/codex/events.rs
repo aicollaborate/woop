@@ -163,7 +163,7 @@ pub fn codex_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> 
         ],
         CodexEvent::Error { message } => vec![AgentChunk::Error {
             thread_id: thread_id.to_string(),
-            message,
+            message: normalize_codex_error_message(message),
         }],
     }
 }
@@ -455,6 +455,45 @@ fn is_transient_codex_status_message(message: &str) -> bool {
         || normalized.contains("reconnect")
         || normalized.contains("retrying")
         || normalized.contains("temporarily unavailable")
+}
+
+/// Codex 的 `turn.failed` / `error` 事件的 `message` 有时是「被 JSON 编码的
+/// 错误信封」，例如
+/// `{"error":{"code":null,"message":"Invalid 'input[5].id': ...","type":"invalid_request_error"}}`。
+/// 直接把整段 JSON 当 message 上屏会把 code/param/type 等噪音暴露给用户。
+/// 这里若 message 能解析为 JSON 对象且含 `error.message` / `message` /
+/// `error` / `detail`，就收敛成那段可读文本；否则原样返回，不丢信息。
+fn normalize_codex_error_message(message: String) -> String {
+    let trimmed = message.trim();
+    if !(trimmed.starts_with('{') && trimmed.ends_with('}')) {
+        return message;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return message;
+    };
+    pick_codex_error_message(&value).unwrap_or(message)
+}
+
+/// 常见 provider 错误信封里取 message 的优先级：`error.message` 优先，兜底
+/// 顶层 `message`、`error` 字符串、`detail`。
+fn pick_codex_error_message(value: &serde_json::Value) -> Option<String> {
+    let error = value.get("error");
+    if let Some(msg) = error
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+    {
+        return Some(msg.to_string());
+    }
+    if let Some(msg) = value.get("message").and_then(|m| m.as_str()) {
+        return Some(msg.to_string());
+    }
+    if let Some(msg) = error.and_then(|e| e.as_str()) {
+        return Some(msg.to_string());
+    }
+    if let Some(msg) = value.get("detail").and_then(|d| d.as_str()) {
+        return Some(msg.to_string());
+    }
+    None
 }
 
 fn message_text(payload: &Value) -> Option<String> {
