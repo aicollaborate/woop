@@ -1,8 +1,8 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { ChevronDown, MoreHorizontal, RefreshCw } from 'lucide-react';
-import { CaretRightIcon, FolderSimpleIcon } from '@phosphor-icons/react';
+import { ChevronDown, MoreHorizontal } from 'lucide-react';
+import { ArrowClockwiseIcon, CaretRightIcon, FolderSimpleIcon, MinusSquareIcon } from '@phosphor-icons/react';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { files, type DocTreeItem } from '@platform/tauri/client';
@@ -28,7 +28,7 @@ import {
 import { FileTypeIcon } from '@features/memo/components/file-type-icon';
 import { useI18n } from '@/lib/i18n';
 
-const TREE_EDGE_GUTTER = 8;
+const TREE_EDGE_GUTTER = 6;
 const ITEM_INLINE_PADDING = 6;
 const ITEM_ICON_SIZE = 16;
 const INDENT_PER_LEVEL = 20;
@@ -60,6 +60,9 @@ export function FolderFileTree({
   // 新建/重命名行的受控输入态: null = 无进行中的行内编辑。
   const [draftRow, setDraftRow] = useState<{ parentPath: string; kind: 'file' | 'folder'; value: string } | null>(null);
   const [renaming, setRenaming] = useState<{ item: DocTreeItem; value: string } | null>(null);
+  // 「…」按钮下拉采用受控单开: 同一时刻只允许一个行菜单展开,
+  // 点击其他按钮 / 其他位置时由 DropdownMenu 的 pointerdown 收起逻辑驱动 onOpenChange(false)。
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const currentDocumentPath = useDocumentStore((s) => s.currentDocumentPath);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
@@ -83,6 +86,18 @@ export function FolderFileTree({
   useEffect(() => {
     if (currentDocumentPath) setActiveFilePath(currentDocumentPath);
   }, [currentDocumentPath]);
+
+  // 滚动 / 缩放时收起「…」下拉 (对齐右键菜单的消失逻辑, DropdownMenu 自身不含此逻辑)。
+  useEffect(() => {
+    if (!openMenuId) return;
+    const close = () => setOpenMenuId(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [openMenuId]);
 
   const visibleNodes = useMemo(() => flattenVisibleTree(tree), [tree]);
 
@@ -237,7 +252,7 @@ export function FolderFileTree({
                 }
               }}
               className={cn(
-                'folder-file-tree__item group flex h-8 items-center rounded-[10px] px-1.5 text-left text-sm font-normal leading-[1.6] text-[var(--foreground)] transition-colors duration-150',
+                'folder-file-tree__item group flex h-8 items-center rounded-[10px] px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
                 isFolder || openable ? 'cursor-pointer' : 'cursor-default',
                 isActive
                   ? 'bg-[var(--muted)]'
@@ -293,7 +308,10 @@ export function FolderFileTree({
                   <span className="ml-1.5 min-w-0 flex-1 truncate">
                     {item.name}
                   </span>
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenuId === item.id}
+                    onOpenChange={(open) => setOpenMenuId(open ? item.id : null)}
+                  >
                     <DropdownMenuTrigger
                       asChild
                       onClick={(event) => event.stopPropagation()}
@@ -310,24 +328,43 @@ export function FolderFileTree({
                         <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" side="bottom" className="w-[160px] px-1 py-1">
+                    <DropdownMenuContent align="end" side="bottom" className="w-[168px] space-y-1 px-1 py-1.5">
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
-                        className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
                       >
                         {t('memo.fileTree.newDocument')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'folder', value: '' })}
-                        className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
                       >
                         {t('memo.fileTree.newFolder')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setRenaming({ item, value: item.name })}
-                        className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
                       >
                         {t('memo.fileTree.rename')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => void handleCopyPath(item)}
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                      >
+                        {t('memo.fileTree.copyPath')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleReveal(item)}
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                      >
+                        {t('memo.fileTree.reveal')}
+                      </DropdownMenuItem>
+                      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+                      <DropdownMenuItem
+                        onClick={() => void handleDelete(item)}
+                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+                      >
+                        {t('memo.fileTree.delete')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -336,33 +373,23 @@ export function FolderFileTree({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-[168px] space-y-1 px-1 py-1.5">
-            {isFolder && (
-              <>
-                <ContextMenuItem
-                  onClick={() => setDraftRow({ parentPath: item.fullPath, kind: 'file', value: '' })}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
-                >
-                  {t('memo.fileTree.newDocument')}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  onClick={() => setDraftRow({ parentPath: item.fullPath, kind: 'folder', value: '' })}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
-                >
-                  {t('memo.fileTree.newFolder')}
-                </ContextMenuItem>
-              </>
-            )}
+            <ContextMenuItem
+              onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
+              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+            >
+              {t('memo.fileTree.newDocument')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'folder', value: '' })}
+              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+            >
+              {t('memo.fileTree.newFolder')}
+            </ContextMenuItem>
             <ContextMenuItem
               onClick={() => setRenaming({ item, value: item.name })}
               className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
             >
               {t('memo.fileTree.rename')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => void handleDelete(item)}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
-            >
-              {t('memo.fileTree.delete')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => void handleCopyPath(item)}
@@ -375,6 +402,13 @@ export function FolderFileTree({
               className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
             >
               {t('memo.fileTree.reveal')}
+            </ContextMenuItem>
+            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+            <ContextMenuItem
+              onClick={() => void handleDelete(item)}
+              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+            >
+              {t('memo.fileTree.delete')}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -460,7 +494,16 @@ export function FolderFileTree({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-0 shrink-0">
+          <button
+            type="button"
+            aria-label={t('memo.fileTree.collapseAll')}
+            title={t('memo.fileTree.collapseAll')}
+            onClick={() => tree.collapseAll()}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+          >
+            <MinusSquareIcon aria-hidden="true" size={14} weight="bold" />
+          </button>
           <button
             type="button"
             aria-label={t('memo.fileTree.refresh')}
@@ -469,14 +512,14 @@ export function FolderFileTree({
             onClick={() => void tree.reload()}
             className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:cursor-default disabled:opacity-50"
           >
-            <RefreshCw aria-hidden="true" className={cn('h-3.5 w-3.5', tree.loading && 'animate-spin')} />
+            <ArrowClockwiseIcon aria-hidden="true" size={14} weight="bold" className={cn(tree.loading && 'animate-spin')} />
           </button>
           {tree.loading && (
             <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border border-[var(--muted-foreground)]/40 border-t-transparent" />
           )}
         </div>
       </div>
-      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="h-full overflow-y-auto py-1">
+      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="h-full overflow-y-auto">
         {visibleNodes.length === 0 && !tree.loading && (
           <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">
             {tree.error ? t('memo.fileTree.unreadableHint') : t('memo.fileTree.empty')}

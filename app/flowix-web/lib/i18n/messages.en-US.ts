@@ -720,14 +720,11 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "agent.mode.code": "PTC mode",
     "agent.mode.minimal": "Minimal mode",
     "agent.mode.cordis": "Creator mode",
-    "agent.mode.standard.description":
-      "Full coding agent with file editing, shell, file and web search, skills, planning, goals, subagents, and workflows.",
-    "agent.mode.code.description":
-      "All Standard mode capabilities, with tools exposed through the Code Mode SDK so the model can combine multi-step operations in one TypeScript program.",
-    "agent.mode.minimal.description":
-      "Two-tool coding agent with persistent bash and str_replace_editor.",
+    "agent.mode.standard.description": "Office or coding",
+    "agent.mode.code.description": "Standard mode capabilities + workflows",
+    "agent.mode.minimal.description": "bash + editor dual tools",
     "agent.mode.cordis.description":
-      "Built for creating custom agent presets, with all Standard mode capabilities plus runtime inspection, plugin experiments, and preset-authoring guidance.",
+      "Standard mode + plugin experimentation/design",
     "agent.reasoning.title": "Reasoning",
     "agent.files.title": "Files",
     "agent.menu.skills": "Skills",
@@ -829,6 +826,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     // 资料文件夹文件树 (中间列, VSCode 风格)
     "memo.fileTree.backToList": "Back to list",
     "memo.fileTree.refresh": "Refresh file tree",
+    "memo.fileTree.collapseAll": "Collapse all folders",
     "memo.fileTree.empty": "Empty folder",
     "memo.fileTree.unreadable": "Unreadable",
     "memo.fileTree.unreadableHint": "Folder cannot be read (it may have been moved or deleted)",

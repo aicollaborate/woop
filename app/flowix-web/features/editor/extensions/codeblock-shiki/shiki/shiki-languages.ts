@@ -3,7 +3,7 @@
 // 取代 shiki 的全量 bundledLanguages / bundledThemes。全量会把 119 种语言
 // grammar + 44 套主题全部打进前端包 (桌面端整体内嵌进二进制), 而实际常用
 // 的只有几十种。这里改为「显式 import 谁, 谁才进包」的细粒度方案:
-//   - 主题: 4 套, 与 codeblock-shiki.ts 的 PRELOADED_SHIKI_THEMES 一一对应。
+//   - 主题: 2 套 (github-light 亮 / github-dark 暗), 与 codeblock-shiki.ts 的 PRELOADED_SHIKI_THEMES 一一对应。
 //   - 语言: 按使用频率精选 ~30 种; 未列入的冷门语言走 plaintext 降级。
 //
 // 每个 import 会把对应 grammar / theme 静态打进包, 未 import 的不会进入
@@ -11,11 +11,9 @@
 // loadLanguage 时依据 registration 的 `aliases` 字段自动登记, getLoadedLanguages()
 // 会同时返回 canonical 名 + 别名, 因此 ```js / ```sh 这类 fence 照常高亮。
 
-// 主题 ── 4 套。
+// 主题 ── 2 套 (亮/暗)。
 import githubLight from '@shikijs/themes/github-light'
 import githubDark from '@shikijs/themes/github-dark'
-import oneLight from '@shikijs/themes/one-light'
-import catppuccinLatte from '@shikijs/themes/catppuccin-latte'
 
 // 语言 ── 精选 ~30 种。新增语言只需加一行 import + 加进 SHIKI_LANGS。
 import javascript from '@shikijs/langs/javascript'
@@ -55,8 +53,6 @@ import powershell from '@shikijs/langs/powershell'
 export const SHIKI_THEMES = [
   githubLight,
   githubDark,
-  oneLight,
-  catppuccinLatte,
 ]
 
 /** 精选语言 ── 每个元素是 LanguageRegistration[] (默认导出即数组)。 */

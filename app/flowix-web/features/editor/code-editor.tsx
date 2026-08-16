@@ -24,6 +24,9 @@ import {
 
 import { cn } from '@/lib/utils';
 
+import { isMarkdownFilePath } from '@features/editor/code-file';
+import { shikiHighlighting, shikiLanguageIdForPath } from '@features/editor/code-editor-shiki';
+
 export interface CodeEditorHandle {
   flushPendingChanges: () => string | null;
 }
@@ -69,7 +72,6 @@ const codeEditorTheme = EditorView.theme({
     color: 'var(--document-foreground, var(--foreground, #1f2937))',
   },
   '.cm-gutters': {
-    paddingLeft: '8px',
     border: 'none',
     color: 'var(--muted-foreground)',
     backgroundColor: 'var(--document-bg)',
@@ -181,12 +183,20 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     if (!mount) return;
 
     let lastSearchPanelOpen = false;
+    // Files whose extension maps to a preloaded Shiki language are colored by
+    // the shared Shiki highlighter (see code-editor-shiki.ts) instead of the
+    // Lezer tagHighlighter path. Anything else falls back to the 8-class
+    // tagHighlighter. The Lezer language is still loaded below for structure
+    // (folding / indentation / bracket matching).
+    const shikiLang = shikiLanguageIdForPath(filePath);
     const state = EditorState.create({
       doc: content,
       extensions: [
         basicSetup,
         codeEditorTheme,
-        syntaxHighlighting(codeHighlighter),
+        ...(shikiLang
+          ? [shikiHighlighting(shikiLang)]
+          : [syntaxHighlighting(codeHighlighter)]),
         EditorView.lineWrapping,
         languageCompartment.of([]),
         EditorView.contentAttributes.of({
@@ -247,6 +257,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    // Markdown is rendered by Shiki and does not need a Lezer language loaded.
+    if (isMarkdownFilePath(filePath)) return;
     let disposed = false;
     const description = LanguageDescription.matchFilename(languages, filePath);
     if (!description) return;

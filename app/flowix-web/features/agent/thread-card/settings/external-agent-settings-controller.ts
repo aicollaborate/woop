@@ -15,6 +15,7 @@ import {
 import {
   getAgentAccessOptions,
   supportsAgentRuntimeSetting,
+  type AgentAccessOption,
   type AgentRuntimeSettingKind,
 } from "@features/agent/runtime/agent-runtime-spec";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
@@ -546,6 +547,10 @@ export class ExternalAgentSettingsController {
         this.handleOutsidePointer,
         true,
       );
+      // Selection handlers write then close; refresh the trigger buttons here
+      // so the model / mode / permission value reflects the new choice even
+      // before any store subscription propagates the change.
+      this.refreshEmptySettings();
     }
   }
 
@@ -662,14 +667,16 @@ export class ExternalAgentSettingsController {
 
   private getPermissionLabel(id: AgentPermissionMode): string {
     const options = this.getAccessOptionsForType();
-    return options.find((option) => option.id === id)?.label ?? options[0]?.label ?? id;
+    const option = options.find((item) => item.id === id) ?? options[0];
+    return option ? this.accessOptionLabel(option) : id;
   }
 
-  private getAccessOptionsForType(): readonly {
-    id: AgentPermissionMode;
-    label: string;
-  }[] {
+  private getAccessOptionsForType(): readonly AgentAccessOption[] {
     return getAgentAccessOptions(this.getTypeKey());
+  }
+
+  private accessOptionLabel(option: AgentAccessOption): string {
+    return option.labelKey ? this.t(option.labelKey) : option.label;
   }
 
   private getExternalAgentModel(): AgentCodexModel {
@@ -742,17 +749,49 @@ export class ExternalAgentSettingsController {
       : mapLabel(CODEX_MODEL_OPTIONS);
   }
 
-  private getExternalModelOptions(): AgentModelOption[] {
-    const currentModel = this.getExternalAgentModel();
-    const currentProviderId = this.getExternalAgentModelProviderId();
+  private getLoadedModelOptions(): AgentModelOption[] {
     const localOptions =
       this.localSupportedModelsTypeKey === this.getTypeKey()
         ? this.localSupportedModels
         : [];
-    const modelOptions =
-      localOptions.length > 0
-        ? localOptions
-        : this.getExternalModelFallbackOptions();
+    return localOptions.length > 0
+      ? localOptions
+      : this.getExternalModelFallbackOptions();
+  }
+
+  /**
+   * Resolve the (id, providerId) pair that the dropdown should highlight.
+   *
+   * The raw pair can disagree — e.g. a snapshot persisted a `key` without a
+   * `providerId` so the route falls through to a different source (the global
+   * settings-file default). Reconciling against the loaded directory keeps the
+   * highlight on the real option inside its provider group instead of a
+   * duplicated tail row, and makes the trigger label agree with the check mark.
+   */
+  private resolveCurrentSelection(): {
+    id: AgentCodexModel;
+    providerId: string | undefined;
+  } {
+    const id = this.getExternalAgentModel();
+    const providerId = this.getExternalAgentModelProviderId();
+    if (id === "inherit") return { id, providerId };
+    const loaded = this.getLoadedModelOptions();
+    if (
+      loaded.some((option) =>
+        option.id === id
+        && (option.providerId ?? "") === (providerId ?? ""),
+      )
+    ) {
+      return { id, providerId };
+    }
+    const byId = loaded.find((option) => option.id === id);
+    if (byId) return { id, providerId: byId.providerId };
+    return { id, providerId };
+  }
+
+  private getExternalModelOptions(): AgentModelOption[] {
+    const selection = this.resolveCurrentSelection();
+    const modelOptions = this.getLoadedModelOptions();
     const inheritLabel = this.getTypeKey() === "deepseek-harness"
       ? ""
       : this.getExternalModelDefaultLabel();
@@ -768,28 +807,30 @@ export class ExternalAgentSettingsController {
         : []),
       ...modelOptions,
     ];
+    // Synthesize a tail row only when the current model is genuinely absent
+    // from the directory. A model present under a different provider route is
+    // reconciled above and rendered as its real option, never duplicated here.
     if (
-      currentModel !== "inherit" &&
+      selection.id !== "inherit" &&
       !options.some((option) =>
-        option.id === currentModel
-        && (option.providerId ?? "") === (currentProviderId ?? ""),
+        option.id === selection.id
+        && (option.providerId ?? "") === (selection.providerId ?? ""),
       )
     ) {
       // 拉取到的 model id 不在 fallback 列表时, 按展示规则美化 label,
       // id 仍为原始字符串, 后端取值不受影响。
       options.push({
-        id: currentModel,
-        label: formatModelDisplayLabel(currentModel),
-        providerId: currentProviderId,
-        providerName: currentProviderId,
+        id: selection.id,
+        label: formatModelDisplayLabel(selection.id),
+        providerId: selection.providerId,
+        providerName: selection.providerId,
       });
     }
     return options;
   }
 
   private getCurrentExternalModelLabel(): string {
-    const model = this.getExternalAgentModel();
-    const providerId = this.getExternalAgentModelProviderId();
+    const { id: model, providerId } = this.resolveCurrentSelection();
     const options = this.getExternalModelOptions();
     const match = options.find((option) =>
       option.id === model
@@ -844,8 +885,8 @@ export class ExternalAgentSettingsController {
   }
 
   private renderModelSettings(): void {
-    const current = this.getExternalAgentModel();
-    const currentProviderId = this.getExternalAgentModelProviderId();
+    const { id: current, providerId: currentProviderId } =
+      this.resolveCurrentSelection();
     const options = this.getExternalModelOptions();
     if (this.getTypeKey() === "deepseek-harness") {
       const groups = new Map<string, { label: string; options: AgentModelOption[] }>();
@@ -862,8 +903,9 @@ export class ExternalAgentSettingsController {
 
       groups.forEach((group) => {
         const providerSection = document.createElement("div");
-        providerSection.className = "agent-thread-card__codex-settings-section";
-        providerSection.textContent = `${this.t("agent.model.title")} ${group.label}`;
+        providerSection.className =
+          "agent-thread-card__codex-settings-section agent-thread-card__codex-settings-section--provider";
+        providerSection.textContent = group.label;
         this.popover.append(providerSection);
         group.options.forEach((option) => {
           this.popover.append(this.createModelSettingsItem(option, current, currentProviderId));
@@ -949,10 +991,14 @@ export class ExternalAgentSettingsController {
     const current = this.readRuntimeSetting("permission");
     this.getAccessOptionsForType().forEach((option) => {
       this.popover.append(
-        createCodexSettingsItem(option.label, option.id === current, () => {
-          this.writeRuntimeSetting("permission", option.id);
-          this.setSettingsPopoverOpen(false);
-        }),
+        createCodexSettingsItem(
+          this.accessOptionLabel(option),
+          option.id === current,
+          () => {
+            this.writeRuntimeSetting("permission", option.id);
+            this.setSettingsPopoverOpen(false);
+          },
+        ),
       );
     });
   }

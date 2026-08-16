@@ -72,7 +72,6 @@
 	display: flex;
 	height: 100%;
 	box-sizing: border-box;
-	padding-left: 8px;
 	border: 0;
 	color: var(--muted-foreground, #6b7280);
 	background: var(--document-bg, #fff);
@@ -93,7 +92,7 @@
 
 .code-editor .cm-lineNumbers .cm-gutterElement {
 	min-width: 20px;
-	padding: 0 3px 0 5px;
+	padding: 0 3px 0 13px;
 	text-align: right;
 	white-space: nowrap;
 	color: color-mix(in oklch, var(--muted-foreground, #6b7280) 40%, transparent);

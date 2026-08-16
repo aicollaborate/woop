@@ -128,6 +128,11 @@ export function useFolderTree(folderPath: string) {
     void loadChildren(dirPath);
   }, [loadChildren]);
 
+  /** 折叠所有已展开的 folder ── 清空 expanded 集合。 */
+  const collapseAll = useCallback(() => {
+    setExpanded(new Set());
+  }, []);
+
   /** 展开到指定 path (打开文件后定位用, 逐级展开父链)。 */
   const expandTo = useCallback((targetPath: string) => {
     // 逐级展开 target 的所有祖先 (后端 parentId 恒 None, 用路径前缀推导)。
@@ -181,7 +186,7 @@ export function useFolderTree(folderPath: string) {
     [rootChildren, nodes, expanded, loading, error],
   );
 
-  return { ...state, toggle, expandTo, refresh, reload: loadRoot };
+  return { ...state, toggle, expandTo, collapseAll, refresh, reload: loadRoot };
 }
 
 /** 渲染辅助 ── 从 rootChildren + nodes + expanded 拍平整棵可见树。 */

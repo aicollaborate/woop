@@ -11,14 +11,12 @@ interface ShikiCodeBlockOptions {
   defaultTheme: string;
 }
 
-/** Shiki 主题白名单 — 与 constants.ts 中 4 套 *_VARS 的 --shiki-theme 一一对应。
- *  这里预加载全部 4 个, 切换主题时 getDecorations() 同步可用, 无 async lag / 无 flash。
- *  4 × ~10KB JSON 远小于语言 grammar 的体量, 不构成性能负担。 */
+/** Shiki 主题白名单 — 与 styles/theme/*.css 中 --shiki-theme 的取值一一对应
+ *  (github-light 亮色 / github-dark 暗色)。这里预加载全部 2 个, 切换主题时
+ *  getDecorations() 同步可用, 无 async lag / 无 flash。 */
 const PRELOADED_SHIKI_THEMES = [
   'github-light',
   'github-dark',
-  'one-light',
-  'catppuccin-latte',
 ] as const;
 
 function getLanguageFromElement(element: HTMLElement): string | null {

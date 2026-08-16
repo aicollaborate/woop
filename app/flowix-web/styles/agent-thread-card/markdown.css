@@ -497,7 +497,7 @@
 }
 
 .agent-thread-card__codex-settings-popover--mode {
-  width: min(420px, calc(100vw - 16px));
+  width: min(280px, calc(100vw - 16px));
   max-height: min(520px, calc(100vh - 16px));
 }
 
@@ -524,11 +524,10 @@
   line-height: 1.2;
 }
 
-.agent-thread-card__codex-settings-provider {
-  padding: 0.45rem 0.5rem 0.2rem;
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-  line-height: 1.2;
+/* 第二个及之后的模型供应商分组标题：上间距对齐下间距，首组保持原样。 */
+.agent-thread-card__codex-settings-section--provider
+  ~ .agent-thread-card__codex-settings-section--provider {
+  padding-top: 0.35rem;
 }
 
 .agent-thread-card__codex-settings-divider {
@@ -573,16 +572,19 @@
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 
 .agent-thread-card__codex-settings-item-description {
+  min-width: 0;
   overflow: hidden;
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.35;
-  white-space: normal;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-thread-card__codex-settings-item .agent-thread-card__copy-icon {

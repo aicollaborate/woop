@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Editor } from '@tiptap/core';
+import { Markdown } from '@tiptap/markdown';
+import StarterKit from '@tiptap/starter-kit';
 
 import { joinMobileDocumentContent, splitMobileDocumentContent } from './mobile-document-content';
-import { parseStaticCustomBlockAttrs, tokenizeStaticCustomBlock } from './static-custom-block';
-import { createMobileMarkdownExtensions } from './mobile-markdown-editor';
+import { parseStaticCustomBlockAttrs, tokenizeStaticCustomBlock, StaticCustomBlock } from './static-custom-block';
 
 describe('mobile document content', () => {
   it('preserves frontmatter byte-for-byte while exposing only the body', () => {
@@ -37,7 +38,11 @@ describe('static custom block codec', () => {
     const raw = '::agent-thread-card{threadId="t1" title="Plan" agentType="codex"}\n';
     const editor = new Editor({
       element: document.createElement('div'),
-      extensions: createMobileMarkdownExtensions(),
+      extensions: [
+        StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+        StaticCustomBlock,
+        Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
+      ],
       content: `# Before\n\n${raw}\nAfter`,
       contentType: 'markdown',
     });

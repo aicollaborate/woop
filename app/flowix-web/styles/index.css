@@ -77,6 +77,13 @@
 	background: color-mix(in srgb, var(--border) 72%, transparent);
 	content: '';
 	pointer-events: none;
+	transition: background-color 150ms ease;
+}
+
+/* hover 子 item 时, 提亮该 item 所在列表(子树)左侧的层级引导线。
+ * 用 --foreground 而非主题色: 浅色主题为黑、深色主题为白。 */
+.folder-file-tree__subtree-inner:has(> .folder-file-tree__subtree-items > .folder-file-tree__item:hover)::before {
+	background: color-mix(in srgb, var(--foreground) 35%, transparent);
 }
 
 .folder-file-tree__subtree-items {

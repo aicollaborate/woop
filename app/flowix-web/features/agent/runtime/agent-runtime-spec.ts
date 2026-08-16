@@ -8,6 +8,7 @@ import type {
   RuntimeConfig,
   WorkspaceSnapshot,
 } from "@/types/agent";
+import type { I18nKey } from "@/lib/i18n";
 import { CODEX_ACCESS_OPTIONS } from "@features/agent/config/codex-options";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
@@ -20,7 +21,10 @@ export type AgentRuntimeSettingKind =
 
 export interface AgentAccessOption {
   id: AgentPermissionMode;
+  /** English fallback label; rendered directly when `labelKey` is absent. */
   label: string;
+  /** Preferred i18n label key; translated by the UI before display. */
+  labelKey?: I18nKey;
 }
 
 export interface BuildAgentRuntimeConfigInput {
@@ -58,9 +62,21 @@ const HERMES_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
 // (没有 yolo), 且 inherit / 未知值须 fail closed 到 workspace-write ── 不能
 // 复用 Codex 的 danger-full-access 兜底, 否则会绕过 Harness 进程沙箱。
 const DSH_ACCESS_OPTIONS: readonly AgentAccessOption[] = [
-  { id: "workspace-write", label: "Workspace Write" },
-  { id: "read-only", label: "Read Only" },
-  { id: "danger-full-access", label: "Full Access" },
+  {
+    id: "workspace-write",
+    label: "Workspace Write",
+    labelKey: "agent.permission.workspaceWrite",
+  },
+  {
+    id: "read-only",
+    label: "Read Only",
+    labelKey: "agent.permission.readOnly",
+  },
+  {
+    id: "danger-full-access",
+    label: "Full Access",
+    labelKey: "agent.permission.dangerFullAccess",
+  },
 ];
 
 const CLAUDE_ACCESS_OPTIONS: readonly AgentAccessOption[] = [

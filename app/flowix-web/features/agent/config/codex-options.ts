@@ -3,7 +3,6 @@ import type {
   AgentCodexReasoningEffort,
   AgentPermissionMode,
 } from "@/types/agent";
-import type { I18nKey } from "@/lib/i18n";
 
 export const CODEX_MODEL_OPTIONS: Array<{
   id: AgentCodexModel;
@@ -74,22 +73,4 @@ export function formatModelDisplayLabel(key: string): string {
   }
 
   return key;
-}
-
-export function getCodexPermissionLabel(
-  t: (key: I18nKey) => string,
-  id: AgentPermissionMode,
-): string {
-  switch (id) {
-    case "inherit":
-      return t("agent.permission.default");
-    case "read-only":
-      return t("agent.permission.readOnly");
-    case "workspace-write":
-      return t("agent.permission.workspaceWrite");
-    case "danger-full-access":
-      return t("agent.permission.dangerFullAccess");
-    case "yolo":
-      return t("agent.permission.yolo");
-  }
 }

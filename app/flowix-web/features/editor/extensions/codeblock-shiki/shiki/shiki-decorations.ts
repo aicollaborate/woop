@@ -88,9 +88,10 @@ export function getDecorations({
     }
 
     let theme = block.node.attrs.theme || defaultTheme
-    // Theme resolution: CSS var (app theme) > node attr (per-block override) > hardcoded default.
-    // Reading --shiki-theme from :root lets useApplyTheme drive code-block colors;
-    // node.attrs.theme remains in the schema for forward-compat (future per-block picker).
+    // Theme resolution: the --shiki-theme CSS var (app theme) is authoritative
+    // whenever set — which is always, so node.attrs.theme / defaultTheme only act
+    // as a fallback if the var is empty. node.attrs.theme remains in the schema for
+    // forward-compat (future per-block picker).
     // 读路径走 readCssTheme() 缓存, 避免每个 keystroke 触发 getComputedStyle 强制 reflow。
     const cssTheme = readCssTheme()
     if (cssTheme) theme = cssTheme as BundledTheme

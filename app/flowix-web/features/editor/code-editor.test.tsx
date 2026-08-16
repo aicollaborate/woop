@@ -4,6 +4,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CodeEditor, type CodeEditorHandle } from '@features/editor/code-editor';
 
+vi.mock(
+  '@features/editor/extensions/codeblock-shiki/shiki/shiki-highlighter',
+  () => ({
+    getShiki: () => ({
+      codeToTokensBase: (code: string) =>
+        code.split('\n').map((line) =>
+          line ? [{ content: line, color: '#123456' }] : []
+        ),
+      getLoadedThemes: () => ['github-light'],
+      getLoadedLanguages: () => [
+        'javascript',
+        'typescript',
+        'jsx',
+        'tsx',
+        'markdown',
+        'python',
+      ],
+    }),
+    loadHighlighter: () => Promise.resolve(),
+  }),
+);
+
 let container: HTMLDivElement;
 let root: Root;
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -59,7 +81,7 @@ describe('CodeEditor', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('renders language tokens with stable stylesheet classes', async () => {
+  it('colors supported languages through Shiki inline styles', async () => {
     await act(async () => root.render(
       <CodeEditor
         filePath="/project/example.js"
@@ -70,7 +92,26 @@ describe('CodeEditor', () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(container.querySelector('.cm-code-keyword')?.textContent).toBe('const');
+        // #123456 is serialized by the DOM as rgb(18, 52, 86).
+        const colored = Array.from(container.querySelectorAll<HTMLSpanElement>('.cm-content span'))
+          .find((el) => el.style.color === 'rgb(18, 52, 86)');
+        expect(colored?.textContent).toBe('const answer = "yes";');
+      });
+    });
+  });
+
+  it('falls back to stable tagHighlighter classes for unsupported languages', async () => {
+    await act(async () => root.render(
+      <CodeEditor
+        filePath="/project/example.pl"
+        content={'if ($x) { print "yes"; }'}
+        onChange={vi.fn()}
+      />
+    ));
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('.cm-code-keyword')?.textContent).toBe('if');
         expect(container.querySelector('.cm-code-string')?.textContent).toBe('"yes"');
       });
     });

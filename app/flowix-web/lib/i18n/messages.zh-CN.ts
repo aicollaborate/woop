@@ -551,9 +551,9 @@ const zhCN = {
 
     // agent
     "agent.permission.default": "默认",
-    "agent.permission.readOnly": "可读",
-    "agent.permission.workspaceWrite": "Workspace Write",
-    "agent.permission.dangerFullAccess": "完全访问",
+    "agent.permission.readOnly": "只读",
+    "agent.permission.workspaceWrite": "空间读写",
+    "agent.permission.dangerFullAccess": "任意读写",
     "agent.permission.yolo": "YOLO",
     "agent.permissionMode.menu": "权限模式",
     "agent.permissionMode.title": "权限模式",
@@ -692,16 +692,13 @@ const zhCN = {
     "agent.permission.title": "权限",
     "agent.mode.title": "模式",
     "agent.mode.standard": "标准模式",
-    "agent.mode.code": "PTC 模式",
+    "agent.mode.code": "PTC模式",
     "agent.mode.minimal": "极简模式",
     "agent.mode.cordis": "创造模式",
-    "agent.mode.standard.description":
-      "功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。",
-    "agent.mode.code.description":
-      "具备标准模式的全部能力，并通过 Code Mode SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。",
-    "agent.mode.minimal.description": "仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。",
-    "agent.mode.cordis.description":
-      "用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。",
+    "agent.mode.standard.description": "办公或编程",
+    "agent.mode.code.description": "标准模式能力+工作流",
+    "agent.mode.minimal.description": "bash+编辑双工具",
+    "agent.mode.cordis.description": "标准模式+插件实验/设计",
     "agent.reasoning.title": "推理",
     "agent.files.title": "文件",
     "agent.menu.skills": "技能",
@@ -803,6 +800,7 @@ const zhCN = {
     // 资料文件夹文件树 (中间列, VSCode 风格)
     "memo.fileTree.backToList": "返回列表",
     "memo.fileTree.refresh": "刷新文件树",
+    "memo.fileTree.collapseAll": "折叠全部文件夹",
     "memo.fileTree.empty": "空文件夹",
     "memo.fileTree.unreadable": "无法读取",
     "memo.fileTree.unreadableHint": "文件夹无法读取 (可能已被移动或删除)",
