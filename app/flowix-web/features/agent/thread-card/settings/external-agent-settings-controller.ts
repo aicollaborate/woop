@@ -844,11 +844,6 @@ export class ExternalAgentSettingsController {
   }
 
   private renderModelSettings(): void {
-    const modelSection = document.createElement("div");
-    modelSection.className = "agent-thread-card__codex-settings-section";
-    modelSection.textContent = this.t("agent.model.title");
-    this.popover.append(modelSection);
-
     const current = this.getExternalAgentModel();
     const currentProviderId = this.getExternalAgentModelProviderId();
     const options = this.getExternalModelOptions();
@@ -867,14 +862,19 @@ export class ExternalAgentSettingsController {
 
       groups.forEach((group) => {
         const providerSection = document.createElement("div");
-        providerSection.className = "agent-thread-card__codex-settings-provider";
-        providerSection.textContent = group.label;
+        providerSection.className = "agent-thread-card__codex-settings-section";
+        providerSection.textContent = `${this.t("agent.model.title")} ${group.label}`;
         this.popover.append(providerSection);
         group.options.forEach((option) => {
           this.popover.append(this.createModelSettingsItem(option, current, currentProviderId));
         });
       });
     } else {
+      const modelSection = document.createElement("div");
+      modelSection.className = "agent-thread-card__codex-settings-section";
+      modelSection.textContent = this.t("agent.model.title");
+      this.popover.append(modelSection);
+
       options.forEach((option) => {
         this.popover.append(this.createModelSettingsItem(option, current, currentProviderId));
       });
