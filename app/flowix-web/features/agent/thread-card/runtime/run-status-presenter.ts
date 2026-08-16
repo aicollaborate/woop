@@ -17,8 +17,6 @@ export interface AgentThreadCardBadgeRuntimeState {
 
 export interface AgentThreadCardBadgeData {
   model: string | undefined;
-  lastRunAt: number | undefined;
-  totalTokens: number | undefined;
   /** Full nested token usage breakdown — see [`UsageInfo`]. */
   usage?: UsageInfo;
   /** Provider-specific status snapshot — see [`StatusInfo`]. */
@@ -32,54 +30,40 @@ export function computeAgentThreadCardBadgeData(options: {
 }): AgentThreadCardBadgeData {
   const { threadState, codexModel, typeKey } = options;
   let model: string | undefined;
-  let lastRunAt: number | undefined;
-  let totalTokens: number | undefined;
   let usage: UsageInfo | undefined;
   let statusInfo: StatusInfo | undefined;
 
   const snapshot = threadState?.lastRun;
   if (snapshot) {
-    if (!model && snapshot.model) model = snapshot.model;
-    if (totalTokens === undefined && snapshot.status !== "running" && snapshot.usage) {
-      totalTokens = snapshot.usage.total_tokens ?? undefined;
+    if (!model && (snapshot.modelId || snapshot.model)) {
+      model = snapshot.modelId ?? snapshot.model;
     }
-    if (!usage && snapshot.status !== "running" && snapshot.usage) {
+    if (!usage && snapshot.usage) {
       usage = snapshot.usage;
     }
     if (!statusInfo && snapshot.statusInfo) statusInfo = snapshot.statusInfo;
-    if (lastRunAt === undefined) {
-      lastRunAt = snapshot.lastRunAt ?? snapshot.endedAt ?? snapshot.startedAt;
-    }
   }
 
   if (!snapshot && threadState?.activeRunId && threadState.runs[threadState.activeRunId]) {
     const run = threadState.runs[threadState.activeRunId];
-    if (!model && run.model) model = run.model;
-    if (totalTokens === undefined && run.status !== "running" && run.usage) {
-      totalTokens = run.usage.total_tokens ?? undefined;
+    if (!model && (run.modelId || run.model)) {
+      model = run.modelId ?? run.model;
     }
-    if (!usage && run.status !== "running" && run.usage) usage = run.usage;
+    if (!usage && run.usage) usage = run.usage;
     if (!statusInfo && run.statusInfo) statusInfo = run.statusInfo;
-    if (lastRunAt === undefined) {
-      lastRunAt = run.lastRunAt ?? run.endedAt ?? run.startedAt;
-    }
   }
 
-  if (!snapshot && lastRunAt === undefined) {
+  if (!snapshot) {
     const runs = Object.values(threadState?.runs ?? {});
     if (runs.length > 0) {
       const latest = runs.reduce((acc, run) =>
         run.startedAt > acc.startedAt ? run : acc,
       );
-      if (!model && latest.model) model = latest.model;
-      if (totalTokens === undefined && latest.status !== "running" && latest.usage) {
-        totalTokens = latest.usage.total_tokens ?? undefined;
+      if (!model && (latest.modelId || latest.model)) {
+        model = latest.modelId ?? latest.model;
       }
-      if (!usage && latest.status !== "running" && latest.usage) usage = latest.usage;
+      if (!usage && latest.usage) usage = latest.usage;
       if (!statusInfo && latest.statusInfo) statusInfo = latest.statusInfo;
-      if (lastRunAt === undefined) {
-        lastRunAt = latest.lastRunAt ?? latest.endedAt ?? latest.startedAt;
-      }
     }
   }
 
@@ -87,7 +71,7 @@ export function computeAgentThreadCardBadgeData(options: {
     model = codexModel;
   }
 
-  return { model, lastRunAt, totalTokens, usage, statusInfo };
+  return { model, usage, statusInfo };
 }
 
 export function renderAgentThreadCardMetaState(options: {

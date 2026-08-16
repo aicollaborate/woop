@@ -1,4 +1,4 @@
-export type UserConfigChangeKind = 'preference' | 'ai_config';
+export type UserConfigChangeKind = 'preference' | 'ai_config' | 'dsh_config';
 
 interface UserConfigSyncActions {
   reloadPreferences: () => void | Promise<void>;

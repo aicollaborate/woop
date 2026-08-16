@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { RuntimeSpec } from '../protocol/v1.ts'
+import { disabledPluginKeys } from './plugin-directory.ts'
+import { applyPluginDisables } from './plugin-composition.ts'
 import DEFAULT_CORDIS_CONFIG from '../../config/flowix.cordis.yml'
 import STANDARD_PRESET from '../../vendor/deepseek-harness/apps/cli/config/agent-presets/standard/agent.cordis.yml'
 import STANDARD_PRESET_META from '../../vendor/deepseek-harness/apps/cli/config/agent-presets/standard/preset.yml'
@@ -14,15 +17,19 @@ import CORDIS_PRESET_META from '../../vendor/deepseek-harness/apps/cli/config/ag
 const PASSTHROUGH = [
   'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'COMSPEC',
   'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'HOME', 'USERPROFILE',
+  'NODE_USE_ENV_PROXY',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
 ] as const
 
 export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
+  const disabled = disabledPluginKeys()
   const env: NodeJS.ProcessEnv = {}
   for (const key of PASSTHROUGH) {
     const value = process.env[key]
     if (value !== undefined) env[key] = value
   }
-  for (const key of ['DSH_API_KEY'] as const) {
+  for (const key of ['DSH_API_KEY', 'DSH_SETTINGS_PATH'] as const) {
     const value = process.env[key]
     if (value !== undefined && value !== '') env[key] = value
   }
@@ -38,9 +45,13 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   if (env.DSH_API_KEY !== undefined) env.DSH_API_KEY_ENV = 'DSH_API_KEY'
   env.DSH_PERMISSION_MODE = spec.permissionMode
   env.DSH_AGENT_PRESET = spec.agentPreset
-  env.DSH_AGENT_PRESET_ROOT = presetRootPath()
+  env.DSH_AGENT_PRESET_ROOT = presetRootPath(disabled)
   env.DSH_SESSION_ROOT = sessionRoot(spec.sessionId)
-  env.DSH_CORDIS_CONFIG = cordisConfigPath()
+  env.DSH_CORDIS_CONFIG = cordisConfigPath(disabled)
+  env.DSH_SETTINGS_MODULE = pathToFileURL(join(
+    hostRoot(),
+    'vendor/deepseek-harness/packages/settings/settings-file/src/index.ts',
+  )).href
   return env
 }
 
@@ -49,7 +60,7 @@ export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: strin
   if (configured !== undefined && configured !== '') {
     return {
       command: configured,
-      args: [cordisConfigPath()],
+        args: [cordisConfigPath()],
       env: { ...runtimeEnvironment(spec), FLOWIX_DSH_RUNTIME_MODE: '1' },
     }
   }
@@ -74,11 +85,11 @@ export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: strin
   }
 }
 
-function cordisConfigPath(): string {
+function cordisConfigPath(disabled = disabledPluginKeys()): string {
   const configured = process.env.FLOWIX_DSH_CORDIS_CONFIG
   if (configured !== undefined && configured !== '') return configured
   const developmentConfig = join(hostRoot(), 'config/flowix.cordis.yml')
-  if (existsSync(developmentConfig)) return developmentConfig
+  if (existsSync(developmentConfig) && !hasScopeDisables(disabled, 'host')) return developmentConfig
 
   // A Tauri externalBin is installed in Contents/MacOS (or the platform
   // equivalent) without the source tree. Materialize the config bundled into
@@ -86,15 +97,15 @@ function cordisConfigPath(): string {
   const runtimeConfigRoot = join(sessionBaseRoot(), '.runtime')
   const runtimeConfig = join(runtimeConfigRoot, 'flowix.cordis.yml')
   mkdirSync(runtimeConfigRoot, { recursive: true })
-  writeFileSync(runtimeConfig, DEFAULT_CORDIS_CONFIG, { encoding: 'utf8', mode: 0o600 })
+  writeFileSync(runtimeConfig, applyPluginDisables(DEFAULT_CORDIS_CONFIG, 'host', undefined, disabled), { encoding: 'utf8', mode: 0o600 })
   return runtimeConfig
 }
 
-function presetRootPath(): string {
+function presetRootPath(disabled = disabledPluginKeys()): string {
   const configured = process.env.FLOWIX_DSH_PRESET_ROOT
   if (configured !== undefined && configured !== '') return configured
   const developmentRoot = join(hostRoot(), 'vendor/deepseek-harness/apps/cli/config/agent-presets')
-  if (existsSync(developmentRoot)) return developmentRoot
+  if (existsSync(developmentRoot) && !hasScopeDisables(disabled, 'preset')) return developmentRoot
 
   const root = join(sessionBaseRoot(), '.runtime', 'agent-presets')
   const presets = [
@@ -106,7 +117,7 @@ function presetRootPath(): string {
   for (const [id, composition, metadata] of presets) {
     const directory = join(root, id)
     mkdirSync(directory, { recursive: true })
-    writeFileSync(join(directory, 'agent.cordis.yml'), composition, { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(join(directory, 'agent.cordis.yml'), applyPluginDisables(composition, 'preset', id, disabled), { encoding: 'utf8', mode: 0o600 })
     writeFileSync(join(directory, 'preset.yml'), metadata, { encoding: 'utf8', mode: 0o600 })
   }
   return root
@@ -135,4 +146,12 @@ function hostRoot(): string {
 
 function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_')
+}
+
+function hasScopeDisables(disabled: ReadonlySet<string>, scope: 'host' | 'preset'): boolean {
+  const prefix = `${scope}:`
+  for (const key of disabled) {
+    if (key.startsWith(prefix)) return true
+  }
+  return false
 }

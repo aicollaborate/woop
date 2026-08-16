@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Bot,
   Check,
@@ -15,8 +15,11 @@ import { Input } from '@shared/ui/input';
 import { AgentSection } from '@features/preferences/sections/agent';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { useI18n, type I18nKey } from '@/lib/i18n';
+import { errorMessage } from '@/lib/error-message';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { deepseekHarness } from '@platform/tauri/client';
+import type { DeepSeekHarnessPlugin, DeepSeekHarnessPluginCatalog } from '@platform/tauri/client';
 
 type DshTab = 'models' | 'general' | 'plugins' | 'presets';
 
@@ -29,18 +32,6 @@ const DSH_TABS: readonly {
   { id: 'models', labelKey: 'preferences.dsh.tabs.models', icon: Database },
   { id: 'plugins', labelKey: 'preferences.dsh.tabs.plugins', icon: Puzzle },
   { id: 'presets', labelKey: 'preferences.dsh.tabs.presets', icon: PanelsTopLeft },
-];
-
-const DSH_PLUGINS: readonly {
-  name: string;
-  descriptionKey: I18nKey;
-}[] = [
-  { name: 'File tools', descriptionKey: 'preferences.dsh.plugins.file' },
-  { name: 'Shell / Bash', descriptionKey: 'preferences.dsh.plugins.shell' },
-  { name: 'Web search', descriptionKey: 'preferences.dsh.plugins.web' },
-  { name: 'Skills', descriptionKey: 'preferences.dsh.plugins.skills' },
-  { name: 'Subagents', descriptionKey: 'preferences.dsh.plugins.subagents' },
-  { name: 'Workflows', descriptionKey: 'preferences.dsh.plugins.workflows' },
 ];
 
 const DSH_PRESETS: readonly {
@@ -113,6 +104,8 @@ export function DshSettingsSection() {
       <div role="tabpanel" aria-label={t(activeTabLabelKey)}>
         {activeTab === 'models' && (
           <AgentSection
+            configStore={deepseekHarness}
+            configChangeKind="dsh_config"
             testConnection={deepseekHarness.testConnection}
             modelDirectory={deepseekHarness}
           />
@@ -173,10 +166,46 @@ function GeneralTab() {
 function PluginsTab() {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
+  const [catalog, setCatalog] = useState<DeepSeekHarnessPluginCatalog | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
-  const visiblePlugins = DSH_PLUGINS.filter(({ name }) =>
-    name.toLowerCase().includes(normalizedQuery),
-  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void deepseekHarness.pluginCatalog().then((nextCatalog) => {
+      if (!cancelled) {
+        setCatalog(nextCatalog);
+        setLoadError(null);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const togglePlugin = async (plugin: DeepSeekHarnessPlugin) => {
+    if (!plugin.toggleable || togglingKey !== null) return;
+    setTogglingKey(plugin.key);
+    try {
+      setCatalog(await deepseekHarness.setPluginEnabled(plugin.key, !plugin.enabled));
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setTogglingKey(null);
+    }
+  };
+
+  const groups: readonly { key: string; title: string; plugins: DeepSeekHarnessPlugin[] }[] = catalog === null
+    ? []
+    : [
+        { key: 'host', title: t('preferences.dsh.plugins.host'), plugins: catalog.host },
+        ...Object.entries(catalog.presets).map(([preset, plugins]) => ({
+          key: `preset:${preset}`,
+          title: `${t('preferences.dsh.plugins.preset')} · ${preset}`,
+          plugins,
+        })),
+      ];
 
   return (
     <div className="space-y-2">
@@ -196,28 +225,66 @@ function PluginsTab() {
         />
       </div>
       <div className="border-b border-[var(--divider)]" />
+      <p className="text-xs text-[var(--muted-foreground)]">
+        {t('preferences.dsh.plugins.hostHint')}
+      </p>
       {/* WKWebView 下外层滚动容器吃不到底部间距, 在列表自身留 pb-10 兜底 */}
       <div className="space-y-2 pb-10">
-        {visiblePlugins.map(({ name, descriptionKey }) => (
-          <div
-            key={name}
-            className="flex items-start gap-3 rounded-lg border border-[var(--divider)] bg-[var(--card)] px-3.5 py-3"
-          >
-            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
-              <Puzzle className="h-3.5 w-3.5" />
+        {loadError && <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-3.5 py-3 text-xs text-red-600">{t('preferences.dsh.plugins.loadError')}: {loadError}</p>}
+        {catalog === null && loadError === null && <p className="text-xs text-[var(--muted-foreground)]">{t('preferences.dsh.plugins.loading')}</p>}
+        {groups.map(({ key, title, plugins }) => {
+          const visiblePlugins = plugins.filter(({ id, name }) =>
+            `${id} ${name}`.toLowerCase().includes(normalizedQuery),
+          );
+          if (visiblePlugins.length === 0) return null;
+          return (
+            <div key={key} className="space-y-2">
+              <h4 className="pt-2 text-xs font-medium text-[var(--muted-foreground)]">{title}</h4>
+              {visiblePlugins.map((plugin) => (
+                <div
+                  key={`${key}:${plugin.key}`}
+                  className="flex items-start gap-3 rounded-lg border border-[var(--divider)] bg-[var(--card)] px-3.5 py-3"
+                >
+                  <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
+                    <Puzzle className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="truncate text-sm font-medium text-[var(--foreground)]">{plugin.id}</h4>
+                      <div className="inline-flex shrink-0 items-center gap-2">
+                        <Check className={cn('h-3 w-3', plugin.enabled ? 'text-emerald-500' : 'text-[var(--muted-foreground)]')} />
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {t(plugin.enabled ? 'preferences.dsh.plugins.enabled' : 'preferences.dsh.plugins.disabled')}
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={plugin.enabled}
+                          aria-label={`${t('preferences.dsh.plugins.toggle')}: ${plugin.id}`}
+                          title={plugin.toggleable ? t('preferences.dsh.plugins.toggle') : t('preferences.dsh.plugins.protected')}
+                          disabled={!plugin.toggleable || togglingKey !== null}
+                          onClick={() => void togglePlugin(plugin)}
+                          className={cn(
+                            'relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+                            plugin.enabled ? 'bg-[var(--primary)]' : 'bg-[var(--muted)]',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                              plugin.enabled ? 'translate-x-4' : 'translate-x-0',
+                            )}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">{plugin.name}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="text-sm font-medium text-[var(--foreground)]">{name}</h4>
-                <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--muted-foreground)]">
-                  <Check className="h-3 w-3 text-emerald-500" />
-                  {t('preferences.dsh.plugins.enabled')}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{t(descriptionKey)}</p>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

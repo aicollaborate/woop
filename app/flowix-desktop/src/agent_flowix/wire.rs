@@ -20,6 +20,9 @@ pub struct RuntimePathConfig {
     /// LLM model id(若�? provider �?���?���?�?
     /// 閫氱敤 metadata 鍗忚瀛楁 鈹€鈹€ `StreamStart` chunk 閫氳繃 `model_for_runtime` 鍙栧€笺€?
     pub model: Option<String>,
+    /// DeepSeek Harness llm-pi-ai provider route. `None` preserves the
+    /// legacy/default `flowix` route.
+    pub provider_id: Option<String>,
     /// 推理 effort("low" / "medium" / "high" / "xhigh")�?
     /// 通用 metadata 协�?字�?,Provider 不支持时�?None�?
     pub reasoning_effort: Option<String>,
@@ -113,6 +116,12 @@ impl AgentUserMessage {
         self.runtime_config_for(runtime)
             .and_then(|config| config.model.as_deref())
             .or(self.codex_model.as_deref())
+    }
+
+    pub fn provider_id_for_runtime(&self, runtime: &str) -> Option<&str> {
+        self.runtime_config_for(runtime)
+            .and_then(|config| config.provider_id.as_deref())
+            .filter(|value| !value.trim().is_empty())
     }
 
     /// 通用: 任意 provider �?reasoning effort�?

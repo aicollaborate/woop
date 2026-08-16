@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { getAgentType } from '@/lib/agent-types';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
-import { windows } from '@platform/tauri/client';
+import { deepseekHarness, windows } from '@platform/tauri/client';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { acquireThreadInterest } from '@features/agent/store/thread-interest';
 import type { ThreadState } from '@features/agent/store/thread-runtime-state';
@@ -376,8 +376,12 @@ export function AgentConversationDetail({
             <BadgeHoverCard
               sessionId={renderThreadId ?? threadId}
               model={badgeData.model}
-              lastRunAt={badgeData.lastRunAt}
-              totalTokens={badgeData.totalTokens}
+              usage={badgeData.usage}
+              onRequestRuntimeInfo={
+                instance.agentType === 'deepseek-harness' && threadId
+                  ? () => deepseekHarness.sessionUsage(threadId)
+                  : undefined
+              }
               cwd={runtimeCwd}
             />
             <span className="agent-type-badge" aria-hidden="true" title={agent.desc}>

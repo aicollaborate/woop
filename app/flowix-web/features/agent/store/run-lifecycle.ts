@@ -70,6 +70,23 @@ function snapshotFromRun(
   };
 }
 
+function accumulateUsage(previous: UsageInfo | undefined, next: UsageInfo): UsageInfo {
+  return {
+    input_tokens: (previous?.input_tokens ?? 0) + (next.input_tokens ?? 0),
+    cached_input_tokens:
+      (previous?.cached_input_tokens ?? 0) + (next.cached_input_tokens ?? 0),
+    output_tokens: (previous?.output_tokens ?? 0) + (next.output_tokens ?? 0),
+    reasoning_output_tokens:
+      (previous?.reasoning_output_tokens ?? 0) +
+      (next.reasoning_output_tokens ?? 0),
+    total_tokens: (previous?.total_tokens ?? 0) + (next.total_tokens ?? 0),
+    model_context_window:
+      next.model_context_window ?? previous?.model_context_window,
+    context_used_tokens:
+      next.context_used_tokens ?? previous?.context_used_tokens,
+  };
+}
+
 export function applyRunStarted<T extends RunLifecycleThreadState>(
   st: T,
   event: AgentEvent,
@@ -147,21 +164,26 @@ export function applyRunUsage<T extends RunLifecycleThreadState>(
   event: AgentEvent & { kind: "usage" },
 ): T {
   const existing = st.runs[event.runId];
-  if (!existing) return st;
   const evUsage: UsageInfo = event.usage ?? {};
-  const prevUsage: UsageInfo = existing.usage ?? {};
-  const nextUsage: UsageInfo = {
-    input_tokens: (prevUsage.input_tokens ?? 0) + (evUsage.input_tokens ?? 0),
-    cached_input_tokens:
-      (prevUsage.cached_input_tokens ?? 0) + (evUsage.cached_input_tokens ?? 0),
-    output_tokens: (prevUsage.output_tokens ?? 0) + (evUsage.output_tokens ?? 0),
-    reasoning_output_tokens:
-      (prevUsage.reasoning_output_tokens ?? 0) +
-      (evUsage.reasoning_output_tokens ?? 0),
-    total_tokens: (prevUsage.total_tokens ?? 0) + (evUsage.total_tokens ?? 0),
-    model_context_window:
-      evUsage.model_context_window ?? prevUsage.model_context_window,
-  };
+
+  // Some providers emit usage after stream_end. The run has already been
+  // removed from `runs` at that point, so fold the late event into the
+  // session-resident lastRun snapshot instead of dropping it.
+  if (!existing) {
+    if (st.lastRun?.runId !== event.runId) return st;
+    return {
+      ...st,
+      lastRun: {
+        ...st.lastRun,
+        usage: accumulateUsage(st.lastRun.usage, evUsage),
+        statusInfo: event.statusInfo ?? st.lastRun.statusInfo,
+        modelId: event.modelId ?? st.lastRun.modelId,
+        lastRunAt: event.lastRunAt ?? st.lastRun.lastRunAt ?? event.timestamp,
+      },
+    };
+  }
+
+  const nextUsage = accumulateUsage(existing.usage, evUsage);
   const nextStatusInfo: StatusInfo | undefined =
     event.statusInfo ?? existing.statusInfo;
   const updatedRun: AgentRunState = {

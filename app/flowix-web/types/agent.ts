@@ -69,6 +69,8 @@ export interface CodexRuntimeConfig extends AgentRuntimeConfigBase {
 
 export interface DeepSeekHarnessRuntimeConfig extends CodexRuntimeConfig {
   mode?: AgentHarnessPreset;
+  /** llm-pi-ai provider route; empty means the legacy/default flowix route. */
+  providerId?: string;
 }
 
 export interface ClaudeRuntimeConfig extends AgentRuntimeConfigBase {
@@ -106,6 +108,8 @@ export interface AgentRuntimeConfig {
 
 export interface ModelConfig {
   key: string;
+  /** DeepSeek Harness provider route for this model selection. */
+  providerId?: string;
 }
 
 export interface AccessConfig {
@@ -374,6 +378,7 @@ export interface AgentChunkStreamEnd {
  * `cached_input_tokens` is the cache-hit portion;
  * `reasoning_output_tokens` is o-series style internal consumption;
  * `model_context_window` is the provider-reported context window for UI.
+ * `context_used_tokens` is the Harness projected context occupancy.
  *
  * Compatibility: prompt/completion fields intentionally omitted — older
  * providers that only report them are mapped to input/output at SSE-parse
@@ -386,6 +391,7 @@ export interface UsageInfo {
   reasoning_output_tokens?: number | null;
   total_tokens?: number | null;
   model_context_window?: number | null;
+  context_used_tokens?: number | null;
 }
 
 /**
@@ -538,9 +544,10 @@ export interface RunInfo {
 }
 
 /**
- * 通用 metadata 协议 —— 一次 run 的"展示快照"。写在 `ThreadState.lastRun` 中, 在 run 结束 (applyRunEnded) 后, 即使该 run
- * 已从 `runs` map 中清理, 展示用的 metadata 仍然可见 —— BadgeHoverCard 仍依赖这个字段在"会话已结束"时仍能读出
- * sessionId/model/elapsed/totalTokens。Provider-agnostic: 对 Codex / Claude / Gemini / Flowix / Hermes / OpenClaw 全部适用, 字段不识别时为 undefined。
+ * 通用 metadata 协议 —— session 的最近一次 run 展示快照。写在
+ * `ThreadState.lastRun` 中, run 从 `runs` map 清理后仍作为常驻展示信息保留；
+ * 迟到的 usage 事件也会继续合并到这个快照。Provider-agnostic: 对 Codex /
+ * Claude / Gemini / Flowix / Hermes / OpenClaw 全部适用, 字段不识别时为 undefined。
  */
 
 export interface LastRunSnapshot {

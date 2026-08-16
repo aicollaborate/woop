@@ -30,6 +30,14 @@
       You are a coding assistant running inside Flowix. Work in {{cwd}} and
       respect the active sandbox policy. Verify changes and report concisely.
 
+- id: settings
+  name: !!js "process.env.DSH_SETTINGS_MODULE"
+  config:
+    # Flowix owns the durable path; keeping it outside the session directory
+    # makes the model selection survive Harness runtime restarts.
+    path: !!js process.env.DSH_SETTINGS_PATH
+    watch: true
+
 - id: llm-pi-ai
   name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
@@ -58,6 +66,9 @@
 
 - id: commands
   name: '@deepseek-ai/dsh-commands'
+
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
 
 - id: token-meter
   name: '@deepseek-ai/dsh-token-meter'

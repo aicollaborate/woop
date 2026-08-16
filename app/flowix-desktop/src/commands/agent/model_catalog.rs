@@ -1,4 +1,5 @@
 // agent_supported_models) 与前�?invoke 不变�?// ─────────────────────────────────────────────────────────────────────────
+use tauri::State;
 
 /// 返回 Codex 默�? model id, 优先�?
 ///   1. `~/.codex/config.toml` 椤跺眰 `model = "..."`;
@@ -20,9 +21,15 @@ pub async fn codex_default_model() -> Result<String, String> {
 /// �?agent type 返回后�?�?���?model id 列表。当前只�?`codex` 走动�?/// 查�? (�?�� `codex debug models`); 其余 type 返回�?── 前�?会回落到
 /// 纭紪鐮?fallback (CODEX_MODEL_OPTIONS / CLAUDE_MODEL_OPTIONS)銆?
 #[tauri::command]
-pub async fn agent_supported_models(agent_type: String) -> Result<Vec<String>, String> {
+pub async fn agent_supported_models(
+    agent_type: String,
+    state: State<'_, crate::app::state::AppState>,
+) -> Result<Vec<String>, String> {
     match agent_type.trim().to_ascii_lowercase().as_str() {
         "codex" => query_codex_models().await,
+        "deepseek-harness" | "deepseek_harness" | "dsh" => {
+            state.deepseek_harness.supported_models().await
+        }
         _ => Ok(Vec::new()),
     }
 }

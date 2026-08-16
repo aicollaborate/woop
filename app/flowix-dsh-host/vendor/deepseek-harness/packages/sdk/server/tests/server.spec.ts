@@ -171,6 +171,44 @@ describe('HarnessSdkJsonRpcServer', () => {
     }
   })
 
+  it('resumes a persisted session after the runtime process restarts', { timeout: 15_000 }, async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), 'dsh-jsonrpc-resume-'))
+    const llmServer = await mockCompletionServer()
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+    vi.stubEnv('DEEPSEEK_BASE_URL', llmServer.url)
+    const firstContext = await makeHarness(storageDir)
+    try {
+      const server = new HarnessSdkJsonRpcServer(firstContext, new FakeTransport())
+      await server.initialize({ cwd: storageDir, provider: 'deepseek-official', model: 'resume-model' })
+      await server.prompt({
+        sessionId: 'restartable',
+        contentBlocks: [{ type: 'text', text: 'first turn' }],
+      })
+      await vi.waitFor(() => { expect(llmServer.requests).toHaveLength(1) })
+      await server.shutdown()
+    } finally {
+      await firstContext.fiber.dispose()
+    }
+
+    const secondContext = await makeHarness(storageDir)
+    try {
+      const server = new HarnessSdkJsonRpcServer(secondContext, new FakeTransport())
+      await server.initialize({ cwd: storageDir, provider: 'deepseek-official', model: 'resume-model' })
+      await server.prompt({
+        sessionId: 'restartable',
+        contentBlocks: [{ type: 'text', text: 'second turn' }],
+      })
+      await vi.waitFor(() => { expect(llmServer.requests).toHaveLength(2) })
+
+      const secondBody = llmServer.requests[1] as { messages: { role: string; content?: unknown }[] }
+      expect(secondBody.messages.filter(message => message.role === 'user')).toHaveLength(2)
+      await server.shutdown()
+    } finally {
+      await secondContext.fiber.dispose()
+      await rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
   it('queues overlapping prompts for one session without blocking other sessions', async () => {
     const mainFollowup = vi.fn<Agent['followup']>()
     const mainAgent = ({
@@ -813,6 +851,36 @@ describe('HarnessSdkJsonRpcServer', () => {
       await ctx.fiber.dispose()
       await rm(storageDir, { recursive: true, force: true })
     }
+  })
+
+  it('waits for a settings-backed adapter to register during initialization', async () => {
+    const providers: { id: string; name: string }[] = []
+    const listeners: (() => void)[] = []
+    const ctx = {
+      on: vi.fn((_event: string, listener: () => void) => {
+        if (_event === 'llm/adapters-updated') listeners.push(listener)
+        return () => undefined
+      }),
+      get: vi.fn((service: string) => service === 'llm'
+        ? { listProviders: () => providers }
+        : undefined),
+      agents: { get: () => undefined },
+    } as unknown as Context
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+
+    const initialized = server.initialize({
+      cwd: process.cwd(),
+      provider: 'zai-coding-cn',
+      model: 'glm-4.5-air',
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    providers.push({ id: 'zai-coding-cn', name: 'GLM' })
+    for (const listener of listeners) listener()
+
+    await expect(initialized).resolves.toMatchObject({
+      serverInfo: { name: 'deepseek-harness-sdk-runtime' },
+    })
+    await server.shutdown()
   })
 
   it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(

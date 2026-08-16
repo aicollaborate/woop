@@ -867,6 +867,7 @@ fn agent_chunk_usage_serializes_with_snake_case_tag() {
             reasoning_output_tokens: Some(10),
             total_tokens: Some(150),
             model_context_window: Some(200_000),
+            context_used_tokens: None,
         }),
         status_info: Some(StatusInfo {
             codex_plan_type: Some("pro".to_string()),
@@ -945,6 +946,7 @@ async fn runtime_config_applies_for_non_persisted_local_thread() {
                 workspace_paths: vec!["/tmp/work".to_string(), "memo-1".to_string()],
                 permission_mode: Some("workspace-write".to_string()),
                 model: Some("claude-sonnet-5".to_string()),
+                provider_id: None,
                 reasoning_effort: Some("high".to_string()),
                 mode: None,
             }),

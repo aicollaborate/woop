@@ -10,6 +10,17 @@ export interface RunResult {
   notifications: HarnessNotification[]
 }
 
+export interface SessionUsageResult {
+  sessionId: string
+  modelId?: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  contextTokens?: number
+  contextWindow?: number
+}
+
 export interface DeepSeekHarnessOptions {
   launch: {
     command: string
@@ -32,5 +43,15 @@ export declare class DeepSeekHarness {
     sessionId?: string
     onNotification?: (notification: HarnessNotification) => void
   }): Promise<RunResult>
+  session(sessionId?: string): HarnessSession
   close(): Promise<void>
+}
+
+export declare class HarnessSession {
+  readonly harness: DeepSeekHarness
+  readonly id: string
+  run(input: string, options?: {
+    onNotification?: (notification: HarnessNotification) => void
+  }): Promise<RunResult>
+  usage(): Promise<SessionUsageResult>
 }

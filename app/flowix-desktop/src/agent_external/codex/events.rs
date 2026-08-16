@@ -113,6 +113,7 @@ pub fn codex_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> 
                     reasoning_output_tokens: usage.reasoning_output_tokens,
                     total_tokens: Some(usage.total_tokens),
                     model_context_window: usage.model_context_window,
+                    context_used_tokens: None,
                 }),
                 status_info: Some(StatusInfo {
                     codex_plan_type: usage.codex_plan_type,

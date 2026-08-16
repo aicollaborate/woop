@@ -27,3 +27,4 @@ export type {
   NotificationFilter,
   RunResult,
 } from './types.ts'
+export type { SessionUsageResult } from '@deepseek-ai/dsh-sdk-protocol'

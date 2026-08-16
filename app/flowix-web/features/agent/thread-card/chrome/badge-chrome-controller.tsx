@@ -2,6 +2,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
+import { deepseekHarness } from "@platform/tauri/client";
 import { type ThreadState } from "@features/agent/store/thread-runtime-state";
 import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
@@ -30,7 +31,17 @@ export class AgentThreadCardBadgeChromeController {
   private readonly getTypeKey: () => AgentTypeKey;
   private readonly getCwd: () => string | null;
   private hoverCardTimer: ReturnType<typeof setInterval> | null = null;
+  private hoverCardPositionFrame: number | null = null;
+  private resizeObserver: ResizeObserver | null = null;
   private disposed = false;
+
+  private readonly handleViewportChange = (): void => {
+    if (this.disposed || this.hoverCardPositionFrame !== null) return;
+    this.hoverCardPositionFrame = window.requestAnimationFrame(() => {
+      this.hoverCardPositionFrame = null;
+      this.syncHoverCardPosition();
+    });
+  };
 
   constructor(options: AgentThreadCardBadgeChromeControllerOptions) {
     this.badgeEl = options.badgeEl;
@@ -81,21 +92,30 @@ export class AgentThreadCardBadgeChromeController {
     this.renderHoverCardContent();
   }
 
+  attachHoverCardPositioning(): void {
+    if (this.disposed) return;
+    window.addEventListener("resize", this.handleViewportChange);
+    document.addEventListener("scroll", this.handleViewportChange, true);
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(this.handleViewportChange);
+      this.resizeObserver.observe(this.badgeEl);
+    }
+    this.handleViewportChange();
+  }
+
   /**
-   * 把 mount 节点绝对定位到 badge 上 ── trigger 是 absolute inset:0,
-   * 跟着 mount 的位置覆盖整个 badge。
-   *
-   * 全屏切换 / 浏览器 resize / editor scroll 都会触发外部重新调用这个方法。
+   * 把 mount 节点固定定位到 badge 的 viewport 矩形 ── trigger 是 absolute
+   * inset:0,跟着 mount 的位置覆盖整个 badge。使用 viewport 坐标不依赖
+   * offsetParent; 后者在 NodeView 初次挂载、编辑器切换可见性时可能为空或尚未稳定。
    */
   syncHoverCardPosition(): void {
     const badgeRect = this.badgeEl.getBoundingClientRect();
-    const wrapRect = this.badgeEl.offsetParent?.getBoundingClientRect();
-    if (!wrapRect) return;
-    const top = badgeRect.top - wrapRect.top;
-    const left = badgeRect.left - wrapRect.left;
-    this.hoverCardMount.style.position = "absolute";
-    this.hoverCardMount.style.top = `${top}px`;
-    this.hoverCardMount.style.left = `${left}px`;
+    // Hidden editors report a zero rect. Keep the previous valid position and
+    // let ResizeObserver/viewport events retry once the card becomes visible.
+    if (badgeRect.width <= 0 || badgeRect.height <= 0) return;
+    this.hoverCardMount.style.position = "fixed";
+    this.hoverCardMount.style.top = `${badgeRect.top}px`;
+    this.hoverCardMount.style.left = `${badgeRect.left}px`;
     this.hoverCardMount.style.width = `${badgeRect.width}px`;
     this.hoverCardMount.style.height = `${badgeRect.height}px`;
     this.hoverCardMount.style.display = "block";
@@ -105,6 +125,14 @@ export class AgentThreadCardBadgeChromeController {
     if (this.disposed) return;
     this.disposed = true;
     this.stopHoverCardTimer();
+    window.removeEventListener("resize", this.handleViewportChange);
+    document.removeEventListener("scroll", this.handleViewportChange, true);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    if (this.hoverCardPositionFrame !== null) {
+      window.cancelAnimationFrame(this.hoverCardPositionFrame);
+      this.hoverCardPositionFrame = null;
+    }
     // 推迟到下一个 microtask 再 unmount React root ── ProseMirror destroy 可能
     // 在 React commit phase / passive effects 内被调用, 此时同步 unmount 会触发
     // "Attempted to synchronously unmount a root while React was already rendering"。
@@ -138,7 +166,9 @@ export class AgentThreadCardBadgeChromeController {
 
   private renderHoverCardContent(): void {
     if (this.disposed) return;
-    const { model, lastRunAt, totalTokens } =
+    const sessionId = this.getThreadId() ?? "";
+    const typeKey = this.getTypeKey();
+    const { model, usage } =
       computeAgentThreadCardBadgeData({
         threadState: this.getThreadState(),
         // Phase 4 (2026-08-02): 真源是 session-store.sessionMeta.settings.
@@ -148,10 +178,13 @@ export class AgentThreadCardBadgeChromeController {
       });
     this.hoverCardRoot.render(
       React.createElement(BadgeHoverCard, {
-        sessionId: this.getThreadId() ?? "",
+        sessionId,
         model,
-        lastRunAt,
-        totalTokens,
+        usage,
+        onRequestRuntimeInfo:
+          typeKey === "deepseek-harness" && sessionId
+            ? () => deepseekHarness.sessionUsage(sessionId)
+            : undefined,
         cwd: this.getCwd() ?? undefined,
         onOpenChange: (open: boolean) =>
           this.handleHoverCardOpenChange(open),

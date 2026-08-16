@@ -9,7 +9,7 @@ import { evaluate, isJsExpr } from './utils.ts'
 export interface EntryOptions {
   /** Stable id inside the containing entry tree. */
   id: string
-  /** Module specifier imported by the entry tree. */
+  /** Module specifier imported by the entry tree, or a runtime expression in YAML. */
   name: string
   /** Config passed to the plugin. */
   config?: any
@@ -277,7 +277,11 @@ export class Entry {
   private async _init() {
     let plugin: any
     try {
-      plugin = this.loader.unwrapExports(await this.parent.tree.import(this.options.name, this.getOuterStack))
+      const name = isJsExpr(this.options.name)
+        ? this.evaluate(this.options.name.__jsExpr)
+        : this.options.name
+      if (typeof name !== 'string') throw new TypeError(`loader entry ${this.options.id} name must evaluate to a string`)
+      plugin = this.loader.unwrapExports(await this.parent.tree.import(name, this.getOuterStack))
     } catch (error) {
       throw updateError('import', this.options, error)
     }

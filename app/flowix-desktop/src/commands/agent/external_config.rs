@@ -63,6 +63,7 @@ fn external_availability(entry: AgentExternalEntry, label: &str) -> AgentRuntime
 #[tauri::command]
 pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
     let ai_config = state.user_config.get_ai_config().model;
+    let dsh_config = state.user_config.get_deepseek_harness_config();
     let flowix_available = !ai_config.model.trim().is_empty();
 
     // The external CLI path comes from agent-external-config.json. Runtime
@@ -75,17 +76,22 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
     let claude = external_availability(cfg.get_entry("claude"), "Claude Code CLI");
     let hermes = external_availability(cfg.get_entry("hermes"), "Hermes Agent CLI");
     let opencode = external_availability(cfg.get_entry("opencode"), "OpenCode CLI");
-    let deepseek_harness =
-        match crate::agent_external::deepseek_harness::resolve_runtime_config(&ai_config, None) {
-            Ok(_) => AgentRuntimeAvailability {
-                available: true,
-                reason: None,
-            },
-            Err(reason) => AgentRuntimeAvailability {
-                available: false,
-                reason: Some(reason),
-            },
-        };
+    let deepseek_harness = match dsh_config.map(|config| {
+        crate::agent_external::deepseek_harness::resolve_runtime_config(&config.model, None)
+    }) {
+        Ok(Ok(_)) => AgentRuntimeAvailability {
+            available: true,
+            reason: None,
+        },
+        Ok(Err(reason)) => AgentRuntimeAvailability {
+            available: false,
+            reason: Some(reason),
+        },
+        Err(error) => AgentRuntimeAvailability {
+            available: false,
+            reason: Some(error.to_string()),
+        },
+    };
 
     AgentRuntimeStatus {
         flowix: AgentRuntimeAvailability {

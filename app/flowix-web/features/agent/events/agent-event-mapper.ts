@@ -12,6 +12,7 @@ import { canonicalAgentMessageId } from "@features/agent/events/message-identity
 
 interface AgentEventMapperThreadState {
   activeRunId: string | null;
+  lastRunId?: string;
 }
 
 export interface AgentEventMapperState {
@@ -29,7 +30,12 @@ function resolveChunkRunId(
   threadId: string,
   st: AgentEventMapperThreadState | undefined,
 ): string {
-  return chunk.run_id ?? st?.activeRunId ?? createRunId(threadId);
+  return (
+    chunk.run_id ??
+    st?.activeRunId ??
+    (chunk.kind === "usage" ? st?.lastRunId : undefined) ??
+    createRunId(threadId)
+  );
 }
 
 const CLAUDE_ENVELOPE_TEXT_MESSAGE_ID =

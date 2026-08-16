@@ -384,6 +384,44 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     ).toBe(renderMessages);
   });
 
+  it("does not let a non-active thread-card send overwrite the active title", async () => {
+    const { useChatStore, useAgentConversationStore } = await import(
+      "@features/agent/store/agent-session-test-facade"
+    );
+    const activeThreadId = "thread-card-active-title";
+    const cardThreadId = "thread-card-secondary-title";
+    const cardInstance = useAgentConversationStore.getState().createInstance({
+      agentType: "flowix",
+      title: "B title",
+      threadId: cardThreadId,
+      source: { kind: "thread-card" },
+    });
+
+    useChatStore.setState({
+      activeThreadIds: { flowix: activeThreadId },
+      currentThreadTitles: { flowix: "A title" },
+    });
+
+    await useChatStore.getState().sendMessageToThread(
+      cardThreadId,
+      "message from B",
+      "flowix",
+      {
+        instanceId: cardInstance.instanceId,
+        conversationTitle: "B title",
+        isFirstMessage: true,
+      },
+    );
+
+    expect(useChatStore.getState().currentThreadTitles.flowix).toBe("A title");
+    expect(useChatStore.getState().threadLists.flowix).toEqual([]);
+    expect(
+      useAgentConversationStore
+        .getState()
+        .getInstance(cardInstance.instanceId)?.title,
+    ).toBe("B title");
+  });
+
   it("uses canonical render messages to detect non-first follow-up sends", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");

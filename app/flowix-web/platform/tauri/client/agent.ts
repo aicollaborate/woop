@@ -14,10 +14,23 @@ import type {
 
 export interface AgentConfig {
   provider: string;
+  /** Harness custom-provider route ID. Empty for built-in catalog providers. */
+  providerId?: string;
+  /** Human-readable name for a custom Harness provider. */
+  displayName?: string;
+  /** Wire protocol selected for a custom Harness provider. */
+  apiProtocol?: string;
   model: string;
+  /** Custom Harness provider model directory. */
+  models?: AgentModelConfig[];
   apiUrl: string;
   /** 按 provider 隔离的秘钥桶。切换供应商时直接读这桶, 互不串。 */
   apiKeys: Record<string, string>;
+}
+
+export interface AgentModelConfig {
+  id: string;
+  name?: string;
 }
 
 // Result of a one-shot probe (`aiConfig.testConnection`).
@@ -385,7 +398,7 @@ export function listenToAgentStream(
 // 璺ㄧ獥鍙ｅ悓姝?// ============================================
 // 鍚庣 set_preference / set_ai_config 鎴愬姛鍚?emit 'user-config-changed',
 // payload 鏄?"preference" | "ai_config" 鎸囨槑鍝釜鏂囦欢鍙樹簡銆?// 鍏跺畠绐楀彛鏀跺埌鍚庝粠纾佺洏閲嶆柊 load, 瑙ｅ喅: 涓や釜 Tauri 绐楀彛鍚勮窇鐙珛 React 鏍?// + 鐙珛 zustand store, 涓€杈规敼鍔ㄥ彟涓€杈圭湅涓嶅埌鐨勯棶棰樸€?
-type UserConfigChangeKind = 'preference' | 'ai_config';
+export type UserConfigChangeKind = 'preference' | 'ai_config' | 'dsh_config';
 type UserConfigChangeHandler = (kind: UserConfigChangeKind) => void;
 
 export function listenToUserConfigChanges(

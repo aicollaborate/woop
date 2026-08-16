@@ -77,7 +77,8 @@ function getAvailableSlashMenuItems(): SlashMenuItem[] {
   return SLASH_MENU_ITEMS.filter((item) => {
     if (!isAgentThreadSlashMenuItemId(item.id)) return true;
     const typeKey = AGENT_THREAD_TYPE_BY_SLASH_ID[item.id];
-    return isAgentRuntimeAvailable(typeKey) && isAgentSlashEnabled(typeKey);
+    if (!isAgentSlashEnabled(typeKey)) return false;
+    return item.alwaysVisible || isAgentRuntimeAvailable(typeKey);
   });
 }
 
@@ -535,7 +536,11 @@ function handleSelect(item: SlashMenuItem): void {
 
   if (isAgentThreadSlashMenuItemId(item.id)) {
     const agentThreadType = AGENT_THREAD_TYPE_BY_SLASH_ID[item.id];
-    if (!isAgentRuntimeAvailable(agentThreadType)) {
+    const runtimeStatus = useAgentRuntimeStore.getState().statusByType[agentThreadType];
+    // DeepSeek Harness is bundled and its slash action creates a card; model
+    // credentials are validated when the run starts. Do not turn a transient
+    // or incomplete runtime status into a redirect back to preferences.
+    if (agentThreadType !== 'deepseek-harness' && runtimeStatus?.available === false) {
       closeMenu();
       return;
     }

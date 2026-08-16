@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -27,13 +28,20 @@ pub struct DshHostClient {
 }
 
 impl DshHostClient {
-    pub async fn spawn(api_key: Option<&str>, session_root: &Path) -> Result<Arc<Self>, String> {
+    pub async fn spawn(
+        api_key: Option<&str>,
+        session_root: &Path,
+        settings_path: &Path,
+        plugin_settings_path: &Path,
+    ) -> Result<Arc<Self>, String> {
         let (mut command, host_root) = resolve_host_command()?;
         command
             .env_clear()
             .envs(allowed_parent_environment())
             .env("FLOWIX_DSH_SESSION_ROOT", session_root)
             .env("FLOWIX_DSH_ROOT", &host_root)
+            .env("DSH_SETTINGS_PATH", settings_path)
+            .env("FLOWIX_DSH_PLUGIN_SETTINGS_PATH", plugin_settings_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -82,7 +90,7 @@ impl DshHostClient {
                 return Err(error);
             }
         };
-        for required in ["model-catalog", "model-discovery"] {
+        for required in ["model-catalog", "model-discovery", "plugin-catalog"] {
             if !capabilities
                 .iter()
                 .any(|value| value.as_str() == Some(required))
@@ -294,6 +302,13 @@ fn command_for_host_path_with_root(
 }
 
 fn packaged_runtime_candidate() -> Option<PathBuf> {
+    // Development builds launch the vendored TypeScript runtime through the
+    // freshly-built dsh-host source path. A stale sidecar left in Cargo's
+    // target directory must not shadow that runtime, otherwise rebuilding the
+    // host appears to have no effect during `tauri dev`.
+    if cfg!(debug_assertions) {
+        return None;
+    }
     let parent = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let unified = parent.join(if cfg!(windows) {
         "dsh-host.exe"
@@ -326,12 +341,86 @@ fn allowed_parent_environment() -> HashMap<String, String> {
         "LC_ALL",
         "HOME",
         "USERPROFILE",
+        // Node 24's fetch only enables proxy support when this switch is set.
+        // Preserve both casing variants because shells and GUI launchers do
+        // not agree on the spelling used for proxy variables.
+        "NODE_USE_ENV_PROXY",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
     ];
-    KEYS.iter()
+    let mut environment = KEYS
+        .iter()
         .filter_map(|key| {
             std::env::var(key)
                 .ok()
                 .map(|value| ((*key).to_string(), value))
         })
-        .collect()
+        .collect::<HashMap<_, _>>();
+
+    // A macOS app launched from Finder commonly has no proxy variables in
+    // its environment even though the system proxy is enabled. Python and
+    // browsers discover that setting through the OS, while Node's fetch does
+    // not. Fill only missing values so an explicitly configured environment
+    // remains authoritative.
+    if cfg!(target_os = "macos") {
+        if let Some(proxy) = macos_https_proxy() {
+            environment
+                .entry("HTTPS_PROXY".to_string())
+                .or_insert_with(|| proxy.clone());
+            environment
+                .entry("HTTP_PROXY".to_string())
+                .or_insert_with(|| proxy.clone());
+            environment.entry("ALL_PROXY".to_string()).or_insert(proxy);
+        }
+    }
+    if environment.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "http_proxy" | "https_proxy" | "all_proxy"
+        )
+    }) {
+        environment
+            .entry("NODE_USE_ENV_PROXY".to_string())
+            .or_insert_with(|| "1".to_string());
+    }
+    environment
+}
+
+#[cfg(target_os = "macos")]
+fn macos_https_proxy() -> Option<String> {
+    let output = StdCommand::new("/usr/sbin/scutil")
+        .arg("--proxy")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = stdout
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            Some((key.trim(), value.trim()))
+        })
+        .collect::<HashMap<_, _>>();
+    if values.get("HTTPSEnable") != Some(&"1") {
+        return None;
+    }
+    let host = values.get("HTTPSProxy")?.trim();
+    let port = values.get("HTTPSPort")?.trim();
+    if host.is_empty() || port.is_empty() {
+        return None;
+    }
+    Some(format!("http://{host}:{port}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_https_proxy() -> Option<String> {
+    None
 }

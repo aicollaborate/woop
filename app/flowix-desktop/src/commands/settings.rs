@@ -56,6 +56,57 @@ pub fn set_ai_config(
         .map_err(|e| e.to_string())?
 }
 
+/// DeepSeek Harness model configuration. This is persisted by llm-pi-ai's
+/// settings-file provider at `~/.flowix/dsh-settings.yaml`, independently of
+/// the Flowix Agent's `agent-config.toml`.
+#[tauri::command]
+pub fn get_deepseek_harness_config(state: State<AppState>) -> Result<AiConfigFile, String> {
+    state
+        .user_config
+        .get_deepseek_harness_config()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_deepseek_harness_configs(state: State<AppState>) -> Result<Vec<AiConfigFile>, String> {
+    state
+        .user_config
+        .get_deepseek_harness_configs()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_deepseek_harness_config(
+    config: AiConfigFile,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    state
+        .user_config
+        .set_deepseek_harness_config(&config)
+        .map(|_| {
+            dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn add_deepseek_harness_model(
+    config: AiConfigFile,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    state
+        .user_config
+        .add_deepseek_harness_config(&config)
+        .map(|_| {
+            dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?
+}
+
 /// 文件监听�?黑名�?(PR2) —�?`preference.json::watcher` 字�?�?///
 /// 鎻愪緵鐙珛 IPC, 閬垮厤鍓嶇涓烘敼涓€涓瓧娈典紶瀹屾暣 PreferenceFile; 鍐欏悗
 /// emit `user-config-changed` 瑙﹀彂 `MemoWatcher::set_whitelist` 鐑洿鏂般€?
@@ -117,6 +168,25 @@ pub async fn deepseek_harness_model_catalog(
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     state.deepseek_harness.model_catalog().await
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_plugin_catalog(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state.deepseek_harness.plugin_catalog().await
+}
+
+#[tauri::command]
+pub async fn set_deepseek_harness_plugin_enabled(
+    plugin_key: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .deepseek_harness
+        .set_plugin_enabled(&plugin_key, enabled)
+        .await
 }
 
 #[tauri::command]

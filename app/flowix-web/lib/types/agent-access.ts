@@ -43,7 +43,7 @@ export interface AgentAccessEntry {
 }
 
 export interface AgentAccessDefaultRuntime {
-  model?: { key: string };
+  model?: { key: string; providerId?: string };
   access?: { sandbox: AgentPermissionMode };
   reasoningEffort?: AgentCodexReasoningEffort;
   /** DeepSeek Harness tool presentation mode. */

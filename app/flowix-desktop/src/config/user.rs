@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,8 @@ use flowix_core::secret::{entry_name, SecretStore};
 ///    `boot/system.json` / `index.db`) 鍖哄垎寰楁洿鏄剧溂
 ///    (TOML 格式 + 显式 `agent-` 前缀, 不会出现"�?��文件该用 JSON"的�?�?
 pub const AI_CONFIG_FILE_NAME: &str = "agent-config.toml";
+pub const DSH_SETTINGS_FILE_NAME: &str = "dsh-settings.yaml";
+pub const DSH_PLUGIN_SETTINGS_FILE_NAME: &str = "dsh-plugin-settings.json";
 
 const BOOT_DIR_NAME: &str = "boot";
 const PREFERENCE_FILE_NAME: &str = "preference.json";
@@ -195,8 +197,23 @@ pub struct PreferenceFile {
 pub struct AiModelConfig {
     #[serde(default)]
     pub provider: String,
+    /// Route ID for a hand-configured DeepSeek Harness provider. Built-in
+    /// providers leave this empty and continue to use the stable `flowix`
+    /// bridge route for backwards compatibility.
+    #[serde(default)]
+    pub provider_id: String,
+    /// Human-readable name for a custom Harness provider.
+    #[serde(default)]
+    pub display_name: String,
+    /// Custom Harness provider wire protocol (`openai-completions`,
+    /// `openai-responses`, or `anthropic-messages`).
+    #[serde(default)]
+    pub api_protocol: String,
     #[serde(default)]
     pub model: String,
+    /// Hand-entered model directory for a custom Harness provider.
+    #[serde(default)]
+    pub models: Vec<AiModelEntry>,
     #[serde(default)]
     pub api_url: String,
     /// �?provider 隔�?�?key �? `provider -> apiKey`�?    /// 前�?切换供应商时直接读这�? 互相不串�?
@@ -208,6 +225,23 @@ pub struct AiModelConfig {
     /// 留出 reasoning + system_prompt 余量, 同时挡住"工具结果越喂越胖"�?    /// wallet drain�?
     #[serde(default = "default_max_total_tokens")]
     pub max_total_tokens: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelEntry {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// User overrides for the declarative DeepSeek Harness plugin composition.
+/// The list contains stable catalog keys for entries the user disabled.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepSeekHarnessPluginSettings {
+    #[serde(default)]
+    pub disabled: Vec<String>,
 }
 
 fn default_max_total_tokens() -> u32 {
@@ -223,7 +257,11 @@ impl Default for AiModelConfig {
     fn default() -> Self {
         Self {
             provider: String::new(),
+            provider_id: String::new(),
+            display_name: String::new(),
+            api_protocol: String::new(),
             model: String::new(),
+            models: Vec::new(),
             api_url: String::new(),
             api_keys: HashMap::new(),
             max_total_tokens: default_max_total_tokens(),
@@ -249,6 +287,336 @@ pub struct AiConfigFile {
     pub model: AiModelConfig,
 }
 
+/// The durable settings document consumed by the vendored `llm-pi-ai`
+/// settings provider.  Flowix keeps the selected provider/model for the
+/// DeepSeek Harness here, separately from the Flowix Agent TOML config.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeepSeekHarnessSettingsFile {
+    #[serde(rename = "llm-pi-ai", default)]
+    pub llm_pi_ai: DeepSeekHarnessLlmSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeepSeekHarnessLlmSettings {
+    #[serde(default)]
+    pub providers: BTreeMap<String, DeepSeekHarnessProviderSettings>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeepSeekHarnessProviderSettings {
+    #[serde(default, rename = "displayName")]
+    pub display_name: String,
+    #[serde(default, rename = "apiKeyEnv")]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub api: String,
+    #[serde(default, rename = "baseURL")]
+    pub base_url: String,
+    #[serde(default)]
+    pub models: Vec<DeepSeekHarnessModelSettings>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeepSeekHarnessModelSettings {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+impl DeepSeekHarnessSettingsFile {
+    fn route_id_for_ai_config(config: &AiConfigFile) -> String {
+        let provider_id = config.model.provider_id.trim();
+        if provider_id.is_empty() {
+            // llm-pi-ai uses the provider map key as the route identity. Keep
+            // the old bridge only for an actually blank provider; a catalog
+            // provider such as `deepseek` or `zai` must get its own route.
+            let provider = config.model.provider.trim();
+            if provider.is_empty() {
+                "flowix".to_string()
+            } else {
+                provider.to_string()
+            }
+        } else {
+            provider_id.to_string()
+        }
+    }
+
+    fn provider_settings_for_ai_config(
+        config: &AiConfigFile,
+    ) -> Option<DeepSeekHarnessProviderSettings> {
+        let model = &config.model;
+        let provider = model.provider.trim().to_string();
+        // A provider with no remaining models is removed rather than written
+        // as an invalid llm-pi-ai route. The Harness schema rejects unknown
+        // routes whose model directory is empty.
+        if model.models.is_empty() && model.model.trim().is_empty() {
+            return None;
+        }
+        let display_name = if model.display_name.trim().is_empty() {
+            provider.clone()
+        } else {
+            model.display_name.trim().to_string()
+        };
+        // Keep an intentionally empty custom directory empty. This is used
+        // by the preferences model manager after deleting the final model;
+        // otherwise the legacy fallback would immediately recreate it from
+        // `model` on the next read.
+        let models = if model.models.is_empty() && !model.model.trim().is_empty() {
+            vec![AiModelEntry {
+                id: model.model.trim().to_string(),
+                name: String::new(),
+            }]
+        } else {
+            model.models.clone()
+        };
+        Some(DeepSeekHarnessProviderSettings {
+            display_name,
+            api_key_env: "DSH_API_KEY".to_string(),
+            api: (!model.api_protocol.trim().is_empty())
+                .then(|| model.api_protocol.trim().to_string())
+                .unwrap_or_else(|| deepseek_harness_api_protocol(&provider)),
+            base_url: model.api_url.trim_end_matches('/').to_string(),
+            models: models
+                .into_iter()
+                .map(|entry| DeepSeekHarnessModelSettings {
+                    id: entry.id,
+                    name: entry.name,
+                })
+                .collect(),
+        })
+    }
+
+    fn from_ai_config(config: &AiConfigFile) -> Self {
+        let Some(provider) = Self::provider_settings_for_ai_config(config) else {
+            return Self::default();
+        };
+        let mut providers = BTreeMap::new();
+        providers.insert(Self::route_id_for_ai_config(config), provider);
+        Self {
+            llm_pi_ai: DeepSeekHarnessLlmSettings { providers },
+        }
+    }
+
+    fn to_ai_config_for_route(
+        route_id: &str,
+        provider: &DeepSeekHarnessProviderSettings,
+    ) -> AiConfigFile {
+        // The settings document deliberately holds only a credential
+        // reference (`apiKeyEnv`), never the secret itself.  Seed the
+        // provider key here so `hydrate_ai_config_secrets` can look up the
+        // corresponding value in Flowix's owner-only secret store.
+        //
+        // Without this entry the hydration loop has no provider to inspect,
+        // so a correctly saved Harness key is silently dropped and the
+        // runtime fails its preflight with "API key is not configured".
+        let provider_name = if provider.display_name.trim().is_empty() {
+            route_id.to_string()
+        } else {
+            provider.display_name.trim().to_string()
+        };
+        let is_custom = route_id != "flowix";
+        let key_bucket = if is_custom {
+            route_id.to_string()
+        } else {
+            provider_name.clone()
+        };
+        let api_keys = (!key_bucket.is_empty())
+            .then(|| HashMap::from([(key_bucket, String::new())]))
+            .unwrap_or_default();
+        AiConfigFile {
+            model: AiModelConfig {
+                // For a real llm-pi-ai route the map key is the provider value
+                // sent to Harness. The display name is presentation only.
+                // The legacy `flowix` bridge keeps its historical provider
+                // name so old configurations continue to resolve.
+                provider: if is_custom {
+                    route_id.to_string()
+                } else {
+                    provider_name.clone()
+                },
+                provider_id: is_custom.then(|| route_id.to_string()).unwrap_or_default(),
+                display_name: provider_name,
+                api_protocol: provider.api.clone(),
+                model: provider
+                    .models
+                    .first()
+                    .map(|model| model.id.clone())
+                    .unwrap_or_default(),
+                models: provider
+                    .models
+                    .iter()
+                    .map(|model| AiModelEntry {
+                        id: model.id.clone(),
+                        name: model.name.clone(),
+                    })
+                    .collect(),
+                api_url: provider.base_url.clone(),
+                api_keys,
+                ..AiModelConfig::default()
+            },
+        }
+    }
+
+    fn to_ai_config(&self) -> AiConfigFile {
+        let (route_id, provider) = if let Some(provider) = self.llm_pi_ai.providers.get("flowix") {
+            ("flowix", provider)
+        } else if let Some((route_id, provider)) = self.llm_pi_ai.providers.iter().next() {
+            (route_id.as_str(), provider)
+        } else {
+            return AiConfigFile::default();
+        };
+        Self::to_ai_config_for_route(route_id, provider)
+    }
+
+    fn to_ai_configs(&self) -> Vec<AiConfigFile> {
+        self.llm_pi_ai
+            .providers
+            .iter()
+            .map(|(route_id, provider)| Self::to_ai_config_for_route(route_id, provider))
+            .collect()
+    }
+}
+
+fn deepseek_harness_api_protocol(provider: &str) -> String {
+    let normalized: String = provider
+        .chars()
+        .filter(|character| !character.is_whitespace() && *character != '-' && *character != '_')
+        .flat_map(char::to_lowercase)
+        .collect();
+    match normalized.as_str() {
+        "anthropic" | "claude" | "kimiforcoding" | "minimax" | "minimaxcn" | "vercelaigateway" => {
+            "anthropic-messages"
+        }
+        "openai" | "openairesponses" | "openairesponsesapi" | "responsesapi" => "openai-responses",
+        _ => "openai-completions",
+    }
+    .to_string()
+}
+
+fn merge_harness_provider(
+    existing: &mut DeepSeekHarnessProviderSettings,
+    incoming: DeepSeekHarnessProviderSettings,
+) {
+    existing.display_name = incoming.display_name;
+    existing.api_key_env = incoming.api_key_env;
+    existing.api = incoming.api;
+    existing.base_url = incoming.base_url;
+    for incoming_model in incoming.models {
+        if let Some(existing_model) = existing
+            .models
+            .iter_mut()
+            .find(|model| model.id == incoming_model.id)
+        {
+            if !incoming_model.name.is_empty() {
+                existing_model.name = incoming_model.name;
+            }
+        } else {
+            existing.models.push(incoming_model);
+        }
+    }
+}
+
+fn normalized_harness_identity(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+/// Resolve the route represented by an IPC config against the routes already
+/// present in `llm-pi-ai.providers`.
+///
+/// Older Flowix builds always stored the active custom provider under the
+/// stable `flowix` route and kept its real identity in `displayName`. Newer
+/// UI drafts carry that identity as `providerId`. Treating those two forms as
+/// different routes is what made adding model B create a second route while
+/// the reader continued to show model A from `flowix`. Match the existing
+/// route by identity/endpoint before falling back to the requested route id.
+fn existing_harness_route_id(
+    settings: &DeepSeekHarnessSettingsFile,
+    config: &AiConfigFile,
+) -> String {
+    let requested = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
+    if settings.llm_pi_ai.providers.contains_key(&requested) {
+        return requested;
+    }
+
+    let model = &config.model;
+    let identities = [model.provider.trim(), model.display_name.trim()];
+    let base_url = normalized_harness_identity(&model.api_url);
+    settings
+        .llm_pi_ai
+        .providers
+        .iter()
+        .find(|(route_id, provider)| {
+            identities.iter().any(|identity| {
+                !identity.is_empty()
+                    && normalized_harness_identity(&provider.display_name)
+                        == normalized_harness_identity(identity)
+            }) || (route_id.as_str() == "flowix"
+                && !base_url.is_empty()
+                && normalized_harness_identity(&provider.base_url) == base_url)
+        })
+        .map(|(route_id, _)| route_id.clone())
+        .unwrap_or(requested)
+}
+
+fn harness_provider_matches_config(
+    route_id: &str,
+    provider: &DeepSeekHarnessProviderSettings,
+    config: &AiConfigFile,
+) -> bool {
+    let identities = [
+        config.model.provider.trim(),
+        config.model.display_name.trim(),
+    ];
+    let base_url = normalized_harness_identity(&config.model.api_url);
+    identities.iter().any(|identity| {
+        !identity.is_empty()
+            && normalized_harness_identity(&provider.display_name)
+                == normalized_harness_identity(identity)
+    }) || (route_id == "flowix"
+        && !base_url.is_empty()
+        && normalized_harness_identity(&provider.base_url) == base_url)
+}
+
+fn split_models_from_legacy_flowix_route(
+    settings: &mut DeepSeekHarnessSettingsFile,
+    requested_route_id: &str,
+    config: &AiConfigFile,
+    incoming: &DeepSeekHarnessProviderSettings,
+) -> bool {
+    if requested_route_id == "flowix"
+        || settings
+            .llm_pi_ai
+            .providers
+            .contains_key(requested_route_id)
+        || settings
+            .llm_pi_ai
+            .providers
+            .get("flowix")
+            .is_none_or(|provider| harness_provider_matches_config("flowix", provider, config))
+    {
+        return false;
+    }
+    let incoming_ids = incoming
+        .models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if let Some(legacy) = settings.llm_pi_ai.providers.get_mut("flowix") {
+        legacy
+            .models
+            .retain(|model| !incoming_ids.contains(model.id.as_str()));
+    }
+    if settings
+        .llm_pi_ai
+        .providers
+        .get("flowix")
+        .is_some_and(|provider| provider.models.is_empty())
+    {
+        settings.llm_pi_ai.providers.remove("flowix");
+    }
+    true
+}
+
 /// 全局用户配置存储。启动时一次性从磁盘读入内存, 写操作先落盘再更内存�?
 pub struct UserConfigStore {
     config_dir: PathBuf,
@@ -268,6 +636,10 @@ pub enum UserConfigError {
     Json(#[from] serde_json::Error),
     #[error("toml serialization error: {0}")]
     Toml(#[from] toml::ser::Error),
+    #[error("yaml serialization error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
     #[error("secret store error: {0}")]
     SecretStore(String),
 }
@@ -333,6 +705,37 @@ impl UserConfigStore {
         &self.config_dir
     }
 
+    pub fn get_deepseek_harness_plugin_settings(
+        &self,
+    ) -> Result<DeepSeekHarnessPluginSettings, UserConfigError> {
+        let path = self.config_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME);
+        match fs::read_to_string(path) {
+            Ok(content) => Ok(serde_json::from_str(&content)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(DeepSeekHarnessPluginSettings::default())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn set_deepseek_harness_plugin_enabled(
+        &self,
+        plugin_key: &str,
+        enabled: bool,
+    ) -> Result<DeepSeekHarnessPluginSettings, UserConfigError> {
+        let mut settings = self.get_deepseek_harness_plugin_settings()?;
+        if enabled {
+            settings.disabled.retain(|key| key != plugin_key);
+        } else if !settings.disabled.iter().any(|key| key == plugin_key) {
+            settings.disabled.push(plugin_key.to_string());
+        }
+        settings.disabled.sort();
+        let content = serde_json::to_string_pretty(&settings)?;
+        let path = self.config_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME);
+        atomic_write_json(&path, &content)?;
+        Ok(settings)
+    }
+
     pub fn get_preference(&self) -> PreferenceFile {
         self.read_preference().clone()
     }
@@ -350,6 +753,159 @@ impl UserConfigStore {
         let mut config = self.read_ai_config().clone();
         self.hydrate_ai_config_secrets(&mut config);
         config
+    }
+
+    /// Load the DeepSeek Harness model configuration from the llm-pi-ai
+    /// settings document. Existing installations are migrated lazily from
+    /// agent-config.toml on first access, so changing Flowix Agent settings
+    /// later does not overwrite an already-created Harness configuration.
+    pub fn get_deepseek_harness_config(&self) -> Result<AiConfigFile, UserConfigError> {
+        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let settings = match self.read_deepseek_harness_settings()? {
+            Some(settings) => settings,
+            None => {
+                let config = self.get_ai_config();
+                let settings = DeepSeekHarnessSettingsFile::from_ai_config(&config);
+                let content = serde_yaml::to_string(&settings)?;
+                atomic_write_yaml(&path, &content)?;
+                settings
+            }
+        };
+        let mut config = settings.to_ai_config();
+        self.hydrate_ai_config_secrets(&mut config);
+        Ok(config)
+    }
+
+    /// Return every configured llm-pi-ai route. The model manager must not
+    /// flatten this into the first provider: `deepseek` and `zai` are
+    /// independent routes and their model cards carry different endpoints
+    /// and credentials.
+    pub fn get_deepseek_harness_configs(&self) -> Result<Vec<AiConfigFile>, UserConfigError> {
+        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let settings = match self.read_deepseek_harness_settings()? {
+            Some(settings) => settings,
+            None => {
+                let config = self.get_ai_config();
+                let settings = DeepSeekHarnessSettingsFile::from_ai_config(&config);
+                let content = serde_yaml::to_string(&settings)?;
+                atomic_write_yaml(&path, &content)?;
+                settings
+            }
+        };
+        let mut configs = settings.to_ai_configs();
+        for config in &mut configs {
+            self.hydrate_ai_config_secrets(config);
+        }
+        Ok(configs)
+    }
+
+    /// Persist only the DeepSeek Harness settings. API keys remain in the
+    /// existing owner-only secret store and are never written to YAML.
+    pub fn set_deepseek_harness_config(
+        &self,
+        config: &AiConfigFile,
+    ) -> Result<(), UserConfigError> {
+        self.persist_ai_config_secrets(config)?;
+        let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
+        if let Some(provider) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
+        {
+            let requested_route_id = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
+            let split_legacy = split_models_from_legacy_flowix_route(
+                &mut settings,
+                &requested_route_id,
+                config,
+                &provider,
+            );
+            let route_id = if split_legacy {
+                requested_route_id
+            } else {
+                existing_harness_route_id(&settings, config)
+            };
+            // Replace only the provider being edited. Other llm-pi-ai routes
+            // and their model directories belong to the settings document
+            // and must survive an unrelated save/delete operation.
+            settings.llm_pi_ai.providers.insert(route_id, provider);
+        } else {
+            let route_id = existing_harness_route_id(&settings, config);
+            settings.llm_pi_ai.providers.remove(&route_id);
+        }
+        let content = serde_yaml::to_string(&settings)?;
+        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        atomic_write_yaml(&path, &content)?;
+        Ok(())
+    }
+
+    /// Add a model to the active llm-pi-ai provider without replacing the
+    /// provider's existing model directory. This is deliberately separate
+    /// from `set_deepseek_harness_config`: edit/delete need replacement
+    /// semantics, while the Add model action is an append/merge operation.
+    pub fn add_deepseek_harness_config(
+        &self,
+        config: &AiConfigFile,
+    ) -> Result<(), UserConfigError> {
+        self.persist_ai_config_secrets(config)?;
+        let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
+        let requested_route_id = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
+        let route_id = existing_harness_route_id(&settings, config);
+        let Some(incoming) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
+        else {
+            return Err(UserConfigError::InvalidConfig(
+                "cannot add a Harness model without a provider and model".to_string(),
+            ));
+        };
+        // Repair the only ambiguous legacy shape while writing: an old
+        // `flowix` route may already contain a model that the user is now
+        // explicitly assigning to a different catalog route.
+        let should_split_legacy_route = split_models_from_legacy_flowix_route(
+            &mut settings,
+            &requested_route_id,
+            config,
+            &incoming,
+        );
+        let target_route_id = if should_split_legacy_route {
+            requested_route_id
+        } else {
+            route_id
+        };
+        if let Some(existing) = settings.llm_pi_ai.providers.get_mut(&target_route_id) {
+            merge_harness_provider(existing, incoming);
+        } else {
+            settings
+                .llm_pi_ai
+                .providers
+                .insert(target_route_id, incoming);
+        }
+        let content = serde_yaml::to_string(&settings)?;
+        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        atomic_write_yaml(&path, &content)?;
+        Ok(())
+    }
+
+    fn read_deepseek_harness_settings(
+        &self,
+    ) -> Result<Option<DeepSeekHarnessSettingsFile>, UserConfigError> {
+        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        match fs::read_to_string(path) {
+            Ok(content) => Ok(Some(serde_yaml::from_str(&content)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Render a standalone Harness settings document for a one-shot probe.
+    ///
+    /// A probe must be able to validate a model that has not been saved yet.
+    /// Keeping this renderer separate from `set_deepseek_harness_config`
+    /// avoids mutating the user's durable settings just to test a draft.
+    pub(crate) fn deepseek_harness_settings_yaml(
+        config: &AiModelConfig,
+    ) -> Result<String, UserConfigError> {
+        serde_yaml::to_string(&DeepSeekHarnessSettingsFile::from_ai_config(
+            &AiConfigFile {
+                model: config.clone(),
+            },
+        ))
+        .map_err(UserConfigError::Yaml)
     }
 
     /// 先把 secrets �?db (主存�?, 再把 **不含明文 key** �?TOML 落盘
@@ -517,6 +1073,27 @@ pub(crate) fn atomic_write_toml(path: &Path, content: &str) -> std::io::Result<(
     Ok(())
 }
 
+pub(crate) fn atomic_write_yaml(path: &Path, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        set_dir_owner_only_perms(parent);
+    }
+    let tmp = path.with_extension("yaml.tmp");
+    {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
+    }
+    set_file_owner_only_perms(&tmp);
+    fs::rename(&tmp, path)?;
+    set_file_owner_only_perms(path);
+    Ok(())
+}
+
 #[cfg(unix)]
 fn set_file_owner_only_perms(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -595,6 +1172,25 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_harness_plugin_settings_round_trip_enabled_state() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+
+        let disabled = store
+            .set_deepseek_harness_plugin_enabled("preset:standard:3:tool-web", false)
+            .unwrap();
+        assert_eq!(disabled.disabled, vec!["preset:standard:3:tool-web"]);
+
+        let loaded = store.get_deepseek_harness_plugin_settings().unwrap();
+        assert_eq!(loaded, disabled);
+
+        let enabled = store
+            .set_deepseek_harness_plugin_enabled("preset:standard:3:tool-web", true)
+            .unwrap();
+        assert!(enabled.disabled.is_empty());
+    }
+
+    #[test]
     fn max_total_tokens_default_is_180k() {
         // 榛樿 180k 鈹€鈹€ 100 cycle 脳 1.8k token, 鐣欏嚭 reasoning + system_prompt
         // 浣欓噺銆傛敼榛樿鍊兼椂杩欐潯鍗曟祴蹇呴』鍚屾鏀广€?
@@ -625,6 +1221,7 @@ mod tests {
             api_url: "https://x".into(),
             api_keys: HashMap::new(),
             max_total_tokens: 50_000,
+            ..AiModelConfig::default()
         };
         let s = toml::to_string(&cfg).unwrap();
         assert!(s.contains("maxTotalTokens = 50000"), "got: {s}");
@@ -643,6 +1240,7 @@ mod tests {
                 api_url: "https://api.anthropic.com".into(),
                 api_keys: HashMap::new(),
                 max_total_tokens: 90_000,
+                ..AiModelConfig::default()
             },
         };
         let s = toml::to_string_pretty(&cfg).unwrap();
@@ -714,6 +1312,7 @@ apiKey = "k"
                     ("Anthropic".to_string(), "sk-ant".to_string()),
                 ]),
                 max_total_tokens: 50_000,
+                ..AiModelConfig::default()
             },
         };
 
@@ -760,6 +1359,7 @@ apiKey = "k"
                     "sk-ant-from-toml".to_string(),
                 )]),
                 max_total_tokens: 50_000,
+                ..AiModelConfig::default()
             },
         };
         std::fs::write(
@@ -825,5 +1425,468 @@ apiKey = "k"
                 .map(String::as_str),
             Some("")
         );
+    }
+
+    #[test]
+    fn deepseek_harness_config_hydrates_its_provider_key_from_secret_store() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let config = AiConfigFile {
+            model: AiModelConfig {
+                provider: "DeepSeek".into(),
+                model: "deepseek-chat".into(),
+                api_url: "https://api.deepseek.com/v1".into(),
+                api_keys: HashMap::from([("DeepSeek".to_string(), "test-key".to_string())]),
+                ..AiModelConfig::default()
+            },
+        };
+
+        store.set_deepseek_harness_config(&config).unwrap();
+
+        let settings_path = home
+            .path()
+            .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME);
+        let settings = std::fs::read_to_string(settings_path).unwrap();
+        assert!(
+            !settings.contains("test-key"),
+            "settings must not contain the API key"
+        );
+
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(loaded.model.provider, "DeepSeek");
+        assert_eq!(loaded.model.effective_api_key("DeepSeek"), "test-key");
+    }
+
+    #[test]
+    fn custom_deepseek_harness_provider_round_trips_its_route_and_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let config = AiConfigFile {
+            model: AiModelConfig {
+                provider: "acme-gateway".into(),
+                provider_id: "acme-gateway".into(),
+                display_name: "Acme Gateway".into(),
+                api_protocol: "openai-responses".into(),
+                model: "acme-large".into(),
+                models: vec![
+                    AiModelEntry {
+                        id: "acme-large".into(),
+                        name: "Acme Large".into(),
+                    },
+                    AiModelEntry {
+                        id: "acme-think".into(),
+                        name: "Acme Think".into(),
+                    },
+                ],
+                api_url: "https://gateway.acme.example/v1".into(),
+                api_keys: HashMap::from([("acme-gateway".to_string(), "test-key".to_string())]),
+                ..AiModelConfig::default()
+            },
+        };
+
+        store.set_deepseek_harness_config(&config).unwrap();
+
+        let settings = std::fs::read_to_string(
+            home.path()
+                .join(USER_CONFIG_DIR_NAME)
+                .join(DSH_SETTINGS_FILE_NAME),
+        )
+        .unwrap();
+        assert!(settings.contains("acme-gateway:"), "got: {settings}");
+        assert!(
+            settings.contains("api: openai-responses"),
+            "got: {settings}"
+        );
+        assert!(settings.contains("name: Acme Think"), "got: {settings}");
+        assert!(
+            !settings.contains("test-key"),
+            "settings must not contain the API key"
+        );
+
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(loaded.model.provider_id, "acme-gateway");
+        assert_eq!(loaded.model.display_name, "Acme Gateway");
+        assert_eq!(loaded.model.api_protocol, "openai-responses");
+        assert_eq!(loaded.model.models.len(), 2);
+        assert_eq!(loaded.model.models[1].name, "Acme Think");
+        assert_eq!(loaded.model.effective_api_key("acme-gateway"), "test-key");
+    }
+
+    #[test]
+    fn adding_harness_model_merges_with_the_existing_llm_pi_ai_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let first = AiConfigFile {
+            model: AiModelConfig {
+                provider: "acme-gateway".into(),
+                provider_id: "acme-gateway".into(),
+                display_name: "Acme Gateway".into(),
+                api_protocol: "openai-completions".into(),
+                model: "model-a".into(),
+                models: vec![AiModelEntry {
+                    id: "model-a".into(),
+                    name: "Model A".into(),
+                }],
+                api_url: "https://gateway.acme.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+        store.set_deepseek_harness_config(&first).unwrap();
+
+        let second = AiConfigFile {
+            model: AiModelConfig {
+                provider: "acme-gateway".into(),
+                provider_id: "acme-gateway".into(),
+                display_name: "Acme Gateway".into(),
+                api_protocol: "openai-completions".into(),
+                model: "model-b".into(),
+                models: vec![AiModelEntry {
+                    id: "model-b".into(),
+                    name: "Model B".into(),
+                }],
+                api_url: "https://gateway.acme.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+        store.add_deepseek_harness_config(&second).unwrap();
+
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(
+            loaded
+                .model
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["model-a", "model-b"]
+        );
+    }
+
+    #[test]
+    fn adding_to_legacy_flowix_route_does_not_create_a_shadow_route() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let path = home
+            .path()
+            .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME);
+        let mut settings = DeepSeekHarnessSettingsFile::default();
+        settings.llm_pi_ai.providers.insert(
+            "flowix".into(),
+            DeepSeekHarnessProviderSettings {
+                display_name: "zai-coding-cn".into(),
+                api_key_env: "DSH_API_KEY".into(),
+                api: "openai-completions".into(),
+                base_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+                models: vec![DeepSeekHarnessModelSettings {
+                    id: "model-a".into(),
+                    name: "Model A".into(),
+                }],
+            },
+        );
+        std::fs::write(&path, serde_yaml::to_string(&settings).unwrap()).unwrap();
+
+        // This is the shape emitted by the current UI when it submits model B
+        // after loading the old stable `flowix` route.
+        store
+            .add_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "zai-coding-cn".into(),
+                    provider_id: "zai-coding-cn".into(),
+                    display_name: "zai-coding-cn".into(),
+                    model: "model-b".into(),
+                    models: vec![AiModelEntry {
+                        id: "model-b".into(),
+                        name: "Model B".into(),
+                    }],
+                    api_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        let saved: DeepSeekHarnessSettingsFile =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved.llm_pi_ai.providers.len(), 1);
+        assert_eq!(
+            saved
+                .llm_pi_ai
+                .providers
+                .get("flowix")
+                .unwrap()
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["model-a", "model-b"]
+        );
+    }
+
+    #[test]
+    fn adding_a_second_catalog_provider_creates_a_separate_llm_pi_ai_route() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        store
+            .set_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "deepseek".into(),
+                    model: "deepseek-chat".into(),
+                    models: vec![AiModelEntry {
+                        id: "deepseek-chat".into(),
+                        name: "DeepSeek Chat".into(),
+                    }],
+                    api_url: "https://api.deepseek.com".into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        store
+            .add_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "zai".into(),
+                    display_name: "GLM".into(),
+                    model: "glm-4.5-air".into(),
+                    models: vec![AiModelEntry {
+                        id: "glm-4.5-air".into(),
+                        name: "GLM 4.5 Air".into(),
+                    }],
+                    api_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        let path = home
+            .path()
+            .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME);
+        let saved: DeepSeekHarnessSettingsFile =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved.llm_pi_ai.providers.len(), 2);
+        assert_eq!(
+            saved
+                .llm_pi_ai
+                .providers
+                .get("deepseek")
+                .unwrap()
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["deepseek-chat"]
+        );
+        assert_eq!(
+            saved
+                .llm_pi_ai
+                .providers
+                .get("zai")
+                .unwrap()
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["glm-4.5-air"]
+        );
+
+        let configs = store.get_deepseek_harness_configs().unwrap();
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].model.provider, "deepseek");
+        assert_eq!(configs[1].model.provider, "zai");
+    }
+
+    #[test]
+    fn same_base_url_does_not_merge_distinct_custom_routes() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let endpoint = "https://shared-gateway.example/v1";
+
+        store
+            .set_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "provider-a".into(),
+                    provider_id: "provider-a".into(),
+                    display_name: "Provider A".into(),
+                    model: "model-a".into(),
+                    models: vec![AiModelEntry {
+                        id: "model-a".into(),
+                        name: "Model A".into(),
+                    }],
+                    api_url: endpoint.into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+        store
+            .set_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "provider-b".into(),
+                    provider_id: "provider-b".into(),
+                    display_name: "Provider B".into(),
+                    model: "model-b".into(),
+                    models: vec![AiModelEntry {
+                        id: "model-b".into(),
+                        name: "Model B".into(),
+                    }],
+                    api_url: endpoint.into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        let configs = store.get_deepseek_harness_configs().unwrap();
+        assert_eq!(configs.len(), 2);
+        assert!(configs
+            .iter()
+            .any(|config| config.model.provider_id == "provider-a"));
+        assert!(configs
+            .iter()
+            .any(|config| config.model.provider_id == "provider-b"));
+    }
+
+    #[test]
+    fn adding_a_catalog_provider_repairs_mixed_legacy_flowix_models() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let path = home
+            .path()
+            .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME);
+        let mut settings = DeepSeekHarnessSettingsFile::default();
+        settings.llm_pi_ai.providers.insert(
+            "flowix".into(),
+            DeepSeekHarnessProviderSettings {
+                display_name: "deepseek".into(),
+                api_key_env: "DSH_API_KEY".into(),
+                api: "openai-completions".into(),
+                base_url: "https://api.deepseek.com".into(),
+                models: vec![
+                    DeepSeekHarnessModelSettings {
+                        id: "deepseek-chat".into(),
+                        name: String::new(),
+                    },
+                    DeepSeekHarnessModelSettings {
+                        id: "glm-4.5-air".into(),
+                        name: String::new(),
+                    },
+                ],
+            },
+        );
+        std::fs::write(&path, serde_yaml::to_string(&settings).unwrap()).unwrap();
+
+        store
+            .add_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "zai".into(),
+                    display_name: "GLM".into(),
+                    model: "glm-4.5-air".into(),
+                    models: vec![AiModelEntry {
+                        id: "glm-4.5-air".into(),
+                        name: String::new(),
+                    }],
+                    api_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        let saved: DeepSeekHarnessSettingsFile =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(
+            saved
+                .llm_pi_ai
+                .providers
+                .get("flowix")
+                .unwrap()
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["deepseek-chat"]
+        );
+        assert_eq!(
+            saved
+                .llm_pi_ai
+                .providers
+                .get("zai")
+                .unwrap()
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["glm-4.5-air"]
+        );
+    }
+
+    #[test]
+    fn saving_one_harness_provider_preserves_other_llm_pi_ai_routes() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let path = home
+            .path()
+            .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME);
+        let mut settings = DeepSeekHarnessSettingsFile::default();
+        settings.llm_pi_ai.providers.insert(
+            "other-route".into(),
+            DeepSeekHarnessProviderSettings {
+                display_name: "Other Route".into(),
+                api_key_env: "OTHER_KEY".into(),
+                api: "openai-completions".into(),
+                base_url: "https://other.example/v1".into(),
+                models: vec![DeepSeekHarnessModelSettings {
+                    id: "other-model".into(),
+                    name: "Other Model".into(),
+                }],
+            },
+        );
+        std::fs::write(&path, serde_yaml::to_string(&settings).unwrap()).unwrap();
+
+        store
+            .set_deepseek_harness_config(&AiConfigFile {
+                model: AiModelConfig {
+                    provider: "Acme".into(),
+                    provider_id: "acme".into(),
+                    model: "acme-model".into(),
+                    models: vec![AiModelEntry {
+                        id: "acme-model".into(),
+                        name: String::new(),
+                    }],
+                    api_url: "https://acme.example/v1".into(),
+                    ..AiModelConfig::default()
+                },
+            })
+            .unwrap();
+
+        let saved: DeepSeekHarnessSettingsFile =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert!(saved.llm_pi_ai.providers.contains_key("other-route"));
+        assert!(saved.llm_pi_ai.providers.contains_key("acme"));
+    }
+
+    #[test]
+    fn deleting_last_custom_harness_model_removes_provider_route() {
+        let home = tempfile::tempdir().unwrap();
+        let store = test_user_config_store(home.path().to_path_buf());
+        let config = AiConfigFile {
+            model: AiModelConfig {
+                provider: "acme-gateway".into(),
+                provider_id: "acme-gateway".into(),
+                display_name: "Acme Gateway".into(),
+                api_protocol: "openai-completions".into(),
+                model: String::new(),
+                models: Vec::new(),
+                api_url: "https://gateway.acme.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+
+        store.set_deepseek_harness_config(&config).unwrap();
+
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert!(loaded.model.provider_id.is_empty());
+        assert!(loaded.model.provider.is_empty());
+        assert!(loaded.model.models.is_empty());
     }
 }

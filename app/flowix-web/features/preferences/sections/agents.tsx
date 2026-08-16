@@ -185,6 +185,8 @@ export function AgentsSection() {
               'deepseek-harness',
               <div className="border-t border-[var(--divider)] py-3">
                 <AgentSection
+                  configStore={deepseekHarness}
+                  configChangeKind="dsh_config"
                   testConnection={deepseekHarness.testConnection}
                   modelDirectory={deepseekHarness}
                 />

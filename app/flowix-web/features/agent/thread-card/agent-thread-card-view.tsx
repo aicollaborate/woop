@@ -159,6 +159,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private agentRolePicker: AgentRolePickerController;
   private isCreating = false;
   private isDestroyed = false;
+  // Guards late async completions (thread creation / role loading) from
+  // writing attrs after a newer submit or a document lifecycle change.
+  private submitGeneration = 0;
   private interestedThreadId: string | null = null;
   private hydratingInstanceId: string | null = null;
   private releaseThreadInterest: (() => void) | null = null;
@@ -343,7 +346,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       isDestroyed: () => this.isDestroyed,
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
     });
-
     this.agentRolePicker = new AgentRolePickerController({
       trigger: this.composerRoleIcon,
       popover: composerRolePopover,
@@ -795,10 +797,49 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private updateAttrs(attrs: Record<string, unknown>): void {
+    if (this.isDestroyed || this.view.isDestroyed) return;
+
     const pos = this.getPos?.();
     if (pos === undefined) return;
 
-    const nextAttrs = { ...this.node.attrs, ...attrs };
+    // getPos is dynamic, but the NodeView's node is only refreshed by
+    // ProseMirror after a transaction. Async callbacks can therefore have a
+    // stale this.node snapshot. Read the node at the live position and make
+    // sure it is still this card before merging attrs. This is a cheap O(depth)
+    // guard on the normal path; importantly, it avoids a whole-document scan.
+    const currentNode = this.view.state.doc.nodeAt(pos);
+    if (!currentNode || currentNode.type.name !== "agentThreadCard") return;
+
+    const currentInstanceId =
+      typeof currentNode.attrs.instanceId === "string"
+        ? currentNode.attrs.instanceId.trim()
+        : "";
+    const expectedInstanceId = this.instanceId ?? "";
+    if (expectedInstanceId && currentInstanceId !== expectedInstanceId) {
+      return;
+    }
+
+    // A legacy card may still be receiving its first instanceId. If another
+    // update has already bound this position to a different instance, reject
+    // the stale callback instead of overwriting that card's identity.
+    const incomingInstanceId =
+      typeof attrs.instanceId === "string" ? attrs.instanceId.trim() : "";
+    if (
+      incomingInstanceId &&
+      expectedInstanceId &&
+      incomingInstanceId !== expectedInstanceId
+    ) {
+      return;
+    }
+    if (
+      incomingInstanceId &&
+      currentInstanceId &&
+      incomingInstanceId !== currentInstanceId
+    ) {
+      return;
+    }
+
+    const nextAttrs = { ...currentNode.attrs, ...attrs };
     this.view.dispatch(
       this.view.state.tr.setNodeMarkup(pos, undefined, nextAttrs),
     );
@@ -1400,6 +1441,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // LLM 自己之前的回答 / 工具结果当成'笔记内容'再喂回去造成循环。
     // 空文档 / 全部是 card 的笔记会得到空上下文。
     const documentContext = extractDocumentContext(this.view);
+    const submitGeneration = ++this.submitGeneration;
 
     this.input.value = "";
     this.composerController.resetHistoryNavigation();
@@ -1439,6 +1481,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         buildTitle,
         loadAgentRoleBody: (memoId) => this.loadAgentRoleBody(memoId),
         onThreadBound: (binding) => {
+          if (
+            this.isDestroyed ||
+            submitGeneration !== this.submitGeneration
+          ) {
+            return;
+          }
           // Persist the card binding only after the optimistic user message has
           // entered the store. Otherwise the node attr update schedules history
           // cache loading while the message list is still empty, producing a

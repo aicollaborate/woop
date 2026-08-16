@@ -72,6 +72,15 @@ pub fn runtime_dispose_request(id: u64, thread_id: &str) -> Value {
     })
 }
 
+pub fn session_usage_request(id: u64, session_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session.usage",
+        "params": { "sessionId": session_id }
+    })
+}
+
 pub fn run_cancel_request(id: u64, thread_id: &str, run_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -87,6 +96,10 @@ pub fn shutdown_request(id: u64) -> Value {
 
 pub fn models_catalog_request(id: u64) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "method": "models.catalog", "params": {} })
+}
+
+pub fn plugins_catalog_request(id: u64) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "plugins.catalog", "params": {} })
 }
 
 pub fn models_discover_request(
@@ -294,13 +307,19 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
             let cache_write = u32_field(event, "cacheWriteTokens");
             let cached = match (cache_read, cache_write) {
                 (None, None) => None,
-                (read, write) => Some(read.unwrap_or(0).saturating_add(write.unwrap_or(0))),
+                // `cached_input_tokens` is the cache-hit/read portion. Cache
+                // writes are not hits and must not be presented as such.
+                (read, _) => read,
             };
             let output = u32_field(event, "outputTokens");
             let reasoning = u32_field(event, "reasoningTokens");
             AdaptedEvent::Chunk(AgentChunk::Usage {
                 thread_id,
-                model_id: None,
+                model_id: event
+                    .get("modelId")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string),
                 last_run_at: Some(chrono::Utc::now().timestamp_millis()),
                 usage: Some(UsageInfo {
                     input_tokens: input,
@@ -310,10 +329,12 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                     total_tokens: Some(
                         input
                             .unwrap_or(0)
-                            .saturating_add(cached.unwrap_or(0))
+                            .saturating_add(cache_read.unwrap_or(0))
+                            .saturating_add(cache_write.unwrap_or(0))
                             .saturating_add(output.unwrap_or(0)),
                     ),
-                    model_context_window: None,
+                    model_context_window: u32_field(event, "contextWindow"),
+                    context_used_tokens: u32_field(event, "contextTokens"),
                 }),
                 status_info: None,
             })
@@ -420,18 +441,21 @@ mod tests {
     fn maps_host_usage_to_flowix_usage() {
         let event = json!({
             "method": "run.event",
-            "params": { "event": { "type": "usage", "inputTokens": 2, "cacheReadTokens": 3, "cacheWriteTokens": 4, "outputTokens": 5 } }
+            "params": { "event": { "type": "usage", "modelId": "deepseek-chat", "inputTokens": 2, "cacheReadTokens": 3, "cacheWriteTokens": 4, "contextTokens": 1200, "contextWindow": 4000, "outputTokens": 5 } }
         });
         assert!(matches!(
             adapt_event(&event, "thread-1"),
             AdaptedEvent::Chunk(AgentChunk::Usage {
                 usage: Some(UsageInfo {
-                    cached_input_tokens: Some(7),
+                    cached_input_tokens: Some(3),
                     total_tokens: Some(14),
+                    context_used_tokens: Some(1200),
+                    model_context_window: Some(4000),
                     ..
                 }),
+                model_id: Some(model_id),
                 ..
-            })
+            }) if model_id == "deepseek-chat"
         ));
     }
 

@@ -417,7 +417,6 @@
 	}
 	[data-tag-icon]:hover,
 	[data-tag-icon]:focus-visible,
-	.tag-tree-list .group:hover [data-tag-icon],
 	.tag-tree-list .group:focus-visible [data-tag-icon] {
 		opacity: 1;
 		color: var(--tag-icon-hover, color-mix(in oklch, var(--foreground) 55%, white));

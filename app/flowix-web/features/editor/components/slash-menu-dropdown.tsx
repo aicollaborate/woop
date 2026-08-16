@@ -70,6 +70,8 @@ export interface SlashMenuItem {
   /** 快捷键 actionId ── 给出时, 右侧用 ShortcutKbd 渲染 (覆盖 description)。
    *  description + shortcut 同时缺省时, 右侧不渲染, label 独占宽度。 */
   shortcut?: string;
+  /** Keep bundled agent entries visible while their runtime status is settling. */
+  alwaysVisible?: boolean;
 }
 
 export interface SlashMenuProps {
@@ -108,6 +110,7 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     keywords: ['dsh', 'deepseek', 'harness', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
     icon: getAgentType('deepseek-harness').icon,
     sectionKey: 'editor.slash.section.agent',
+    alwaysVisible: true,
   },
   {
     id: 'agent-thread-codex',

@@ -12,6 +12,7 @@ import { resolve } from 'node:path'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { HarnessClient, isRecord, SdkProtocolError } from './client.ts'
 import type { ContentBlock, DeepSeekHarnessOptions, HarnessClientOptions, HarnessNotification, RunResult } from './types.ts'
+import type { SessionUsageResult } from '@deepseek-ai/dsh-sdk-protocol'
 
 /**
  * Reusable SDK for running DeepSeek Harness agent turns in a runtime
@@ -191,6 +192,16 @@ export class HarnessSession {
       events,
       notifications,
     }
+  }
+
+  /**
+   * Read the cumulative usage snapshot for this session after a turn settles.
+   * The runtime folds durable session events, so this does not count chunks in
+   * the SDK client.
+   */
+  async usage(): Promise<SessionUsageResult> {
+    await this.harness.start()
+    return this.harness.client.sessionUsage(this.id)
   }
 }
 

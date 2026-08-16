@@ -27,4 +27,17 @@ describe('syncUserConfigChange', () => {
     expect(refreshAgentRuntime).toHaveBeenCalledOnce();
     expect(reloadPreferences).not.toHaveBeenCalled();
   });
+
+  it('refreshes the runtime snapshot after DeepSeek Harness config changes', () => {
+    const reloadPreferences = vi.fn();
+    const refreshAgentRuntime = vi.fn();
+
+    syncUserConfigChange('dsh_config', {
+      reloadPreferences,
+      refreshAgentRuntime,
+    });
+
+    expect(refreshAgentRuntime).toHaveBeenCalledOnce();
+    expect(reloadPreferences).not.toHaveBeenCalled();
+  });
 });

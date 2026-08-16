@@ -10,9 +10,11 @@ import {
   requireThreadRun,
   requireModelDiscover,
   requireModelResolve,
+  requireSessionUsage,
 } from './protocol/validation.ts'
 import { SessionPool } from './runtime/session-pool.ts'
 import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
+import { catalog as pluginCatalog } from './runtime/plugin-directory.ts'
 
 let writeChain = Promise.resolve()
 function writeFrame(frame: unknown): void {
@@ -46,12 +48,14 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
           'cancel-by-restart',
           'model-catalog',
           'model-discovery',
+          'plugin-catalog',
         ],
       }
     case 'host.ping': return { ok: true }
     case 'runtime.ensure': return await pool.ensure(requireRuntimeSpec(request.params))
     case 'runtime.status': return { runtimes: pool.status() }
     case 'runtime.dispose': return { disposed: await pool.dispose(requireThread(request.params).threadId) }
+    case 'session.usage': return (await pool.usage(requireSessionUsage(request.params).sessionId)) ?? null
     case 'run.start':
       pool.startRun(requireRunStart(request.params))
       return { accepted: true }
@@ -87,6 +91,7 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
         ...(hit.maxTokens === undefined ? {} : { maxTokens: hit.maxTokens }),
       }
     }
+    case 'plugins.catalog': return pluginCatalog()
     case 'host.shutdown':
       await pool.close()
       setImmediate(() => process.exit(0))

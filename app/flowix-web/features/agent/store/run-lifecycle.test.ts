@@ -108,6 +108,29 @@ describe("run lifecycle reducer", () => {
     });
   });
 
+  it("keeps usage that arrives after stream_end in the session snapshot", () => {
+    const running = applyRunStarted(emptyState(), startEvent("run-1"), {
+      model: "deepseek-chat",
+    });
+    const ended = applyRunEnded(running, endEvent("run-1"));
+    const updated = applyRunUsage(ended, {
+      kind: "usage",
+      agentType: "codex",
+      threadId: "thread-1",
+      runId: "run-1",
+      timestamp: 250,
+      modelId: "deepseek-chat",
+      usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 },
+    });
+
+    expect(updated.runs["run-1"]).toBeUndefined();
+    expect(updated.lastRun).toMatchObject({
+      runId: "run-1",
+      modelId: "deepseek-chat",
+      usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 },
+    });
+  });
+
   it("removes failed runs from runs and preserves lastRun", () => {
     const running = applyRunStarted(
       {

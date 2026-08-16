@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec } from './v1.ts'
+import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec, SessionUsageParams } from './v1.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -117,6 +117,11 @@ export function requireModelResolve(value: unknown): { provider: string; model: 
 export function requireThread(value: unknown): { threadId: string } {
   const params = requireRecord(value, 'runtime params')
   return { threadId: requireString(params.threadId, 'threadId') }
+}
+
+export function requireSessionUsage(value: unknown): SessionUsageParams {
+  const params = requireRecord(value, 'session.usage params')
+  return { sessionId: requireString(params.sessionId, 'sessionId') }
 }
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {

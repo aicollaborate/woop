@@ -85,13 +85,11 @@ export class AgentThreadCardChromeController {
   attach(): void {
     this.header.attach();
     this.badge.renderHoverCard();
-    // mount 节点默认 `display: none` (role-picker.css),需要把它绝对定位到 badge
-    // 上才能让 absolute inset:0 的 trigger 覆盖住 badge ── 下一帧跑确保
-    // getBoundingClientRect 拿到真实尺寸,非全屏状态下也需要这一步(旧版依赖
-    // 全屏切换调用,会让非全屏卡片的 trigger 永远不可见)。
-    window.requestAnimationFrame(() =>
-      this.badge.syncHoverCardPosition(),
-    );
+    // mount 节点默认 `display: none` (role-picker.css),需要把它定位到 badge
+    // 上才能让 trigger 覆盖住图标。不能只在全屏切换时同步: 非全屏卡片可能在
+    // editor 尚未完成布局时挂载,而 editor 滚动/resize 也会改变 badge 的 viewport
+    // 坐标。Badge controller 会持续监听这些布局变化。
+    this.badge.attachHoverCardPositioning();
   }
 
   startTitleEdit(): void {

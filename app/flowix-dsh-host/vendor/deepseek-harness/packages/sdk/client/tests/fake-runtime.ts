@@ -4,7 +4,7 @@
  * env vars — no model, no network, no harness imports. Speaks the runtime's
  * newline-delimited JSON-RPC protocol on stdio: answers `initialize`,
  * `session/prompt` (streaming scripted `session.event` notifications, then
- * `session.finished`, then the response), and `shutdown`.
+ * `session.status` idle, then the response), `session/usage`, and `shutdown`.
  *
  * Script vocabulary (all optional):
  * - `FAKE_TEXT`: assistant text for each turn (default `hello from fake runtime`).
@@ -222,6 +222,16 @@ reader.on('line', (line) => {
       respond({ messageId })
       return
     }
+    case 'session/usage':
+      respond({
+        sessionId: sessionIdOf(frame.params),
+        modelId: 'fake-model',
+        inputTokens: 7,
+        outputTokens: 3,
+        cacheReadTokens: 2,
+        cacheWriteTokens: 1,
+      })
+      return
     case 'shutdown':
       respond({})
       // An EOF-ignoring fake also refuses the protocol exit, so the client's

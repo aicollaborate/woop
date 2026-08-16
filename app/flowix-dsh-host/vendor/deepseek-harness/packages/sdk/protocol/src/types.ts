@@ -44,6 +44,32 @@ export interface SessionPromptResult {
   messageId: string
 }
 
+/** Parameters for reading the durable usage snapshot of one session. */
+export interface SessionUsageParams {
+  /** The session whose whole-log usage should be returned. */
+  sessionId: string
+}
+
+/** Whole-session provider usage as reported by the token-meter projection. */
+export interface SessionUsageResult {
+  /** The requested session identity. */
+  sessionId: string
+  /** Most recently recorded model id, when an assistant message exists. */
+  modelId?: string
+  /** Input tokens excluding cache reads. */
+  inputTokens: number
+  /** Generated output tokens (reasoning included by the provider). */
+  outputTokens: number
+  /** Input tokens served from the provider cache. */
+  cacheReadTokens: number
+  /** Input tokens written to the provider cache. */
+  cacheWriteTokens: number
+  /** Projected model context tokens, when the runtime knows the context window. */
+  contextTokens?: number
+  /** Model context window capacity, when advertised by the route. */
+  contextWindow?: number
+}
+
 /** Deployment-mapped SDK outcome: `ok` for an accepted result, `error` otherwise. */
 export type SdkRunStatus = 'ok' | 'error'
 
@@ -101,5 +127,6 @@ export interface HarnessSdkNotificationMap {
 export interface HarnessSdkRequestMap {
   'initialize': { params: InitializeParams; result: InitializeResult }
   'session/prompt': { params: SessionPromptParams; result: SessionPromptResult }
+  'session/usage': { params: SessionUsageParams; result: SessionUsageResult }
   'shutdown': { params: undefined; result: Record<string, never> }
 }

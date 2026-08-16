@@ -18,6 +18,37 @@ test('maps text, reasoning and usage chunks', () => {
   ])
 })
 
+test('maps the assistant source model and preserves cache read/write fields', () => {
+  assert.deepEqual(adaptSessionEvent({
+    type: 'assistant/message',
+    data: {
+      message: { source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' } },
+      usage: { inputTokens: 12, outputTokens: 4, cacheReadTokens: 8, cacheWriteTokens: 2 },
+    },
+  }), [{
+    type: 'usage',
+    modelId: 'deepseek-chat',
+    inputTokens: 12,
+    outputTokens: 4,
+    cacheReadTokens: 8,
+    cacheWriteTokens: 2,
+  }])
+})
+
+test('can suppress streamed usage when the caller reads one session snapshot', () => {
+  assert.deepEqual(adaptSessionEvent({
+    type: 'assistant/chunk',
+    data: { chunk: { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } } },
+  }, { includeUsage: false }), [])
+  assert.deepEqual(adaptSessionEvent({
+    type: 'assistant/message',
+    data: {
+      message: { source: { model: 'deepseek-chat' } },
+      usage: { inputTokens: 3, outputTokens: 4 },
+    },
+  }, { includeUsage: false }), [])
+})
+
 test('maps authoritative tool events', () => {
   assert.deepEqual(adaptSessionEvent({
     type: 'tool/call', data: { callId: 'call-1', name: 'read', arguments: '{"path":"a"}' },

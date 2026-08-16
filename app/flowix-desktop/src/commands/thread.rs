@@ -482,6 +482,14 @@ pub async fn deepseek_harness_thread_session_id(
 }
 
 #[tauri::command]
+pub async fn deepseek_harness_session_usage(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::agent_external::deepseek_harness::DeepSeekHarnessSessionUsage>, String> {
+    state.deepseek_harness.session_usage(&thread_id).await
+}
+
+#[tauri::command]
 pub async fn opencode_thread_session_id(
     thread_id: String,
     state: State<'_, AppState>,

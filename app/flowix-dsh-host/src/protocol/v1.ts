@@ -40,6 +40,10 @@ export interface RuntimeDisposeParams {
   threadId: string
 }
 
+export interface SessionUsageParams {
+  sessionId: string
+}
+
 /** One `models.discover` interrogation: the draft endpoint the user is editing. */
 export interface ModelDiscoverParams {
   /** Route the draft edits, when it edits a catalog-known one. */
@@ -67,7 +71,7 @@ export type HostEvent =
   | { type: 'reasoning.delta'; text: string }
   | { type: 'tool.started'; id: string; name: string; input: unknown }
   | { type: 'tool.completed'; id: string; name: string; result: unknown; isError?: boolean }
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; modelId?: string; cacheReadTokens?: number; cacheWriteTokens?: number; contextTokens?: number; contextWindow?: number; reasoningTokens?: number }
   | { type: 'run.completed'; reason: RunEndReason }
   | { type: 'run.error'; message: string; code?: string }
 

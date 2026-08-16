@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { UserSettings } from '@/lib/constants';
 import type { AgentAccessConfig, AgentAccessEntry } from '@/lib/types/agent-access';
+import type { UsageInfo } from '@/types/agent';
 import type { AgentConfig, TestConnectionResult } from './agent';
 
 export const preferences = {
@@ -87,13 +88,67 @@ export const aiConfig = {
 /** DeepSeek Harness model probe. This uses dsh-host/runtime and is separate
  * from the Flowix Agent provider probe above. */
 export const deepseekHarness = {
+  // DeepSeek Harness uses its own llm-pi-ai settings document, separate from
+  // the Flowix Agent's agent-config.toml.
+  get: () => invoke<{ model: AgentConfig }>('get_deepseek_harness_config'),
+  // The Rust command returns Vec<AiConfigFile> directly. Each item keeps the
+  // same `{ model: ... }` envelope as the single-config response above.
+  list: () => invoke<{ model: AgentConfig }[]>('get_deepseek_harness_configs'),
+  set: (config: AgentConfig) =>
+    invoke<void>('set_deepseek_harness_config', { config: { model: config } }),
+  add: (config: AgentConfig) =>
+    invoke<void>('add_deepseek_harness_model', { config: { model: config } }),
   testConnection: (config: AgentConfig) =>
     invoke<TestConnectionResult>('test_deepseek_harness_connection', { config }),
   modelCatalog: () =>
     invoke<DeepSeekHarnessModelCatalog>('deepseek_harness_model_catalog'),
+  pluginCatalog: () =>
+    invoke<DeepSeekHarnessPluginCatalog>('deepseek_harness_plugin_catalog'),
+  setPluginEnabled: (pluginKey: string, enabled: boolean) =>
+    invoke<DeepSeekHarnessPluginCatalog>('set_deepseek_harness_plugin_enabled', {
+      pluginKey,
+      enabled,
+    }),
   discoverModels: (config: AgentConfig) =>
     invoke<DeepSeekHarnessModelListing>('discover_deepseek_harness_models', { config }),
+  sessionUsage: async (threadId: string): Promise<DeepSeekHarnessSessionSnapshot | null> => {
+    const usage = await invoke<DeepSeekHarnessSessionUsage | null>(
+      'deepseek_harness_session_usage',
+      { threadId },
+    );
+    if (usage === null) return null;
+    return {
+      model: usage.modelId ?? undefined,
+      usage: {
+        input_tokens: usage.inputTokens,
+        cached_input_tokens: usage.cacheReadTokens,
+        output_tokens: usage.outputTokens,
+        total_tokens: usage.inputTokens
+          + usage.cacheReadTokens
+          + usage.cacheWriteTokens
+          + usage.outputTokens,
+        model_context_window: usage.contextWindow ?? null,
+        context_used_tokens: usage.contextTokens ?? null,
+      },
+    };
+  },
 };
+
+export interface DeepSeekHarnessSessionSnapshot {
+  model?: string;
+  usage: UsageInfo;
+}
+
+export interface DeepSeekHarnessSessionUsage {
+  sessionId: string;
+  modelId?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  contextTokens?: number | null;
+  contextWindow?: number | null;
+}
 
 export interface DeepSeekHarnessModel {
   id: string;
@@ -104,6 +159,9 @@ export interface DeepSeekHarnessModel {
 
 export interface DeepSeekHarnessCatalogProvider {
   provider: string;
+  displayName?: string;
+  baseUrl?: string;
+  api?: string;
   takesApiKey: boolean;
   models: DeepSeekHarnessModel[];
 }
@@ -114,6 +172,22 @@ export interface DeepSeekHarnessModelCatalog {
 
 export interface DeepSeekHarnessModelListing {
   models: DeepSeekHarnessModel[];
+}
+
+export interface DeepSeekHarnessPlugin {
+  key: string;
+  id: string;
+  name: string;
+  enabled: boolean;
+  toggleable: boolean;
+  scope: 'host' | 'preset';
+  preset?: string;
+}
+
+export interface DeepSeekHarnessPluginCatalog {
+  platform: string;
+  host: DeepSeekHarnessPlugin[];
+  presets: Record<string, DeepSeekHarnessPlugin[]>;
 }
 
 // Agent access roots (backend ~/.flowix/agent-access.json).

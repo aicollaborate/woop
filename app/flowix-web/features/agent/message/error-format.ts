@@ -3,6 +3,7 @@ import { translate, type AppLanguage } from "@/lib/i18n";
 
 const DEEPSEEK_HARNESS_ERROR_ID =
   /^msg:deepseek-harness:[^:]+:error:/;
+const DEEPSEEK_HARNESS_MESSAGE_MAX_CHARS = 240;
 
 /**
  * DeepSeek Harness error events are materialized as assistant messages by
@@ -21,11 +22,41 @@ export function formatDeepSeekHarnessReconnectError(
   message: ChatMessage,
   language: AppLanguage,
 ): string {
-  const reason = formatAgentErrorMessage(message.content || "");
+  const reason = formatDeepSeekHarnessFailureMessage(message.content || "");
   return [
     translate(language, "agent.deepseekHarness.reconnectFailed"),
     translate(language, "agent.deepseekHarness.failureReason", { reason }),
   ].join("\n\n");
+}
+
+/**
+ * Harness runtime errors may put the complete stderr/stack trace in the
+ * message string. The conversation only needs the actual error message; the
+ * diagnostic tail remains available to the runtime logging path.
+ */
+function formatDeepSeekHarnessFailureMessage(content: string): string {
+  const normalized = formatAgentErrorMessage(content)
+    .replace(/\r\n/g, "\n")
+    .trim();
+  if (!normalized) return normalized;
+
+  const firstMessageLine = normalized
+    .split("\n")
+    .map(line => line.trim())
+    .find(line => line !== "" && !/^stderr tail:?$/i.test(line));
+  if (!firstMessageLine) return normalized;
+
+  // Desktop protocol prefixes runtime errors with their machine-readable
+  // code, e.g. "[HARNESS_RUN_FAILED] JSON-RPC input closed". The code is
+  // useful for diagnostics but is not part of the user-facing message.
+  const message = firstMessageLine.replace(/^\[[^\]]+\]\s*/, "");
+  return truncateErrorMessage(message);
+}
+
+function truncateErrorMessage(value: string): string {
+  const chars = Array.from(value);
+  if (chars.length <= DEEPSEEK_HARNESS_MESSAGE_MAX_CHARS) return value;
+  return `${chars.slice(0, DEEPSEEK_HARNESS_MESSAGE_MAX_CHARS).join("")}…`;
 }
 
 /**

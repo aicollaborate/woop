@@ -290,13 +290,13 @@
   user-select: text;
 }
 
-/* ── 全屏时的 Agent 徽章 HoverCard ──────────────────────────────
- * mount 默认 display: none (不占 agentWrap flex 流空间),全屏时由
- * syncBadgeHoverCardPosition() 设为 position: absolute + top/left/width/height
- * 覆盖到 badge 区域。 trigger 覆盖层 absolute 占满 mount。
+/* ── Agent 徽章 HoverCard ──────────────────────────────────────
+ * mount 默认 display: none (不占 agentWrap flex 流空间),由 controller 按 badge
+ * 的 viewport 矩形定位。trigger 覆盖层 absolute 占满 mount。
  * 不包 badgeEl ── 避免 React render(null) 把 badge 一并清空。 */
 .agent-thread-card__badge-hover-card-mount {
   display: none;
+  z-index: 1;
 }
 
 /* Standalone conversation details use the same badge hover card as the
@@ -306,6 +306,60 @@
   position: relative;
   display: inline-flex;
   flex: 0 0 auto;
+}
+
+/* 空间名称始终单行右对齐展示,超出时从右侧省略。 */
+.agent-thread-card__cwd-value {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--foreground);
+}
+
+/* 模型 ID 单行右对齐展示,超出时从右侧省略。 */
+.agent-thread-card__model-value {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.agent-thread-card__cache-hit-value {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.agent-thread-card__context-ring {
+  position: relative;
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 9999px;
+  background: conic-gradient(
+    var(--foreground) var(--proportion),
+    var(--muted) 0
+  );
+}
+
+.agent-thread-card__context-ring::after {
+  position: absolute;
+  inset: 3px;
+  border-radius: inherit;
+  background: var(--popover);
+  content: "";
 }
 
 .agent-thread-card__badge-hover-trigger {

@@ -28,7 +28,13 @@ describe("run-status-presenter", () => {
           startedAt: 100,
           endedAt: 200,
           model: "thread-model",
-          usage: { total_tokens: 123 },
+          modelId: "deepseek-chat",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 20,
+            output_tokens: 3,
+            total_tokens: 123,
+          },
         },
       }),
       codexModel: "inherit",
@@ -36,9 +42,13 @@ describe("run-status-presenter", () => {
     });
 
     expect(badge).toMatchObject({
-      model: "thread-model",
-      lastRunAt: 200,
-      totalTokens: 123,
+      model: "deepseek-chat",
+      usage: {
+        input_tokens: 100,
+        cached_input_tokens: 20,
+        output_tokens: 3,
+        total_tokens: 123,
+      },
     });
   });
 });

@@ -6,19 +6,30 @@ export interface RunFailure {
   code?: string
 }
 
-export function adaptHarnessNotification(notification: unknown): HostEvent[] {
+export interface HarnessNotificationAdaptOptions {
+  /** Include provider usage samples from the stream; false when the caller reads one session snapshot after the turn. */
+  includeUsage?: boolean
+}
+
+export function adaptHarnessNotification(
+  notification: unknown,
+  options: HarnessNotificationAdaptOptions = {},
+): HostEvent[] {
   if (!isRecord(notification) || notification.method !== 'session.event') return []
   const params = notification.params
   if (!isRecord(params) || !isRecord(params.event)) return []
-  return adaptSessionEvent(params.event)
+  return adaptSessionEvent(params.event, options)
 }
 
-export function adaptSessionEvent(event: Record<string, unknown>): HostEvent[] {
+export function adaptSessionEvent(
+  event: Record<string, unknown>,
+  options: HarnessNotificationAdaptOptions = {},
+): HostEvent[] {
   const data = event.data
   if (!isRecord(data)) return []
   switch (event.type) {
     case 'assistant/chunk':
-      return adaptStreamChunk(data.chunk)
+      return adaptStreamChunk(data.chunk, options)
     case 'tool/call': {
       const id = stringValue(data.callId)
       const name = stringValue(data.name)
@@ -41,7 +52,7 @@ export function adaptSessionEvent(event: Record<string, unknown>): HostEvent[] {
       }]
     }
     case 'assistant/message':
-      return adaptUsage(data.usage)
+      return options.includeUsage === false ? [] : adaptUsage(data.usage, modelIdFromMessage(data.message))
     default:
       return []
   }
@@ -116,7 +127,7 @@ function normalizeFailure(value: unknown, fallback: string): RunFailure {
   return code === undefined ? { message } : { message, code }
 }
 
-function adaptStreamChunk(value: unknown): HostEvent[] {
+function adaptStreamChunk(value: unknown, options: HarnessNotificationAdaptOptions = {}): HostEvent[] {
   if (!isRecord(value)) return []
   if (value.type === 'text-delta' && typeof value.text === 'string') {
     return [{ type: 'assistant.delta', text: value.text }]
@@ -124,20 +135,26 @@ function adaptStreamChunk(value: unknown): HostEvent[] {
   if (value.type === 'reasoning-delta' && typeof value.text === 'string') {
     return [{ type: 'reasoning.delta', text: value.text }]
   }
-  if (value.type === 'usage') return adaptUsage(value.usage)
+  if (value.type === 'usage') return options.includeUsage === false ? [] : adaptUsage(value.usage)
   return []
 }
 
-function adaptUsage(value: unknown): HostEvent[] {
+function adaptUsage(value: unknown, modelId?: string): HostEvent[] {
   if (!isRecord(value) || !numberValue(value.inputTokens) || !numberValue(value.outputTokens)) return []
   return [{
     type: 'usage',
     inputTokens: Number(value.inputTokens),
     outputTokens: Number(value.outputTokens),
+    ...(modelId === undefined ? {} : { modelId }),
     ...optionalNumber('cacheReadTokens', value.cacheReadTokens),
     ...optionalNumber('cacheWriteTokens', value.cacheWriteTokens),
     ...optionalNumber('reasoningTokens', value.reasoningTokens),
   }]
+}
+
+function modelIdFromMessage(value: unknown): string | undefined {
+  if (!isRecord(value) || !isRecord(value.source)) return undefined
+  return stringValue(value.source.model)
 }
 
 function optionalNumber<K extends string>(key: K, value: unknown): Partial<Record<K, number>> {

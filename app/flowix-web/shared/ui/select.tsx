@@ -12,7 +12,7 @@ interface SelectContextValue {
 	onValueChange: (value: string) => void;
 	open: boolean;
 	setOpen: (open: boolean) => void;
-	triggerRef: React.RefObject<HTMLButtonElement | null>;
+	triggerRef: React.RefObject<HTMLElement | null>;
 }
 
 const SelectContext = React.createContext<SelectContextValue | null>(null);
@@ -36,7 +36,7 @@ interface SelectProps {
 function Select({ children, value: controlledValue, onValueChange, defaultValue = "", disabled = false }: SelectProps) {
 	const [uncontrolledValue, setUncontrolledValue] = React.useState(defaultValue);
 	const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
-	const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+	const triggerRef = React.useRef<HTMLElement | null>(null);
 
 	const value = controlledValue !== undefined ? controlledValue : uncontrolledValue;
 	const open = uncontrolledOpen;
@@ -87,7 +87,7 @@ function SelectTrigger({ children, className, asChild }: SelectTriggerProps) {
 		return (
 			<button
 				type="button"
-				ref={triggerRef}
+				ref={triggerRef as React.Ref<HTMLButtonElement>}
 				onClick={handleClick}
 				className={cn(
 					"flex items-center justify-between w-full h-8 px-3 rounded-lg bg-[var(--card)] border border-[var(--border)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]",
@@ -105,8 +105,13 @@ function SelectTrigger({ children, className, asChild }: SelectTriggerProps) {
 
 	if (asChild && React.Children.count(children) === 1) {
 		const child = React.Children.only(children) as React.ReactElement<SelectTriggerChildProps>;
+		const childOnClick = child.props.onClick;
 		return React.cloneElement(child, {
-			onClick: handleClick,
+			ref: triggerRef,
+			onClick: (event: React.MouseEvent<HTMLElement>) => {
+				childOnClick?.(event);
+				if (!event.defaultPrevented) handleClick();
+			},
 			'data-state': open ? 'open' : 'closed',
 		} as Record<string, unknown>);
 	}
@@ -114,7 +119,7 @@ function SelectTrigger({ children, className, asChild }: SelectTriggerProps) {
 	return (
 		<button
 			type="button"
-			ref={triggerRef}
+			ref={triggerRef as React.Ref<HTMLButtonElement>}
 			onClick={handleClick}
 			className={cn(
 				"flex items-center justify-between w-full h-8 px-3 rounded-lg bg-[var(--card)] border border-[var(--border)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]",
@@ -146,9 +151,16 @@ interface SelectContentProps {
 	children: React.ReactNode;
 	className?: string;
 	align?: "start" | "center" | "end";
+	/** Keep the menu inside the viewport and scroll its items when necessary. */
+	fitViewport?: boolean;
 }
 
-function SelectContent({ children, className, align = "end" }: SelectContentProps) {
+function SelectContent({
+	children,
+	className,
+	align = "end",
+	fitViewport = false,
+}: SelectContentProps) {
 	const { open, setOpen, triggerRef } = useSelectContext();
 	const contentRef = React.useRef<HTMLDivElement>(null);
 	const [position, setPosition] = React.useState<React.CSSProperties | null>(null);
@@ -160,11 +172,24 @@ function SelectContent({ children, className, align = "end" }: SelectContentProp
 
 		const updatePosition = () => {
 			const rect = trigger.getBoundingClientRect();
+			const gap = 4;
+			const viewportPadding = 8;
 			const nextPosition: React.CSSProperties = {
 				position: "fixed",
-				top: rect.bottom + 4,
+				top: rect.bottom + gap,
 				minWidth: rect.width,
 			};
+
+			if (fitViewport) {
+				const availableBelow = Math.max(
+					0,
+					window.innerHeight - rect.bottom - gap - viewportPadding,
+				);
+				// Keep the menu below its trigger. Long lists stay within the
+				// viewport by scrolling inside the menu instead of covering the
+				// trigger or opening over the form above it.
+				nextPosition.maxHeight = `${availableBelow}px`;
+			}
 
 			if (align === "start") {
 				nextPosition.left = rect.left;
@@ -185,7 +210,7 @@ function SelectContent({ children, className, align = "end" }: SelectContentProp
 			window.removeEventListener("resize", updatePosition);
 			window.removeEventListener("scroll", updatePosition, true);
 		};
-	}, [align, open, triggerRef]);
+	}, [align, fitViewport, open, triggerRef]);
 
 	// Close on click outside
 	React.useEffect(() => {
@@ -228,6 +253,7 @@ function SelectContent({ children, className, align = "end" }: SelectContentProp
 			style={position ?? undefined}
 			className={cn(
 				"z-[1500] min-w-[180px] bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg p-1.5 animate-in fade-in-0 zoom-in-95",
+				fitViewport && "overflow-y-auto overscroll-contain [scrollbar-gutter:stable]",
 				className
 			)}
 		>

@@ -126,6 +126,20 @@ describe('DeepSeekHarness', () => {
     await harness.close()
   })
 
+  it('reads one cumulative usage snapshot for a session', async () => {
+    const harness = harnessWith()
+    const result = await harness.run('usage please', { sessionId: 'usage-session' })
+
+    await expect(harness.session(result.sessionId).usage()).resolves.toEqual({
+      sessionId: 'usage-session',
+      modelId: 'fake-model',
+      inputTokens: 7,
+      outputTokens: 3,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 1,
+    })
+  })
+
   it('keeps events root-scoped while streaming notifications for the session tree', async () => {
     const harness = harnessWith({ FAKE_SUBAGENT: '1' })
     const seen: HarnessNotification[] = []

@@ -163,6 +163,28 @@ describe("agent event mapper", () => {
     vi.restoreAllMocks();
   });
 
+  it("routes a late usage chunk to the resident last run", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "usage",
+        thread_id: "thread-1",
+        agent_type: "deepseek-harness",
+        usage: { input_tokens: 10, output_tokens: 4 },
+      },
+      state({
+        threadStates: {
+          "thread-1": {
+            activeRunId: null,
+            lastRunId: "run-finished",
+          },
+        },
+      }),
+      () => 123,
+    );
+
+    expect(event.runId).toBe("run-finished");
+  });
+
   it("folds Claude reasoning from multiple provider messages into one run id", () => {
     const mapperState = state();
     const first = mapAgentChunkToEvent(

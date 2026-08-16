@@ -422,6 +422,7 @@ mod probe_tests {
             api_url: api_url.to_string(),
             api_keys,
             max_total_tokens: 180_000,
+            ..AiModelConfig::default()
         }
     }
 

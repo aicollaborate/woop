@@ -820,6 +820,7 @@ impl AgentManager {
                                     reasoning_output_tokens,
                                     total_tokens: Some(total_tokens),
                                     model_context_window,
+                                    context_used_tokens: None,
                                 };
                                 if let Some(message) = self
                                     .handle_usage_item(

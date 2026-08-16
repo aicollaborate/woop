@@ -152,6 +152,7 @@ pub async fn plugin_run(
                 workspace_paths: vec![notebook_path.clone()],
                 permission_mode: None,
                 model: None,
+                provider_id: None,
                 reasoning_effort: None,
                 mode: None,
             }),

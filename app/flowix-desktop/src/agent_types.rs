@@ -45,6 +45,7 @@ pub struct UsageInfo {
     pub reasoning_output_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
     pub model_context_window: Option<u32>,
+    pub context_used_tokens: Option<u32>,
 }
 
 /// Provider-specific status snapshot shared by agent streaming events and

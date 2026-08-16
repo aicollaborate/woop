@@ -141,7 +141,7 @@ function MemoCardMoreMenu({
   'memo' | 'variant' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
 >) {
   return (
-    <div className="absolute right-3 z-100 shrink-0 items-center gap-1">
+    <div className="absolute right-3 top-2 z-100 shrink-0 items-center gap-1">
       <DropdownMenu
         open={isDropdownOpen}
         onOpenChange={(open) => onOpenDropdown(open ? memo.id : null)}
@@ -219,17 +219,17 @@ function MemoCardShell({
             <div className="min-w-0 flex-1">
               {children}
             </div>
-            <MemoCardMoreMenu
-              memo={memo}
-              variant={variant}
-              isDropdownOpen={isDropdownOpen}
-              moreLabel={moreLabel}
-              onOpenDropdown={onOpenDropdown}
-              onFavoriteToggle={onFavoriteToggle}
-              onDelete={onDelete}
-              onColorsChange={onColorsChange}
-            />
           </div>
+          <MemoCardMoreMenu
+            memo={memo}
+            variant={variant}
+            isDropdownOpen={isDropdownOpen}
+            moreLabel={moreLabel}
+            onOpenDropdown={onOpenDropdown}
+            onFavoriteToggle={onFavoriteToggle}
+            onDelete={onDelete}
+            onColorsChange={onColorsChange}
+          />
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-[180px] space-y-1 px-1 py-1.5">

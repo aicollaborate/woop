@@ -33,5 +33,6 @@ pub use path_scope::path_is_inside;
 pub use security_bookmark::pick_directory_with_bookmark;
 pub use security_bookmark::SecurityBookmarkStore;
 pub use user::{
-    AiConfigFile, AiModelConfig, PreferenceFile, Theme, UserConfigError, UserConfigStore,
+    AiConfigFile, AiModelConfig, AiModelEntry, DeepSeekHarnessPluginSettings, PreferenceFile,
+    Theme, UserConfigError, UserConfigStore, DSH_PLUGIN_SETTINGS_FILE_NAME, DSH_SETTINGS_FILE_NAME,
 };

@@ -19,7 +19,7 @@ import {
 } from "@features/agent/runtime/agent-runtime-spec";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
-import { agent } from "@platform/tauri/client";
+import { agent, deepseekHarness } from "@platform/tauri/client";
 import {
   applyPopoverPosition,
   calculateAnchoredPopoverPosition,
@@ -39,6 +39,9 @@ const CODEX_SETTINGS_POPOVER_VIEWPORT_PADDING_PX = 8;
 type AgentModelOption = {
   id: AgentCodexModel;
   label: string;
+  /** DeepSeek Harness llm-pi-ai route; absent for legacy/Codex options. */
+  providerId?: string;
+  providerName?: string;
 };
 
 const CLAUDE_MODEL_OPTIONS: AgentModelOption[] = [
@@ -109,6 +112,8 @@ export class ExternalAgentSettingsController {
   private resizeObserver: ResizeObserver | null = null;
   private positionFrame: number | null = null;
   private codexDefaultModel = "";
+  private dshDefaultModel = "";
+  private dshDefaultProviderId: string | undefined;
   private localSupportedModelsTypeKey: AgentTypeKey | null = null;
   private localSupportedModels: AgentModelOption[] = [];
 
@@ -173,7 +178,13 @@ export class ExternalAgentSettingsController {
       }
       if (kind === "mode" && typeDefault.mode) return typeDefault.mode;
     }
-    if (kind === "model") return settings.agentCodexModel;
+    // DSH 不继承 Codex 系全局模型选择 (用户在 Codex 卡片选过的模型对 DSH
+    // 无意义) —— 无 instance / 类型默认时等待全局 dsh-settings 的真实默认值。
+    if (kind === "model") {
+      return this.getTypeKey() === "deepseek-harness"
+        ? undefined
+        : settings.agentCodexModel;
+    }
     // DSH 不继承 Codex 系的全局权限默认 (danger-full-access) ── 无显式
     // 选择时显示并落自己的 workspace-write 默认。
     if (kind === "permission") {
@@ -192,6 +203,7 @@ export class ExternalAgentSettingsController {
   private writeRuntimeSetting(
     kind: "model" | "permission" | "reasoning" | "mode",
     value: string,
+    providerId?: string,
   ): void {
     const instanceId = this.getInstanceId();
     const typeKey = this.getTypeKey();
@@ -199,11 +211,19 @@ export class ExternalAgentSettingsController {
       const instanceStore = useAgentSessionStore.getState();
       if (kind === "model") {
         instanceStore.setRuntimeConfig(instanceId, {
-          model: { key: value },
+          model: {
+            key: value,
+            ...(providerId?.trim() ? { providerId: providerId.trim() } : {}),
+          },
         });
         void useAgentAccessStore
           .getState()
-          .setDefaultRuntime(typeKey, { model: { key: value } });
+          .setDefaultRuntime(typeKey, {
+            model: {
+              key: value,
+              ...(providerId?.trim() ? { providerId: providerId.trim() } : {}),
+            },
+          });
         return;
       }
       if (kind === "permission") {
@@ -245,7 +265,12 @@ export class ExternalAgentSettingsController {
       }));
       void useAgentAccessStore
         .getState()
-        .setDefaultRuntime(typeKey, { model: { key: value } });
+        .setDefaultRuntime(typeKey, {
+          model: {
+            key: value,
+            ...(providerId?.trim() ? { providerId: providerId.trim() } : {}),
+          },
+        });
       return;
     }
     if (kind === "permission") {
@@ -293,20 +318,93 @@ export class ExternalAgentSettingsController {
 
   loadDefaultModel(): void {
     const typeKey = this.getTypeKey();
-    void agent
-      .getCodexDefaultModel()
-      .then((model) => {
-        if (this.isDestroyed()) return;
-        this.codexDefaultModel = model.trim();
-        this.refreshEmptySettings();
-        if (this.open && this.kind === "model") {
-          this.renderPopover();
-          this.schedulePosition();
-        }
-      })
-      .catch(() => {
-        // Keep the generic default label when Codex has no configured default.
-      });
+    if (typeKey === "deepseek-harness") {
+      // DSH 的默认模型来自全局 dsh-settings 配置, 而非 ~/.codex/config.toml。
+      void deepseekHarness
+        .get()
+        .then((file) => {
+          if (this.isDestroyed()) return;
+          const configuredDefault = useAgentAccessStore
+            .getState()
+            .config.defaults?.runtime?.['deepseek-harness']?.model;
+          this.dshDefaultModel = configuredDefault?.key
+            && configuredDefault.key !== 'inherit'
+            ? configuredDefault.key.trim()
+            : file.model.model.trim();
+          this.dshDefaultProviderId = configuredDefault?.key
+            && configuredDefault.key !== 'inherit'
+            ? configuredDefault.providerId?.trim() || undefined
+            : file.model.providerId?.trim() || undefined;
+          this.refreshEmptySettings();
+          if (this.open && this.kind === "model") {
+            this.renderPopover();
+            this.schedulePosition();
+          }
+        })
+        .catch(() => {
+          // 无全局配置时保留通用 Default label。
+        });
+    } else {
+      void agent
+        .getCodexDefaultModel()
+        .then((model) => {
+          if (this.isDestroyed()) return;
+          this.codexDefaultModel = model.trim();
+          this.refreshEmptySettings();
+          if (this.open && this.kind === "model") {
+            this.renderPopover();
+            this.schedulePosition();
+          }
+        })
+        .catch(() => {
+          // Keep the generic default label when Codex has no configured default.
+        });
+    }
+
+    if (typeKey === "deepseek-harness") {
+      void deepseekHarness
+        .list()
+        .then((configs) => {
+          if (this.isDestroyed() || this.getTypeKey() !== typeKey) return;
+          const seen = new Set<string>();
+          this.localSupportedModelsTypeKey = typeKey;
+          this.localSupportedModels = configs.flatMap((file) => {
+            const config = file.model;
+            const providerId = config.providerId?.trim() || undefined;
+            const providerName = config.displayName?.trim() || config.provider;
+            const models = config.models?.length
+              ? config.models
+              : config.model.trim()
+                ? [{ id: config.model, name: "" }]
+                : [];
+            return models
+              .map((model) => ({
+                id: model.id.trim(),
+                label: formatModelDisplayLabel(model.id),
+                providerId,
+                providerName,
+              }))
+              .filter((model) => model.id.length > 0)
+              .filter((model) => {
+                const key = `${model.providerId ?? "flowix"}\u0000${model.id}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+          });
+          this.refreshEmptySettings();
+          if (this.open && this.kind === "model") {
+            this.renderPopover();
+            this.schedulePosition();
+          }
+        })
+        .catch(() => {
+          if (this.isDestroyed() || this.getTypeKey() !== typeKey) return;
+          this.localSupportedModelsTypeKey = typeKey;
+          this.localSupportedModels = [];
+        });
+      return;
+    }
 
     const listSupportedModels =
       "listSupportedModels" in agent &&
@@ -527,9 +625,10 @@ export class ExternalAgentSettingsController {
     open: boolean,
     kind: AgentRuntimeSettingKind | null,
   ): void {
+    const modelExpanded = open && kind === "model";
     this.modelButton?.setAttribute(
       "aria-expanded",
-      open && kind === "model" ? "true" : "false",
+      modelExpanded ? "true" : "false",
     );
     this.permissionButton?.setAttribute(
       "aria-expanded",
@@ -545,7 +644,7 @@ export class ExternalAgentSettingsController {
     );
     this.modelButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
-      open && kind === "model",
+      modelExpanded,
     );
     this.permissionButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
@@ -577,18 +676,46 @@ export class ExternalAgentSettingsController {
     // Claude 仍走 local state (per-controller); codex/claude-other
     // 改为走 instance.runtimeConfig 优先, fallback 全局 agentCodexModel.
     const fromThread = this.readRuntimeSetting("model");
-    if (fromThread) return fromThread as AgentCodexModel;
+    if (
+      fromThread &&
+      !(this.getTypeKey() === "deepseek-harness" && fromThread === "inherit")
+    ) {
+      return fromThread as AgentCodexModel;
+    }
+    // DSH 不提供 inherit 选项，未单独设置时直接选中全局 dsh-settings
+    // 中的真实默认模型。配置异步加载完成后 refreshEmptySettings 会更新选中项。
+    if (this.getTypeKey() === "deepseek-harness") {
+      return (this.dshDefaultModel || "inherit") as AgentCodexModel;
+    }
     // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.settings.
     return useAgentSessionStore.getState().sessionMeta.settings.agentCodexModel;
   }
 
-  private setExternalAgentModel(model: AgentCodexModel): void {
-    this.writeRuntimeSetting("model", model);
+  private getExternalAgentModelProviderId(): string | undefined {
+    const instanceId = this.getInstanceId();
+    if (instanceId) {
+      const providerId = useAgentSessionStore
+        .getState()
+        .getInstance(instanceId)
+        ?.runtimeConfig?.model?.providerId;
+      if (providerId?.trim()) return providerId.trim();
+    }
+    const typeDefault = useAgentAccessStore
+      .getState()
+      .config.defaults?.runtime?.[this.getTypeKey()]
+      ?.model?.providerId;
+    if (typeDefault?.trim()) return typeDefault.trim();
+    return this.getTypeKey() === "deepseek-harness"
+      ? this.dshDefaultProviderId
+      : undefined;
   }
 
-  // Returns empty string when there is no real default model id to display.
-  // 空状态 ── 没有真实 default model id 时返回空串, 调用方应据此隐藏
-  // 「Default」项而不是渲染「Codex default」之类的兜底文案。
+  private setExternalAgentModel(option: AgentModelOption): void {
+    this.writeRuntimeSetting("model", option.id, option.providerId);
+  }
+
+  // Returns the legacy/Codex inherit option label when a real default model
+  // is available. DeepSeek Harness deliberately does not call this an option.
   private getExternalModelDefaultLabel(): string {
     if (this.getTypeKey() === "claude") return this.t("agent.permission.default");
     return this.codexDefaultModel
@@ -604,7 +731,12 @@ export class ExternalAgentSettingsController {
       options.map((option) => ({
         id: option.id,
         label: formatModelDisplayLabel(option.id),
+        providerId: option.providerId,
+        providerName: option.providerName,
       }));
+    // DSH 无硬编码 fallback —— 列表完全来自后端 (用户目录 / llm-pi-ai
+    // catalog); 拉取失败时仅显示当前值, 不显示 Codex 的模型。
+    if (this.getTypeKey() === "deepseek-harness") return [];
     return this.getTypeKey() === "claude"
       ? mapLabel(CLAUDE_MODEL_OPTIONS)
       : mapLabel(CODEX_MODEL_OPTIONS);
@@ -612,6 +744,7 @@ export class ExternalAgentSettingsController {
 
   private getExternalModelOptions(): AgentModelOption[] {
     const currentModel = this.getExternalAgentModel();
+    const currentProviderId = this.getExternalAgentModelProviderId();
     const localOptions =
       this.localSupportedModelsTypeKey === this.getTypeKey()
         ? this.localSupportedModels
@@ -620,20 +753,35 @@ export class ExternalAgentSettingsController {
       localOptions.length > 0
         ? localOptions
         : this.getExternalModelFallbackOptions();
-    const inheritLabel = this.getExternalModelDefaultLabel();
+    const inheritLabel = this.getTypeKey() === "deepseek-harness"
+      ? ""
+      : this.getExternalModelDefaultLabel();
     const options: AgentModelOption[] = [
-      ...(inheritLabel ? [{ id: "inherit" as AgentCodexModel, label: inheritLabel }] : []),
+      ...(this.getTypeKey() !== "deepseek-harness" && inheritLabel
+        ? [{
+            id: "inherit" as AgentCodexModel,
+            label: inheritLabel,
+            providerId: this.getTypeKey() === "deepseek-harness"
+              ? this.dshDefaultProviderId
+              : undefined,
+          }]
+        : []),
       ...modelOptions,
     ];
     if (
       currentModel !== "inherit" &&
-      !options.some((option) => option.id === currentModel)
+      !options.some((option) =>
+        option.id === currentModel
+        && (option.providerId ?? "") === (currentProviderId ?? ""),
+      )
     ) {
       // 拉取到的 model id 不在 fallback 列表时, 按展示规则美化 label,
       // id 仍为原始字符串, 后端取值不受影响。
       options.push({
         id: currentModel,
         label: formatModelDisplayLabel(currentModel),
+        providerId: currentProviderId,
+        providerName: currentProviderId,
       });
     }
     return options;
@@ -641,13 +789,18 @@ export class ExternalAgentSettingsController {
 
   private getCurrentExternalModelLabel(): string {
     const model = this.getExternalAgentModel();
+    const providerId = this.getExternalAgentModelProviderId();
     const options = this.getExternalModelOptions();
-    const match = options.find((option) => option.id === model);
+    const match = options.find((option) =>
+      option.id === model
+      && (option.providerId ?? "") === (providerId ?? ""),
+    );
     if (match) return match.label;
-    // 「inherit」被过滤 (无 default model id) ── 落到第一个真实 model,
-    // 不渲染空 label。 选取 CODEX_MODEL_OPTIONS / CLAUDE_MODEL_OPTIONS
-    // 中第一个作为 fallback, 与「无 default 时第一个 model 即默认」的
-    // 隐式语义对齐。
+    // DSH 没有 Default 选项，等待默认模型异步加载期间不伪造一个选中值。
+    if (this.getTypeKey() === "deepseek-harness" && model === "inherit") {
+      return "";
+    }
+    // 未知模型仍然回退到列表中的第一个真实模型，避免控件显示空 label。
     const fallback = options.find(
       (option) => option.id !== ("inherit" as AgentCodexModel),
     );
@@ -697,14 +850,35 @@ export class ExternalAgentSettingsController {
     this.popover.append(modelSection);
 
     const current = this.getExternalAgentModel();
-    this.getExternalModelOptions().forEach((option) => {
-      this.popover.append(
-        createCodexSettingsItem(option.label, option.id === current, () => {
-          this.setExternalAgentModel(option.id);
-          this.setSettingsPopoverOpen(false);
-        }),
-      );
-    });
+    const currentProviderId = this.getExternalAgentModelProviderId();
+    const options = this.getExternalModelOptions();
+    if (this.getTypeKey() === "deepseek-harness") {
+      const groups = new Map<string, { label: string; options: AgentModelOption[] }>();
+      options.forEach((option) => {
+        const label = option.providerName?.trim() || option.providerId?.trim() || "Other";
+        const key = option.providerId?.trim() || label;
+        const group = groups.get(key);
+        if (group) {
+          group.options.push(option);
+        } else {
+          groups.set(key, { label, options: [option] });
+        }
+      });
+
+      groups.forEach((group) => {
+        const providerSection = document.createElement("div");
+        providerSection.className = "agent-thread-card__codex-settings-provider";
+        providerSection.textContent = group.label;
+        this.popover.append(providerSection);
+        group.options.forEach((option) => {
+          this.popover.append(this.createModelSettingsItem(option, current, currentProviderId));
+        });
+      });
+    } else {
+      options.forEach((option) => {
+        this.popover.append(this.createModelSettingsItem(option, current, currentProviderId));
+      });
+    }
 
     if (!this.supportsRuntimeSetting("reasoning")) return;
 
@@ -718,6 +892,22 @@ export class ExternalAgentSettingsController {
     this.popover.append(reasoningSection);
 
     this.renderReasoningOptions();
+  }
+
+  private createModelSettingsItem(
+    option: AgentModelOption,
+    current: AgentCodexModel,
+    currentProviderId: string | undefined,
+  ): HTMLElement {
+    return createCodexSettingsItem(
+      option.label,
+      option.id === current
+        && (option.providerId ?? "") === (currentProviderId ?? ""),
+      () => {
+        this.setExternalAgentModel(option);
+        this.setSettingsPopoverOpen(false);
+      },
+    );
   }
 
   private renderReasoningSettings(): void {

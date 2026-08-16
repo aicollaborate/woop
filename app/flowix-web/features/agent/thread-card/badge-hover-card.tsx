@@ -7,18 +7,24 @@ import {
 } from "@shared/ui/hover-card";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import type { UsageInfo } from "@/types/agent";
 
 interface BadgeHoverCardProps {
   /** SESSION ID (agent thread id) */
   sessionId: string;
   /** 当前 run 锁定的 LLM model id(由通用 metadata 协议填入) */
   model?: string;
-  lastRunAt?: number;
-  /** 本次运行的持续毫秒数,undefined 表示未运行 / 不可用 */
   /** 当前 run 累计 token 用量(undefined 表示未上报) */
-  totalTokens?: number;
+  usage?: UsageInfo;
+  /** Loads the runtime snapshot only when this card has no loaded usage yet. */
+  onRequestRuntimeInfo?: () => Promise<BadgeHoverCardRuntimeInfo | null>;
   cwd?: string;
   onOpenChange?: (open: boolean) => void;
+}
+
+export interface BadgeHoverCardRuntimeInfo {
+  model?: string;
+  usage: UsageInfo;
 }
 
 function formatTokens(n: number): string {
@@ -35,53 +41,142 @@ function formatTokens(n: number): string {
   return `${value.toFixed(digits).replace(/\.0$/, "")}${unit.suffix}`;
 }
 
-/**
- * 把毫秒格式化成 "1h 23m 45s" / "23m 45s" / "45s"。
- */
-function formatRelativeTime(timestamp: number, language: string): string {
-  const totalSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  const isZh = language.startsWith("zh");
-  if (totalSeconds < 60) return isZh ? "刚刚" : "just now";
+function formatUsageTokens(value: number | null | undefined): string {
+  return typeof value === "number" ? `${formatTokens(value)} tok` : "";
+}
 
-  const minutes = Math.floor(totalSeconds / 60);
-  if (minutes < 60) return isZh ? `${minutes}分钟前` : `${minutes}m ago`;
+function lastPathSegment(path: string): string {
+  const segments = path.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? "";
+}
 
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return isZh ? `${hours}小时前` : `${hours}h ago`;
+function hasUsageContent(usage: UsageInfo | undefined): boolean {
+  if (!usage) return false;
+  return Object.values(usage).some(
+    (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+}
 
-  const days = Math.floor(hours / 24);
-  if (days < 30) return isZh ? `${days}天前` : `${days}d ago`;
+function cacheHitRate(usage: UsageInfo | undefined): number | undefined {
+  const input = usage?.input_tokens;
+  const cached = usage?.cached_input_tokens;
+  if (
+    typeof input !== "number" ||
+    typeof cached !== "number" ||
+    input < 0 ||
+    cached < 0
+  ) {
+    return undefined;
+  }
+  const totalInput = input + cached;
+  return totalInput > 0 ? cached / totalInput : undefined;
+}
 
-  const months = Math.floor(days / 30);
-  if (months < 12) return isZh ? `${months}个月前` : `${months}mo ago`;
+function contextUsageRate(usage: UsageInfo | undefined): number | undefined {
+  const used = usage?.context_used_tokens;
+  const window = usage?.model_context_window;
+  if (
+    typeof used !== "number" ||
+    typeof window !== "number" ||
+    used < 0 ||
+    window <= 0
+  ) {
+    return undefined;
+  }
+  return Math.min(1, used / window);
+}
 
-  const years = Math.floor(days / 365);
-  return isZh ? `${years}年前` : `${years}y ago`;
+function percentageFromRate(rate: number | undefined): string {
+  return rate === undefined ? "" : `${Math.round(rate * 100)}%`;
 }
 
 /**
- * Agent Thread Card 全屏时,hover Agent 类型徽章弹出的卡片。
+ * Agent Thread Card hover Agent 类型徽章弹出的卡片。
  *
  * 通用 metadata 协议字段均通过 props 传入,组件本身不读取 store ──
  * 由父级 (agent-thread-card.tsx) 负责从 useChatStore 抽取并定时刷新。
  *
- * 展示 4 行 + 可选 cwd 行:
+ * 展示会话、模型和 token 明细 + 可选 cwd 行:
  *   1. Session ID + 复制按钮
- *   2. Model(可选, 由 run.model 填充, 未上报时显示 "—")
- *   3. 运行持续时间(可选, run 未跑时显示 "—")
- *   4. Token 总量(可选, 网关未上报时显示 "—")
- *   5. CWD (可选, instance.runtimeConfig 解出, 文本溢出走原生 title tooltip)
+ *   2. Model(可选, 由 run.model 填充)
+ *   3. 输入 / 输出 / 缓存命中
+ *   4. 空间 (可选, instance.runtimeConfig 解出, 文本溢出走原生 title tooltip)
  */
 export function BadgeHoverCard({
   sessionId,
   model,
-  lastRunAt,
-  totalTokens,
+  usage,
+  onRequestRuntimeInfo,
   cwd,
   onOpenChange,
 }: BadgeHoverCardProps) {
-  const { language, t } = useI18n();
+  const { t } = useI18n();
   const [copied, setCopied] = React.useState(false);
+  const [displayModel, setDisplayModel] = React.useState(model);
+  const [displayUsage, setDisplayUsage] = React.useState(usage);
+  const runtimeInfoLoadedRef = React.useRef(hasUsageContent(usage));
+  const runtimeInfoRequestRef = React.useRef<Promise<BadgeHoverCardRuntimeInfo | null> | null>(
+    null,
+  );
+
+  React.useEffect(() => {
+    // Parent controllers periodically re-render this component. Do not let an
+    // empty projection erase a resident snapshot fetched on the first hover.
+    if (!runtimeInfoLoadedRef.current || hasUsageContent(usage)) {
+      setDisplayModel(model);
+      setDisplayUsage(usage);
+    }
+    if (hasUsageContent(usage)) {
+      runtimeInfoLoadedRef.current = true;
+    }
+  }, [model, usage]);
+
+  const requestRuntimeInfo = React.useCallback(() => {
+    if (
+      runtimeInfoLoadedRef.current ||
+      runtimeInfoRequestRef.current !== null ||
+      !onRequestRuntimeInfo
+    ) {
+      return;
+    }
+
+    let request: Promise<BadgeHoverCardRuntimeInfo | null>;
+    try {
+      request = onRequestRuntimeInfo();
+    } catch {
+      return;
+    }
+    runtimeInfoRequestRef.current = request;
+    void request
+      .then((info) => {
+        if (info === null) return;
+        if (hasUsageContent(info.usage) || info.model) {
+          runtimeInfoLoadedRef.current = true;
+        }
+        setDisplayModel(info.model ?? model);
+        setDisplayUsage(info.usage);
+      })
+      .catch(() => {
+        // Keep the resident snapshot visible and allow the next hover to retry.
+      })
+      .finally(() => {
+        if (runtimeInfoRequestRef.current === request) {
+          runtimeInfoRequestRef.current = null;
+        }
+      });
+  }, [model, onRequestRuntimeInfo]);
+
+  const handleOpenChange = React.useCallback(
+    (open: boolean) => {
+      onOpenChange?.(open);
+      if (open) requestRuntimeInfo();
+    },
+    [onOpenChange, requestRuntimeInfo],
+  );
+
+  const hitRate = cacheHitRate(displayUsage);
+  const contextRate = contextUsageRate(displayUsage);
+  const displayCwd = cwd ? lastPathSegment(cwd) : "";
 
   const handleCopy = React.useCallback(async () => {
     if (!sessionId) return;
@@ -98,19 +193,20 @@ export function BadgeHoverCard({
     <HoverCard
       openDelay={120}
       closeDelay={150}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
     >
       <HoverCardTrigger asChild>
         <span
           aria-hidden="true"
           className="agent-thread-card__badge-hover-trigger"
+          onPointerEnter={requestRuntimeInfo}
         />
       </HoverCardTrigger>
       <HoverCardContent
         side="bottom"
         align="start"
         sideOffset={6}
-        className="w-72 px-3 py-2.5"
+        className="w-[14.4rem] rounded-lg px-3 py-2.5"
       >
         <div className="flex flex-col gap-1.5">
           {/* Session ID 行: 复制按钮在右 */}
@@ -119,7 +215,7 @@ export function BadgeHoverCard({
               className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]"
               title={sessionId || ""}
             >
-              {sessionId || "—"}
+              {sessionId || "-"}
             </span>
             <button
               type="button"
@@ -141,60 +237,70 @@ export function BadgeHoverCard({
           </div>
 
           {/* Model 行 */}
-          <div className="flex items-center justify-between gap-2 text-[11px]">
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
             <span className="text-[var(--muted-foreground)]">
               {t("editor.threadCard.model")}
             </span>
             <span
               className={cn(
-                "font-mono",
-                model
+                "agent-thread-card__model-value min-w-0 font-mono",
+                displayModel
                   ? "text-[var(--foreground)]"
                   : "text-[var(--muted-foreground)]",
               )}
             >
-              {model || "—"}
+              {displayModel || "-"}
             </span>
           </div>
 
-          {/* 上次运行时间行 */}
-          <div className="flex items-center justify-between gap-2 text-[11px]">
+          {/* Token 明细: Harness 的 inputTokens 不包含 cacheReadTokens。 */}
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
             <span className="text-[var(--muted-foreground)]">
-              {t("editor.threadCard.lastRun")}
+              {t("editor.threadCard.inputOutputTokens")}
+            </span>
+            <span className="text-right font-mono tabular-nums text-[var(--foreground)]">
+              {formatUsageTokens(displayUsage?.input_tokens) || "-"} /{" "}
+              {formatUsageTokens(displayUsage?.output_tokens) || "-"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
+            <span className="text-[var(--muted-foreground)]">
+              {t("editor.threadCard.cacheReadTokens")}
             </span>
             <span
-              className={cn(
-                "font-mono tabular-nums",
-                typeof lastRunAt === "number"
-                  ? "text-[var(--foreground)]"
-                  : "text-[var(--muted-foreground)]",
-              )}
+              className="agent-thread-card__cache-hit-value"
+              aria-label={percentageFromRate(hitRate) || "-"}
             >
-              {typeof lastRunAt === "number"
-                ? formatRelativeTime(lastRunAt, language)
-                : "-"}
+              <span className="font-mono tabular-nums text-[var(--foreground)]">
+                {percentageFromRate(hitRate) || "-"}
+              </span>
             </span>
           </div>
 
-          {/* Token 总量行 */}
-          <div className="flex items-center justify-between gap-2 text-[11px]">
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
             <span className="text-[var(--muted-foreground)]">
-              {t("editor.threadCard.totalTokens")}
+              {t("editor.threadCard.contextUsage")}
             </span>
             <span
-              className={cn(
-                "font-mono tabular-nums",
-                typeof totalTokens === "number"
-                  ? "text-[var(--foreground)]"
-                  : "text-[var(--muted-foreground)]",
-              )}
+              className="agent-thread-card__cache-hit-value"
+              aria-label={percentageFromRate(contextRate) || "-"}
             >
-              {typeof totalTokens === "number" ? formatTokens(totalTokens) : "—"}
+              <span className="font-mono tabular-nums text-[var(--foreground)]">
+                {percentageFromRate(contextRate) || "-"}
+              </span>
+              {contextRate === undefined ? null : (
+                <span
+                  aria-hidden="true"
+                  className="agent-thread-card__context-ring"
+                  style={{ "--proportion": `${contextRate * 100}%` } as React.CSSProperties}
+                />
+              )}
             </span>
           </div>
 
-          {cwd ? (
-            <div className="flex items-start justify-between gap-3 text-[11px]">
+          {displayCwd ? (
+            <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-2 text-[11px]">
               <span className="shrink-0 text-[var(--muted-foreground)]">
                 {t("editor.threadCard.cwd")}
               </span>
@@ -202,7 +308,7 @@ export function BadgeHoverCard({
                 className="agent-thread-card__cwd-value"
                 title={cwd}
               >
-                {cwd}
+                {displayCwd}
               </span>
             </div>
           ) : null}

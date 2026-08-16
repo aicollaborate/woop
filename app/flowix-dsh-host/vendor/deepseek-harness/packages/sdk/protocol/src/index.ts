@@ -20,6 +20,8 @@ export type {
   SessionStatusNotification,
   SessionPromptParams,
   SessionPromptResult,
+  SessionUsageParams,
+  SessionUsageResult,
   SubagentFinishedNotification,
   SubagentStartedNotification,
 } from './types.ts'

@@ -157,10 +157,16 @@ function eventMapperStateForChunk(
   return {
     threadTypes: state.sessionMeta.threadTypes,
     externalSessionResolutions: state.sessionMeta.externalSessionResolutions,
-    // The mapper only reads activeRunId. Keep this adapter scoped to the one
-    // routed thread so high-frequency chunks do not rebuild the whole map.
+    // Keep this adapter scoped to the one routed thread so high-frequency
+    // chunks do not rebuild the whole map. Usage may arrive after stream_end;
+    // provide the resident snapshot id so it can still update that session.
     threadStates: projection
-      ? { [threadId]: { activeRunId: projection.runs.activeRunId } }
+      ? {
+          [threadId]: {
+            activeRunId: projection.runs.activeRunId,
+            lastRunId: projection.runs.lastRun?.runId,
+          },
+        }
       : {},
   };
 }
@@ -334,10 +340,20 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
           if (isFirstMessage && conversationTitle) {
             state.setSessionMeta((meta) => ({
               ...meta,
-              currentThreadTitles: {
-                ...meta.currentThreadTitles,
-                [type.key]: conversationTitle,
-              },
+              // Thread cards and the conversation detail have their own
+              // instance-backed titles. An instance-backed send must never
+              // overwrite the legacy, agent-type-wide title (otherwise card
+              // B can make card A display B's title during fallback/recovery).
+              // The legacy main conversation has no instanceId and keeps the
+              // existing current-title behavior.
+              ...(!options?.instanceId
+                ? {
+                    currentThreadTitles: {
+                      ...meta.currentThreadTitles,
+                      [type.key]: conversationTitle,
+                    },
+                  }
+                : {}),
               threadLists: {
                 ...meta.threadLists,
                 [type.key]: (meta.threadLists[type.key] ?? []).map((item) =>

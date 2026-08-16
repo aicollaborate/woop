@@ -34,4 +34,21 @@ describe("DeepSeek Harness reconnect error display", () => {
       ),
     ).toBe("Request timed out.");
   });
+
+  it("keeps only the Harness error message and hides stderr/stack details", () => {
+    expect(
+      getAgentMessageVisibleContent(
+        errorMessage({
+          content: [
+            "[HARNESS_RUN_FAILED] JSON-RPC input closed",
+            "exit code: 1",
+            "stderr tail:",
+            "Error: dsh-jsonrpc-agent: plugin tree failed to load",
+            "    at /local/path/app-boot/src/index.ts:800:11",
+          ].join("\n"),
+        }),
+        "zh-CN",
+      ),
+    ).toBe("DeepSeek Harness 重连失败\n\n失败原因：JSON-RPC input closed");
+  });
 });

@@ -144,7 +144,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(result.codex?.reasoningEffort).toBe("high");
   });
 
-  it("DeepSeek Harness exposes mode before permission and sends the card mode", () => {
+  it("DeepSeek Harness exposes model before mode and permission and sends the card overrides", () => {
     const result = buildAgentRuntimeConfig({
       typeKey: "deepseek-harness",
       notebookPath: "/tmp/notebook",
@@ -152,18 +152,22 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       codexModel: "inherit",
       codexReasoningEffort: "medium",
       instanceRuntimeConfig: {
+        model: { key: "deepseek-v4-pro", providerId: "provider-b" },
         deepseekHarness: { mode: "code" },
       },
     });
 
     expect(result.deepseekHarness?.mode).toBe("code");
+    expect(result.deepseekHarness?.model).toBe("deepseek-v4-pro");
+    expect(result.deepseekHarness?.providerId).toBe("provider-b");
     expect(getAgentRuntimeSpec("deepseek-harness").emptySettings).toEqual([
+      "model",
       "mode",
       "permission",
     ]);
   });
 
-  it("DeepSeek Harness 始终使用配置模型, 不序列化卡片模型", () => {
+  it("DeepSeek Harness inherit 时不序列化模型, 选定后透传卡片模型", () => {
     const inherited = buildAgentRuntimeConfig({
       typeKey: "deepseek-harness",
       notebookPath: "/tmp/project",
@@ -171,7 +175,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       codexModel: "inherit",
       codexReasoningEffort: "medium",
     });
-    expect(inherited.deepseekHarness?.model).toBeUndefined();
+    expect(inherited.deepseekHarness?.model).toBe("inherit");
 
     const selected = buildAgentRuntimeConfig({
       typeKey: "deepseek-harness",
@@ -180,7 +184,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       codexModel: "deepseek-v4-pro",
       codexReasoningEffort: "medium",
     });
-    expect(selected.deepseekHarness?.model).toBeUndefined();
+    expect(selected.deepseekHarness?.model).toBe("deepseek-v4-pro");
   });
 
   it("flowix supports empty-card runtime settings for files (空状态设置区仍可用)", () => {
@@ -188,7 +192,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(supportsAgentEmptySettings("codex")).toBe(true);
     expect(supportsAgentEmptySettings("claude")).toBe(true);
     expect(supportsAgentEmptySettings("deepseek-harness")).toBe(true);
-    expect(supportsAgentRuntimeSetting("deepseek-harness", "model")).toBe(false);
+    expect(supportsAgentRuntimeSetting("deepseek-harness", "model")).toBe(true);
     expect(supportsAgentRuntimeSetting("deepseek-harness", "mode")).toBe(true);
     expect(supportsAgentRuntimeSetting("deepseek-harness", "permission")).toBe(true);
   });

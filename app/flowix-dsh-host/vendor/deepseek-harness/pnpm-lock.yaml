@@ -8523,6 +8523,9 @@ importers:
       '@deepseek-ai/dsh-settings':
         specifier: workspace:^
         version: link:../../packages/settings/settings
+      '@deepseek-ai/dsh-settings-file':
+        specifier: workspace:^
+        version: link:../../packages/settings/settings-file
       '@deepseek-ai/dsh-shell':
         specifier: workspace:^
         version: link:../../packages/shell/shell

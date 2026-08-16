@@ -487,7 +487,16 @@ class SingleExeBuild {
       }
       bin = dispatcherName
     }
-    const patch = { bin, pkg: { assets: ASSET_GLOBS } }
+    const patch = {
+      bin,
+      pkg: {
+        assets: ASSET_GLOBS,
+        // Cordis loads settings providers from the external YAML at runtime.
+        // Keep this provider in pkg's script snapshot so Node's package
+        // resolver can execute the dynamic bare import in a SEA executable.
+        scripts: ['node_modules/@deepseek-ai/dsh-settings-file/lib/**/*.js'],
+      },
+    }
     const manifestPath = join(this.staging, 'package.json')
     if (this.cli.dryRun) {
       console.log(`build-exe-for-python-sdk: [dry-run] patch ${manifestPath} with ${JSON.stringify(patch)}`)
@@ -496,9 +505,19 @@ class SingleExeBuild {
     if (!existsSync(manifestPath)) {
       throw new Error(`build-exe-for-python-sdk: ${manifestPath} missing — pnpm deploy did not produce a staged package.`)
     }
-    if (!existsSync(join(this.staging, ENTRY_BIN))) {
-      throw new Error(`build-exe-for-python-sdk: ${join(this.staging, ENTRY_BIN)} missing — run without --skip-build so lib/ artifacts exist.`)
+    const entryPath = join(this.staging, ENTRY_BIN)
+    if (!existsSync(entryPath)) {
+      throw new Error(`build-exe-for-python-sdk: ${entryPath} missing — run without --skip-build so lib/ artifacts exist.`)
     }
+    const entrySource = await readFile(entryPath, 'utf8')
+    const shebangEnd = entrySource.startsWith('#!') ? entrySource.indexOf('\n') + 1 : 0
+    // pnpm deploy may materialize package files as hard links. Unlink the
+    // staged entry before patching so the source-plane lib is never changed.
+    await rm(entryPath)
+    await writeFile(
+      entryPath,
+      `${entrySource.slice(0, shebangEnd)}process.env.DSH_SETTINGS_MODULE = new URL('../../dsh-settings-file/lib/index.js', import.meta.url).href\nimport '@deepseek-ai/dsh-settings-file'\n${entrySource.slice(shebangEnd)}`,
+    )
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
     await writeFile(manifestPath, `${JSON.stringify({ ...manifest, ...patch }, null, 2)}\n`)
     console.log(`build-exe-for-python-sdk: injected pkg config into ${manifestPath}`)

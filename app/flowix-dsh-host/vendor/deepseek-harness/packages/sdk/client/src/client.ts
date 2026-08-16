@@ -19,6 +19,8 @@ import {
   type InitializeParams,
   type InitializeResult,
   type SessionPromptParams,
+  type SessionUsageParams,
+  type SessionUsageResult,
 } from '@deepseek-ai/dsh-sdk-protocol'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { disposeRuntimeProcess } from './dispose.ts'
@@ -290,6 +292,39 @@ export class HarnessClient {
   }
 
   /**
+   * Read the whole-session usage snapshot maintained by the runtime's
+   * token-meter projection. This is intentionally one request for all four
+   * counters; callers do not need to add streaming usage samples.
+   * @param sessionId - target session.
+   * @returns the cumulative provider usage for the session.
+   */
+  async sessionUsage(sessionId: string): Promise<SessionUsageResult> {
+    const params: SessionUsageParams = { sessionId }
+    const result = await this.request('session/usage', { ...params })
+    if (!isRecord(result)
+      || typeof result.sessionId !== 'string'
+      || !nonNegativeNumber(result.inputTokens)
+      || !nonNegativeNumber(result.outputTokens)
+      || !nonNegativeNumber(result.cacheReadTokens)
+      || !nonNegativeNumber(result.cacheWriteTokens)
+      || (result.contextTokens !== undefined && !nonNegativeNumber(result.contextTokens))
+      || (result.contextWindow !== undefined && !positiveNumber(result.contextWindow))
+      || (result.modelId !== undefined && typeof result.modelId !== 'string')) {
+      throw new SdkProtocolError(`session/usage returned malformed usage: ${JSON.stringify(result)}`)
+    }
+    return {
+      sessionId: result.sessionId,
+      ...(result.modelId === undefined ? {} : { modelId: result.modelId }),
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      cacheReadTokens: result.cacheReadTokens,
+      cacheWriteTokens: result.cacheWriteTokens,
+      ...(result.contextTokens === undefined ? {} : { contextTokens: result.contextTokens }),
+      ...(result.contextWindow === undefined ? {} : { contextWindow: result.contextWindow }),
+    }
+  }
+
+  /**
    * Send one JSON-RPC request and await its result.
    * @param method - the wire method name.
    * @param params - the params object; omitted params send `{}`.
@@ -470,4 +505,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 function errorMessage(error: unknown): string {
   /* v8 ignore next -- the transport and dispose ladder reject only with Errors */
   return error instanceof Error ? error.message : String(error)
+}
+
+function nonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function positiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }

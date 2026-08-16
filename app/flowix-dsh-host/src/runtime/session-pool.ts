@@ -1,4 +1,4 @@
-import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+import { DeepSeekHarness, type SessionUsageResult } from '@deepseek-ai/dsh-sdk-client'
 import {
   adaptHarnessNotification,
   endReasonFromNotifications,
@@ -113,15 +113,38 @@ export class SessionPool {
     }))
   }
 
+  async usage(sessionId: string): Promise<SessionUsageResult | undefined> {
+    const slot = [...this.slots.values()].find(candidate => candidate.spec.sessionId === sessionId)
+    if (slot === undefined) return undefined
+    slot.lastUsedAt = Date.now()
+    this.clearIdleTimer(slot)
+    return await readSessionUsage(slot)
+  }
+
   private async execute(slot: RuntimeSlot, marker: { runId: string; cancelled: boolean }, prompt: string): Promise<void> {
     try {
       const result = await slot.harness.run(prompt, {
         sessionId: slot.spec.sessionId,
         onNotification: notification => {
-          for (const event of adaptHarnessNotification(notification)) this.push(slot, marker.runId, event)
+          for (const event of adaptHarnessNotification(notification, { includeUsage: false })) {
+            this.push(slot, marker.runId, event)
+          }
         },
       })
       if (!marker.cancelled) {
+        const usage = await readSessionUsage(slot)
+        if (usage !== undefined) {
+          this.push(slot, marker.runId, {
+            type: 'usage',
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            ...(usage.modelId === undefined ? {} : { modelId: usage.modelId }),
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
+            ...(usage.contextTokens === undefined ? {} : { contextTokens: usage.contextTokens }),
+            ...(usage.contextWindow === undefined ? {} : { contextWindow: usage.contextWindow }),
+          })
+        }
         const reason = endReasonFromNotifications(result.notifications)
         const failure = failureFromNotifications(result.notifications)
         if (failure !== undefined || reason === 'protocol_error') {
@@ -194,6 +217,16 @@ export class SessionPool {
       generation: slot.generation,
       event,
     })
+  }
+}
+
+async function readSessionUsage(slot: RuntimeSlot): Promise<SessionUsageResult | undefined> {
+  try {
+    return await slot.harness.session(slot.spec.sessionId).usage()
+  } catch {
+    // Usage is supplementary metadata. A completed answer must still reach
+    // the UI when an older/custom runtime does not implement session/usage.
+    return undefined
   }
 }
 

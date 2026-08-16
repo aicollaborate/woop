@@ -721,6 +721,7 @@ mod tests {
                     last_run_at: None,
                     usage: Some(crate::agent_flowix::UsageInfo {
                         total_tokens: Some(total_tokens),
+                        context_used_tokens: None,
                         ..Default::default()
                     }),
                     status_info: None,

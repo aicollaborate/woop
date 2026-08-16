@@ -641,6 +641,7 @@ fn stream_event_to_chunks(
                     reasoning_output_tokens: None,
                     total_tokens: None,
                     model_context_window: None,
+                    context_used_tokens: None,
                 }),
                 status_info: None,
             }],

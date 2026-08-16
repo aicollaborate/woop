@@ -1,9 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use super::host::DshHostClient;
@@ -20,7 +24,10 @@ use crate::agent_flowix::provider::{
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::ThreadManager;
-use crate::config::{AiModelConfig, UserConfigStore};
+use crate::config::{
+    AiConfigFile, AiModelConfig, AiModelEntry, UserConfigStore, DSH_PLUGIN_SETTINGS_FILE_NAME,
+    DSH_SETTINGS_FILE_NAME,
+};
 
 struct ActiveRun {
     started_at: i64,
@@ -28,6 +35,59 @@ struct ActiveRun {
     run_id: String,
     session_id: String,
     stream_end_emitted: Arc<AtomicBool>,
+    /// Credential bucket of the host serving this run. Kept in memory only so
+    /// idle hosts can be retired without putting secrets on disk or logs.
+    host_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepSeekHarnessSessionUsage {
+    pub session_id: String,
+    pub model_id: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedRuntimeConfig {
+    model: Option<PersistedModelConfig>,
+    access: Option<PersistedAccessConfig>,
+    deepseek_harness: Option<PersistedDeepSeekHarnessConfig>,
+    cwd: Option<String>,
+    workspace_snapshot: Option<PersistedWorkspaceSnapshot>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedModelConfig {
+    key: Option<String>,
+    provider_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedAccessConfig {
+    sandbox: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedDeepSeekHarnessConfig {
+    mode: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedWorkspaceSnapshot {
+    cwd: Option<String>,
+    #[serde(default)]
+    workspace_paths: Vec<String>,
 }
 
 /// The provider configuration for one Harness host. The secret stays in the
@@ -40,6 +100,18 @@ pub struct HarnessRuntimeConfig {
     pub(crate) base_url: String,
     pub(crate) model: String,
     pub(crate) api_key: Option<String>,
+}
+
+impl HarnessRuntimeConfig {
+    /// Stable non-secret identity used for host caching and cancellation.
+    /// The raw key is only retained for child-process environment injection.
+    fn host_key(&self) -> String {
+        self.api_key
+            .as_deref()
+            .filter(|key| !key.is_empty())
+            .map(|key| format!("sha256:{:x}", Sha256::digest(key.as_bytes())))
+            .unwrap_or_default()
+    }
 }
 
 /// Resolve the current Flowix model configuration into the stable Harness
@@ -63,12 +135,15 @@ pub fn resolve_runtime_config(
         .ok_or("AI model is not configured")?;
 
     let normalized = normalize_provider(provider_name);
-    let (api_protocol, default_base_url, requires_api_key) = match normalized.as_str() {
+    let (inferred_api_protocol, default_base_url, requires_api_key) = match normalized.as_str() {
         "anthropic" | "claude" => (
             "anthropic-messages",
             Some("https://api.anthropic.com/v1"),
             true,
         ),
+        "kimiforcoding" | "minimax" | "minimaxcn" | "vercelaigateway" => {
+            ("anthropic-messages", None, true)
+        }
         "openai" | "openairesponses" | "openairesponsesapi" | "responsesapi" => {
             ("openai-responses", Some("https://api.openai.com/v1"), true)
         }
@@ -95,6 +170,12 @@ pub fn resolve_runtime_config(
         }
         _ => ("openai-completions", None, true),
     };
+    let api_protocol =
+        if config.provider_id.trim().is_empty() || config.api_protocol.trim().is_empty() {
+            inferred_api_protocol
+        } else {
+            config.api_protocol.trim()
+        };
     let base_url = config
         .api_url
         .trim()
@@ -110,7 +191,12 @@ pub fn resolve_runtime_config(
         ));
     }
 
-    let api_key = config.effective_api_key(provider_name).trim().to_string();
+    let api_key_bucket = if config.provider_id.trim().is_empty() {
+        provider_name
+    } else {
+        config.provider_id.trim()
+    };
+    let api_key = config.effective_api_key(api_key_bucket).trim().to_string();
     if requires_api_key && api_key.is_empty() {
         return Err(format!(
             "API key is not configured for provider {provider_name}"
@@ -118,13 +204,47 @@ pub fn resolve_runtime_config(
     }
 
     Ok(HarnessRuntimeConfig {
-        provider: "flowix".to_string(),
-        provider_name: provider_name.to_string(),
+        provider: (!config.provider_id.trim().is_empty())
+            .then(|| config.provider_id.trim().to_string())
+            .unwrap_or_else(|| "flowix".to_string()),
+        provider_name: (!config.display_name.trim().is_empty())
+            .then(|| config.display_name.trim().to_string())
+            .unwrap_or_else(|| provider_name.to_string()),
         api_protocol: api_protocol.to_string(),
         base_url,
         model: model.to_string(),
         api_key: (!api_key.is_empty()).then_some(api_key),
     })
+}
+
+/// Select the complete provider route for one conversation. A model id alone
+/// is intentionally insufficient: two routes may expose the same id while
+/// using different endpoints, protocols, and credentials.
+fn select_harness_config(
+    configs: Vec<AiConfigFile>,
+    provider_id: Option<&str>,
+) -> Result<AiModelConfig, String> {
+    let requested = provider_id.map(str::trim).filter(|value| !value.is_empty());
+    let selected = match requested {
+        Some(route) => {
+            if route == "flowix" {
+                configs
+                    .into_iter()
+                    .find(|config| config.model.provider_id.trim().is_empty())
+            } else {
+                configs
+                    .into_iter()
+                    .find(|config| config.model.provider_id.trim() == route)
+            }
+        }
+        None => configs.into_iter().next(),
+    };
+    selected
+        .map(|config| config.model)
+        .ok_or_else(|| match requested {
+            Some(route) => format!("DeepSeek Harness provider route is not configured: {route}"),
+            None => "DeepSeek Harness provider is not configured".to_string(),
+        })
 }
 
 fn normalize_provider(provider: &str) -> String {
@@ -154,8 +274,10 @@ pub struct DeepSeekHarnessManager {
     thread_manager: Arc<ThreadManager>,
     user_config: Arc<UserConfigStore>,
     session_root: PathBuf,
-    host: Mutex<Option<Arc<DshHostClient>>>,
-    host_api_key: Mutex<Option<String>>,
+    /// Harness child processes are keyed by credential. One process cannot
+    /// safely serve two different API keys because the key is injected through
+    /// its environment, but different keys can be used concurrently.
+    hosts: Mutex<HashMap<String, Arc<DshHostClient>>>,
     active: Mutex<HashMap<String, ActiveRun>>,
 }
 
@@ -210,8 +332,7 @@ impl DeepSeekHarnessManager {
             thread_manager,
             user_config,
             session_root,
-            host: Mutex::new(None),
-            host_api_key: Mutex::new(None),
+            hosts: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
         }
     }
@@ -240,31 +361,57 @@ impl DeepSeekHarnessManager {
             }
         };
 
-        let host =
-            match tokio::time::timeout(HARNESS_PROBE_TIMEOUT, self.ensure_host(&runtime_config))
-                .await
-            {
-                Ok(Ok(host)) => host,
-                Ok(Err(error)) => {
-                    return harness_probe_failure(
-                        &model_id,
-                        started,
-                        TestConnectionErrorKind::Other,
-                        error,
-                    )
-                }
-                Err(_) => {
-                    return harness_probe_failure(
-                        &model_id,
-                        started,
-                        TestConnectionErrorKind::NetworkUnreachable,
-                        format!(
-                            "DeepSeek Harness did not start within {}s",
-                            HARNESS_PROBE_TIMEOUT.as_secs()
-                        ),
-                    )
-                }
-            };
+        // The durable settings file may still describe the previously saved
+        // model directory while this draft is being tested. Harness treats an
+        // explicit `models` list as authoritative, so probing through the
+        // normal cached host would reject a newly added model as unknown.
+        // Give this probe its own settings snapshot instead; no user config
+        // is changed and the production host/cache is not disturbed.
+        let probe_settings_path = match create_probe_settings_file(config) {
+            Ok(path) => path,
+            Err(error) => {
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::Other,
+                    error,
+                )
+            }
+        };
+        let host = match tokio::time::timeout(
+            HARNESS_PROBE_TIMEOUT,
+            DshHostClient::spawn(
+                runtime_config.api_key.as_deref(),
+                &self.session_root,
+                &probe_settings_path,
+                &self.plugin_settings_path(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(host)) => host,
+            Ok(Err(error)) => {
+                let _ = fs::remove_file(&probe_settings_path);
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::Other,
+                    error,
+                );
+            }
+            Err(_) => {
+                let _ = fs::remove_file(&probe_settings_path);
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::NetworkUnreachable,
+                    format!(
+                        "DeepSeek Harness did not start within {}s",
+                        HARNESS_PROBE_TIMEOUT.as_secs()
+                    ),
+                );
+            }
+        };
 
         let probe_id = uuid::Uuid::new_v4().to_string();
         let thread_id = format!("flowix-harness-probe-{probe_id}");
@@ -287,7 +434,7 @@ impl DeepSeekHarnessManager {
             "read-only",
         );
         if let Err(error) = timed_host_request(&host, ensure).await {
-            dispose_probe_runtime(&host, &thread_id).await;
+            cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
             return harness_probe_failure(
                 &model_id,
                 started,
@@ -305,7 +452,7 @@ impl DeepSeekHarnessManager {
         );
         if let Err(error) = timed_host_request(&host, start).await {
             host.unsubscribe(&thread_id, &run_id).await;
-            dispose_probe_runtime(&host, &thread_id).await;
+            cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
             return harness_probe_failure(
                 &model_id,
                 started,
@@ -360,7 +507,7 @@ impl DeepSeekHarnessManager {
         .await;
 
         host.unsubscribe(&thread_id, &run_id).await;
-        dispose_probe_runtime(&host, &thread_id).await;
+        cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
 
         match outcome {
             Ok(Ok(summary)) => TestConnectionResult {
@@ -398,6 +545,184 @@ impl DeepSeekHarnessManager {
             host.shutdown().await;
         }
         result
+    }
+
+    /// Return the plugin rows from the same host and agent-preset compositions
+    /// used by dsh-host. This is metadata only and does not require a model or
+    /// API key, so the preferences page can load it before the first chat.
+    pub async fn plugin_catalog(&self) -> Result<serde_json::Value, String> {
+        let (host, ephemeral) = self.model_host().await?;
+        let result = timed_host_request(
+            &host,
+            protocol::plugins_catalog_request(host.next_request_id()),
+        )
+        .await;
+        if ephemeral {
+            host.shutdown().await;
+        }
+        result
+    }
+
+    pub async fn session_usage(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<DeepSeekHarnessSessionUsage>, String> {
+        let session_id = self
+            .thread_manager
+            .get_external_session(thread_id, AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| stable_session_id(thread_id));
+
+        let instance = self
+            .thread_manager
+            .find_agent_conversation_by_thread_id(thread_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let persisted_config = instance
+            .as_ref()
+            .and_then(|value| value.runtime_config.as_deref())
+            .and_then(|raw| serde_json::from_str::<PersistedRuntimeConfig>(raw).ok());
+        let provider_id = persisted_config
+            .as_ref()
+            .and_then(|config| config.model.as_ref())
+            .and_then(|model| model.provider_id.as_deref());
+        let model_id = persisted_config
+            .as_ref()
+            .and_then(|config| config.model.as_ref())
+            .and_then(|model| model.key.as_deref());
+
+        let configured = select_harness_config(
+            self.user_config
+                .get_deepseek_harness_configs()
+                .map_err(|error| error.to_string())?,
+            provider_id,
+        )?;
+        let runtime_config = resolve_runtime_config(&configured, model_id)?;
+        let cwd = instance
+            .as_ref()
+            .and_then(|value| value.frozen_cwd.clone())
+            .or_else(|| {
+                persisted_config
+                    .as_ref()
+                    .and_then(|config| config.workspace_snapshot.as_ref())
+                    .and_then(|snapshot| snapshot.cwd.clone())
+            })
+            .or_else(|| {
+                persisted_config
+                    .as_ref()
+                    .and_then(|config| config.cwd.clone())
+            })
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .to_string_lossy()
+                    .into_owned()
+            });
+        let workspace_paths = persisted_config
+            .as_ref()
+            .and_then(|config| config.workspace_snapshot.as_ref())
+            .map(|snapshot| snapshot.workspace_paths.clone())
+            .unwrap_or_default();
+        let agent_preset = normalize_agent_preset(
+            persisted_config
+                .as_ref()
+                .and_then(|config| config.deepseek_harness.as_ref())
+                .and_then(|config| config.mode.as_deref()),
+        );
+        let permission = normalize_permission(
+            persisted_config
+                .as_ref()
+                .and_then(|config| config.access.as_ref())
+                .and_then(|config| config.sandbox.as_deref()),
+        );
+
+        let host = self.ensure_host(&runtime_config).await?;
+        let ensure = protocol::runtime_ensure_request(
+            host.next_request_id(),
+            thread_id,
+            &session_id,
+            &cwd,
+            &workspace_paths,
+            &runtime_config.provider,
+            &runtime_config.provider_name,
+            &runtime_config.api_protocol,
+            &runtime_config.base_url,
+            &runtime_config.model,
+            agent_preset,
+            permission,
+        );
+        host.request_value(ensure).await?;
+        let result = timed_host_request(
+            &host,
+            protocol::session_usage_request(host.next_request_id(), &session_id),
+        )
+        .await?;
+        self.close_idle_hosts().await;
+        if result.is_null() {
+            return Ok(None);
+        }
+        serde_json::from_value(result)
+            .map(Some)
+            .map_err(|error| format!("invalid DeepSeek Harness session usage: {error}"))
+    }
+
+    pub async fn set_plugin_enabled(
+        &self,
+        plugin_key: &str,
+        enabled: bool,
+    ) -> Result<serde_json::Value, String> {
+        validate_plugin_key(plugin_key)?;
+        if !self.active.lock().await.is_empty() {
+            return Err("DeepSeek Harness 插件运行中不可切换，请先停止当前任务".to_string());
+        }
+
+        self.user_config
+            .set_deepseek_harness_plugin_enabled(plugin_key, enabled)
+            .map_err(|error| error.to_string())?;
+
+        let hosts = {
+            let mut hosts = self.hosts.lock().await;
+            hosts.drain().map(|(_, host)| host).collect::<Vec<_>>()
+        };
+        for host in hosts {
+            host.shutdown().await;
+        }
+
+        self.plugin_catalog().await
+    }
+
+    /// Backwards-compatible flat model list for older callers. New DSH UI code
+    /// uses `deepseekHarness.list()` so it can retain the provider route next
+    /// to every model id; this method intentionally remains string-only.
+    pub async fn supported_models(&self) -> Result<Vec<String>, String> {
+        let configs = self
+            .user_config
+            .get_deepseek_harness_configs()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .flat_map(|config| {
+                let model = config.model;
+                if model.models.is_empty() {
+                    vec![model.model].into_iter()
+                } else {
+                    model
+                        .models
+                        .into_iter()
+                        .map(|entry| entry.id)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                }
+            })
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        let models = configs
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+        Ok(models)
     }
 
     /// Discover models for the provider draft currently being edited. The key
@@ -452,6 +777,7 @@ impl DeepSeekHarnessManager {
                     run_id: run_id.clone(),
                     session_id: session_id.clone(),
                     stream_end_emitted: stream_end_emitted.clone(),
+                    host_key: None,
                 },
             );
         }
@@ -478,6 +804,7 @@ impl DeepSeekHarnessManager {
                 }
             };
             manager.remove_active_if_run(&thread_id, &run_id).await;
+            manager.close_idle_hosts().await;
             manager
                 .emit_stream_end(
                     &app_handle,
@@ -508,11 +835,18 @@ impl DeepSeekHarnessManager {
             None,
         )
         .await?;
-        let configured = self.user_config.get_ai_config().model;
+        let configured = select_harness_config(
+            self.user_config
+                .get_deepseek_harness_configs()
+                .map_err(|error| error.to_string())?,
+            message.provider_id_for_runtime(AGENT_TYPE),
+        )?;
         let runtime_config =
             resolve_runtime_config(&configured, message.model_for_runtime(AGENT_TYPE))?;
         let agent_preset = normalize_agent_preset(message.mode_for_runtime(AGENT_TYPE));
         let permission = normalize_permission(message.permission_mode_for_runtime(AGENT_TYPE));
+        self.set_active_host_key(thread_id, run_id, runtime_config.host_key())
+            .await;
         let host = self.ensure_host(&runtime_config).await?;
         let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         let ensure = protocol::runtime_ensure_request(
@@ -636,41 +970,56 @@ impl DeepSeekHarnessManager {
         &self,
         runtime_config: &HarnessRuntimeConfig,
     ) -> Result<Arc<DshHostClient>, String> {
-        let mut guard = self.host.lock().await;
-        if let Some(host) = guard.as_ref().filter(|host| !host.is_closed()) {
-            if *self.host_api_key.lock().await == runtime_config.api_key {
-                return Ok(host.clone());
-            }
-            if self.active.lock().await.len() > 1 {
-                return Err(
-                    "DeepSeek Harness credentials changed while another run is active".to_string(),
-                );
-            }
-            host.shutdown().await;
+        let host_key = runtime_config.host_key();
+        let mut hosts = self.hosts.lock().await;
+        if let Some(host) = hosts.get(&host_key).filter(|host| !host.is_closed()) {
+            return Ok(host.clone());
         }
-        *guard = None;
         std::fs::create_dir_all(&self.session_root)
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
-        let host =
-            DshHostClient::spawn(runtime_config.api_key.as_deref(), &self.session_root).await?;
-        *guard = Some(host.clone());
-        *self.host_api_key.lock().await = runtime_config.api_key.clone();
+        let settings_path = self.user_config.config_dir().join(DSH_SETTINGS_FILE_NAME);
+        let plugin_settings_path = self.plugin_settings_path();
+        let host = DshHostClient::spawn(
+            runtime_config.api_key.as_deref(),
+            &self.session_root,
+            &settings_path,
+            &plugin_settings_path,
+        )
+        .await?;
+        hosts.insert(host_key, host.clone());
         Ok(host)
     }
 
     async fn model_host(&self) -> Result<(Arc<DshHostClient>, bool), String> {
         if let Some(host) = self
-            .host
+            .hosts
             .lock()
             .await
-            .as_ref()
-            .filter(|host| !host.is_closed())
+            .values()
+            .find(|host| !host.is_closed())
         {
             return Ok((host.clone(), false));
         }
         std::fs::create_dir_all(&self.session_root)
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
-        Ok((DshHostClient::spawn(None, &self.session_root).await?, true))
+        let settings_path = self.user_config.config_dir().join(DSH_SETTINGS_FILE_NAME);
+        let plugin_settings_path = self.plugin_settings_path();
+        Ok((
+            DshHostClient::spawn(
+                None,
+                &self.session_root,
+                &settings_path,
+                &plugin_settings_path,
+            )
+            .await?,
+            true,
+        ))
+    }
+
+    fn plugin_settings_path(&self) -> PathBuf {
+        self.user_config
+            .config_dir()
+            .join(DSH_PLUGIN_SETTINGS_FILE_NAME)
     }
 
     pub async fn stop_chat(
@@ -682,14 +1031,32 @@ impl DeepSeekHarnessManager {
         let target = {
             let active = self.active.lock().await;
             active.get(thread_id).and_then(|run| {
-                (run_id.is_none() || run_id == Some(run.run_id.as_str()))
-                    .then(|| (run.run_id.clone(), run.stream_end_emitted.clone()))
+                (run_id.is_none() || run_id == Some(run.run_id.as_str())).then(|| {
+                    (
+                        run.run_id.clone(),
+                        run.stream_end_emitted.clone(),
+                        run.host_key.clone(),
+                    )
+                })
             })
         };
-        let Some((run_id, stream_end_emitted)) = target else {
+        let Some((run_id, stream_end_emitted, host_key)) = target else {
             return false;
         };
-        if let Some(host) = self.host.lock().await.as_ref().cloned() {
+        let hosts = {
+            let hosts = self.hosts.lock().await;
+            match host_key {
+                Some(host_key) => hosts
+                    .get(&host_key)
+                    .cloned()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                // A run can fail before its route is resolved. In that case
+                // retain the legacy best-effort cancellation across hosts.
+                None => hosts.values().cloned().collect::<Vec<_>>(),
+            }
+        };
+        for host in hosts {
             let request = protocol::run_cancel_request(host.next_request_id(), thread_id, &run_id);
             let _ = host.request_value(request).await;
         }
@@ -702,6 +1069,7 @@ impl DeepSeekHarnessManager {
             &stream_end_emitted,
         )
         .await;
+        self.close_idle_hosts().await;
         true
     }
 
@@ -729,10 +1097,10 @@ impl DeepSeekHarnessManager {
     pub async fn stop_all(&self) -> usize {
         let count = self.active.lock().await.len();
         self.active.lock().await.clear();
-        if let Some(host) = self.host.lock().await.take() {
-            host.shutdown().await
+        let hosts = std::mem::take(&mut *self.hosts.lock().await);
+        for host in hosts.into_values() {
+            host.shutdown().await;
         }
-        *self.host_api_key.lock().await = None;
         count
     }
 
@@ -763,6 +1131,14 @@ impl DeepSeekHarnessManager {
         }
     }
 
+    async fn set_active_host_key(&self, thread_id: &str, run_id: &str, host_key: String) {
+        if let Some(active) = self.active.lock().await.get_mut(thread_id) {
+            if active.run_id == run_id {
+                active.host_key = Some(host_key);
+            }
+        }
+    }
+
     async fn remove_active_if_run(&self, thread_id: &str, run_id: &str) {
         let mut active = self.active.lock().await;
         if active
@@ -770,6 +1146,37 @@ impl DeepSeekHarnessManager {
             .is_some_and(|run| run.run_id == run_id)
         {
             active.remove(thread_id);
+        }
+    }
+
+    async fn close_idle_hosts(&self) {
+        let active_runs = self.active.lock().await;
+        // Do not retire anything while a newly-created run is between its
+        // active-map insertion and route resolution. Its host key is not
+        // known yet, so closing here could kill a host that the new run is
+        // about to reuse.
+        if active_runs.values().any(|run| run.host_key.is_none()) {
+            return;
+        }
+        let active_keys = active_runs
+            .values()
+            .filter_map(|run| run.host_key.clone())
+            .collect::<HashSet<_>>();
+        drop(active_runs);
+        let stale = {
+            let mut hosts = self.hosts.lock().await;
+            let stale_keys = hosts
+                .keys()
+                .filter(|key| !active_keys.contains(*key))
+                .cloned()
+                .collect::<Vec<_>>();
+            stale_keys
+                .into_iter()
+                .filter_map(|key| hosts.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        for host in stale {
+            host.shutdown().await;
         }
     }
 }
@@ -818,6 +1225,53 @@ async fn dispose_probe_runtime(host: &Arc<DshHostClient>, thread_id: &str) {
     let _ = tokio::time::timeout(Duration::from_secs(2), host.request_value(request)).await;
 }
 
+/// Create the settings snapshot consumed by one probe runtime.
+///
+/// The active model is added even when the form's directory still contains
+/// only the previously saved models. This is the exact transition involved
+/// when adding model B after model A.
+fn create_probe_settings_file(config: &AiModelConfig) -> Result<PathBuf, String> {
+    let mut probe_config = config.clone();
+    let model_id = probe_config.model.trim().to_string();
+    if !model_id.is_empty() && !probe_config.models.iter().any(|model| model.id == model_id) {
+        probe_config.models.push(AiModelEntry {
+            id: model_id,
+            name: String::new(),
+        });
+    }
+    let content = UserConfigStore::deepseek_harness_settings_yaml(&probe_config)
+        .map_err(|error| format!("failed to prepare Harness probe settings: {error}"))?;
+    let path = std::env::temp_dir().join(format!("flowix-dsh-probe-{}.yaml", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("failed to create Harness probe settings: {error}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|error| format!("failed to write Harness probe settings: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("failed to flush Harness probe settings: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("failed to secure Harness probe settings: {error}"))?;
+        }
+        Ok(path.clone())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&path);
+    }
+    result
+}
+
+async fn cleanup_probe_host(host: &Arc<DshHostClient>, thread_id: &str, settings_path: &PathBuf) {
+    dispose_probe_runtime(host, thread_id).await;
+    host.shutdown().await;
+    let _ = fs::remove_file(settings_path);
+}
+
 fn harness_probe_failure(
     model_id: &str,
     started: Instant,
@@ -850,6 +1304,38 @@ fn normalize_agent_preset(value: Option<&str>) -> &'static str {
     }
 }
 
+fn validate_plugin_key(plugin_key: &str) -> Result<(), String> {
+    let mut parts = plugin_key.splitn(4, ':');
+    let scope = parts.next().unwrap_or_default();
+    let preset_or_index = parts.next().unwrap_or_default();
+    let index_or_id = parts.next().unwrap_or_default();
+    let rest = parts.next().unwrap_or(index_or_id);
+    if rest.is_empty() {
+        return Err("DeepSeek Harness 插件标识无效".to_string());
+    }
+    if scope == "host" {
+        if !preset_or_index
+            .chars()
+            .all(|character| character.is_ascii_digit())
+            || parts.next().is_some()
+        {
+            return Err("DeepSeek Harness 插件标识无效".to_string());
+        }
+        return Err("Host 级 Harness 插件由 Flowix 组合管理，不可单独关闭".to_string());
+    }
+    if scope == "preset" {
+        let preset = preset_or_index;
+        let index = index_or_id;
+        if !matches!(preset, "standard" | "code" | "minimal" | "cordis")
+            || !index.chars().all(|character| character.is_ascii_digit())
+        {
+            return Err("DeepSeek Harness 插件标识无效".to_string());
+        }
+        return Ok(());
+    }
+    Err("DeepSeek Harness 插件标识无效".to_string())
+}
+
 fn stable_session_id(thread_id: &str) -> String {
     let safe = thread_id
         .chars()
@@ -879,6 +1365,31 @@ mod tests {
     }
 
     #[test]
+    fn host_cache_key_is_a_stable_non_secret_fingerprint() {
+        let first = HarnessRuntimeConfig {
+            provider: "flowix".to_string(),
+            provider_name: "GLM".to_string(),
+            api_protocol: "openai-completions".to_string(),
+            base_url: "https://example.test/v1".to_string(),
+            model: "glm".to_string(),
+            api_key: Some("secret-a".to_string()),
+        };
+        let same = HarnessRuntimeConfig {
+            api_key: Some("secret-a".to_string()),
+            ..first.clone()
+        };
+        let other = HarnessRuntimeConfig {
+            api_key: Some("secret-b".to_string()),
+            ..first.clone()
+        };
+
+        assert_eq!(first.host_key(), same.host_key());
+        assert_ne!(first.host_key(), other.host_key());
+        assert!(!first.host_key().contains("secret-a"));
+        assert!(first.host_key().starts_with("sha256:"));
+    }
+
+    #[test]
     fn agent_presets_default_to_standard_and_reject_unknown_values() {
         assert_eq!(normalize_agent_preset(None), "standard");
         assert_eq!(normalize_agent_preset(Some("standard")), "standard");
@@ -891,6 +1402,37 @@ mod tests {
     #[test]
     fn session_ids_are_path_safe_and_stable() {
         assert_eq!(stable_session_id("thread/a b"), "flowix-thread_a_b");
+    }
+
+    #[test]
+    fn probe_settings_include_a_new_active_model_without_persisting_a_key() {
+        let config = AiModelConfig {
+            provider: "acme-gateway".to_string(),
+            provider_id: "acme-gateway".to_string(),
+            display_name: "Acme Gateway".to_string(),
+            api_protocol: "openai-completions".to_string(),
+            model: "model-b".to_string(),
+            models: vec![AiModelEntry {
+                id: "model-a".to_string(),
+                name: "Model A".to_string(),
+            }],
+            api_url: "https://gateway.example/v1".to_string(),
+            api_keys: std::collections::HashMap::from([(
+                "acme-gateway".to_string(),
+                "secret".to_string(),
+            )]),
+            ..AiModelConfig::default()
+        };
+
+        let path = create_probe_settings_file(&config).unwrap();
+        let settings = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+        assert!(settings.contains("id: model-a"), "got: {settings}");
+        assert!(settings.contains("id: model-b"), "got: {settings}");
+        assert!(
+            !settings.contains("secret"),
+            "probe settings leaked the API key"
+        );
     }
 
     #[test]
@@ -953,6 +1495,7 @@ mod tests {
                 "secret".to_string(),
             )]),
             max_total_tokens: 180_000,
+            ..AiModelConfig::default()
         };
         let resolved = resolve_runtime_config(&config, None).unwrap();
         assert_eq!(resolved.provider, "flowix");
@@ -974,10 +1517,34 @@ mod tests {
                 "secret".to_string(),
             )]),
             max_total_tokens: 180_000,
+            ..AiModelConfig::default()
         };
         let resolved = resolve_runtime_config(&config, Some("deepseek-v4-pro")).unwrap();
         assert_eq!(resolved.model, "deepseek-v4-pro");
         assert_eq!(resolved.base_url, "https://api.deepseek.com/v1");
+    }
+
+    #[test]
+    fn custom_provider_uses_its_route_protocol_and_credential_bucket() {
+        let config = AiModelConfig {
+            provider: "acme-gateway".to_string(),
+            provider_id: "acme-gateway".to_string(),
+            display_name: "Acme Gateway".to_string(),
+            api_protocol: "anthropic-messages".to_string(),
+            model: "acme-large".to_string(),
+            api_url: "https://gateway.acme.example/v1".to_string(),
+            api_keys: std::collections::HashMap::from([(
+                "acme-gateway".to_string(),
+                "secret".to_string(),
+            )]),
+            ..AiModelConfig::default()
+        };
+
+        let resolved = resolve_runtime_config(&config, None).unwrap();
+        assert_eq!(resolved.provider, "acme-gateway");
+        assert_eq!(resolved.provider_name, "Acme Gateway");
+        assert_eq!(resolved.api_protocol, "anthropic-messages");
+        assert_eq!(resolved.api_key.as_deref(), Some("secret"));
     }
 
     #[test]
@@ -991,10 +1558,55 @@ mod tests {
                 "secret".to_string(),
             )]),
             max_total_tokens: 180_000,
+            ..AiModelConfig::default()
         };
         let error = resolve_runtime_config(&config, None)
             .err()
             .expect("missing active provider key should fail");
         assert!(error.contains("MiniMax"));
+    }
+
+    fn route_config(route: &str, model: &str) -> AiConfigFile {
+        AiConfigFile {
+            model: AiModelConfig {
+                provider: route.to_string(),
+                provider_id: route.to_string(),
+                model: model.to_string(),
+                ..AiModelConfig::default()
+            },
+        }
+    }
+
+    #[test]
+    fn selected_route_keeps_provider_boundaries_when_model_ids_overlap() {
+        let configs = vec![
+            route_config("provider-a", "same-model"),
+            route_config("provider-b", "same-model"),
+        ];
+
+        let selected = select_harness_config(configs, Some("provider-b")).unwrap();
+        assert_eq!(selected.provider_id, "provider-b");
+    }
+
+    #[test]
+    fn selecting_unknown_route_fails_instead_of_falling_back() {
+        let error =
+            select_harness_config(vec![route_config("provider-a", "model")], Some("missing"))
+                .expect_err("unknown provider routes must not silently use another key");
+        assert!(error.contains("missing"));
+    }
+
+    #[test]
+    fn legacy_flowix_route_is_selected_by_empty_provider_id() {
+        let legacy = AiConfigFile {
+            model: AiModelConfig {
+                provider: "DeepSeek".to_string(),
+                provider_id: String::new(),
+                model: "deepseek-chat".to_string(),
+                ..AiModelConfig::default()
+            },
+        };
+        let selected = select_harness_config(vec![legacy], Some("flowix")).unwrap();
+        assert_eq!(selected.provider, "DeepSeek");
     }
 }

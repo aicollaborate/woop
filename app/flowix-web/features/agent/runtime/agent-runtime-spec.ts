@@ -170,15 +170,24 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   },
   "deepseek-harness": {
     typeKey: "deepseek-harness",
-    // DSH always follows the Flowix provider/model configuration. Its tool
-    // Agent preset and per-card permission mode are configurable here.
-    emptySettings: ["mode", "permission"],
+    // DSH follows the Flowix provider configuration but allows a per-card
+    // model override (runtime_config.deepseek_harness.model, "inherit" falls
+    // back to the global dsh-settings model). Its tool Agent preset and
+    // per-card permission mode are configurable here as well.
+    emptySettings: ["model", "mode", "permission"],
     accessOptions: DSH_ACCESS_OPTIONS,
-    buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
+    buildRuntimeConfig: ({
+      cwd,
+      workspacePaths,
+      permissionMode,
+      codexModel,
+    }) => ({
       deepseekHarness: {
         cwd,
         workspacePaths,
         permissionMode: normalizeDshPermissionMode(permissionMode),
+        model: codexModel,
+        providerId: undefined,
       },
     }),
   },
@@ -269,6 +278,8 @@ export function buildAgentRuntimeConfig({
   if (typeKey === "deepseek-harness" && runtimeConfig.deepseekHarness) {
     runtimeConfig.deepseekHarness.mode =
       instanceRuntimeConfig?.deepseekHarness?.mode ?? "standard";
+    runtimeConfig.deepseekHarness.providerId =
+      instanceRuntimeConfig?.model?.providerId;
   }
   return runtimeConfig;
 }
