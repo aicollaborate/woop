@@ -303,7 +303,7 @@ App Store Connect 中必须已经存在 `Flowix` App Record，Bundle ID 必须�
 版本号分成两个字段，必须同时满足：
 
 ```text
-CFBundleShortVersionString = 营销版本，例如 1.1.16
+CFBundleShortVersionString = 营销版本，例如 1.2.0
 CFBundleVersion            = 本次唯一构建号，例如 date +%s
 ```
 

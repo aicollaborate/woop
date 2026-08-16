@@ -2,7 +2,7 @@
 
 SwiftUI/UIKit 原生客户端目标。它与现有 `app/flowix-mobile` 并行，暂时不替换 Tauri 移动端。
 
-当前原生实现使用与旧 Tauri 版本相同的 App Store Connect Bundle ID `com.flowix.app.mobile`，营销版本为 `1.1.16`，因此上传后会作为原 TestFlight App 的更新版本。TestFlight 发布使用仓库根目录的 `scripts/build-and-upload-ios-native-testflight.sh`，不要使用 Tauri 专用的 `scripts/build-and-upload-testflight.sh`。
+当前原生实现使用与旧 Tauri 版本相同的 App Store Connect Bundle ID `com.flowix.app.mobile`，营销版本为 `1.2.0`，因此上传后会作为原 TestFlight App 的更新版本。TestFlight 发布使用仓库根目录的 `scripts/build-and-upload-ios-native-testflight.sh`，不要使用 Tauri 专用的 `scripts/build-and-upload-testflight.sh`。
 
 编辑器资源由 `app/flowix-web` 构建，再通过 `npm run stage:ios-editor` 放入 `Resources/EditorWebView`。该目录中的 bundle 是生成物，已通过 `.gitignore` 排除。
 

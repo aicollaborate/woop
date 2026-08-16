@@ -30,7 +30,7 @@ targets:
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 1.1.16
+        MARKETING_VERSION: 1.2.0
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: FlowixIOS/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

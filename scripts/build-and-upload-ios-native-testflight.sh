@@ -13,7 +13,7 @@ NATIVE_DIR="$REPO_ROOT/app/flowix-ios-native"
 PROJECT="$NATIVE_DIR/FlowixIOS.xcodeproj"
 SCHEME="FlowixIOS"
 BUNDLE_ID="com.flowix.app.mobile"
-MARKETING_VERSION="1.1.16"
+MARKETING_VERSION="1.2.0"
 VERIFY_IOS="$REPO_ROOT/scripts/verify-ios-release.sh"
 
 # Required for a signed build. Keep these values in the environment, never in
