@@ -835,6 +835,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "memo.fileTree.newFolder": "New folder",
     "memo.fileTree.rename": "Rename",
     "memo.fileTree.moreActions": "More actions",
+    "memo.fileTree.createdAt": "Created",
+    "memo.fileTree.updatedAt": "Updated",
     "memo.fileTree.renamed": "Renamed to {name}",
     "memo.fileTree.renameFailed": "Rename failed",
     "memo.fileTree.renameFolderUnsupported": "Rename folders in Finder instead",

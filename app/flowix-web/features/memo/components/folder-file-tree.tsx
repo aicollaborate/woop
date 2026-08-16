@@ -33,6 +33,26 @@ const ITEM_INLINE_PADDING = 6;
 const ITEM_ICON_SIZE = 16;
 const INDENT_PER_LEVEL = 20;
 
+/** 字节数 → 人类可读大小 (e.g. 36.6 KB)；末尾 0 去掉，folder 传 null 不显示。 */
+function formatFileSize(bytes: number | null): string {
+  if (bytes === null) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const fmt = (v: number) => String(parseFloat(v.toFixed(2)));
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${fmt(kb)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${fmt(mb)} MB`;
+  return `${fmt(mb / 1024)} GB`;
+}
+
+/** Unix epoch 毫秒 → "YYYY-MM-DD HH:mm" (本地时区)；null → "—"。 */
+function formatTimestamp(ms: number | null): string {
+  if (ms === null) return '—';
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /**
  * 资料文件夹文件树 (中间列) ── VSCode 风格。
  *
@@ -252,7 +272,7 @@ export function FolderFileTree({
                 }
               }}
               className={cn(
-                'folder-file-tree__item group flex h-8 items-center rounded-[10px] px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
+                'folder-file-tree__item group relative flex h-8 items-center rounded-[10px] px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
                 isFolder || openable ? 'cursor-pointer' : 'cursor-default',
                 isActive
                   ? 'bg-[var(--muted)]'
@@ -308,6 +328,11 @@ export function FolderFileTree({
                   <span className="ml-1.5 min-w-0 flex-1 truncate">
                     {item.name}
                   </span>
+                  {!isFolder && item.sizeBytes !== null && (
+                    <span className="ml-2 mr-1 shrink-0 text-[11px] tabular-nums text-[color-mix(in_oklch,var(--muted-foreground)_50%,white)] [[data-theme='dark']_&]:opacity-50">
+                      {formatFileSize(item.sizeBytes)}
+                    </span>
+                  )}
                   <DropdownMenu
                     open={openMenuId === item.id}
                     onOpenChange={(open) => setOpenMenuId(open ? item.id : null)}
@@ -323,12 +348,23 @@ export function FolderFileTree({
                         onMouseDown={(event) => event.stopPropagation()}
                         onPointerDown={(event) => event.stopPropagation()}
                         onKeyDown={(event) => event.stopPropagation()}
-                        className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--foreground)] group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--muted)] text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--foreground)] group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100"
                       >
                         <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" side="bottom" className="w-[168px] space-y-1 px-1 py-1.5">
+                    <DropdownMenuContent align="end" side="bottom" className="min-w-[188px] space-y-1 px-1 py-1.5">
+                      <div className="select-text rounded-md px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
+                        <div className="flex items-center gap-0.5">
+                          <span className="opacity-70">{t('memo.fileTree.createdAt')}</span>
+                          <span className="tabular-nums">{formatTimestamp(item.createdMs)}</span>
+                        </div>
+                        <div className="flex items-center gap-0.5">
+                          <span className="opacity-70">{t('memo.fileTree.updatedAt')}</span>
+                          <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
+                        </div>
+                      </div>
+                      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
                         className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
@@ -372,7 +408,18 @@ export function FolderFileTree({
               )}
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="w-[168px] space-y-1 px-1 py-1.5">
+          <ContextMenuContent className="min-w-[188px] space-y-1 px-1 py-1.5">
+            <div className="select-text rounded-md px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
+              <div className="flex items-center gap-0.5">
+                <span className="opacity-70">{t('memo.fileTree.createdAt')}</span>
+                <span className="tabular-nums">{formatTimestamp(item.createdMs)}</span>
+              </div>
+              <div className="flex items-center gap-0.5">
+                <span className="opacity-70">{t('memo.fileTree.updatedAt')}</span>
+                <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
+              </div>
+            </div>
+            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
             <ContextMenuItem
               onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
               className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"

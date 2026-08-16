@@ -7,6 +7,7 @@
 //! 笔记本同权放行, 让文件树视图能浏览用户添加的资料目录。
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use serde::Serialize;
@@ -30,6 +31,12 @@ pub struct DocTreeItem {
     pub item_type: String,
     pub parent_id: Option<String>,
     pub children: Option<Vec<DocTreeItem>>,
+    /// 文件字节大小 (folder 为 None, 避免递归统计目录大小的开销)。
+    pub size_bytes: Option<u64>,
+    /// 最后修改时间 (Unix epoch 毫秒; 文件与 folder 均适用)。
+    pub modified_ms: Option<u64>,
+    /// 创建时间 (Unix epoch 毫秒; macOS/Windows 免费读, 其余平台为 None)。
+    pub created_ms: Option<u64>,
 }
 
 // ==================== 域内 helper ====================
@@ -39,6 +46,39 @@ fn generate_stable_id(full_path: &str) -> String {
         "file-{}",
         full_path.replace(['\\', '/', '#', '%', '?', '&'], "_")
     )
+}
+
+fn system_time_to_ms(t: SystemTime) -> Option<u64> {
+    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
+}
+
+fn modified_time_ms(meta: &fs::Metadata) -> Option<u64> {
+    meta.modified().ok().and_then(system_time_to_ms)
+}
+
+/// 创建时间 → Unix epoch 毫秒。macOS (`st_birthtime`) 与 Windows
+/// (`creation_time`) 都在同一次 stat 结果里, 读取零额外 syscall; 其余
+/// 平台 std 不提供 birth time, 返回 None。
+fn created_time_ms(meta: &fs::Metadata) -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        let secs = meta.st_birthtime();
+        return (secs >= 0).then_some(secs as u64 * 1000);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILETIME: 100ns 自 1601-01-01; 与 Unix epoch 相差 11,644,473,600 秒。
+        const WINDOWS_TO_UNIX_EPOCH_MS: u64 = 11_644_473_600_000;
+        let ms_since_1601 = meta.creation_time() / 10_000; // 100ns → ms
+        return Some(ms_since_1601.saturating_sub(WINDOWS_TO_UNIX_EPOCH_MS));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = meta;
+        None
+    }
 }
 
 /// 单层目录列举 ── 只列直接子项, folder 的 `children` 置空占位, 由前端
@@ -61,7 +101,13 @@ fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
                 continue;
             }
 
-            let is_dir = path.is_dir();
+            // 一次 fs::metadata() 同时拿类型与大小 (语义与原先 path.is_dir()
+            // 一致、跟随符号链接): 文件取 len()、folder 置 None, 不做递归统计。
+            let meta = fs::metadata(&path).ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size_bytes = if is_dir { None } else { meta.as_ref().map(|m| m.len()) };
+            let modified_ms = meta.as_ref().and_then(modified_time_ms);
+            let created_ms = meta.as_ref().and_then(created_time_ms);
             let item = DocTreeItem {
                 id: generate_stable_id(&path.to_string_lossy()),
                 full_path: path.to_string_lossy().to_string(),
@@ -73,6 +119,9 @@ fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
                 },
                 parent_id: None,
                 children: if is_dir { Some(Vec::new()) } else { None },
+                size_bytes,
+                modified_ms,
+                created_ms,
             };
 
             items.push(item);
@@ -232,6 +281,9 @@ pub fn create_folder(
         item_type: "folder".to_string(),
         parent_id: None,
         children: Some(vec![]),
+        size_bytes: None,
+        modified_ms: None,
+        created_ms: None,
     })
 }
 
@@ -267,5 +319,8 @@ pub fn create_document(
         item_type: "document".to_string(),
         parent_id: None,
         children: None,
+        size_bytes: Some(0),
+        modified_ms: None,
+        created_ms: None,
     })
 }

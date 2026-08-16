@@ -809,6 +809,8 @@ const zhCN = {
     "memo.fileTree.newFolder": "新建文件夹",
     "memo.fileTree.rename": "重命名",
     "memo.fileTree.moreActions": "更多操作",
+    "memo.fileTree.createdAt": "创建",
+    "memo.fileTree.updatedAt": "更新",
     "memo.fileTree.renamed": "已重命名为 {name}",
     "memo.fileTree.renameFailed": "重命名失败",
     "memo.fileTree.renameFolderUnsupported": "文件夹重命名请在访达中操作",

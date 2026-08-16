@@ -8,6 +8,9 @@ export interface DocTreeItem {
   type: 'folder' | 'document';
   parentId: string | null;
   children: DocTreeItem[] | null;
+  sizeBytes: number | null;
+  modifiedMs: number | null;
+  createdMs: number | null;
 }
 
 export const files = {

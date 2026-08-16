@@ -26,11 +26,11 @@ vi.mock('@platform/tauri/client', async (importOriginal) => {
 });
 
 function dir(path: string, name: string, children: DocTreeItem[] = []): DocTreeItem {
-  return { id: `file-${path}`, fullPath: path, name, type: 'folder', parentId: null, children };
+  return { id: `file-${path}`, fullPath: path, name, type: 'folder', parentId: null, children, sizeBytes: null, modifiedMs: null, createdMs: null };
 }
 
 function file(path: string, name: string): DocTreeItem {
-  return { id: `file-${path}`, fullPath: path, name, type: 'document', parentId: null, children: null };
+  return { id: `file-${path}`, fullPath: path, name, type: 'document', parentId: null, children: null, sizeBytes: 0, modifiedMs: null, createdMs: null };
 }
 
 // 仓库测试惯例 (无 @testing-library): createRoot 挂一个 probe 组件,
