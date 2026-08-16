@@ -112,6 +112,63 @@
 	border-left-color: var(--foreground, #1f2937);
 }
 
+/* Editing affordances (active line / selection / search panel / tooltip)
+ * used to live only in the EditorView.theme() sheet that CodeMirror mounts
+ * through style-mod at runtime. Packaged WebViews can drop or reject that
+ * injected sheet (see the header comment), so mirror the rules here with the
+ * same values — identical to codeEditorTheme in code-editor.tsx — to keep
+ * them visible in the installed app. */
+.code-editor .cm-activeLine,
+.code-editor .cm-activeLineGutter {
+	background-color: color-mix(in oklch, var(--muted, #f3f4f6) 58%, transparent);
+}
+
+.code-editor .cm-selectionBackground,
+.code-editor .cm-editor.cm-focused .cm-selectionBackground,
+.code-editor ::selection {
+	background-color: color-mix(in oklch, var(--primary, #7c3aed) 24%, transparent);
+}
+
+.code-editor .cm-panels {
+	color: var(--foreground, #1f2937);
+	background-color: var(--card, #ffffff);
+}
+
+.code-editor .cm-panels.cm-panels-top {
+	border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.code-editor .cm-search {
+	padding: 6px 10px;
+}
+
+.code-editor .cm-textfield {
+	height: 26px;
+	border: 1px solid var(--border, #e5e7eb);
+	border-radius: 6px;
+	color: var(--foreground, #1f2937);
+	background-color: var(--background, #ffffff);
+}
+
+.code-editor .cm-button {
+	border: 1px solid var(--border, #e5e7eb);
+	border-radius: 6px;
+	color: var(--foreground, #1f2937);
+	background-image: none;
+	background-color: var(--muted, #f3f4f6);
+}
+
+.code-editor .cm-tooltip {
+	border: 1px solid var(--border, #e5e7eb);
+	color: var(--foreground, #1f2937);
+	background-color: var(--popover, #ffffff);
+}
+
+.code-editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+	color: var(--foreground, #1f2937);
+	background-color: var(--muted, #f3f4f6);
+}
+
 /* Syntax highlighting uses stable classes from codeHighlighter. Keeping
  * these declarations in the compiled stylesheet makes highlighting work in
  * packaged WebViews without CodeMirror's runtime-generated style sheet. */
