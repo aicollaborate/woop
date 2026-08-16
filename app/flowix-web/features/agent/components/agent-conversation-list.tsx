@@ -19,6 +19,7 @@ import { createLogger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 /**
  * The "Conversations" navigation view. It deliberately lists conversation
@@ -224,7 +225,7 @@ export function AgentConversationList() {
                       : 'border-[var(--border)] opacity-60 hover:opacity-100',
                   )}
                 >
-                  <img src={type.icon} alt="" className="h-full w-full object-contain" draggable={false} />
+                  <AgentIcon typeKey={type.key} alt="" className="h-full w-full object-contain" />
                 </button>
               );
             })}
@@ -267,7 +268,7 @@ export function AgentConversationList() {
                         'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
                         running && 'agent-conversation-list__icon--running',
                       )}>
-                        <img src={agent.icon} alt="" className="h-3 w-3 object-contain" draggable={false} />
+                        <AgentIcon typeKey={agent.key} alt="" className="h-3 w-3 object-contain" />
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm font-normal">
                         {instance.title?.trim() || t('common.untitled')}

@@ -34,6 +34,8 @@ import iconGemini from '@/assets/icon-gemini.svg';
 import iconDeepseek from '@/assets/icon-deepseek.svg';
 import iconOpenrouter from '@/assets/icon-openrouter.svg';
 import iconOllama from '@/assets/icon-ollama.svg';
+import type { AgentTypeKey } from '@/types/agent';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 type TestConnection = (config: AgentConfig) => Promise<TestConnectionResult>;
 
@@ -311,6 +313,7 @@ function isProviderVisibleInRegion(
 /** Provider dropdown item 左侧的 icon 规格。没有对应图标时不渲染占位图。 */
 interface ProviderIconSpec {
   icon: string | null;
+  agentTypeKey?: AgentTypeKey;
 }
 
 const iconKimi = 'https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/kimi/default.svg';
@@ -329,7 +332,7 @@ const PROVIDER_ICONS: Record<string, ProviderIconSpec> = {
   Anthropic: { icon: iconClaude },
   Gemini: { icon: iconGemini },
   Ollama: { icon: iconOllama },
-  DeepSeek: { icon: iconDeepseek },
+  DeepSeek: { icon: iconDeepseek, agentTypeKey: 'deepseek-harness' },
   OpenRouter: { icon: iconOpenrouter },
   Kimi: { icon: iconKimi },
   Moonshot: { icon: iconKimi },
@@ -373,6 +376,9 @@ function providerIconSpec(provider: string): ProviderIconSpec {
 
 function ProviderIcon({ spec }: { spec: ProviderIconSpec }) {
   if (!spec.icon) return null;
+  if (spec.agentTypeKey) {
+    return <AgentIcon typeKey={spec.agentTypeKey} alt="" className="h-4 w-4 shrink-0 object-contain" />;
+  }
   return (
     <img
       src={spec.icon}

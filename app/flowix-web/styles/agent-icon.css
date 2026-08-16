@@ -1,0 +1,15 @@
+/* Monochrome agent icons use their SVG as a mask so the icon follows the
+ * active Flowix palette instead of relying on a hardcoded SVG fill. */
+.agent-icon--masked {
+  display: block;
+  flex: 0 0 auto;
+  background-color: var(--agent-icon-color, var(--foreground));
+  -webkit-mask-image: var(--agent-icon-src);
+  mask-image: var(--agent-icon-src);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}

@@ -198,6 +198,14 @@ export class HarnessClient {
   /** @param options - launch spec, complete child environment, and timeouts. */
   constructor(readonly options: HarnessClientOptions) {}
 
+  /** Whether the owned runtime process is currently usable for requests. */
+  get isRunning(): boolean {
+    return this.child !== undefined
+      && this.exitCode === undefined
+      && this.spawnError === undefined
+      && this.closeTask === undefined
+  }
+
   /**
    * Spawn the runtime subprocess and start reading frames. Idempotent while
    * the process is live; rejects reuse after {@link close}.

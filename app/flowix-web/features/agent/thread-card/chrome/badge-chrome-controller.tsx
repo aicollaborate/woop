@@ -8,10 +8,11 @@ import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store"
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { BadgeHoverCard } from "@features/agent/thread-card/badge-hover-card";
 import { computeAgentThreadCardBadgeData } from "@features/agent/thread-card/runtime/run-status-presenter";
+import { isThemeAdaptiveAgentIcon } from "@features/agent/components/agent-icon";
 
 export interface AgentThreadCardBadgeChromeControllerOptions {
   badgeEl: HTMLSpanElement;
-  badgeIcon: HTMLImageElement;
+  badgeIcon: HTMLSpanElement;
   badgeName: HTMLSpanElement;
   hoverCardMount: HTMLSpanElement;
   getThreadId: () => string | null;
@@ -22,7 +23,7 @@ export interface AgentThreadCardBadgeChromeControllerOptions {
 
 export class AgentThreadCardBadgeChromeController {
   private readonly badgeEl: HTMLSpanElement;
-  private readonly badgeIcon: HTMLImageElement;
+  private readonly badgeIcon: HTMLSpanElement;
   private readonly badgeName: HTMLSpanElement;
   private readonly hoverCardMount: HTMLSpanElement;
   private readonly hoverCardRoot: Root;
@@ -57,8 +58,15 @@ export class AgentThreadCardBadgeChromeController {
 
   refreshBadge(): void {
     const type = getAgentType(this.getTypeKey());
-    this.badgeIcon.src = type.icon;
-    this.badgeIcon.alt = type.name;
+    this.badgeIcon.style.setProperty("--agent-icon-src", `url("${type.icon}")`);
+    this.badgeIcon.classList.toggle(
+      "agent-icon--masked",
+      isThemeAdaptiveAgentIcon(type.key),
+    );
+    this.badgeIcon.classList.toggle(
+      "agent-type-badge__icon--image",
+      !isThemeAdaptiveAgentIcon(type.key),
+    );
     this.badgeName.textContent = type.name;
     this.syncRuntimeState();
   }

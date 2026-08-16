@@ -33,7 +33,7 @@ import { PreferencesTitlebarWin } from '@features/preferences/preferences-titleb
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { getCurrentWindow } from '@platform/tauri/window';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
-import iconDeepseek from '@/assets/icon-deepseek.svg';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 function isWindowsPlatform(): boolean {
 	return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -60,7 +60,7 @@ const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 			{
 				id: 'dsh',
 				labelKey: 'preferences.tabs.dsh',
-				icon: <img src={iconDeepseek} alt="" aria-hidden className="h-4 w-4 object-contain" draggable={false} />,
+					icon: <AgentIcon typeKey="deepseek-harness" alt="" className="h-4 w-4 object-contain" />,
 			},
 			// 模型配置整段塞到 aiAgent 的 Flowix 卡片里, 不再独立成 tab。
 			{ id: 'aiAgent', labelKey: 'preferences.tabs.aiAgent', icon: <StarFourIcon className="w-4 h-4" weight="regular" /> },

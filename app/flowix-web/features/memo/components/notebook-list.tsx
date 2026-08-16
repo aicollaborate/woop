@@ -224,11 +224,11 @@ export function NotebookList({
                           </span>
                         )}
                         <span
-                          className="min-w-0 flex-1 truncate text-[11px] leading-4 text-[var(--muted-foreground)]"
-                          style={{ direction: 'rtl', textAlign: 'left' }}
+                          className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[11px] leading-4 text-[var(--muted-foreground)]"
+                          style={{ direction: 'rtl', textAlign: 'left', textOverflow: 'clip' }}
                           title={notebook.path}
                         >
-                          {notebook.path}
+                          {notebook.path.trim().replace(/[\\/]+$/, '')}
                         </span>
                       </div>
                     )}

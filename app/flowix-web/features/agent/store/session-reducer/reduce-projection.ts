@@ -186,7 +186,6 @@ function applyToolCallToProjection(
     event.name,
     event.input,
     event.agentType,
-    event.display,
     {
       id: event.messageId,
       phase: event.messagePhase,

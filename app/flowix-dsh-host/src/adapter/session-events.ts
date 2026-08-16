@@ -176,7 +176,13 @@ function parseJsonOrString(value: unknown): unknown {
 
 function toolName(source: unknown): string {
   if (!isRecord(source)) return 'tool'
-  return stringValue(source.name) ?? stringValue(source.tool) ?? 'tool'
+  // ToolResultSource uses `toolName` as its canonical field. Keep the
+  // fallback spellings for older/session-generated records, but never turn a
+  // successful result into the generic `tool` name when the real name exists.
+  return stringValue(source.toolName)
+    ?? stringValue(source.name)
+    ?? stringValue(source.tool)
+    ?? 'tool'
 }
 
 function contentResult(value: unknown): unknown {

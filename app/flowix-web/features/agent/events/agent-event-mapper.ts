@@ -7,7 +7,6 @@ import {
   resolveExternalChunkAgentType,
   resolveExternalChunkThreadId,
 } from "@features/agent/store/external-session";
-import { createAgentToolDisplay } from "@features/agent/tool-display";
 import { canonicalAgentMessageId } from "@features/agent/events/message-identity";
 
 interface AgentEventMapperThreadState {
@@ -169,11 +168,6 @@ export function mapAgentChunkToEvent(
           chunk.id,
         name: chunk.name,
         input: chunk.input,
-        display: createAgentToolDisplay({
-          agentType: base.agentType,
-          toolName: chunk.name,
-          input: chunk.input,
-        }),
       };
     case "tool_result":
       return {

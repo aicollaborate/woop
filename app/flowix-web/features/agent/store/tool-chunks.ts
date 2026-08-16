@@ -27,8 +27,8 @@ function toolMessageTimestamp(sourceTimestamp?: number): string {
  * tool_result 收尾。 tool 行作为流式断点, 显式清 `pendingAssistantId` ─
  * 下一条 text chunk 必须开新 assistant 行, 不能 append 到本行。
  *
- * `toolDisplay` 的优先级: caller 显式传 (来自外部 runtime 的预渲染) 优先,
- * 否则用 createAgentToolDisplay(...) 兜底。
+ * 工具展示完全由 Flowix 根据结构化的 tool name/input 计算；runtime 只
+ * 提供原始工具事件，不把另一套 toolview/display 注入消息。
  */
 export function applyToolCallChunk(
   st: LiveMessageState,
@@ -36,7 +36,6 @@ export function applyToolCallChunk(
   name: string,
   input: unknown,
   agentType?: AgentTypeKey,
-  display?: ChatMessage["toolDisplay"],
   metadata: MessageChunkMetadata = {},
 ): ApplyResult {
   const toolInput = normalizeToolInput(input);
@@ -52,13 +51,11 @@ export function applyToolCallChunk(
     toolName: name,
     toolAgentType: agentType,
     toolInput,
-    toolDisplay:
-      display ??
-      createAgentToolDisplay({
-        agentType,
-        toolName: name,
-        input: toolInput ?? input,
-      }),
+    toolDisplay: createAgentToolDisplay({
+      agentType,
+      toolName: name,
+      input: toolInput ?? input,
+    }),
     isLoading: true,
   };
   const existingIndex = st.messages.findIndex(
@@ -72,7 +69,9 @@ export function applyToolCallChunk(
       toolName: name || existing.toolName,
       toolAgentType: agentType ?? existing.toolAgentType,
       toolInput: toolInput ?? existing.toolInput,
-      toolDisplay: display ?? toolMessage.toolDisplay ?? existing.toolDisplay,
+      // Recompute from the latest structured call metadata. This keeps a
+      // repeated/live call and history replay on the same Flowix formatter.
+      toolDisplay: toolMessage.toolDisplay ?? existing.toolDisplay,
       timestamp: existing.timestamp || toolMessage.timestamp,
       sourceTimestamp: existing.sourceTimestamp ?? metadata.sourceTimestamp,
       sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
@@ -120,7 +119,10 @@ export function applyToolResultChunk(
               ...m,
               content: resultContent,
               toolData: resultContent,
-              toolName: resultToolName || m.toolName || "",
+              // The started event owns the tool identity. Result sources in
+              // external runtimes may use a generic/legacy name (for example
+              // `tool`), so never replace a known call name at completion.
+              toolName: m.toolName || resultToolName || "",
               isLoading: false,
             }
           : m,

@@ -142,7 +142,6 @@ describe("tool chunk idempotency", () => {
       "exec_command",
       { cmd: "pwd" },
       "codex",
-      undefined,
       {
         id: "tool-call-1",
         phase: "started",
@@ -155,6 +154,34 @@ describe("tool chunk idempotency", () => {
       "tool-call-1",
       "assistant-item-2",
     ]);
+  });
+
+  it("keeps the started tool name when a result has a generic name", () => {
+    const started = applyToolCallChunk(
+      emptyState(),
+      "plan-1",
+      "todo_write",
+      {
+        todos: [
+          { content: "检查项目", status: "pending" },
+          { content: "修复展示", status: "pending" },
+        ],
+      },
+      "deepseek-harness",
+    );
+    const completed = applyToolResultChunk(
+      started,
+      "plan-1",
+      "tool",
+      { content: "ok" },
+      "deepseek-harness",
+    );
+
+    expect(completed.messages[0]).toMatchObject({
+      toolName: "todo_write",
+      toolDisplay: { summary: "0/2", kind: "todo" },
+      isLoading: false,
+    });
   });
 
   it("replaces repeated assistant snapshots with the same Codex message id", () => {

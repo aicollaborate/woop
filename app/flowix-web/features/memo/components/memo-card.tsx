@@ -10,6 +10,7 @@ import { getAgentType } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { useI18n } from '@/lib/i18n';
 import { formatTimeAgo } from '@/lib/format-time-ago';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -96,10 +97,9 @@ function AgentTodoIcons({
       {runningAgent && (
         // 仅在 AI 运行中展示 star-four 图标, 主色高亮。
         <span className="memo-card__running-agent-icon">
-          <img
-            src={runningAgent.icon}
+          <AgentIcon
+            typeKey={runningAgent.key}
             alt=""
-            draggable={false}
             className="h-full w-full object-contain"
           />
         </span>

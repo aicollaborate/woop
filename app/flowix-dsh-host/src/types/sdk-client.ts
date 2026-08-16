@@ -39,6 +39,7 @@ export interface DeepSeekHarnessOptions {
 
 export declare class DeepSeekHarness {
   constructor(options: DeepSeekHarnessOptions)
+  readonly isRuntimeRunning: boolean
   run(input: string, options?: {
     sessionId?: string
     onNotification?: (notification: HarnessNotification) => void

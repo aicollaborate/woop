@@ -1,6 +1,7 @@
 import { MoreHorizontal } from 'lucide-react';
 import { getAgentType, type AgentTypeKey } from '@/lib/agent-types';
 import { cn } from '@/lib/utils';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 const STACK_ORDER: AgentTypeKey[] = ['flowix', 'hermes', 'codex', 'claude'];
 
@@ -59,12 +60,11 @@ export function AgentIconStack({ className }: { className?: string }) {
                 strokeWidth={2}
               />
             ) : (
-              <img
-                src={type.icon}
+              <AgentIcon
+                typeKey={type.key}
                 alt=""
                 style={{ width: ICON_IMG_SIZE, height: ICON_IMG_SIZE }}
                 className="object-contain"
-                draggable={false}
               />
             )}
           </span>

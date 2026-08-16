@@ -76,11 +76,12 @@ pub fn get_deepseek_harness_configs(state: State<AppState>) -> Result<Vec<AiConf
 }
 
 #[tauri::command]
-pub fn set_deepseek_harness_config(
+pub async fn set_deepseek_harness_config(
     config: AiConfigFile,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    state.deepseek_harness.invalidate_hosts().await?;
     state
         .user_config
         .set_deepseek_harness_config(&config)
@@ -92,11 +93,12 @@ pub fn set_deepseek_harness_config(
 }
 
 #[tauri::command]
-pub fn add_deepseek_harness_model(
+pub async fn add_deepseek_harness_model(
     config: AiConfigFile,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    state.deepseek_harness.invalidate_hosts().await?;
     state
         .user_config
         .add_deepseek_harness_config(&config)

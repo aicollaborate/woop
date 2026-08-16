@@ -23,6 +23,7 @@ import { getAgentRuntimeStatusText } from '@features/agent/components/agent-runt
 import { openAgentSetup } from '@features/agent/agent-setup';
 import { useI18n } from '@/lib/i18n';
 import { AgentConversationOverlay } from '@features/shell/components/status-bar/agent-conversation-overlay';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 /// 状态栏 Agents 弹窗里要隐藏的 agent ── 与偏好设置对齐, 不展示尚未发布的
 /// openclaw / gemini, 避免弹窗里出现两个永久 disabled 的项。
@@ -115,14 +116,13 @@ export function AgentRuntimeStatusMenu() {
                     )}
                   >
                     <span className="mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5">
-                      <img
-                        src={type.icon}
+                      <AgentIcon
+                        typeKey={type.key}
                         alt=""
                         className={cn(
                           'h-full w-full object-contain',
                           unavailable && 'grayscale opacity-60'
                         )}
-                        draggable={false}
                       />
                     </span>
                     <span

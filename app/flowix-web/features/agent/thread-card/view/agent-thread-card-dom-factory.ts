@@ -24,7 +24,7 @@ export interface AgentThreadCardDomParts {
   header: HTMLDivElement;
   titleEl: HTMLElement;
   badgeEl: HTMLSpanElement;
-  badgeIcon: HTMLImageElement;
+  badgeIcon: HTMLSpanElement;
   badgeName: HTMLSpanElement;
   badgeHoverCardMount: HTMLSpanElement;
   metaEl: HTMLElement;
@@ -66,10 +66,9 @@ export function createAgentThreadCardDom(
 
   const badgeEl = document.createElement("span");
   badgeEl.className = "agent-type-badge";
-  const badgeIcon = document.createElement("img");
+  const badgeIcon = document.createElement("span");
   badgeIcon.className = "agent-type-badge__icon";
-  badgeIcon.draggable = false;
-  badgeIcon.alt = "";
+  badgeIcon.setAttribute("aria-hidden", "true");
   const badgeName = document.createElement("span");
   badgeName.className = "agent-type-badge__name";
   badgeName.hidden = true;

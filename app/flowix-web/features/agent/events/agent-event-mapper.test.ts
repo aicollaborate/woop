@@ -260,7 +260,7 @@ describe("agent event mapper", () => {
     );
   });
 
-  it("adds a stable tool display summary without requiring UI schema knowledge", () => {
+  it("keeps tool events structured and preserves the real tool name", () => {
     const event = mapAgentChunkToEvent(
       {
         kind: "tool_call",
@@ -279,11 +279,7 @@ describe("agent event mapper", () => {
       kind: "tool_call",
       name: "web_search",
       input: { query: "OpenAI latest model" },
-      display: {
-        summary: "OpenAI latest model",
-        title: "OpenAI latest model",
-        kind: "search",
-      },
     });
+    expect(event).not.toHaveProperty("display");
   });
 });

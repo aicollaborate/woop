@@ -11,7 +11,7 @@ export interface AgentThreadCardChromeControllerOptions {
   header: HTMLDivElement;
   titleEl: HTMLElement;
   badgeEl: HTMLSpanElement;
-  badgeIcon: HTMLImageElement;
+  badgeIcon: HTMLSpanElement;
   badgeName: HTMLSpanElement;
   badgeHoverCardMount: HTMLSpanElement;
   view: EditorView;

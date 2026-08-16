@@ -24,6 +24,7 @@ import { ExternalAgentSettingsController } from '@features/agent/thread-card/set
 import { AgentConversationSurfaceController } from '@features/agent/thread-card/surface/agent-conversation-surface-controller';
 import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
 import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -388,7 +389,7 @@ export function AgentConversationDetail({
               cwd={runtimeCwd}
             />
             <span className="agent-type-badge" aria-hidden="true" title={agent.desc}>
-              <img className="agent-type-badge__icon" src={agent.icon} alt="" draggable={false} />
+              <AgentIcon typeKey={agent.key} alt="" className="agent-type-badge__icon" />
             </span>
           </span>
           {isEditingTitle ? (

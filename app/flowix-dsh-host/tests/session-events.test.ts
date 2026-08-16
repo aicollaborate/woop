@@ -55,8 +55,20 @@ test('maps authoritative tool events', () => {
   }), [{ type: 'tool.started', id: 'call-1', name: 'read', input: { path: 'a' } }])
   assert.deepEqual(adaptSessionEvent({
     type: 'tool/result',
-    data: { message: { source: { name: 'read' }, content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] }] } },
+    data: { message: { source: { toolName: 'read' }, content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] }] } },
   }), [{ type: 'tool.completed', id: 'call-1', name: 'read', result: 'ok' }])
+})
+
+test('keeps the Harness toolResult source toolName instead of falling back to tool', () => {
+  assert.deepEqual(adaptSessionEvent({
+    type: 'tool/result',
+    data: {
+      message: {
+        source: { kind: 'tool', toolName: 'todo_write', callId: 'call-plan' },
+        content: [{ type: 'tool-result', toolCallId: 'call-plan', content: [] }],
+      },
+    },
+  }), [{ type: 'tool.completed', id: 'call-plan', name: 'todo_write', result: [] }])
 })
 
 test('maps terminal turn reason', () => {

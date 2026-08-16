@@ -230,6 +230,7 @@ export const TOOLS: readonly AgentToolMeta[] = [
   {
     name: "update_plan",
     aliases: [
+      "todo_write",
       "todo_list",
       "todowrite",
       "todo",

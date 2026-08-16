@@ -658,7 +658,6 @@ impl DeepSeekHarnessManager {
             protocol::session_usage_request(host.next_request_id(), &session_id),
         )
         .await?;
-        self.close_idle_hosts().await;
         if result.is_null() {
             return Ok(None);
         }
@@ -804,7 +803,6 @@ impl DeepSeekHarnessManager {
                 }
             };
             manager.remove_active_if_run(&thread_id, &run_id).await;
-            manager.close_idle_hosts().await;
             manager
                 .emit_stream_end(
                     &app_handle,
@@ -1069,7 +1067,6 @@ impl DeepSeekHarnessManager {
             &stream_end_emitted,
         )
         .await;
-        self.close_idle_hosts().await;
         true
     }
 
@@ -1149,35 +1146,21 @@ impl DeepSeekHarnessManager {
         }
     }
 
-    async fn close_idle_hosts(&self) {
-        let active_runs = self.active.lock().await;
-        // Do not retire anything while a newly-created run is between its
-        // active-map insertion and route resolution. Its host key is not
-        // known yet, so closing here could kill a host that the new run is
-        // about to reuse.
-        if active_runs.values().any(|run| run.host_key.is_none()) {
-            return;
+    /// Close all cached hosts before a provider, credential, or plugin
+    /// configuration change. A live run must finish first: closing its host
+    /// would terminate the runtime underneath an in-flight tool call.
+    pub async fn invalidate_hosts(&self) -> Result<(), String> {
+        if !self.active.lock().await.is_empty() {
+            return Err("DeepSeek Harness 配置运行中不可修改，请先停止当前任务".to_string());
         }
-        let active_keys = active_runs
-            .values()
-            .filter_map(|run| run.host_key.clone())
-            .collect::<HashSet<_>>();
-        drop(active_runs);
-        let stale = {
+        let hosts = {
             let mut hosts = self.hosts.lock().await;
-            let stale_keys = hosts
-                .keys()
-                .filter(|key| !active_keys.contains(*key))
-                .cloned()
-                .collect::<Vec<_>>();
-            stale_keys
-                .into_iter()
-                .filter_map(|key| hosts.remove(&key))
-                .collect::<Vec<_>>()
+            hosts.drain().map(|(_, host)| host).collect::<Vec<_>>()
         };
-        for host in stale {
+        for host in hosts {
             host.shutdown().await;
         }
+        Ok(())
     }
 }
 

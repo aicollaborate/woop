@@ -22,6 +22,8 @@ import {
   type OverlayScrollbarHandle,
 } from '@shared/ui/overlay-scrollbar';
 import { translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
+import type { AgentTypeKey } from '@/types/agent';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 export type SlashMenuItemId =
   | 'blockquote'
@@ -359,16 +361,11 @@ export const SlashMenuDropdown = ({
                 : null;
               const showSectionHeader = !prevItem || prevSectionLabel !== sectionLabel;
               const displayLabel = getSlashMenuItemLabel(item, language);
+              const agentTypeKey = item.id.slice('agent-thread-'.length) as AgentTypeKey;
               const renderIcon = typeof Icon === 'string'
                 ? isAgentThreadItem ? (
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5">
-                      <img
-                        src={Icon}
-                        alt=""
-                        data-agent-icon={item.id.slice('agent-thread-'.length)}
-                        className="h-full w-full object-contain"
-                        aria-hidden="true"
-                      />
+                      <AgentIcon typeKey={agentTypeKey} alt="" className="h-full w-full object-contain" />
                     </span>
                   ) : (
                     <img

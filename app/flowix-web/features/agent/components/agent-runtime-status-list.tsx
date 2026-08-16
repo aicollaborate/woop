@@ -8,6 +8,7 @@ import type { AgentTypeKey } from '@/types/agent';
 import type { AgentRuntimeAvailability } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 type AgentRuntimeStatusByType = Partial<Record<AgentTypeKey, AgentRuntimeAvailability>>;
 
@@ -152,15 +153,13 @@ export function AgentRuntimeStatusList({
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-1">
-                    <img
-                      src={type.icon}
+                    <AgentIcon
+                      typeKey={type.key}
                       alt={displayName(type)}
-                      data-agent-icon={type.key}
                       className={cn(
                         'h-full w-full object-contain',
                         unavailable && 'grayscale opacity-60'
                       )}
-                      draggable={false}
                     />
                   </span>
                   <div className="min-w-0">
@@ -271,15 +270,13 @@ export function AgentRuntimeStatusList({
             )}
           >
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-1">
-              <img
-                src={type.icon}
+              <AgentIcon
+                typeKey={type.key}
                 alt=""
-                data-agent-icon={type.key}
                 className={cn(
                   'h-full w-full object-contain',
                   unavailable && 'grayscale opacity-60'
                 )}
-                draggable={false}
               />
             </span>
             <span

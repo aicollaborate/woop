@@ -12,6 +12,8 @@ import { sessionPoolOptions } from './pool-options.ts'
 interface RuntimeSlot {
   spec: RuntimeSpec
   harness: DeepSeekHarness
+  /** A runtime transport can die without the host process dying. */
+  reusable: boolean
   generation: number
   sequence: number
   lastUsedAt: number
@@ -31,7 +33,10 @@ export class SessionPool {
 
   async ensure(spec: RuntimeSpec): Promise<{ sessionId: string; generation: number }> {
     const existing = this.slots.get(spec.threadId)
-    if (existing !== undefined && sameSpec(existing.spec, spec)) {
+    const existingRuntimeIsUsable = existing === undefined
+      || existing.sequence === 0
+      || existing.harness.isRuntimeRunning
+    if (existing !== undefined && existing.reusable && existingRuntimeIsUsable && sameSpec(existing.spec, spec)) {
       this.clearIdleTimer(existing)
       return { sessionId: existing.spec.sessionId, generation: existing.generation }
     }
@@ -56,6 +61,7 @@ export class SessionPool {
     this.slots.set(spec.threadId, {
       spec,
       harness,
+      reusable: true,
       generation,
       sequence: 0,
       lastUsedAt: Date.now(),
@@ -163,13 +169,18 @@ export class SessionPool {
       }
     } catch (error) {
       if (!marker.cancelled) {
+        // HarnessClient permanently marks a dead transport unusable. Do not
+        // retain this slot as idle: the next conversation must construct a
+        // fresh client and reuse the persisted session id instead.
+        slot.reusable = false
         this.push(slot, marker.runId, { type: 'run.error', message: errorMessage(error), code: 'HARNESS_RUN_FAILED' })
         this.push(slot, marker.runId, { type: 'run.completed', reason: 'runtime_crashed' })
       }
     } finally {
       if (slot.currentRun === marker) {
         slot.currentRun = undefined
-        await this.retainIdle(slot)
+        if (slot.reusable) await this.retainIdle(slot)
+        else await this.closeSlot(slot)
       }
     }
   }

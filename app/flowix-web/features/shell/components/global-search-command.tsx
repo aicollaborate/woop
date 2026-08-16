@@ -58,6 +58,7 @@ import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
 import { ShortcutKbd } from '@shared/ui/shortcut-kbd';
 import { useI18n } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 const logger = createLogger('global-search');
 
@@ -401,11 +402,10 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
             }}
           >
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5 agent-runtime-list__icon--running">
-              <img
-                src={agent.icon}
+              <AgentIcon
+                typeKey={agent.key}
                 alt=""
                 className="h-full w-full object-contain"
-                draggable={false}
               />
             </span>
             <div className="flex min-w-0 flex-1 flex-col">

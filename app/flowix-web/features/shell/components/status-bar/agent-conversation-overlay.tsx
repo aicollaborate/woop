@@ -18,6 +18,7 @@ import {
 import { useDocumentStore } from '@features/document';
 import { useI18n } from '@/lib/i18n';
 import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 interface AgentConversationOverlayProps {
   initialAgentType: AgentTypeKey;
@@ -159,11 +160,10 @@ export function AgentConversationOverlay({
                     comingSoon && 'cursor-not-allowed opacity-35',
                   )}
                 >
-                  <img
-                    src={type.icon}
+                  <AgentIcon
+                    typeKey={type.key}
                     alt=""
                     className="h-4 w-4 object-contain"
-                    draggable={false}
                   />
                 </button>
               );

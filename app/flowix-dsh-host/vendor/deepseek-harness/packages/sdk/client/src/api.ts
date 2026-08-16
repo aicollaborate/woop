@@ -43,6 +43,11 @@ export class DeepSeekHarness implements AsyncDisposable {
     this.maxTokens = options.maxTokens
   }
 
+  /** Whether this harness currently owns a live runtime process. */
+  get isRuntimeRunning(): boolean {
+    return this.clientInstance.isRunning
+  }
+
   /**
    * The underlying JSON-RPC client (exposed for low-level access). A failed
    * handshake reaps its runtime and swaps in a fresh instance, so do not

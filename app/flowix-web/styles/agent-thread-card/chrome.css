@@ -43,6 +43,13 @@
   border: 0 !important;
   border-radius: 0 !important;
   margin-bottom: 0 !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.agent-type-badge__icon--image {
+  background-image: var(--agent-icon-src);
 }
 
 .agent-type-badge__icon--unavailable {
@@ -392,5 +399,4 @@
     transform: scale(1.15);
   }
 }
-
 

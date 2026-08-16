@@ -510,7 +510,6 @@ export type AgentEvent =
       toolCallId: string;
       name: string;
       input: unknown;
-      display?: AgentToolDisplay;
     })
   | (AgentEventBase & {
       kind: "tool_result";

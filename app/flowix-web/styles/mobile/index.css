@@ -31,6 +31,7 @@
 @import './base.css';
 @import './list.css';
 @import '../cloud-status-icon.css';
+@import '../agent-icon.css';
 @import './drawer.css';
 @import './account.css';
 @import './editor.css';
