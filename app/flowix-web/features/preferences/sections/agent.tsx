@@ -1930,7 +1930,7 @@ function ConfiguredModelsList({
                 <div className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2 text-xs">
-                      <span className="truncate rounded bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] px-1.5 py-0.5 text-[var(--primary)]" title={model.providerName}>
+                      <span className="truncate rounded bg-[var(--muted)] px-1.5 py-0.5 text-[var(--muted-foreground)]" title={model.providerName}>
                         {model.providerName}
                       </span>
                       {model.id === selectedModelId
@@ -1948,7 +1948,7 @@ function ConfiguredModelsList({
                     </div>
                     {hasConfiguredApiKey(model) && (
                       <span
-                        className="block truncate text-xl leading-[1.4] text-black"
+                        className="block truncate text-xl leading-[1.4] text-[var(--foreground)]"
                         role="img"
                         aria-label={t('preferences.agent.provider.configuredModelKeyMask')}
                         title={t('preferences.agent.provider.configuredModelKeyMask')}

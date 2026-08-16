@@ -53,6 +53,7 @@ import {
   type ConversationRunIndex,
 } from '@features/agent/store/conversation-run-index';
 import { getAgentType, DEFAULT_AGENT_TYPE_KEY } from '@/lib/agent-types';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import { canonicalPath } from '@/lib/path';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
@@ -535,10 +536,10 @@ function AgentThreadNavigator({
                 triggerItem?.isRunning ? 'agent-thread-navigator__icon--running' : ''
               }`}
             >
-              <img
-                src={triggerAgentType.icon}
+              <AgentIcon
+                typeKey={triggerAgentType.key}
                 alt=""
-                draggable={false}
+                className="h-3.5 w-3.5 object-contain"
               />
             </span>
             <ChevronDown className="h-3 w-3" />
@@ -564,10 +565,9 @@ function AgentThreadNavigator({
                       item.isRunning ? 'agent-thread-navigator__icon--running' : ''
                     }`}
                   >
-                    <img
-                      src={agentType.icon}
+                    <AgentIcon
+                      typeKey={agentType.key}
                       alt=""
-                      draggable={false}
                       className="h-full w-full object-contain"
                     />
                   </span>

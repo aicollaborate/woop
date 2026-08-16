@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 export const THEME_ADAPTIVE_AGENT_ICON_KEYS = new Set<AgentTypeKey>([
   'deepseek-harness',
   'opencode',
+  'hermes',
 ]);
 
 export function isThemeAdaptiveAgentIcon(typeKey: AgentTypeKey): boolean {
@@ -28,7 +29,7 @@ export interface AgentIconProps {
  * Shared agent icon renderer.
  *
  * SVGs loaded through <img> cannot inherit CSS currentColor from the host
- * document. The two monochrome agent icons therefore use the SVG as a CSS
+ * document. The monochrome agent icons therefore use the SVG as a CSS
  * mask, while the remaining branded icons keep their original SVG colors.
  */
 export function AgentIcon({
