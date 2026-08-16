@@ -66,6 +66,16 @@ Flowix keeps your work as plain Markdown files on your device. You choose what a
 
 ---
 
+## Product preview
+
+| | |
+| --- | --- |
+| <img src="./docs/images/gh-detail-1.png" width="100%" alt="Note library with tags" /><br/>*Note library with tags* | <img src="./docs/images/gh-detail-2.png" width="100%" alt="Note detail with agent presets" /><br/>*Note detail with agent presets* |
+| <img src="./docs/images/gh-detail-3.png" width="100%" alt="Agent model picker" /><br/>*Agent model picker* | <img src="./docs/images/gh-detail-4.png" width="100%" alt="Full-text and file search" /><br/>*Full-text and file search* |
+| <img src="./docs/images/gh-detail-5.png" width="100%" alt="Provider and MCP configuration" /><br/>*Provider and MCP configuration* | <img src="./docs/images/gh-detail-6.png" width="100%" alt="Code file browsing and editing" /><br/>*Code file browsing and editing* |
+
+---
+
 ## Quick start
 
 1. Download and install Flowix from [the website](https://flowix-memo.com/).
