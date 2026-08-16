@@ -4,6 +4,7 @@ import svgPanZoom from 'svg-pan-zoom'
 import { translate, type I18nKey } from '@/lib/i18n'
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store'
 import { CodeBlockClipboardController } from './clipboard-controller'
+import { SHIKI_LANGUAGE_LABEL_BY_ID, SHIKI_LANGUAGE_OPTIONS } from './shiki/shiki-languages'
 
 // svg-pan-zoom 实例类型 ── 库本身没有导出类型, 用 ReturnType 推断。
 // 用在 fullscreen overlay 内 ── 用户的 mermaid 流程图常因节点多而显示
@@ -61,20 +62,6 @@ const ZOOM_IN_ICON = '<svg class="code-block-fullscreen-icon" viewBox="0 0 256 2
 // 顶层做常量, 不再每次 click 时从 DOM 读 innerHTML 当「原始态」保存 ──
 // 那种保存方式在快速重复点击下会让第二次点击把 check icon 当成原态,
 // 后续 timer 全部还原成 check icon, 状态卡死。
-type BundledLanguageInfo = {
-  id: string
-  name: string
-}
-
-let bundledLanguagesInfoPromise: Promise<readonly BundledLanguageInfo[]> | null = null
-
-function loadBundledLanguagesInfo(): Promise<readonly BundledLanguageInfo[]> {
-  if (!bundledLanguagesInfoPromise) {
-    bundledLanguagesInfoPromise = import('shiki').then((module) => module.bundledLanguagesInfo)
-  }
-  return bundledLanguagesInfoPromise
-}
-
 export interface CodeBlockShikiViewOptions {
   theme: string
 }
@@ -123,7 +110,6 @@ class CodeBlockShikiView implements NodeView {
   private boundThemeChangeHandler: ((e: Event) => void) | null = null
   private boundSyncFullscreenBounds: (() => void) | null = null
   private boundHandleFullscreenKeydown: ((event: KeyboardEvent) => void) | null = null
-  private isDestroyed = false
   private isFullscreen = false
   // 复制成功态 reset timer ── 每次点击复制都重新调度, 旧的必须先
   // clearTimeout, 否则快速重复点击会让多个 timer 串行触发, 后发的
@@ -171,7 +157,7 @@ class CodeBlockShikiView implements NodeView {
     // (e.g. "TypeScript") ── createView 里先用 id 占位是必要的,
     // 否则首帧 button 是空的; 后续 microtask 内覆盖, 闪一帧
     // 用户基本无感。
-    void this.applyLanguageDisplay()
+    this.applyLanguageDisplay()
   }
 
   private createView() {
@@ -372,7 +358,7 @@ class CodeBlockShikiView implements NodeView {
     }
   }
 
-  private async populateLanguageDropdown(dropdown: HTMLElement): Promise<void> {
+  private populateLanguageDropdown(dropdown: HTMLElement): void {
     if (this.dropdownPopulated) return
     this.dropdownPopulated = true
     dropdown.replaceChildren()
@@ -380,45 +366,23 @@ class CodeBlockShikiView implements NodeView {
     const search = this.createLanguageSearchInput()
     const list = document.createElement('div')
     list.classList.add('code-block-language-list')
-    const loading = document.createElement('div')
-    loading.classList.add('code-block-language-status')
-    loading.textContent = 'Loading languages...'
-    list.appendChild(loading)
     dropdown.append(search, list)
 
     this.dropdownSearchInput = search
     this.dropdownList = list
 
-    let bundledLanguagesInfo: readonly BundledLanguageInfo[]
-    try {
-      bundledLanguagesInfo = await loadBundledLanguagesInfo()
-    } catch (err) {
-      this.dropdownPopulated = false
-      loading.textContent = 'Failed to load languages'
-      console.error('[CodeBlockShiki] failed to load language list:', err)
-      return
-    }
-
-    if (this.isDestroyed) return
-    list.replaceChildren()
-
     // Plain text option ── dropdown 选项文案跟 button 状态描述
-    // 对齐: 空 attr 在两条路径 (sync click / async resolve) 都
-    // 显示 "Plain Text", 用户视角一个按钮一种文案。不用 "Auto Detect"
+    // 对齐: 空 attr 在两条路径 (sync click / 初始化) 都显示
+    // "Plain Text", 用户视角一个按钮一种文案。不用 "Auto Detect"
     // 是因为 shiki 并没有自动检测能力, 选它只是清空 attr, "Plain Text"
-    // 更准确反映 shiki "无高亮" 的语义, 也跟 shiki metadata 里
-    // id="plaintext", name="Plain Text" 的命名一致。
+    // 更准确反映 shiki "无高亮" 的语义。
     list.appendChild(this.createLanguageDropdownItem('Plain Text', ''))
 
-    // Language options
-    const languages = bundledLanguagesInfo.map(lang => ({
-      label: lang.name,
-      value: lang.id,
-    }))
-
-    languages.forEach(({ label, value }) => {
-      list.appendChild(this.createLanguageDropdownItem(label, value))
-    })
+    // Language options ── 硬编码精选列表 (细粒度 bundle, 不读 shiki
+    // 全量 bundledLanguagesInfo, 未列出的冷门语言不会出现在 dropdown)。
+    for (const { id, label } of SHIKI_LANGUAGE_OPTIONS) {
+      list.appendChild(this.createLanguageDropdownItem(label, id))
+    }
 
     const empty = document.createElement('div')
     empty.classList.add('code-block-language-status')
@@ -449,7 +413,7 @@ class CodeBlockShikiView implements NodeView {
       dropdown.style.display = 'block'
       this.isDropdownOpen = true
       this.attachOutsideClickHandler()
-      void this.populateLanguageDropdown(dropdown)
+      this.populateLanguageDropdown(dropdown)
       requestAnimationFrame(() => this.dropdownSearchInput?.focus())
     }
   }
@@ -504,7 +468,7 @@ class CodeBlockShikiView implements NodeView {
     if (displayLabel) {
       this.updateLanguageButton(displayLabel)
     } else {
-      void this.applyLanguageDisplay()
+      this.applyLanguageDisplay()
     }
     // 切到非 mermaid 语言时强制退出全屏 ── 避免全屏态挂着 mermaid
     // SVG 但节点本身已不再是 mermaid, view 渲染可能与全屏态不一致
@@ -525,7 +489,7 @@ class CodeBlockShikiView implements NodeView {
   // 空) 走 "Plain Text" 显示 ── dropdown 项跟 button 状态描述文案
   // 对齐: 同一份数据两种视图都用 "Plain Text", 不再区分动作/状态
   // 语义, 用户视角一个空 attr 只对应一个 label。
-  private async applyLanguageDisplay(): Promise<void> {
+  private applyLanguageDisplay(): void {
     if (!this.languageBtn) return
 
     const id = this.node.attrs.language || ''
@@ -533,21 +497,14 @@ class CodeBlockShikiView implements NodeView {
 
     let displayLabel: string
     if (!id || id === PLAIN_TEXT_ID) {
-      // 专门处理 'plaintext' sentinel ── shiki bundledLanguagesInfo
-      // 不收录此条目 (它不是真实语言, 只是无高亮占位), lookup 必然
-      // miss 会让 button 永远停在 'plaintext' 小写态。空 attr 同理:
-      // dropdown "Plain Text" 项设的就是空值, 两条路径统一走 label。
+      // 专门处理 'plaintext' sentinel ── 它不是真实语言, 只是无高亮
+      // 占位, 精选列表 lookup 必然 miss, 会让 button 停在 'plaintext'
+      // 小写态。空 attr 同理: dropdown "Plain Text" 项设的就是空值,
+      // 两条路径统一走 label。
       displayLabel = PLAIN_TEXT_LABEL
     } else {
-      try {
-        const bundled = await loadBundledLanguagesInfo()
-        if (this.isDestroyed) return
-        const match = bundled.find((lang) => lang.id === id)
-        displayLabel = match?.name ?? id
-      } catch {
-        // metadata 加载失败 ── 退回 id 自身 (跟旧行为一致), 不阻塞 UI。
-        displayLabel = id
-      }
+      // 精选列表 id / 别名 → 显示名; 未收录 (冷门语言) 退回 id 自身。
+      displayLabel = SHIKI_LANGUAGE_LABEL_BY_ID.get(id) ?? id
     }
     this.updateLanguageButton(displayLabel)
   }
@@ -1088,7 +1045,7 @@ private unmountFullscreenOverlay(): void {
     // Update language button if changed externally
     const newId = node.attrs.language || ''
     if (newId !== this.currentLanguageId) {
-      void this.applyLanguageDisplay()
+      this.applyLanguageDisplay()
     }
 
     this.updateLanguageAttribute()
@@ -1110,7 +1067,6 @@ private unmountFullscreenOverlay(): void {
 
   destroy() {
     this.setFullscreen(false)
-    this.isDestroyed = true
     this.detachOutsideClickHandler()
     if (this.boundThemeChangeHandler) {
       window.removeEventListener('app-theme-changed', this.boundThemeChangeHandler)

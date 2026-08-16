@@ -1,27 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
-// gsap 动态 import (独立 chunk, ~168KB)。memo-list 挂载时预热, 入场动画多数
-// 命中已加载路径 (useLayoutEffect 内同步 fromTo, 与懒加载前体验一致); 极少数
-// 未就绪时先隐藏 animEl 防 paint 闪烁, 加载后 fromTo 接管 (clearProps 清理)。
-type GsapApi = typeof import('gsap')['default'];
-let gsapPromise: Promise<GsapApi> | null = null;
-let gsapLoaded: GsapApi | null = null;
+// 入场动画用浏览器内置 Web Animations API (element.animate), 不再引入
+// gsap (~168KB chunk)。动画只是 opacity + translateX + scale 的简单缓出,
+// WAAPI 同步可用、无动态 import 的加载 gap, 也让 hook 少掉整套预热逻辑。
 
-function ensureGsap(): Promise<GsapApi> {
-  if (gsapLoaded) return Promise.resolve(gsapLoaded);
-  if (!gsapPromise) {
-    gsapPromise = import('gsap').then((module) => {
-      gsapLoaded = module.default;
-      return module.default;
-    });
-  }
-  return gsapPromise;
-}
-
-const ENTRANCE_DURATION = 0.3;
-const ENTRANCE_EASE = 'power2.out';
+const ENTRANCE_DURATION = 300;
+// ≈ gsap 的 power2.out (二次缓出)。
+const ENTRANCE_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
@@ -32,19 +19,18 @@ interface PendingInsert {
   attempts: number;
 }
 
-function runEntrance(gsap: GsapApi, animEl: HTMLElement) {
-  gsap.killTweensOf(animEl);
-  gsap.fromTo(
-    animEl,
-    { autoAlpha: 0, x: -36, scale: 0.985 },
+function runEntrance(animEl: HTMLElement) {
+  // 取消该元素上已有动画, 等价于 gsap.killTweensOf。
+  animEl.getAnimations().forEach((animation) => animation.cancel());
+  animEl.animate(
+    [
+      { opacity: 0, transform: 'translateX(-36px) scale(0.985)' },
+      { opacity: 1, transform: 'translateX(0) scale(1)' },
+    ],
     {
-      autoAlpha: 1,
-      x: 0,
-      scale: 1,
       duration: ENTRANCE_DURATION,
-      ease: ENTRANCE_EASE,
-      clearProps: 'opacity,visibility,transform',
-    }
+      easing: ENTRANCE_EASE,
+    },
   );
 }
 
@@ -55,7 +41,7 @@ function runEntrance(gsap: GsapApi, animEl: HTMLElement) {
  * - 不动整列 (没有 FLIP / 没有列表滚动), 只让新 card 自己从左侧淡入;
  * - 新 card 的容器是普通文档流, 没有 transform 定位, 物理上不可能与
  *   上下邻居重叠;
- * - GSAP 作用在 [data-insert-anim] wrapper 上, wrapper 自己的 transform
+ * - 动画作用在 [data-insert-anim] wrapper 上, wrapper 自己的 transform
  *   (x / scale) 不会外溢到 row 容器;
  * - 只在 prepareForInsert(newId) 之后的下一次 useLayoutEffect 里跑,
  *   其它时候 onListRendered 是 no-op。
@@ -63,11 +49,6 @@ function runEntrance(gsap: GsapApi, animEl: HTMLElement) {
 export function useMemoInsertAnimation() {
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const pendingRef = useRef<PendingInsert | null>(null);
-
-  // 预热: memo-list 挂载后立即拉 gsap chunk, 让用户新建 memo 时多数命中同步路径。
-  useEffect(() => {
-    void ensureGsap();
-  }, []);
 
   const registerCard = useCallback((id: string) => (el: HTMLDivElement | null) => {
     if (el) cardRefs.current.set(id, el);
@@ -97,25 +78,13 @@ export function useMemoInsertAnimation() {
 
     pendingRef.current = null;
 
-    // 优先取 row 内部的 [data-insert-anim] wrapper, 让 GSAP 的 transform/x/scale
+    // 优先取 row 内部的 [data-insert-anim] wrapper, 让 transform/x/scale
     // 全部作用在视觉层; 找不到 (旧结构 / 单测 / Storybook) 时退回 row 本身。
     const animEl = (newEl.querySelector('[data-insert-anim]') as HTMLElement | null) ?? newEl;
 
     if (prefersReducedMotion()) return;
 
-    // gsap 已加载: 同步跑 (useLayoutEffect 内, paint 前, 与懒加载前一致)。
-    if (gsapLoaded) {
-      runEntrance(gsapLoaded, animEl);
-      return;
-    }
-
-    // 未加载: 同步隐藏防 paint 闪烁, 加载后 fromTo 接管 (clearProps 清理内联样式)。
-    animEl.style.opacity = '0';
-    void ensureGsap()
-      .then((gsap) => runEntrance(gsap, animEl))
-      .catch(() => {
-        animEl.style.opacity = '';
-      });
+    runEntrance(animEl);
   }, []);
 
   return { registerCard, prepareForInsert, onListRendered };

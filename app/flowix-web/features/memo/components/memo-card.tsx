@@ -81,10 +81,13 @@ function AgentTodoIcons({
   hasTodos,
   runningAgentType,
   className,
+  lineCenter = false,
 }: {
   hasTodos: boolean;
   runningAgentType?: AgentTypeKey;
   className?: string;
+  /** 大卡(detailed)：徽章保持原尺寸，在标题行高内垂直居中（小卡 flex 居中不受影响）。 */
+  lineCenter?: boolean;
 }) {
   // AI 仅在"运行中"才露出圆圈 loading; 非运行态不显示。
   const runningAgent = runningAgentType ? getAgentType(runningAgentType) : null;
@@ -92,7 +95,11 @@ function AgentTodoIcons({
   return (
     <span
       aria-hidden="true"
-      className={cn('inline-flex shrink-0 items-center gap-0.5 text-[var(--muted-foreground)]', className)}
+      className={cn(
+        'inline-flex shrink-0 items-center gap-0.5 text-[var(--muted-foreground)]',
+        lineCenter && 'memo-card__agent-icons--line-center',
+        className,
+      )}
     >
       {runningAgent && (
         // 仅在 AI 运行中展示 star-four 图标, 主色高亮。
@@ -298,6 +305,7 @@ function DetailedMemoCardBody({
           <AgentTodoIcons
             hasTodos={false}
             runningAgentType={runningAgentType}
+            lineCenter
             className="mr-0.5"
           />
           <span className="min-w-0">{title}</span>

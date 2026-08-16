@@ -9,7 +9,7 @@
 imports the upstream TypeScript SDK client and protocol directly. The runtime
 build reuses the upstream SDK runtime closure and executable build script.
 
-Flowix applies four small patches after import:
+Flowix applies five small patches after import:
 
 - `patches/runtime-bash-sandbox.patch` adds the upstream sandboxed bash
   provider to the SDK runtime closure because the stock Python SDK composition
@@ -28,6 +28,11 @@ Flowix applies four small patches after import:
   selection as `agentPreset` in the session metadata. This is what lets Flowix
   expose the shipped `standard`, `code`, `minimal`, and `cordis` compositions
   through the Agent Thread Card.
+- `patches/strip-dev-only-artifacts.patch` strips dev-only files (`.map`,
+  `.ts`, `.d.ts`) and non-target native prebuilds (Windows `node-pty`
+  prebuilds) from the staged closure before packaging, shrinking the single
+  executable. Windows is a non-goal, so those prebuilds are dead weight on the
+  macOS and Linux targets.
 
 Update the snapshot only through `scripts/sync-upstream.mjs`; the script checks
 the requested commit before replacing the tree.

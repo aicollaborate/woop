@@ -1,8 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useImperativeHandle, useRef, type Ref } from 'react';
-import { Transformer } from 'markmap-lib';
-import { Markmap } from 'markmap-view';
+import type { Markmap } from 'markmap-view';
 
 const MARKMAP_BRANCH_COLORS = [
   'var(--plugin-markmap-branch-1)',
@@ -41,33 +40,52 @@ function MarkmapRenderer({ content, rendererRef }: RendererProps) {
     const svg = svgRef.current;
     if (!svg) return;
     svg.replaceChildren();
-    const transformer = new Transformer();
-    const { root } = transformer.transform(content);
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const markmap = Markmap.create(svg, {
-      autoFit: true,
-      duration: reduceMotion ? 0 : 260,
-      embedGlobalCSS: true,
-      fitRatio: 0.88,
-      initialExpandLevel: -1,
-      maxInitialScale: 1.2,
-      maxWidth: 360,
-      nodeMinHeight: 24,
-      paddingX: 12,
-      pan: true,
-      scrollForPan: false,
-      spacingHorizontal: 92,
-      spacingVertical: 10,
-      toggleRecursively: false,
-      zoom: true,
-      color: (node) => MARKMAP_BRANCH_COLORS[node.state.depth % MARKMAP_BRANCH_COLORS.length],
-      lineWidth: (node) => node.state.depth === 1 ? 2 : 1.4,
-    }, root);
-    markmapRef.current = markmap;
-    const frame = requestAnimationFrame(fit);
+    let disposed = false;
+    let markmap: Markmap | null = null;
+    let frame: number | null = null;
+
+    // 懒加载 markmap (连同传递依赖 d3 + marked) ── 只在真正渲染 markmap
+    // 产物时拉取, 避免其 ~678K 进入插件/编辑器主 chunk。异步 gap 用
+    // disposed 标志 + 局部 markmap/frame 变量交给 cleanup 兜底。
+    void (async () => {
+      const [{ Transformer }, { Markmap: MarkmapCtor }] = await Promise.all([
+        import('markmap-lib'),
+        import('markmap-view'),
+      ]);
+      if (disposed || !svgRef.current) return;
+
+      const transformer = new Transformer();
+      const { root } = transformer.transform(content);
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      markmap = MarkmapCtor.create(svgRef.current, {
+        autoFit: true,
+        duration: reduceMotion ? 0 : 260,
+        embedGlobalCSS: true,
+        fitRatio: 0.88,
+        initialExpandLevel: -1,
+        maxInitialScale: 1.2,
+        maxWidth: 360,
+        nodeMinHeight: 24,
+        paddingX: 12,
+        pan: true,
+        scrollForPan: false,
+        spacingHorizontal: 92,
+        spacingVertical: 10,
+        toggleRecursively: false,
+        zoom: true,
+        color: (node) => MARKMAP_BRANCH_COLORS[node.state.depth % MARKMAP_BRANCH_COLORS.length],
+        lineWidth: (node) => node.state.depth === 1 ? 2 : 1.4,
+      }, root);
+      markmapRef.current = markmap;
+      frame = requestAnimationFrame(fit);
+    })().catch((error: unknown) => {
+      console.error('[MarkmapRenderer] failed to load markmap:', error);
+    });
+
     return () => {
-      cancelAnimationFrame(frame);
-      markmap.destroy();
+      disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      markmap?.destroy();
       markmapRef.current = null;
       svg.replaceChildren();
     };

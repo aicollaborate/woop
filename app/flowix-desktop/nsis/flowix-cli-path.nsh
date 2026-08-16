@@ -39,38 +39,6 @@
   ${EndIf}
 !macroend
 
-!macro FLOWIX_REMOVE_CLI_FROM_USER_PATH
-  ReadRegStr $0 HKCU "Environment" "Path"
-  ${If} $0 != ""
-    StrCpy $1 ""
-    StrCpy $2 1
-    ; Preserve every unrelated PATH entry, including the single-entry case.
-    StrCpy $4 "$0;"
-
-    ${Do}
-      ClearErrors
-      ${WordFind} "$4" ";" "E+$2" $3
-      ${If} ${Errors}
-        ${ExitDo}
-      ${EndIf}
-      ${If} $3 != "${FLOWIX_CLI_BIN_DIR}"
-      ${AndIf} $3 != ""
-        ${If} $1 == ""
-          StrCpy $1 "$3"
-        ${Else}
-          StrCpy $1 "$1;$3"
-        ${EndIf}
-      ${EndIf}
-      IntOp $2 $2 + 1
-    ${Loop}
-
-    ${If} $1 != $0
-      WriteRegExpandStr HKCU "Environment" "Path" "$1"
-      !insertmacro FLOWIX_BROADCAST_ENVIRONMENT_CHANGE
-    ${EndIf}
-  ${EndIf}
-!macroend
-
 !macro NSIS_HOOK_POSTINSTALL
   CreateDirectory "${FLOWIX_CLI_BIN_DIR}"
   Delete "${FLOWIX_LEGACY_CLI_SHIM}"
@@ -84,8 +52,9 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  ; Only remove files created by the Flowix CLI shim. Do not modify the
+  ; user's HKCU\Environment\Path during product uninstall.
   Delete "${FLOWIX_CLI_SHIM}"
   Delete "${FLOWIX_LEGACY_CLI_SHIM}"
   RMDir "${FLOWIX_CLI_BIN_DIR}"
-  !insertmacro FLOWIX_REMOVE_CLI_FROM_USER_PATH
 !macroend

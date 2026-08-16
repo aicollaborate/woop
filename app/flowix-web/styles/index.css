@@ -661,6 +661,15 @@
   object-position: center;
 }
 
+/* 大卡(detailed)：徽章保持 16px 原尺寸，在 20px 标题行高内垂直居中。
+ * vertical-align: top 把徽章顶边固定到行框顶部（消除默认 baseline 对齐导致的偏上），
+ * margin-top 再下移 (20px 行高 - 16px 徽章) / 2 = 2px 实现精确居中。
+ * 小卡(compact) 走 flex items-center 居中，vertical-align/margin 不生效，不受影响。 */
+.memo-card__agent-icons--line-center {
+  vertical-align: top;
+  margin-top: calc((20px - 1rem) / 2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .memo-card__running-agent-icon {
     animation: none;

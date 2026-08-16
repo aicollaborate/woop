@@ -1,95 +1,63 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import type { BundledLanguage, BundledTheme, Highlighter, BundledHighlighterOptions } from 'shiki'
+import type { BundledLanguage, BundledTheme } from 'shiki'
 
 import { findChildren } from '@tiptap/core'
 
-let highlighter: Highlighter | undefined
-let highlighterPromise: Promise<void> | undefined
-let shikiModulePromise: Promise<typeof import('shiki')> | undefined
-const loadingLanguages = new Set<BundledLanguage>()
-const loadingThemes = new Set<BundledTheme>()
+import { createHighlighterCore } from 'shiki/core'
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 
-function loadShikiModule() {
-  if (!shikiModulePromise) {
-    shikiModulePromise = import('shiki')
-  }
-  return shikiModulePromise
-}
+import { SHIKI_LANGS, SHIKI_THEMES } from './shiki-languages'
+
+// createHighlighterCore 返回 HighlighterCore, 类型从 shiki/core 推导,
+// 避免额外引入 shiki 全量包的类型面。
+type ShikiHighlighter = Awaited<ReturnType<typeof createHighlighterCore>>
+
+let highlighter: ShikiHighlighter | undefined
+let highlighterPromise: Promise<void> | undefined
 
 export function getShiki() {
   return highlighter
 }
 
 /**
- * Load the highlighter. Makes sure the highlighter is only loaded once.
- * After creation, eagerly load all languages (Shiki v4 doesn't sync load them).
+ * Load the highlighter once. Uses Shiki's fine-grained core (no bundled
+ * languages/themes) with the curated language + theme set and the same
+ * Oniguruma WASM engine that shiki's full `createHighlighter` uses internally.
+ *
+ * All curated languages and themes are loaded upfront, so later `loadLanguage`
+ * / `loadTheme` calls are no-ops; unsupported (cold) languages fall back to
+ * plaintext in the decorations layer via `getLoadedLanguages()`.
  */
-export async function loadHighlighter(opts: BundledHighlighterOptions<BundledLanguage, BundledTheme>) {
+export async function loadHighlighter() {
   if (highlighter) return
 
   if (!highlighter && !highlighterPromise) {
-    highlighterPromise = loadShikiModule().then(async ({ bundledLanguages, bundledThemes, createHighlighter }) => {
-      const themes = (opts.themes as string[]).filter(
-        (theme) => !!theme && (theme in bundledThemes)
-      ) as BundledTheme[]
-      const langs = (opts.langs as string[]).filter(
-        (lang) => !!lang && (lang in bundledLanguages)
-      ) as BundledLanguage[]
-
-      const h = await createHighlighter({ themes, langs })
+    highlighterPromise = createHighlighterCore({
+      themes: SHIKI_THEMES,
+      langs: SHIKI_LANGS,
+      engine: createOnigurumaEngine(import('shiki/wasm')),
+    }).then((h) => {
       highlighter = h
-      // Eagerly load all languages since createHighlighter doesn't sync load them
-      for (const lang of langs) {
-        await h.loadLanguage(lang);
-      }
     })
-    return highlighterPromise;
   }
 
-  if (highlighterPromise) {
-    return highlighterPromise;
-  }
+  return highlighterPromise
 }
 
 /**
  * Loads a theme if it's valid and not yet loaded.
- * @returns true or false depending on if it got loaded.
+ * Curated themes are all preloaded in {@link loadHighlighter}; nothing to do.
  */
-export async function loadTheme(theme: BundledTheme): Promise<boolean> {
-  const { bundledThemes } = await loadShikiModule()
-  if (
-    highlighter
-    && !highlighter.getLoadedThemes().includes(theme)
-    && !loadingThemes.has(theme)
-    && theme in bundledThemes
-  ) {
-    loadingThemes.add(theme);
-    await highlighter.loadTheme(theme);
-    loadingThemes.delete(theme);
-    return true;
-  }
-
-  return false;
+export async function loadTheme(_theme: BundledTheme): Promise<boolean> {
+  return false
 }
 
 /**
- * Loads a language if it's valid and not yet loaded
- * @returns true or false depending on if it got loaded.
+ * Loads a language if it's valid and not yet loaded.
+ * Curated languages are all preloaded; unsupported (cold) languages are left
+ * to the decorations layer, which degrades them to plaintext.
  */
-export async function loadLanguage(language: BundledLanguage): Promise<boolean> {
-  const { bundledLanguages } = await loadShikiModule()
-  if (
-    highlighter
-    && !highlighter.getLoadedLanguages().includes(language)
-    && !loadingLanguages.has(language)
-    && language in bundledLanguages
-  ) {
-    loadingLanguages.add(language)
-    await highlighter.loadLanguage(language)
-    loadingLanguages.delete(language)
-    return true
-  }
-
+export async function loadLanguage(_language: BundledLanguage): Promise<boolean> {
   return false
 }
 
@@ -102,38 +70,16 @@ interface InitHighlighterOptions {
 }
 
 /**
- * Initializes the highlighter based on the prose-mirror document,
- * with the themes and languages in the document.
+ * Initializes the highlighter based on the prose-mirror document, with the
+ * themes and languages in the document.
  */
 export async function initHighlighter({
   doc,
   name,
   language,
-  theme,
-  themes: extraThemes = []
 }: InitHighlighterOptions) {
   const codeBlocks = findChildren(doc, node => node.type.name === name)
   if (codeBlocks.length === 0 && language === 'plaintext') return
 
-  const themes = [
-    ...codeBlocks.map(block => block.node.attrs.theme as BundledTheme),
-    ...extraThemes,
-    theme
-  ]
-  const languages = [
-    ...codeBlocks.map(block => block.node.attrs.language as BundledLanguage),
-    language
-  ]
-
-  if (!highlighter) {
-    const loader = loadHighlighter({ langs: languages as BundledLanguage[], themes: themes as BundledTheme[] })
-    await loader
-  } else {
-    await Promise.all([
-      ...themes.flatMap(theme => loadTheme(theme)),
-      ...languages.flatMap(language =>
-        language && language !== 'plaintext' ? loadLanguage(language) : []
-      )
-    ])
-  }
+  await loadHighlighter()
 }

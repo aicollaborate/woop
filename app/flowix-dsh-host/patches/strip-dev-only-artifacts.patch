@@ -1,0 +1,52 @@
+diff --git a/scripts/build-exe-for-python-sdk.ts b/scripts/build-exe-for-python-sdk.ts
+index 321bc79..c63c886 100644
+--- a/scripts/build-exe-for-python-sdk.ts
++++ b/scripts/build-exe-for-python-sdk.ts
+@@ -439,6 +439,39 @@ class SingleExeBuild {
+     )
+   }
+ 
++  /**
++   * Remove dev-only files and non-target native prebuilds from the staged
++   * closure before packaging. Source maps and TypeScript declaration files are
++   * never loaded at runtime; Windows node-pty prebuilds are useless on the
++   * supported macOS/Linux targets (Windows is a non-goal).
++   */
++  async stripDevOnlyArtifacts(): Promise<void> {
++    const nodeModules = join(this.staging, 'node_modules')
++    if (this.cli.dryRun) {
++      console.log('build-exe-for-python-sdk: [dry-run] strip dev-only files and non-target prebuilds')
++      return
++    }
++    let removed = 0
++    const walk = async (dir: string): Promise<void> => {
++      for (const entry of await readdir(dir, { withFileTypes: true })) {
++        const path = join(dir, entry.name)
++        if (entry.isDirectory()) {
++          if (entry.name.startsWith('win32-') && path.includes(`${sep}prebuilds${sep}`)) {
++            await rm(path, { recursive: true, force: true })
++            removed += 1
++            continue
++          }
++          await walk(path)
++        } else if (entry.name.endsWith('.map') || entry.name.endsWith('.ts')) {
++          await rm(path, { force: true })
++          removed += 1
++        }
++      }
++    }
++    await walk(nodeModules)
++    console.log(`build-exe-for-python-sdk: stripped ${removed} dev-only / non-target files`)
++  }
++
+   /** Read one deployed package manifest into the pruning index. */
+   private async recordPackage(
+     packages: Map<string, { directory: string, manifest: PackageManifest }>,
+@@ -667,6 +700,7 @@ async function main(): Promise<void> {
+   await pipeline.build()
+   await pipeline.deployStaging()
+   await pipeline.pruneStaging()
++  await pipeline.stripDevOnlyArtifacts()
+   await pipeline.injectPkgConfig()
+   const products: string[] = []
+   for (const target of cli.targets) products.push(...await pipeline.pack(target))
