@@ -24,13 +24,8 @@ vi.mock("@shared/ui/hover-card", () => ({
       }),
       children,
     ),
-  HoverCardTrigger: ({
-    children,
-    onPointerEnter,
-  }: {
-    children: ReactNode;
-    onPointerEnter?: () => void;
-  }) => createElement("div", { onPointerEnter }, children),
+  HoverCardTrigger: ({ children }: { children: ReactNode }) =>
+    createElement("div", null, children),
   HoverCardContent: ({ children }: { children: ReactNode }) =>
     createElement("div", null, children),
 }));
@@ -83,8 +78,7 @@ describe("BadgeHoverCard", () => {
       "D:\\projects\\flowix",
     );
     expect(host.textContent).toContain("100");
-    expect(host.textContent).toContain("100 tok");
-    expect(host.textContent).toContain("In/Out100 tok / 3 tok");
+    expect(host.textContent).toContain("In/Out100 / 3 tok");
     expect(host.textContent).toContain("17%");
     expect(host.textContent).toContain("3");
     expect(host.textContent).toContain("Context");
@@ -173,7 +167,35 @@ describe("BadgeHoverCard", () => {
     });
 
     expect(requestRuntimeInfo).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain("12 tok / -");
+    expect(host.textContent).toContain("12 / - tok");
+
+    await act(async () => root.unmount());
+  });
+
+  it("refreshes when only aggregate tokens are present", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const requestRuntimeInfo = vi.fn().mockResolvedValue({
+      usage: { input_tokens: 42, output_tokens: 7 },
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(BadgeHoverCard, {
+          sessionId: "session-1",
+          usage: { total_tokens: 49 },
+          onRequestRuntimeInfo: requestRuntimeInfo,
+        }),
+      );
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-open="true"]')?.click();
+    });
+
+    expect(requestRuntimeInfo).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("42 / 7 tok");
 
     await act(async () => root.unmount());
   });

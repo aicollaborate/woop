@@ -182,8 +182,13 @@ export class AgentThreadCardBadgeChromeController {
         model,
         usage,
         onRequestRuntimeInfo:
-          typeKey === "deepseek-harness" && sessionId
-            ? () => deepseekHarness.sessionUsage(sessionId)
+          typeKey === "deepseek-harness"
+            ? () => {
+                const currentSessionId = this.getThreadId();
+                return currentSessionId
+                  ? deepseekHarness.sessionUsage(currentSessionId)
+                  : Promise.resolve(null);
+              }
             : undefined,
         cwd: this.getCwd() ?? undefined,
         onOpenChange: (open: boolean) =>

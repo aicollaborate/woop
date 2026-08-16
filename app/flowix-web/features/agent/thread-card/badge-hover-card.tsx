@@ -41,8 +41,8 @@ function formatTokens(n: number): string {
   return `${value.toFixed(digits).replace(/\.0$/, "")}${unit.suffix}`;
 }
 
-function formatUsageTokens(value: number | null | undefined): string {
-  return typeof value === "number" ? `${formatTokens(value)} tok` : "";
+function formatTokenCount(value: number | null | undefined): string {
+  return typeof value === "number" ? formatTokens(value) : "";
 }
 
 function lastPathSegment(path: string): string {
@@ -52,7 +52,14 @@ function lastPathSegment(path: string): string {
 
 function hasUsageContent(usage: UsageInfo | undefined): boolean {
   if (!usage) return false;
-  return Object.values(usage).some(
+  // Aggregate/context metadata alone is not enough for this card: DeepSeek
+  // Harness may persist those fields before its token breakdown is available.
+  // In that case the first hover must still query the SDK.
+  return [
+    usage.input_tokens,
+    usage.cached_input_tokens,
+    usage.output_tokens,
+  ].some(
     (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
   );
 }
@@ -118,8 +125,20 @@ export function BadgeHoverCard({
   const runtimeInfoRequestRef = React.useRef<Promise<BadgeHoverCardRuntimeInfo | null> | null>(
     null,
   );
+  const residentSessionIdRef = React.useRef(sessionId);
+  const observedSessionIdRef = React.useRef(sessionId);
+  const triggerHoveredRef = React.useRef(false);
+  const hoverCardOpenRef = React.useRef(false);
 
   React.useEffect(() => {
+    if (residentSessionIdRef.current !== sessionId) {
+      residentSessionIdRef.current = sessionId;
+      runtimeInfoLoadedRef.current = hasUsageContent(usage);
+      runtimeInfoRequestRef.current = null;
+      setDisplayModel(model);
+      setDisplayUsage(usage);
+      return;
+    }
     // Parent controllers periodically re-render this component. Do not let an
     // empty projection erase a resident snapshot fetched on the first hover.
     if (!runtimeInfoLoadedRef.current || hasUsageContent(usage)) {
@@ -129,7 +148,7 @@ export function BadgeHoverCard({
     if (hasUsageContent(usage)) {
       runtimeInfoLoadedRef.current = true;
     }
-  }, [model, usage]);
+  }, [model, sessionId, usage]);
 
   const requestRuntimeInfo = React.useCallback(() => {
     if (
@@ -147,10 +166,12 @@ export function BadgeHoverCard({
       return;
     }
     runtimeInfoRequestRef.current = request;
+    const requestSessionId = sessionId;
     void request
       .then((info) => {
+        if (residentSessionIdRef.current !== requestSessionId) return;
         if (info === null) return;
-        if (hasUsageContent(info.usage) || info.model) {
+        if (hasUsageContent(info.usage)) {
           runtimeInfoLoadedRef.current = true;
         }
         setDisplayModel(info.model ?? model);
@@ -164,10 +185,19 @@ export function BadgeHoverCard({
           runtimeInfoRequestRef.current = null;
         }
       });
-  }, [model, onRequestRuntimeInfo]);
+  }, [model, onRequestRuntimeInfo, sessionId]);
+
+  React.useEffect(() => {
+    if (observedSessionIdRef.current === sessionId) return;
+    observedSessionIdRef.current = sessionId;
+    if (triggerHoveredRef.current || hoverCardOpenRef.current) {
+      requestRuntimeInfo();
+    }
+  }, [requestRuntimeInfo, sessionId]);
 
   const handleOpenChange = React.useCallback(
     (open: boolean) => {
+      hoverCardOpenRef.current = open;
       onOpenChange?.(open);
       if (open) requestRuntimeInfo();
     },
@@ -199,7 +229,13 @@ export function BadgeHoverCard({
         <span
           aria-hidden="true"
           className="agent-thread-card__badge-hover-trigger"
-          onPointerEnter={requestRuntimeInfo}
+          onPointerEnter={() => {
+            triggerHoveredRef.current = true;
+            requestRuntimeInfo();
+          }}
+          onPointerLeave={() => {
+            triggerHoveredRef.current = false;
+          }}
         />
       </HoverCardTrigger>
       <HoverCardContent
@@ -259,8 +295,8 @@ export function BadgeHoverCard({
               {t("editor.threadCard.inputOutputTokens")}
             </span>
             <span className="text-right font-mono tabular-nums text-[var(--foreground)]">
-              {formatUsageTokens(displayUsage?.input_tokens) || "-"} /{" "}
-              {formatUsageTokens(displayUsage?.output_tokens) || "-"}
+              {formatTokenCount(displayUsage?.input_tokens) || "-"} /{" "}
+              {formatTokenCount(displayUsage?.output_tokens) || "-"} tok
             </span>
           </div>
 

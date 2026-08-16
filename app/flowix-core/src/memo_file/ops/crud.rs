@@ -1,5 +1,27 @@
 use super::*;
 
+/// 判断当前文件名和派生标题是否仍代表同一个标题。
+///
+/// 文件名冲突时会在原始标题后追加 `-N`。因此 `Stable-1.md` 可能仍然
+/// 对应正文标题 `Stable`；保存正文时不能因为这个系统生成的后缀而再次
+/// 触发 rename。只接受无前导零的正整数后缀，避免把用户真正使用的
+/// `Stable-01` / `Stable-0` 标题误判成冲突后缀。
+fn same_title_with_generated_conflict_suffix(current_base: &str, derived_title: &str) -> bool {
+    if current_base == derived_title {
+        return true;
+    }
+
+    let Some((base, suffix)) = current_base.rsplit_once('-') else {
+        return false;
+    };
+
+    base == derived_title
+        && !suffix.is_empty()
+        && suffix != "0"
+        && !suffix.starts_with('0')
+        && suffix.chars().all(|ch| ch.is_ascii_digit())
+}
+
 impl MemoFile {
     /// 创建一个 memo: 写 .md + 写 memo index。返回新建的 Memo (含 id / filename)。
     pub fn create_memo(&self, title: &str, body: &str, tag: Option<&str>) -> std::io::Result<Memo> {
@@ -288,7 +310,7 @@ impl MemoFile {
             .unwrap_or(&memo.filename)
             .to_string();
         let new_candidate = base_filename(derived_title);
-        if new_candidate == old_base {
+        if same_title_with_generated_conflict_suffix(&old_base, &new_candidate) {
             return Ok(memo);
         }
 
@@ -372,7 +394,7 @@ impl MemoFile {
             .unwrap_or(&memo.filename)
             .to_string();
         let new_candidate = base_filename(derived_title);
-        if new_candidate == old_base {
+        if same_title_with_generated_conflict_suffix(&old_base, &new_candidate) {
             return Ok(memo);
         }
 

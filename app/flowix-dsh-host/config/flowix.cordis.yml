@@ -52,6 +52,9 @@
         baseURL: !!js process.env.DSH_BASE_URL
         models:
           - id: !!js process.env.DSH_MODEL ?? 'flowix-model'
+            # The official DeepSeek V4 Flash/Pro model capacity is 1M tokens.
+            # This is resolved by Harness and returned by session.usage().
+            contextWindow: !!js "['deepseek-v4-flash', 'deepseek-v4-pro'].includes(process.env.DSH_MODEL ?? '') ? 1000000 : undefined"
 
 - id: sessions
   name: '@deepseek-ai/dsh-session-persistence-jsonl'

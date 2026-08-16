@@ -378,8 +378,11 @@ export function AgentConversationDetail({
               model={badgeData.model}
               usage={badgeData.usage}
               onRequestRuntimeInfo={
-                instance.agentType === 'deepseek-harness' && threadId
-                  ? () => deepseekHarness.sessionUsage(threadId)
+                instance.agentType === 'deepseek-harness'
+                  ? () =>
+                      threadId
+                        ? deepseekHarness.sessionUsage(threadId)
+                        : Promise.resolve(null)
                   : undefined
               }
               cwd={runtimeCwd}

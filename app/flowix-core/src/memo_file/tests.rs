@@ -390,6 +390,45 @@ fn write_memo_by_id_updates_global_notebook_without_switching_current() {
 }
 
 #[test]
+fn write_memo_global_ignores_generated_conflict_suffix() {
+    let (mut mf, tmp) = fresh_memo_file();
+    let other_dir = tmp.join("other-global-suffix");
+    fs::create_dir_all(&other_dir).unwrap();
+    let mut configs = mf.read_notebook_configs().expect("read notebooks");
+    configs.push(super::types::NotebookConfig {
+        id: "nb_other".to_string(),
+        name: "Other".to_string(),
+        icon: None,
+        path: format!("{}/", other_dir.display()),
+        is_default: false,
+        sort: 0,
+        created_at: 1,
+        updated_at: 1,
+    });
+    mf.write_notebook_configs(&configs)
+        .expect("write notebooks");
+
+    mf.set_current_notebook(Some("nb_other".to_string()));
+    let _existing = mf
+        .create_memo("Stable", "Stable\nexisting\n", None)
+        .unwrap();
+    let memo = mf
+        .create_memo("Stable", "Stable\nold body\n", None)
+        .unwrap();
+    assert_eq!(memo.filename, "Stable-1.md");
+    mf.set_current_notebook(Some("nb_test".to_string()));
+
+    let updated = mf
+        .write_memo_renaming_on_title_change_global(&memo.id, "Stable\nnew body\n")
+        .expect("global write ok");
+
+    assert_eq!(updated.filename, "Stable-1.md");
+    assert!(other_dir.join("Stable-1.md").exists());
+    assert!(!other_dir.join("Stable-2.md").exists());
+    assert_eq!(mf.current_notebook_id_value().as_deref(), Some("nb_test"));
+}
+
+#[test]
 fn pasted_file_with_key_from_other_notebook_gets_new_id_in_current_notebook() {
     let (mut mf, tmp) = fresh_memo_file();
 
@@ -881,7 +920,7 @@ fn write_rename_changes_disk_when_first_line_changes() {
 
 #[test]
 fn write_rename_noop_when_first_line_unchanged() {
-    // 首行未变 → 走完 write_memo 后比对 new_candidate == old_base,
+    // 首行未变 → 走完 write_memo 后判定标题仍对应当前文件,
     // 不 fs::rename, 不改 memo index.filename。
     let (mf, base) = fresh_memo_file();
     let memo = mf.create_memo("Stable", "old body\n", None).unwrap();
@@ -893,6 +932,82 @@ fn write_rename_noop_when_first_line_unchanged() {
     assert!(base.join("Stable.md").exists());
     let queried = mf.read_memo(&memo.id).expect("still in list");
     assert_eq!(queried.filename, "Stable.md");
+}
+
+#[test]
+fn write_rename_ignores_generated_conflict_suffix_when_title_is_base() {
+    let (mf, base) = fresh_memo_file();
+    let _existing = mf
+        .create_memo("Stable", "Stable\nexisting\n", None)
+        .unwrap();
+    let memo = mf
+        .create_memo("Stable", "Stable\nold body\n", None)
+        .unwrap();
+    assert_eq!(memo.filename, "Stable-1.md");
+
+    let updated = mf
+        .write_memo_renaming_on_title_change(&memo.id, "Stable\nnew body\n")
+        .expect("write ok");
+
+    assert_eq!(updated.filename, "Stable-1.md");
+    assert!(base.join("Stable-1.md").exists());
+    assert!(!base.join("Stable-2.md").exists());
+}
+
+#[test]
+fn write_rename_treats_suffix_in_new_title_as_a_title_change() {
+    let (mf, base) = fresh_memo_file();
+    let memo = mf
+        .create_memo("Stable", "Stable\nold body\n", None)
+        .unwrap();
+
+    let updated = mf
+        .write_memo_renaming_on_title_change(&memo.id, "Stable-1\nnew body\n")
+        .expect("write+rename ok");
+
+    assert_eq!(updated.filename, "Stable-1.md");
+    assert!(!base.join("Stable.md").exists());
+    assert!(base.join("Stable-1.md").exists());
+}
+
+#[test]
+fn write_rename_changes_generated_suffix_when_title_changes() {
+    let (mf, base) = fresh_memo_file();
+    let _existing = mf
+        .create_memo("Stable", "Stable\nexisting\n", None)
+        .unwrap();
+    let memo = mf
+        .create_memo("Stable", "Stable\nold body\n", None)
+        .unwrap();
+    assert_eq!(memo.filename, "Stable-1.md");
+
+    let updated = mf
+        .write_memo_renaming_on_title_change(&memo.id, "Stable-2\nnew body\n")
+        .expect("write+rename ok");
+
+    assert_eq!(updated.filename, "Stable-2.md");
+    assert!(!base.join("Stable-1.md").exists());
+    assert!(base.join("Stable-2.md").exists());
+}
+
+#[test]
+fn write_rename_keeps_filename_when_title_includes_same_suffix() {
+    let (mf, base) = fresh_memo_file();
+    let _existing = mf
+        .create_memo("Stable", "Stable\nexisting\n", None)
+        .unwrap();
+    let memo = mf
+        .create_memo("Stable", "Stable\nold body\n", None)
+        .unwrap();
+    assert_eq!(memo.filename, "Stable-1.md");
+
+    let updated = mf
+        .write_memo_renaming_on_title_change(&memo.id, "Stable-1\nnew body\n")
+        .expect("write ok");
+
+    assert_eq!(updated.filename, "Stable-1.md");
+    assert!(base.join("Stable-1.md").exists());
+    assert!(!base.join("Stable-2.md").exists());
 }
 
 #[test]

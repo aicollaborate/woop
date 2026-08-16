@@ -117,22 +117,28 @@ export const deepseekHarness = {
       { threadId },
     );
     if (usage === null) return null;
-    return {
-      model: usage.modelId ?? undefined,
-      usage: {
-        input_tokens: usage.inputTokens,
-        cached_input_tokens: usage.cacheReadTokens,
-        output_tokens: usage.outputTokens,
-        total_tokens: usage.inputTokens
-          + usage.cacheReadTokens
-          + usage.cacheWriteTokens
-          + usage.outputTokens,
-        model_context_window: usage.contextWindow ?? null,
-        context_used_tokens: usage.contextTokens ?? null,
-      },
-    };
+    return snapshotFromHarnessUsage(usage);
   },
 };
+
+function snapshotFromHarnessUsage(
+  usage: DeepSeekHarnessSessionUsage,
+): DeepSeekHarnessSessionSnapshot {
+  return {
+    model: usage.modelId ?? undefined,
+    usage: {
+      input_tokens: usage.inputTokens,
+      cached_input_tokens: usage.cacheReadTokens,
+      output_tokens: usage.outputTokens,
+      total_tokens: usage.inputTokens
+        + usage.cacheReadTokens
+        + usage.cacheWriteTokens
+        + usage.outputTokens,
+      model_context_window: usage.contextWindow ?? null,
+      context_used_tokens: usage.contextTokens ?? null,
+    },
+  };
+}
 
 export interface DeepSeekHarnessSessionSnapshot {
   model?: string;
