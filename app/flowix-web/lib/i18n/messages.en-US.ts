@@ -212,6 +212,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.agent.provider.configuredModelEdit": "Edit model",
     "preferences.agent.provider.configuredModelDelete": "Delete model",
     "preferences.agent.provider.configuredModelDeleteConfirm": "Delete model “{model}”?",
+    "preferences.agent.provider.configuredModelKeyMask": "API key configured",
     "preferences.agent.provider.customEditTitle": "Edit custom provider",
     "preferences.agent.provider.customSave": "Save changes",
     "preferences.agent.provider.customCreate": "Create provider",

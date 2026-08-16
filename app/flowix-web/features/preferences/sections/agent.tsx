@@ -1876,6 +1876,12 @@ export function AgentSection({
   );
 }
 
+/** Whether one card's provider has a non-empty API key in its key bucket. */
+function hasConfiguredApiKey(card: ConfiguredModelCard): boolean {
+  const bucket = card.config.providerId?.trim() || card.config.provider;
+  return (card.config.apiKeys[bucket] ?? '').trim().length > 0;
+}
+
 function ConfiguredModelsList({
   models,
   selectedModelId,
@@ -1924,38 +1930,50 @@ function ConfiguredModelsList({
                 <div className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2 text-xs">
-                      <span className="truncate text-[var(--foreground)]" title={model.providerName}>
+                      <span className="truncate rounded bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] px-1.5 py-0.5 text-[var(--primary)]" title={model.providerName}>
                         {model.providerName}
                       </span>
                       {model.id === selectedModelId
                         && (model.config.providerId ?? '') === (selectedProviderId ?? '') && (
-                        <span className="shrink-0 rounded bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] px-1.5 py-0.5 text-[10px] text-[var(--primary)]">
+                        <span className="shrink-0 text-[var(--muted-foreground)]">
                           {t('preferences.agent.provider.configuredModelActive')}
                         </span>
                       )}
                     </div>
-                    <div className="truncate text-xs text-[var(--foreground)]" title={model.id}>
+                    <div className="truncate text-sm font-semibold leading-[2] text-[var(--foreground)]" title={model.id}>
                       {model.id}
                     </div>
-                    <div className="truncate text-xs text-[var(--muted-foreground)]" title={model.apiUrl || undefined}>
+                    <div className="truncate text-xs leading-[1.3] text-[var(--muted-foreground)]" title={model.apiUrl || undefined}>
                       {model.apiUrl || '—'}
                     </div>
+                    {hasConfiguredApiKey(model) && (
+                      <span
+                        className="block truncate text-xl leading-[1.4] text-black"
+                        role="img"
+                        aria-label={t('preferences.agent.provider.configuredModelKeyMask')}
+                        title={t('preferences.agent.provider.configuredModelKeyMask')}
+                      >
+                        {'•••••••••'}
+                      </span>
+                    )}
                   </div>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
+                    className="size-7"
                     aria-label={t('preferences.agent.provider.configuredModelEdit')}
                     title={t('preferences.agent.provider.configuredModelEdit')}
                     onClick={() => onEdit(model)}
                     disabled={busy}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
+                    <Pencil className="h-3 w-3" />
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
+                    className="size-7"
                     aria-label={t('preferences.agent.provider.configuredModelDelete')}
                     title={t('preferences.agent.provider.configuredModelDelete')}
                     onClick={() => {
@@ -1965,7 +1983,7 @@ function ConfiguredModelsList({
                     }}
                     disabled={busy}
                   >
-                    <Trash2 className="h-3.5 w-3.5 text-[var(--destructive)]" />
+                    <Trash2 className="h-3 w-3 text-[var(--destructive)]" />
                   </Button>
                 </div>
               )}

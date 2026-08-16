@@ -201,6 +201,7 @@ const zhCN = {
     "preferences.agent.provider.configuredModelEdit": "编辑模型",
     "preferences.agent.provider.configuredModelDelete": "删除模型",
     "preferences.agent.provider.configuredModelDeleteConfirm": "确定删除模型“{model}”？",
+    "preferences.agent.provider.configuredModelKeyMask": "密钥已配置",
     "preferences.agent.provider.customEditTitle": "编辑自定义提供方",
     "preferences.agent.provider.customSave": "保存修改",
     "preferences.agent.provider.customCreate": "创建提供方",
