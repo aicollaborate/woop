@@ -29,6 +29,7 @@ try {
   run('git', ['-C', checkout, 'apply', resolve(hostRoot, 'patches/downstream-single-exe-options.patch')], hostRoot)
   run('git', ['-C', checkout, 'apply', resolve(hostRoot, 'patches/agent-presets-sdk-server.patch')], hostRoot)
   run('git', ['-C', checkout, 'apply', resolve(hostRoot, 'patches/strip-dev-only-artifacts.patch')], hostRoot)
+  run('git', ['-C', checkout, 'apply', resolve(hostRoot, 'patches/sdk-runtime-mcp-client.patch')], hostRoot)
   await rm(resolve(checkout, '.git'), { recursive: true, force: true })
 
   await rm(backup, { recursive: true, force: true })

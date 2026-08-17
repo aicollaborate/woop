@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline'
 import test from 'node:test'
 
 test('packaged host drives the packaged Harness runtime through a mock provider turn', async () => {
-  const root = resolve(import.meta.dirname, '../..')
+  const root = resolve(import.meta.dirname, '../../..')
   const triple = hostTriple()
   const suffix = process.platform === 'win32' ? '.exe' : ''
   const host = resolve(root, `app/flowix-desktop/binaries/dsh-host-${triple}${suffix}`)
@@ -80,7 +80,9 @@ test('packaged host drives the packaged Harness runtime through a mock provider 
 
     const events = frames.filter(frame => frame.method === 'run.event').map(frame => frame.params.event)
     assert.equal(events.find(event => event.type === 'assistant.delta')?.text, 'hello from packaged runtime')
-    assert.deepEqual(mock.toolNames, ['bash', 'str_replace_editor'])
+    assert.deepEqual([...mock.toolNames].sort(), [
+      'bash', 'mcp__dsh-flowix-memory__flowix_memo', 'str_replace_editor',
+    ])
     assert.equal(events.find(event => event.type === 'usage')?.outputTokens, 4)
     assert.equal(events.at(-1)?.reason, 'completed')
     assert.equal(mock.requests, 1)

@@ -1,0 +1,15 @@
+# dsh-flowix-memory: connect any DeepSeek Harness instance to the local
+# flowix-cli MCP server. Requires the `flowix` CLI on PATH (or the
+# FLOWIX_CLI_PATH environment variable) plus access to the Flowix notebook
+# data directory (default `~/.flowix`; override with FLOWIX_HOME/FLOWIX_DATA).
+#
+# Keep this row in sync with config/flowix.cordis.yml (id, serverName, args);
+# tests/bundle-sync.test.ts guards the drift.
+- insert:
+    - id: dsh-flowix-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: dsh-flowix-memory
+        transport: stdio
+        command: !!js process.env.FLOWIX_CLI_PATH ?? 'flowix'
+        args: ['mcp']

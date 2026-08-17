@@ -1,0 +1,30 @@
+{
+  "name": "dsh-flowix-memory",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness bundle: expose Flowix memos and artifact tools through the local flowix-cli MCP server",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "flowix",
+    "mcp",
+    "notes"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/text2future/flowix.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -15,6 +15,7 @@ const FLOWIX_RUNTIME_ROOTS = [
   '@deepseek-ai/dsh-agent-presets',
   '@deepseek-ai/dsh-agent-tool-presentation',
   '@deepseek-ai/dsh-llm-pi-ai',
+  '@deepseek-ai/dsh-mcp-client',
   '@deepseek-ai/dsh-settings-file',
   '@deepseek-ai/dsh-session-persistence-jsonl',
   '@deepseek-ai/dsh-session-checkpoint-policy',

@@ -128,6 +128,19 @@
   config:
     timeoutMs: 60000
 
+# Flowix's own memo and artifact-tool surface exposed as one MCP server.
+# `command` resolves to the bundled flowix-cli sidecar through
+# FLOWIX_DSH_MCP_CLI (set by the host); the PATH fallback covers development
+# checkouts where the CLI is linked. The server is the `flowix mcp` stdio
+# frontend (see app/flowix-cli/src/mcp.rs) — no shell is involved.
+- id: dsh-flowix-memory
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: dsh-flowix-memory
+    transport: stdio
+    command: !!js process.env.FLOWIX_DSH_MCP_CLI ?? 'flowix'
+    args: ['mcp']
+
 # The SDK has no approval response method yet. Never upgrade permissions in
 # the runtime; denied operations stay denied and return to the model.
 - id: approval

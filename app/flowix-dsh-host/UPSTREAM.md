@@ -9,7 +9,7 @@
 imports the upstream TypeScript SDK client and protocol directly. The runtime
 build reuses the upstream SDK runtime closure and executable build script.
 
-Flowix applies five small patches after import:
+Flowix applies six small patches after import:
 
 - `patches/runtime-bash-sandbox.patch` adds the upstream sandboxed bash
   provider to the SDK runtime closure because the stock Python SDK composition
@@ -33,6 +33,11 @@ Flowix applies five small patches after import:
   prebuilds) from the staged closure before packaging, shrinking the single
   executable. Windows is a non-goal, so those prebuilds are dead weight on the
   macOS and Linux targets.
+- `patches/sdk-runtime-mcp-client.patch` adds `@deepseek-ai/dsh-mcp-client`
+  to the `python/sdk-runtime` deploy manifest so the MCP client bridge is part
+  of the generic deployed closure. Flowix's composition mounts one instance
+  (`dsh-flowix-memory`) that connects to the bundled `flowix-cli mcp` server, so the
+  runtime needs the package inside the pruned single executable.
 
 Update the snapshot only through `scripts/sync-upstream.mjs`; the script checks
 the requested commit before replacing the tree.

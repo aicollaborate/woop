@@ -48,6 +48,8 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   env.DSH_AGENT_PRESET_ROOT = presetRootPath(disabled)
   env.DSH_SESSION_ROOT = sessionRoot(spec.sessionId)
   env.DSH_CORDIS_CONFIG = cordisConfigPath(disabled)
+  const mcpCli = flowixCliPath()
+  if (mcpCli !== undefined) env.FLOWIX_DSH_MCP_CLI = mcpCli
   env.DSH_SETTINGS_MODULE = pathToFileURL(join(
     hostRoot(),
     'vendor/deepseek-harness/packages/settings/settings-file/src/index.ts',
@@ -142,6 +144,23 @@ function hostRoot(): string {
   const parent = dirname(entryDirectory)
   if (existsSync(join(parent, 'config/flowix.cordis.yml'))) return parent
   return entryDirectory
+}
+
+/**
+ * Resolve the flowix-cli executable used by the `dsh-flowix-memory` composition row.
+ * Packaged builds place the CLI sidecar beside the dsh-host executable; the
+ * development fallback is the CLI staged by `scripts/build-cli.sh`. An
+ * explicit FLOWIX_DSH_MCP_CLI wins so tests and custom launchers can point at
+ * any build. Absent a candidate, the runtime falls back to `flowix` on PATH.
+ */
+function flowixCliPath(): string | undefined {
+  const configured = process.env.FLOWIX_DSH_MCP_CLI
+  if (configured !== undefined && configured !== '') return configured
+  const candidates = [
+    join(dirname(resolve(process.execPath)), 'flowix-cli'),
+    join(hostRoot(), '../flowix-desktop/binaries/flowix-cli'),
+  ]
+  return candidates.find(existsSync)
 }
 
 function safeSegment(value: string): string {
