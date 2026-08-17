@@ -55,6 +55,22 @@ Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **
 
 ---
 
+## Built-in agent runtime (DeepSeek Harness)
+
+Flowix ships with a built-in agent runtime powered by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It runs on your own provider configuration (OpenAI, Anthropic, DeepSeek, and other OpenAI-compatible providers), so it is not limited to DeepSeek models. It ships four agent presets — `standard`, `code`, `minimal`, and `cordis` — and exposes your notes to the agent through a bundled MCP memory bridge (`flowix mcp`).
+
+For contributors, build the host and runtime sidecars with:
+
+```bash
+npm install
+npm --prefix app/flowix-dsh-host run vendor:install
+npm run dsh:build
+```
+
+See [`app/flowix-dsh-host/README.md`](app/flowix-dsh-host/README.md) for the protocol, security boundary, and verification details.
+
+---
+
 ## Your notes stay local and under your control
 
 Flowix keeps your work as plain Markdown files on your device. You choose what agents can access, when context is sent, and how your files are synced, backed up, or versioned.

@@ -55,6 +55,22 @@
 
 ---
 
+## 内置 Agent 运行时（DeepSeek Harness）
+
+Flowix 内置由 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 驱动的 Agent 运行时。它复用你自己的 Provider 配置（OpenAI、Anthropic、DeepSeek 及其他 OpenAI 兼容 Provider），并不局限于 DeepSeek 模型；内置 `standard`、`code`、`minimal`、`cordis` 四种 Agent 预置，并通过捆绑的 MCP 记忆桥（`flowix mcp`）把你的笔记暴露给 Agent。
+
+贡献者可用以下命令构建 host 与 runtime sidecar：
+
+```bash
+npm install
+npm --prefix app/flowix-dsh-host run vendor:install
+npm run dsh:build
+```
+
+协议、安全边界与验证细节见 [`app/flowix-dsh-host/README.md`](app/flowix-dsh-host/README.md)。
+
+---
+
 ## 笔记留在本地，由你掌控
 
 Flowix 将笔记保存为本地 Markdown 文件。你决定 Agent 能看到什么，也可以自由选择同步和备份方式。
