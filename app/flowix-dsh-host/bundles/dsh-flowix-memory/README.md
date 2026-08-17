@@ -25,22 +25,29 @@ local notebook data directory.
 
 ## Install
 
-```sh
-# published package
-dsh plugin add dsh-flowix-memory
+`dsh plugin` manages one profile at a time and requires `--profile <name>`
+(shipped profiles: `web`, `headless`). The bundle ships in the
+[flowix-main](https://github.com/text2future/flowix) repository and is not yet
+published to npm, so install it from the checkout:
 
-# or local checkout / tarball
-dsh plugin add ./dsh-flowix-memory
-dsh plugin add ./dsh-flowix-memory-0.1.0.tgz
+```sh
+# from the flowix-main checkout root
+dsh plugin --profile <name> add ./app/flowix-dsh-host/bundles/dsh-flowix-memory
 ```
 
-The row activates for the current profile. To persist across profiles, add the
-package to each profile's `cordis.patch.yml`, or see
-`dsh plugin --help` for profile selection.
+Once published, the npm package installs the same way:
+
+```sh
+dsh plugin --profile <name> add dsh-flowix-memory
+```
+
+The row activates for that profile. To persist across profiles, install the
+package into each profile, or see `dsh plugin --help` for profile selection.
 
 ## Verify
 
-Start Harness (`dsh web`), then check that the tool is registered:
+Start Harness for the profile you installed into (`dsh web` for the `web`
+profile), then check that the tool is registered:
 
 ```
 mcp__dsh-flowix-memory__flowix_memo

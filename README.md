@@ -59,24 +59,23 @@ Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **
 
 [dsh-flowix-memory](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) is a config-only [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that connects any Harness instance to your **local Flowix notes** through the bundled `flowix-cli` MCP server. Once installed, the agent gets the `mcp__dsh-flowix-memory__flowix_memo` tool to search, read, create, and edit Flowix Markdown memos — and to create plugin artifacts such as mind maps. It contains no code and never touches a remote service: the CLI is spawned locally over stdio and reads your local notebook data.
 
-**Install**
+**Install** — `dsh plugin` manages one profile at a time and **requires** `--profile <name>` (shipped profiles: `web`, `headless`). The bundle ships in this repo and is not yet published to npm, so install it from the flowix-main checkout:
 
 ```sh
-# published package
-dsh plugin add dsh-flowix-memory
-
-# or a local checkout / tarball
-dsh plugin add ./dsh-flowix-memory-0.1.0.tgz
+# from the flowix-main checkout root
+dsh plugin --profile <name> add ./app/flowix-dsh-host/bundles/dsh-flowix-memory
 ```
+
+Once published, the npm package installs the same way: `dsh plugin --profile <name> add dsh-flowix-memory`.
 
 **Prerequisites**
 
 - The `flowix` CLI on `PATH` (or set `FLOWIX_CLI_PATH` to its absolute path).
 - Access to the Flowix notebook data (defaults to `~/.flowix`; override with `FLOWIX_HOME` / `FLOWIX_DATA`).
 
-**Verify** — start Harness (`dsh web`), then check that the tool is registered: `mcp__dsh-flowix-memory__flowix_memo`.
+**Verify** — start Harness for that profile (`dsh web` for the `web` profile), then check that the tool is registered: `mcp__dsh-flowix-memory__flowix_memo`.
 
-See the [plugin README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) for configuration (`FLOWIX_CLI_PATH`) and uninstall (`dsh plugin remove dsh-flowix-memory`).
+See the [plugin README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) for configuration (`FLOWIX_CLI_PATH`) and uninstall (`dsh plugin --profile <name> remove dsh-flowix-memory`).
 
 ---
 

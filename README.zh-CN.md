@@ -59,24 +59,23 @@
 
 [dsh-flowix-memory](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) 是一个纯配置的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，通过捆绑的 `flowix-cli` MCP server 把任何 Harness 实例连接到你的**本地 Flowix 笔记**。安装后，Agent 将获得 `mcp__dsh-flowix-memory__flowix_memo` 工具，可搜索、读取、创建和编辑 Flowix Markdown 笔记，也可以创建思维导图等插件产物。它不含任何代码，也不会连接远程服务：CLI 通过 stdio 在本地拉起，读取你的本地笔记本数据。
 
-**安装**
+**安装** — `dsh plugin` 每次管理一个 profile，且**必须**带 `--profile <name>`（内置 profile：`web`、`headless`）。该 bundle 随本仓库发布，尚未发布到 npm，因此请从 flowix-main checkout 安装：
 
 ```sh
-# 已发布包
-dsh plugin add dsh-flowix-memory
-
-# 或本地 checkout / tarball
-dsh plugin add ./dsh-flowix-memory-0.1.0.tgz
+# 在 flowix-main checkout 根目录下执行
+dsh plugin --profile <name> add ./app/flowix-dsh-host/bundles/dsh-flowix-memory
 ```
+
+发布到 npm 后，可用同样的方式安装：`dsh plugin --profile <name> add dsh-flowix-memory`。
 
 **前置条件**
 
 - `flowix` CLI 位于 `PATH`（或通过 `FLOWIX_CLI_PATH` 指定其绝对路径）。
 - 可访问 Flowix 笔记本数据（默认 `~/.flowix`；可用 `FLOWIX_HOME` / `FLOWIX_DATA` 覆盖）。
 
-**验证** — 启动 Harness（`dsh web`），然后确认工具已注册：`mcp__dsh-flowix-memory__flowix_memo`。
+**验证** — 启动对应 profile 的 Harness（`web` profile 用 `dsh web`），然后确认工具已注册：`mcp__dsh-flowix-memory__flowix_memo`。
 
-配置（`FLOWIX_CLI_PATH`）与卸载（`dsh plugin remove dsh-flowix-memory`）详见[插件 README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md)。
+配置（`FLOWIX_CLI_PATH`）与卸载（`dsh plugin --profile <name> remove dsh-flowix-memory`）详见[插件 README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md)。
 
 ---
 
