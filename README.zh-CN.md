@@ -55,19 +55,28 @@
 
 ---
 
-## 内置 Agent 运行时（DeepSeek Harness）
+## dsh-flowix-memory 插件
 
-Flowix 内置由 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 驱动的 Agent 运行时。它复用你自己的 Provider 配置（OpenAI、Anthropic、DeepSeek 及其他 OpenAI 兼容 Provider），并不局限于 DeepSeek 模型；内置 `standard`、`code`、`minimal`、`cordis` 四种 Agent 预置，并通过捆绑的 MCP 记忆桥（`flowix mcp`）把你的笔记暴露给 Agent。
+[dsh-flowix-memory](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) 是一个纯配置的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，通过捆绑的 `flowix-cli` MCP server 把任何 Harness 实例连接到你的**本地 Flowix 笔记**。安装后，Agent 将获得 `mcp__dsh-flowix-memory__flowix_memo` 工具，可搜索、读取、创建和编辑 Flowix Markdown 笔记，也可以创建思维导图等插件产物。它不含任何代码，也不会连接远程服务：CLI 通过 stdio 在本地拉起，读取你的本地笔记本数据。
 
-贡献者可用以下命令构建 host 与 runtime sidecar：
+**安装**
 
-```bash
-npm install
-npm --prefix app/flowix-dsh-host run vendor:install
-npm run dsh:build
+```sh
+# 已发布包
+dsh plugin add dsh-flowix-memory
+
+# 或本地 checkout / tarball
+dsh plugin add ./dsh-flowix-memory-0.1.0.tgz
 ```
 
-协议、安全边界与验证细节见 [`app/flowix-dsh-host/README.md`](app/flowix-dsh-host/README.md)。
+**前置条件**
+
+- `flowix` CLI 位于 `PATH`（或通过 `FLOWIX_CLI_PATH` 指定其绝对路径）。
+- 可访问 Flowix 笔记本数据（默认 `~/.flowix`；可用 `FLOWIX_HOME` / `FLOWIX_DATA` 覆盖）。
+
+**验证** — 启动 Harness（`dsh web`），然后确认工具已注册：`mcp__dsh-flowix-memory__flowix_memo`。
+
+配置（`FLOWIX_CLI_PATH`）与卸载（`dsh plugin remove dsh-flowix-memory`）详见[插件 README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md)。
 
 ---
 
