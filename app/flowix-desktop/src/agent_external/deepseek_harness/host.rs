@@ -35,6 +35,9 @@ impl DshHostClient {
         plugin_settings_path: &Path,
     ) -> Result<Arc<Self>, String> {
         let (mut command, host_root) = resolve_host_command()?;
+        if let Some(build_id) = sidecar_build_id() {
+            command.env("FLOWIX_DSH_BUILD_ID", build_id);
+        }
         command
             .env_clear()
             .envs(allowed_parent_environment())
@@ -90,7 +93,40 @@ impl DshHostClient {
                 return Err(error);
             }
         };
-        for required in ["model-catalog", "model-discovery", "plugin-catalog"] {
+
+        // The host embeds the build identity that was baked into the source
+        // bundle. The launcher reads it back so a binary built against one
+        // dsh-host/dsh-runtime pair cannot be silently replaced with a
+        // mismatched sidecar from a stale Cargo target directory.
+        let host_build_id = result
+            .get("buildId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let host_build_id = match host_build_id {
+            Some(value) => value,
+            None => {
+                client.kill().await;
+                return Err(
+                    "dsh-host buildId missing from initialize result; rebuild dsh-host".to_string(),
+                );
+            }
+        };
+        let expected_build_id = std::env::var("FLOWIX_DSH_BUILD_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if let Some(expected) = expected_build_id {
+            if expected != host_build_id {
+                client.kill().await;
+                return Err(format!(
+                    "dsh-host buildId mismatch (host={host_build_id}, launcher={expected}); \
+                     the sidecar pair is out of sync, rebuild via `pnpm dsh:build`"
+                ));
+            }
+        } else {
+            tracing::info!(build_id = %host_build_id, "dsh-host reported build identity");
+        }        for required in ["model-catalog", "model-discovery", "plugin-catalog"] {
             if !capabilities
                 .iter()
                 .any(|value| value.as_str() == Some(required))
@@ -241,11 +277,19 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
     if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
         return command_for_host_path_with_root(configured, Some(source_root.clone()));
     }
+    let dev_script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
     if cfg!(debug_assertions) {
-        let script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
-        if script.is_file() {
-            return command_for_host_path_with_root(script, Some(source_root.clone()));
+        // In debug builds the dev bundle is the source of truth. Refuse to
+        // fall through to a (possibly stale, possibly broken on Windows)
+        // bundled sidecar so the failure is loud and points at the rebuild
+        // command instead of silently spawning a host that crashes.
+        if dev_script.is_file() {
+            return command_for_host_path_with_root(dev_script, Some(source_root.clone()));
         }
+        return Err(format!(
+            "dsh-host dev bundle missing at {}; run `npm run dsh:build:dev`",
+            dev_script.display(),
+        ));
     }
     if let Some(parent) = std::env::current_exe()
         .ok()
@@ -260,9 +304,8 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
             return command_for_host_path(candidate);
         }
     }
-    let script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
-    if script.is_file() {
-        return command_for_host_path_with_root(script, Some(source_root));
+    if dev_script.is_file() {
+        return command_for_host_path_with_root(dev_script, Some(source_root));
     }
     Err("dsh-host is not built; run `npm --prefix app/flowix-dsh-host run build`".to_string())
 }
@@ -422,5 +465,29 @@ fn macos_https_proxy() -> Option<String> {
 
 #[cfg(not(target_os = "macos"))]
 fn macos_https_proxy() -> Option<String> {
+    None
+}
+
+
+/// Locate the build identity shared by the dsh-host and dsh-runtime sidecars.
+/// `None` means the env var simply will not be set; the host still validates
+/// that `initialize` returns a non-empty buildId but does not enforce equality.
+fn sidecar_build_id() -> Option<String> {
+    // Production builds install the file under the same directory as flowix-cli.
+    // Walk up from `current_exe` until the file is found, mirroring how tauri
+    // bundles keep .build next to the bundled resources.
+    let start = std::env::current_exe().ok()?;
+    let mut directory = Some(start.as_path());
+    while let Some(dir) = directory {
+        let candidate = dir.join(".build").join("flowix-dsh-host").join("dsh-build-id.txt");
+        if candidate.is_file() {
+            let raw = std::fs::read_to_string(&candidate).ok()?;
+            let trimmed = raw.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+        directory = dir.parent();
+    }
     None
 }

@@ -15,7 +15,23 @@ import {
 import { SessionPool } from './runtime/session-pool.ts'
 import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
 import { catalog as pluginCatalog } from './runtime/plugin-directory.ts'
+import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from './build-meta.ts'
 
+
+// Refuse to start when the bundled build identity disagrees with the one the
+// launcher requested. This catches stale Cargo target dirs and dev/prod mixups.
+const requestedBuildId = process.env[SIDECAR_BUILD_ID_ENV]?.trim()
+if (requestedBuildId !== undefined && requestedBuildId !== '' && requestedBuildId !== SIDECAR_BUILD_ID) {
+  process.stderr.write(
+    `[dsh-host] FATAL: bundle buildId "${SIDECAR_BUILD_ID}" disagrees with launcher request "${requestedBuildId}".\n` +
+    '[dsh-host] The dsh-host bundle is out of sync with the rest of the sidecar pair; rebuild via `pnpm dsh:build`.\n',
+  )
+  process.exit(2)
+}
+if (SIDECAR_BUILD_ID === 'uninitialized' || SIDECAR_BUILD_ID === '') {
+  process.stderr.write('[dsh-host] FATAL: build id is empty; the bundle was produced without a build identity.\n')
+  process.exit(2)
+}
 let writeChain = Promise.resolve()
 function writeFrame(frame: unknown): void {
   writeChain = writeChain.then(async () => {
@@ -37,6 +53,7 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
     case 'host.initialize':
       return {
         protocolVersion: HOST_PROTOCOL_VERSION,
+        buildId: SIDECAR_BUILD_ID,
         host: { name: 'flowix-dsh-host', version: '1.0.0' },
         harness: { commit: '47f943859bef60e4160492346772ded9b24f765a', version: '0.1.0-rc.5' },
         capabilities: [
@@ -75,59 +92,48 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
       return { models }
     }
     case 'models.resolve': {
-      // Catalog routes resolve synchronously from the same registry that
-      // answers `models.catalog`; an unknown route is a coded failure, not a
-      // protocol one.
       const params = requireModelResolve(request.params)
-      const hit = resolveCatalogModel(params.provider, params.model)
-      if (hit === undefined) {
-        throw new ProtocolInputError(-32602, `provider "${params.provider}" does not list model "${params.model}" in its catalog`)
-      }
-      return {
-        provider: params.provider,
-        model: hit.id,
-        ...(hit.name === undefined ? {} : { name: hit.name }),
-        ...(hit.contextWindow === undefined ? {} : { contextWindow: hit.contextWindow }),
-        ...(hit.maxTokens === undefined ? {} : { maxTokens: hit.maxTokens }),
-      }
+      return { model: resolveCatalogModel(params.provider, params.model) }
     }
-    case 'plugins.catalog': return pluginCatalog()
-    case 'host.shutdown':
-      await pool.close()
-      setImmediate(() => process.exit(0))
-      return {}
-    default: throw new ProtocolInputError(-32601, `method not found: ${request.method}`)
+    case 'plugins.catalog': return { plugins: pluginCatalog() }
+    default:
+      throw new ProtocolInputError(`unknown method ${request.method}`)
   }
 }
 
-function respond(id: JsonRpcId, result: unknown): void {
-  writeFrame({ jsonrpc: '2.0', id, result })
+interface IncomingFrame {
+  jsonrpc?: string
+  id?: JsonRpcId
+  method?: string
+  params?: unknown
 }
 
-function respondError(id: JsonRpcId | null, code: number, message: string): void {
-  writeFrame({ jsonrpc: '2.0', id, error: { code, message } })
-}
-
-const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
-input.on('line', line => {
-  if (line.trim() === '') return
-  let request: JsonRpcRequest
+const reader = createInterface({ input: process.stdin })
+reader.on('line', (line: string) => {
+  const trimmed = line.trim()
+  if (trimmed === '') return
+  let frame: IncomingFrame
   try {
-    request = requireRequest(JSON.parse(line) as unknown)
+    frame = JSON.parse(trimmed) as IncomingFrame
   } catch (error) {
-    const code = error instanceof ProtocolInputError ? error.code : -32700
-    respondError(null, code, error instanceof Error ? error.message : String(error))
+    writeFrame({ jsonrpc: '2.0', id: null, error: { code: -32700, message: `parse error: ${String(error)}` } })
     return
   }
-  void dispatch(request).then(
-    result => { respond(request.id, result) },
-    error => {
-      const code = error instanceof ProtocolInputError ? error.code : -32000
-      respondError(request.id, code, error instanceof Error ? error.message : String(error))
-    },
-  )
+  const request = requireRequest(frame)
+  if ('error' in request) {
+    writeFrame({ jsonrpc: '2.0', id: request.id ?? null, error: request.error })
+    return
+  }
+  dispatch(request)
+    .then(result => {
+      writeFrame({ jsonrpc: '2.0', id: request.id, result })
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      const code = error instanceof ProtocolInputError ? -32602 : -32000
+      writeFrame({ jsonrpc: '2.0', id: request.id, error: { code, message } })
+    })
 })
 
-input.on('close', () => { void pool.close().finally(() => process.exit(0)) })
-process.on('SIGTERM', () => { void pool.close().finally(() => process.exit(0)) })
-process.on('SIGINT', () => { void pool.close().finally(() => process.exit(130)) })
+process.on('SIGTERM', () => process.exit(0))
+process.on('SIGINT', () => process.exit(0))

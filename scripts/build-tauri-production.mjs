@@ -34,7 +34,9 @@ if (targetPlatform === "darwin") {
   run("npm", ["run", "dsh:build:macos"]);
 } else {
   run("npm", ["run", "cli:build"]);
-  if (targetPlatform !== "win32") {
+  if (targetPlatform === "win32") {
+    run("npm", ["run", "dsh:build:win"]);
+  } else {
     run("npm", ["run", "dsh:build"]);
   }
 }

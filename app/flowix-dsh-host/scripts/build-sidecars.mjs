@@ -110,16 +110,20 @@ for (const target of targets) {
 process.stdout.write(`Flowix DSH sidecars staged in ${tauriBins}\n`)
 
 function hostTarget() {
-  const platform = process.platform === 'darwin' ? 'macos' : process.platform
-  if (!['macos', 'linux'].includes(platform) || !['x64', 'arm64'].includes(process.arch)) {
+  const platform = process.platform === 'darwin'
+    ? 'macos'
+    : process.platform === 'win32'
+      ? 'windows'
+      : process.platform
+  if (!['macos', 'linux', 'windows'].includes(platform) || !['x64', 'arm64'].includes(process.arch)) {
     throw new Error(`unsupported DSH sidecar host ${process.platform}-${process.arch}`)
   }
   return `node24-${platform}-${process.arch}`
 }
 
 function validateTarget(target) {
-  if (!/^node24-(macos|linux)-(x64|arm64)$/.test(target)) {
-    throw new Error(`unsupported target ${target}; expected node24-(macos|linux)-(x64|arm64)`)
+  if (!/^node24-(macos|linux|windows)-(x64|arm64)$/.test(target)) {
+    throw new Error(`unsupported target ${target}; expected node24-(macos|linux|windows)-(x64|arm64)`)
   }
 }
 
@@ -133,9 +137,13 @@ function tauriName(name, target) {
 function tauriTriple(target) {
   const platform = targetPlatform(target)
   const arch = targetArch(target)
-  return platform === 'macos'
-    ? `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`
-    : `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-gnu`
+  if (platform === 'macos') {
+    return `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`
+  }
+  if (platform === 'windows') {
+    return `x86_64-pc-windows-msvc`
+  }
+  return `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-gnu`
 }
 
 function vendorBin(name) {
@@ -147,6 +155,10 @@ async function stripProduct(product, target) {
   if (targetPlatform(target) === 'macos') {
     await run('strip', ['-x', product], repo)
     await run('codesign', ['--force', '--sign', '-', product], repo)
+    return
+  }
+  if (targetPlatform(target) === 'windows') {
+    // Windows executables ship unstripped; the Tauri installer step performs signing.
     return
   }
   await run('strip', ['--strip-unneeded', product], repo)

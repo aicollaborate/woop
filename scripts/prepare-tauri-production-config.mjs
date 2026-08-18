@@ -72,8 +72,6 @@ production.bundle ??= {};
 
 if (targetPlatform === "win32") {
   production.bundle.targets = ["nsis"];
-  production.bundle.externalBin = (production.bundle.externalBin ?? [])
-    .filter((binary) => !binary.startsWith("binaries/dsh-"));
   production.bundle.windows ??= {};
   if (production.bundle.macOS) {
     delete production.bundle.macOS.signingIdentity;

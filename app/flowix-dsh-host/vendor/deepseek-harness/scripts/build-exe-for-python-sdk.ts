@@ -49,7 +49,7 @@ const ASSET_GLOBS = [
   'node_modules/**/*.wasm',
 ]
 
-const PLATFORMS = ['linux', 'macos'] as const
+const PLATFORMS = ['linux', 'macos', 'windows'] as const
 const ARCHES = ['x64', 'arm64'] as const
 type Platform = (typeof PLATFORMS)[number]
 type Arch = (typeof ARCHES)[number]
@@ -119,7 +119,13 @@ class Target {
    * @returns the host target; throws on an unsupported host platform or arch.
    */
   static host(): Target {
-    const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'linux' ? 'linux' : undefined
+    const platform = process.platform === 'darwin'
+      ? 'macos'
+      : process.platform === 'linux'
+        ? 'linux'
+        : process.platform === 'win32'
+          ? 'windows'
+          : undefined
     if (platform === undefined) {
       throw new Error(`build-exe-for-python-sdk: unsupported host platform ${process.platform}; pass --targets explicitly.`)
     }
@@ -511,7 +517,7 @@ class SingleExeBuild {
         await copyFile(this.cli.launcher, join(this.staging, launcherName))
         await writeFile(join(this.staging, dispatcherName), [
           "if (process.env.FLOWIX_DSH_RUNTIME_MODE === '1') {",
-          "  void import('@deepseek-ai/dsh-sdk-jsonrpc-demo/packaged-bin')",
+          `  require('./${launcherName}')`,
           '} else {',
           `  require('./${launcherName}')`,
           '}',
@@ -575,11 +581,18 @@ class SingleExeBuild {
       '--output',
       product,
     ])
-    if (!this.cli.dryRun && !existsSync(product)) {
+    // pkg appends .exe on Windows regardless of --output. Try the literal
+    // path first, then fall back to .exe when running on Windows.
+    const resolvedProduct = existsSync(product)
+      ? product
+      : process.platform === 'win32' && existsSync(product + '.exe')
+        ? product + '.exe'
+        : product
+    if (!this.cli.dryRun && !existsSync(resolvedProduct)) {
       throw new Error(`build-exe-for-python-sdk: product ${product} is missing after the pkg run; inspect ${this.outDir}.`)
     }
-    if (target.platform !== 'macos') return [product]
-    const spawnHelper = `${product}-spawn-helper`
+    if (target.platform !== 'macos') return [resolvedProduct]
+    const spawnHelper = `${resolvedProduct}-spawn-helper`
     const source = join(this.staging, 'node_modules', 'node-pty', 'prebuilds', `darwin-${target.arch}`, 'spawn-helper')
     if (this.cli.dryRun) {
       console.log(`build-exe-for-python-sdk: [dry-run] cp ${source} ${spawnHelper}`)
@@ -675,6 +688,8 @@ class SingleExeBuild {
         stdio: 'inherit',
         // Artifact builds must not mutate or validate a developer's Git hooks.
         env: { ...process.env, CI: 'true' },
+        // Windows refuses to spawn .cmd without shell=true since Node 20 (CVE-2024-27980).
+        shell: process.platform === 'win32',
       })
       child.once('error', (error) => {
         reject(new Error(`build-exe-for-python-sdk: ${label} failed to spawn: ${error.message} (${printable})`))

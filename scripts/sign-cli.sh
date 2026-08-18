@@ -102,7 +102,7 @@ sign_macos() {
 
 # =================== Windows ===================
 sign_windows() {
-  local names=(flowix-cli)
+  local names=(flowix-cli dsh-host)
 
   if [[ -z "${WINDOWS_CERTIFICATE:-}" ]]; then
     echo "[sign] WINDOWS_CERTIFICATE not set, skip signtool (本地开发)"

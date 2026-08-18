@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import type { RuntimeSpec } from '../protocol/v1.ts'
 import { disabledPluginKeys } from './plugin-directory.ts'
 import { applyPluginDisables } from './plugin-composition.ts'
+import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from '../build-meta.ts'
 import DEFAULT_CORDIS_CONFIG from '../../config/flowix.cordis.yml'
 import STANDARD_PRESET from '../../vendor/deepseek-harness/apps/cli/config/agent-presets/standard/agent.cordis.yml'
 import STANDARD_PRESET_META from '../../vendor/deepseek-harness/apps/cli/config/agent-presets/standard/preset.yml'
@@ -57,13 +58,38 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   return env
 }
 
+/**
+ * Build the env block shared by every runtime launch path. `FLOWIX_DSH_BUILD_ID`
+ * travels into the runtime so a paired host/runtime always come from the same
+ * build; the launcher refuses mismatches.
+ */
+function withBuildId(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, [SIDECAR_BUILD_ID_ENV]: SIDECAR_BUILD_ID }
+}
+
 export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+  // Production path: Rust sets FLOWIX_DSH_RUNTIME_PATH to the bundled sidecar.
   const configured = process.env.FLOWIX_DSH_RUNTIME_PATH
   if (configured !== undefined && configured !== '') {
     return {
       command: configured,
-        args: [cordisConfigPath()],
-      env: { ...runtimeEnvironment(spec), FLOWIX_DSH_RUNTIME_MODE: '1' },
+      args: [cordisConfigPath()],
+      env: withBuildId({ ...runtimeEnvironment(spec), FLOWIX_DSH_RUNTIME_MODE: '1' }),
+    }
+  }
+
+  // Dev path: prefer the packaged runtime that build-host.mjs produced. The
+  // vendored tsx + bin.ts path is fragile (Cordis plugin tree loads through
+  // workspace links and tsx has ordering surprises that leave the harness
+  // client in an inconsistent state when init fails), so dev and prod both
+  // use the SEA binary. If it is missing the build pipeline was skipped;
+  // fall back to tsx so a cold checkout can still boot the launcher.
+  const devPackaged = devPackagedRuntimeBinary()
+  if (devPackaged !== undefined) {
+    return {
+      command: devPackaged,
+      args: [cordisConfigPath()],
+      env: withBuildId({ ...runtimeEnvironment(spec), FLOWIX_DSH_RUNTIME_MODE: '1' }),
     }
   }
 
@@ -71,19 +97,19 @@ export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: strin
   const bin = join(root, 'vendor/deepseek-harness/packages/examples/jsonrpc-demo/src/bin.ts')
   const tsxLoader = join(root, 'vendor/deepseek-harness/node_modules/tsx/dist/esm/index.mjs')
   if (!existsSync(bin) || !existsSync(tsxLoader)) {
-    throw new Error('dsh-runtime is not bundled and the vendored development runtime is not installed')
+    throw new Error('dsh-runtime is not bundled and the vendored development runtime is not installed; run npm --prefix app/flowix-dsh-host run build:dev (which auto-builds the packaged runtime)')
   }
   return {
     command: process.execPath,
-    args: ['--import', tsxLoader, bin, cordisConfigPath()],
+    args: ['--import', pathToFileURL(tsxLoader).href, bin, cordisConfigPath()],
     // The agent runs with the user's workspace as cwd, but the vendored
     // Harness source tree owns the TS path aliases for all @deepseek-ai/*
     // workspace packages. Without this explicit config, tsx resolves from
     // the user's cwd and the child exits before the first model request.
-    env: {
+    env: withBuildId({
       ...runtimeEnvironment(spec),
       TSX_TSCONFIG_PATH: join(root, 'vendor/deepseek-harness/tsconfig.json'),
-    },
+    }),
   }
 }
 
@@ -173,4 +199,13 @@ function hasScopeDisables(disabled: ReadonlySet<string>, scope: 'host' | 'preset
     if (key.startsWith(prefix)) return true
   }
   return false
+}
+/**
+ * Locate the packaged runtime that build-host.mjs produced for the host
+ * platform. Returns undefined if not built, in which case the caller falls
+ * back to the vendored tsx + bin.ts path.
+ */
+function devPackagedRuntimeBinary(): string | undefined {
+  const binary = join(hostRoot(), '../../.build/flowix-dsh-host/dsh-runtime' + (process.platform === 'win32' ? '.exe' : ''))
+  return existsSync(binary) ? binary : undefined
 }
