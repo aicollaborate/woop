@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { RuntimeSpec } from '../protocol/v1.ts'
 import { disabledPluginKeys } from './plugin-directory.ts'
@@ -74,11 +74,14 @@ function withBuildId(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export function runtimeLaunch(spec: RuntimeSpec): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
-  // Production path: Rust sets FLOWIX_DSH_RUNTIME_PATH to the bundled sidecar.
-  const configured = process.env.FLOWIX_DSH_RUNTIME_PATH
-  if (configured !== undefined && configured !== '') {
+  // Release path: when dsh-host runs as a SEA, the runtime sidecar lives
+  // next to it inside the bundle. Probe the directory that owns the current
+  // executable (the SEA itself) for both the rustc-triple-suffixed and the
+  // bare names, in that order.
+  const packaged = packagedRuntimeBinary()
+  if (packaged !== undefined) {
     return {
-      command: configured,
+      command: packaged,
       args: [cordisConfigPath()],
       env: withBuildId({ ...runtimeEnvironment(spec), FLOWIX_DSH_RUNTIME_MODE: '1' }),
     }
@@ -205,4 +208,40 @@ function hasScopeDisables(disabled: ReadonlySet<string>, scope: 'host' | 'preset
 function devPackagedRuntimeBinary(): string | undefined {
   const binary = join(hostRoot(), '../../.build/flowix-dsh-host/dsh-runtime' + (process.platform === 'win32' ? '.exe' : ''))
   return existsSync(binary) ? binary : undefined
+}
+
+/**
+ * Locate the runtime sidecar that ships next to this dsh-host process.
+ * Mirrors `host.rs:packaged_runtime_candidate` so the launcher and the
+ * host agree on which binary counts as the runtime.
+ *
+ * Returns undefined for the dev bundle (process.execPath is node) and when
+ * the sidecar is missing from the install directory.
+ */
+function packagedRuntimeBinary(): string | undefined {
+  const exe = process.execPath
+  const exeExt = extname(exe).toLowerCase()
+  // The vendored dev bundle runs under node and lives in
+  // .build/flowix-dsh-host/; only SEA launches report a real .exe path here.
+  if (exeExt === '.exe' || exeExt === '' || exeExt === '.bin') {
+    const parent = dirname(exe)
+    const candidates = [
+      join(parent, `dsh-runtime-${runtimeTriple()}${process.platform === 'win32' ? '.exe' : ''}`),
+      join(parent, `dsh-runtime${process.platform === 'win32' ? '.exe' : ''}`),
+    ]
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return undefined
+}
+
+function runtimeTriple(): string {
+  if (process.platform === 'darwin') {
+    return process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
+  }
+  if (process.platform === 'win32') {
+    return 'x86_64-pc-windows-msvc'
+  }
+  return process.arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu'
 }

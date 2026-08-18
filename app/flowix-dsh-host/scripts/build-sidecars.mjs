@@ -85,22 +85,74 @@ await run(vendorBin('tsx'), [
   `--launcher=${resolve(outdir, 'dsh-host.cjs')}`,
 ], vendor, { ...process.env, PATH: `${tooling}:${process.env.PATH ?? ''}` })
 
+// A second invocation without --launcher produces an independent runtime SEA
+// that runs the vendored packaged-bin entry directly. dsh-host and dsh-runtime
+// share the same build closure but ship as two sidecars so each can be
+// updated, signed, and verified on its own.
+await run(vendorBin('tsx'), [
+  'scripts/build-exe-for-python-sdk.ts',
+  `--targets=${targets.join(',')}`,
+  '--skip-build',
+  `--keep-packages=${FLOWIX_RUNTIME_ROOTS.join(',')}`,
+], vendor, { ...process.env, PATH: `${tooling}:${process.env.PATH ?? ''}` })
+
+// The first pkg invocation (with --launcher) produced the host SEA into the
+// vendored dist-exe dir; we move it aside before the second invocation so
+// its successor can land in the same path without overwriting.
 for (const target of targets) {
   const platform = targetPlatform(target)
   const arch = targetArch(target)
-  const runtime = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}`)
-  if (!existsSync(runtime)) throw new Error(`upstream runtime product is missing: ${runtime}`)
-  await stripProduct(runtime, target)
-  const output = resolve(outdir, `dsh-host-${platform}-${arch}`)
-  await copyFile(runtime, output)
-  await chmod(output, 0o755)
-  await copyFile(output, resolve(tauriBins, tauriName('dsh-host', target)))
-  const helper = `${runtime}-spawn-helper`
+  const upstream = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}`)
+  if (!existsSync(upstream)) throw new Error(`upstream product is missing: ${upstream}`)
+  const hostSea = resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}`)
+  await copyFile(upstream, hostSea)
+  const helper = `${upstream}-spawn-helper`
   if (existsSync(helper)) {
-    await copyFile(helper, resolve(tauriBins, tauriName('dsh-host-spawn-helper', target)))
+    await copyFile(helper, `${hostSea}-spawn-helper`)
   }
-  await rm(resolve(tauriBins, tauriName('dsh-runtime', target)), { force: true })
-  await rm(resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)), { force: true })
+}
+
+// Second invocation has now overwritten the upstream product with the
+// runtime SEA. Stage both products into .build and the Tauri binaries dir.
+for (const target of targets) {
+  const platform = targetPlatform(target)
+  const arch = targetArch(target)
+  const upstreamHost = resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}`)
+  const upstreamRuntime = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}`)
+  if (!existsSync(upstreamHost)) throw new Error(`host SEA is missing after staging: ${upstreamHost}`)
+  if (!existsSync(upstreamRuntime)) throw new Error(`runtime SEA is missing after second pkg run: ${upstreamRuntime}`)
+
+  await stripProduct(upstreamHost, target)
+  const hostOut = resolve(outdir, `dsh-host-${platform}-${arch}`)
+  await copyFile(upstreamHost, hostOut)
+  await chmod(hostOut, 0o755)
+  await copyFile(hostOut, resolve(tauriBins, tauriName('dsh-host', target)))
+  const hostHelper = `${upstreamHost}-spawn-helper`
+  if (existsSync(hostHelper)) {
+    await copyFile(hostHelper, resolve(tauriBins, tauriName('dsh-host-spawn-helper', target)))
+  } else {
+    await rm(resolve(tauriBins, tauriName('dsh-host-spawn-helper', target)), { force: true })
+  }
+
+  await stripProduct(upstreamRuntime, target)
+  const runtimeOut = resolve(outdir, `dsh-runtime-${platform}-${arch}`)
+  await copyFile(upstreamRuntime, runtimeOut)
+  await chmod(runtimeOut, 0o755)
+  await copyFile(runtimeOut, resolve(tauriBins, tauriName('dsh-runtime', target)))
+  const runtimeHelper = `${upstreamRuntime}-spawn-helper`
+  if (existsSync(runtimeHelper)) {
+    await copyFile(runtimeHelper, resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)))
+  } else {
+    await rm(resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)), { force: true })
+  }
+}
+
+// Clean the staging aliases so a re-run does not double up.
+for (const target of targets) {
+  const platform = targetPlatform(target)
+  const arch = targetArch(target)
+  await rm(resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}`), { force: true })
+  await rm(resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}-spawn-helper`), { force: true })
 }
 
 for (const target of targets) {

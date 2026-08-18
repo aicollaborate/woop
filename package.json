@@ -25,7 +25,6 @@
     "dsh:build": "npm --prefix app/flowix-dsh-host run build:sidecars",
     "dsh:build:dev": "npm --prefix app/flowix-dsh-host run build:dev",
     "dsh:build:macos": "npm --prefix app/flowix-dsh-host run build:macos",
-    "dsh:build:win": "node app/flowix-dsh-host/scripts/build-host-windows.mjs",
     "tauri:dev": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.conf.dev.json",
     "tauri:dev:win": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.windows.dev.conf.json",
     "tauri:mobile:dev": "npm run tauri:mobile:preview",

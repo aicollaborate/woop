@@ -34,11 +34,9 @@ if (targetPlatform === "darwin") {
   run("npm", ["run", "dsh:build:macos"]);
 } else {
   run("npm", ["run", "cli:build"]);
-  if (targetPlatform === "win32") {
-    run("npm", ["run", "dsh:build:win"]);
-  } else {
-    run("npm", ["run", "dsh:build"]);
-  }
+  // dsh:build is now platform-agnostic; build-sidecars.mjs picks the right
+  // target triple from process.platform / process.arch on the host.
+  run("npm", ["run", "dsh:build"]);
 }
 
 const configPath = run(

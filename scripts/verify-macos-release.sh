@@ -60,7 +60,7 @@ verify_dmg_contents() (
     return 1
   fi
 
-  for name in flowix-cli dsh-host dsh-host-spawn-helper; do
+  for name in flowix-cli dsh-host dsh-host-spawn-helper dsh-runtime dsh-runtime-spawn-helper; do
     binary="$mounted_app/Contents/MacOS/$name"
     if [ ! -x "$binary" ]; then
       echo "ERROR: packaged sidecar is missing or not executable: $binary" >&2

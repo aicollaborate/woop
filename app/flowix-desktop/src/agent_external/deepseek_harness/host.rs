@@ -53,9 +53,10 @@ impl DshHostClient {
         if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
             command.env("DSH_API_KEY", api_key);
         }
-        if let Some(runtime) = packaged_runtime_candidate() {
-            command.env("FLOWIX_DSH_RUNTIME_PATH", runtime);
-        }
+        // dsh-host resolves the runtime path itself by scanning the directory
+        // that holds its own executable. The launcher no longer hands it a
+        // hard-coded path so an end-user cannot silently redirect the
+        // runtime through an env override.
         configure_unix_process_group(&mut command);
         crate::process_window::hide_command_window(&mut command);
         let mut child = command
@@ -346,29 +347,26 @@ fn command_for_host_path_with_root(
     }
 }
 
+#[allow(dead_code)]
 fn packaged_runtime_candidate() -> Option<PathBuf> {
-    // Development builds launch the vendored TypeScript runtime through the
-    // freshly-built dsh-host source path. A stale sidecar left in Cargo's
-    // target directory must not shadow that runtime, otherwise rebuilding the
-    // host appears to have no effect during `tauri dev`.
+    // Development builds use the freshly-built dsh-host bundle, which spawns
+    // the runtime out of .build/flowix-dsh-host/ via devPackagedRuntimeBinary.
+    // Honoring a packaged sidecar here would shadow that dev path and make
+    // rebuilds look ineffective.
     if cfg!(debug_assertions) {
         return None;
     }
     let parent = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let unified = parent.join(if cfg!(windows) {
-        "dsh-host.exe"
-    } else {
-        "dsh-host"
-    });
-    if unified.is_file() {
-        return Some(unified);
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    // Prefer the tauri-triple suffix that matches the host triple; fall back
+    // to the bare `dsh-runtime` name for installs that use a single binary.
+    let triple_suffix = rust_target_triple().to_string();
+    let triple = parent.join(format!("dsh-runtime-{triple_suffix}{exe_suffix}"));
+    if triple.is_file() {
+        return Some(triple);
     }
-    let legacy = parent.join(if cfg!(windows) {
-        "dsh-runtime.exe"
-    } else {
-        "dsh-runtime"
-    });
-    legacy.is_file().then_some(legacy)
+    let bare = parent.join(format!("dsh-runtime{exe_suffix}"));
+    bare.is_file().then_some(bare)
 }
 
 fn allowed_parent_environment() -> HashMap<String, String> {
@@ -492,4 +490,22 @@ fn sidecar_build_id() -> Option<String> {
         directory = dir.parent();
     }
     None
+}
+
+/// The rustc target triple the desktop binary was compiled for. Used to pick
+/// the matching `dsh-runtime-<triple>` sidecar from the same directory as
+/// flowix.exe / Flowix.app. The result is computed at runtime because we do
+/// not have a build script; the table is small enough that the lookup is
+/// cheaper than the I/O it gates.
+fn rust_target_triple() -> &'static str {
+    let arch = std::env::consts::ARCH;
+    let os = std::env::consts::OS;
+    match (os, arch) {
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("windows", _) => "x86_64-pc-windows-msvc",
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+        _ => "unknown-unknown-unknown",
+    }
 }

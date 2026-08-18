@@ -57,7 +57,7 @@ fi
 # =================== macOS ===================
 sign_macos() {
   local host="$1"
-  local names=(flowix-cli dsh-host dsh-host-spawn-helper)
+  local names=(flowix-cli dsh-host dsh-host-spawn-helper dsh-runtime dsh-runtime-spawn-helper)
 
   local identity="${APPLE_SIGNING_IDENTITY:-}"
   if [[ -z "$identity" ]]; then
@@ -102,7 +102,7 @@ sign_macos() {
 
 # =================== Windows ===================
 sign_windows() {
-  local names=(flowix-cli dsh-host)
+  local names=(flowix-cli dsh-host dsh-runtime)
 
   if [[ -z "${WINDOWS_CERTIFICATE:-}" ]]; then
     echo "[sign] WINDOWS_CERTIFICATE not set, skip signtool (本地开发)"
