@@ -13,8 +13,13 @@ use flowix_core::secret::{entry_name, SecretStore};
 ///    `boot/system.json` / `index.db`) 鍖哄垎寰楁洿鏄剧溂
 ///    (TOML 格式 + 显式 `agent-` 前缀, 不会出现"�?��文件该用 JSON"的�?�?
 pub const AI_CONFIG_FILE_NAME: &str = "agent-config.toml";
-pub const DSH_SETTINGS_FILE_NAME: &str = "dsh-settings.yaml";
-pub const DSH_PLUGIN_SETTINGS_FILE_NAME: &str = "dsh-plugin-settings.json";
+/// DeepSeek Harness runtime data lives under one root inside the Flowix config
+/// dir (`~/.flowix/dsh/`), mirroring the harness-home single-root convention.
+/// Sessions, settings, and plugin settings all nest beneath it.
+pub const DSH_DIR_NAME: &str = "dsh";
+pub const DSH_SESSIONS_DIR_NAME: &str = "sessions";
+pub const DSH_SETTINGS_FILE_NAME: &str = "settings.yaml";
+pub const DSH_PLUGIN_SETTINGS_FILE_NAME: &str = "plugin-settings.json";
 
 const BOOT_DIR_NAME: &str = "boot";
 const PREFERENCE_FILE_NAME: &str = "preference.json";
@@ -689,6 +694,7 @@ impl UserConfigStore {
         let _ = fs::create_dir_all(&config_dir);
         // Restrict the configuration directory to its owner.
         set_dir_owner_only_perms(&config_dir);
+        migrate_dsh_layout(&config_dir);
 
         let preference = Self::read_preference_from_disk(&config_dir).unwrap_or_default();
         let ai_config = Self::read_ai_config_from_disk(&config_dir).unwrap_or_default();
@@ -705,10 +711,28 @@ impl UserConfigStore {
         &self.config_dir
     }
 
+    /// `~/.flowix/dsh/` — the single root for all DeepSeek Harness runtime
+    /// data. Paths derive from here so the layout never scatters again.
+    pub fn dsh_dir(&self) -> PathBuf {
+        self.config_dir.join(DSH_DIR_NAME)
+    }
+
+    pub fn dsh_settings_path(&self) -> PathBuf {
+        self.dsh_dir().join(DSH_SETTINGS_FILE_NAME)
+    }
+
+    pub fn dsh_plugin_settings_path(&self) -> PathBuf {
+        self.dsh_dir().join(DSH_PLUGIN_SETTINGS_FILE_NAME)
+    }
+
+    pub fn dsh_sessions_dir(&self) -> PathBuf {
+        self.dsh_dir().join(DSH_SESSIONS_DIR_NAME)
+    }
+
     pub fn get_deepseek_harness_plugin_settings(
         &self,
     ) -> Result<DeepSeekHarnessPluginSettings, UserConfigError> {
-        let path = self.config_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME);
+        let path = self.dsh_plugin_settings_path();
         match fs::read_to_string(path) {
             Ok(content) => Ok(serde_json::from_str(&content)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -731,7 +755,7 @@ impl UserConfigStore {
         }
         settings.disabled.sort();
         let content = serde_json::to_string_pretty(&settings)?;
-        let path = self.config_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME);
+        let path = self.dsh_plugin_settings_path();
         atomic_write_json(&path, &content)?;
         Ok(settings)
     }
@@ -760,7 +784,7 @@ impl UserConfigStore {
     /// agent-config.toml on first access, so changing Flowix Agent settings
     /// later does not overwrite an already-created Harness configuration.
     pub fn get_deepseek_harness_config(&self) -> Result<AiConfigFile, UserConfigError> {
-        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let path = self.dsh_settings_path();
         let settings = match self.read_deepseek_harness_settings()? {
             Some(settings) => settings,
             None => {
@@ -781,7 +805,7 @@ impl UserConfigStore {
     /// independent routes and their model cards carry different endpoints
     /// and credentials.
     pub fn get_deepseek_harness_configs(&self) -> Result<Vec<AiConfigFile>, UserConfigError> {
-        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let path = self.dsh_settings_path();
         let settings = match self.read_deepseek_harness_settings()? {
             Some(settings) => settings,
             None => {
@@ -830,7 +854,7 @@ impl UserConfigStore {
             settings.llm_pi_ai.providers.remove(&route_id);
         }
         let content = serde_yaml::to_string(&settings)?;
-        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let path = self.dsh_settings_path();
         atomic_write_yaml(&path, &content)?;
         Ok(())
     }
@@ -876,7 +900,7 @@ impl UserConfigStore {
                 .insert(target_route_id, incoming);
         }
         let content = serde_yaml::to_string(&settings)?;
-        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let path = self.dsh_settings_path();
         atomic_write_yaml(&path, &content)?;
         Ok(())
     }
@@ -884,7 +908,7 @@ impl UserConfigStore {
     fn read_deepseek_harness_settings(
         &self,
     ) -> Result<Option<DeepSeekHarnessSettingsFile>, UserConfigError> {
-        let path = self.config_dir.join(DSH_SETTINGS_FILE_NAME);
+        let path = self.dsh_settings_path();
         match fs::read_to_string(path) {
             Ok(content) => Ok(Some(serde_yaml::from_str(&content)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -1094,6 +1118,90 @@ pub(crate) fn atomic_write_yaml(path: &Path, content: &str) -> std::io::Result<(
     Ok(())
 }
 
+/// Move the legacy flat DeepSeek Harness layout under `~/.flowix/`
+/// (`dsh-settings.yaml`, `dsh-plugin-settings.json`, `dsh-sessions/`) into the
+/// single `~/.flowix/dsh/` root, then flatten the former per-Flowix-session
+/// wrapper so session files match Harness' official layout. A source is moved
+/// only when its target does not already exist, so a fresh install or a
+/// repeated startup is a no-op.
+fn migrate_dsh_layout(config_dir: &Path) {
+    let dsh_dir = config_dir.join(DSH_DIR_NAME);
+    let legacy_settings = config_dir.join("dsh-settings.yaml");
+    let legacy_plugin_settings = config_dir.join("dsh-plugin-settings.json");
+    let legacy_sessions = config_dir.join("dsh-sessions");
+
+    if legacy_settings.exists() || legacy_plugin_settings.exists() || legacy_sessions.exists() {
+        let _ = fs::create_dir_all(&dsh_dir);
+        set_dir_owner_only_perms(&dsh_dir);
+    }
+
+    migrate_into(&legacy_settings, &dsh_dir.join(DSH_SETTINGS_FILE_NAME));
+    migrate_into(
+        &legacy_plugin_settings,
+        &dsh_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME),
+    );
+    migrate_into(&legacy_sessions, &dsh_dir.join(DSH_SESSIONS_DIR_NAME));
+    flatten_dsh_session_wrappers(&dsh_dir.join(DSH_SESSIONS_DIR_NAME));
+}
+
+/// Rename `source` to `target` when the source exists and the target is
+/// absent, then reapply owner-only permissions. Never overwrites an existing
+/// target; the directory case keeps the execute bit so it stays traversable.
+fn migrate_into(source: &Path, target: &Path) {
+    if !source.exists() || target.exists() {
+        return;
+    }
+    if let Some(parent) = target.parent() {
+        let _ = fs::create_dir_all(parent);
+        set_dir_owner_only_perms(parent);
+    }
+    if fs::rename(source, target).is_ok() {
+        if target.is_dir() {
+            set_dir_owner_only_perms(target);
+        } else {
+            set_file_owner_only_perms(target);
+        }
+    }
+}
+
+/// Remove the temporary Flowix-owned `<session-id>/` wrapper that was used
+/// before the persistence root matched Harness' official layout. Only
+/// directories that clearly contain project directories are flattened; other
+/// entries such as `.runtime` are left untouched.
+fn flatten_dsh_session_wrappers(sessions_dir: &Path) {
+    let Ok(entries) = fs::read_dir(sessions_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let wrapper = entry.path();
+        if !wrapper.is_dir() || entry.file_name() == ".runtime" {
+            continue;
+        }
+        let Ok(projects) = fs::read_dir(&wrapper) else {
+            continue;
+        };
+        let projects = projects
+            .flatten()
+            .filter(|project| {
+                let project_name = project.file_name().to_string_lossy().into_owned();
+                project.path().is_dir()
+                    && (project_name == "_no-cwd"
+                        || (project_name.starts_with("--") && project_name.ends_with("--")))
+            })
+            .collect::<Vec<_>>();
+        if projects.is_empty() {
+            continue;
+        }
+        for project in projects {
+            let target = sessions_dir.join(project.file_name());
+            if !target.exists() {
+                let _ = fs::rename(project.path(), target);
+            }
+        }
+        let _ = fs::remove_dir(&wrapper);
+    }
+}
+
 #[cfg(unix)]
 fn set_file_owner_only_perms(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -1165,10 +1273,42 @@ mod tests {
     }
 
     fn test_user_config_store(home: PathBuf) -> UserConfigStore {
+        let dsh_dir = home.join(USER_CONFIG_DIR_NAME).join(DSH_DIR_NAME);
+        std::fs::create_dir_all(&dsh_dir).unwrap();
         UserConfigStore::new_with_secret_store(
             home,
             SecretStore::with_backend(Box::new(TestSecretBackend::new())),
         )
+    }
+
+    #[test]
+    fn migrates_legacy_dsh_layout_into_single_root() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(USER_CONFIG_DIR_NAME);
+        std::fs::create_dir_all(config_dir.join("dsh-sessions/flowix-old/--work--/session-old"))
+            .unwrap();
+        std::fs::write(config_dir.join("dsh-settings.yaml"), "legacy: true\n").unwrap();
+        std::fs::write(config_dir.join("dsh-plugin-settings.json"), "{}\n").unwrap();
+
+        let store = UserConfigStore::new(home.path().to_path_buf());
+        let dsh_dir = store.dsh_dir();
+
+        assert_eq!(
+            std::fs::read_to_string(dsh_dir.join(DSH_SETTINGS_FILE_NAME)).unwrap(),
+            "legacy: true\n"
+        );
+        assert!(dsh_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME).is_file());
+        assert!(dsh_dir
+            .join(DSH_SESSIONS_DIR_NAME)
+            .join("--work--/session-old")
+            .is_dir());
+        assert!(!dsh_dir
+            .join(DSH_SESSIONS_DIR_NAME)
+            .join("flowix-old")
+            .exists());
+        assert!(!config_dir.join("dsh-settings.yaml").exists());
+        assert!(!config_dir.join("dsh-plugin-settings.json").exists());
+        assert!(!config_dir.join("dsh-sessions").exists());
     }
 
     #[test]
@@ -1446,6 +1586,7 @@ apiKey = "k"
         let settings_path = home
             .path()
             .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_DIR_NAME)
             .join(DSH_SETTINGS_FILE_NAME);
         let settings = std::fs::read_to_string(settings_path).unwrap();
         assert!(
@@ -1490,6 +1631,7 @@ apiKey = "k"
         let settings = std::fs::read_to_string(
             home.path()
                 .join(USER_CONFIG_DIR_NAME)
+                .join(DSH_DIR_NAME)
                 .join(DSH_SETTINGS_FILE_NAME),
         )
         .unwrap();
@@ -1570,6 +1712,7 @@ apiKey = "k"
         let path = home
             .path()
             .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_DIR_NAME)
             .join(DSH_SETTINGS_FILE_NAME);
         let mut settings = DeepSeekHarnessSettingsFile::default();
         settings.llm_pi_ai.providers.insert(
@@ -1661,6 +1804,7 @@ apiKey = "k"
         let path = home
             .path()
             .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_DIR_NAME)
             .join(DSH_SETTINGS_FILE_NAME);
         let saved: DeepSeekHarnessSettingsFile =
             serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
@@ -1752,6 +1896,7 @@ apiKey = "k"
         let path = home
             .path()
             .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_DIR_NAME)
             .join(DSH_SETTINGS_FILE_NAME);
         let mut settings = DeepSeekHarnessSettingsFile::default();
         settings.llm_pi_ai.providers.insert(
@@ -1826,6 +1971,7 @@ apiKey = "k"
         let path = home
             .path()
             .join(USER_CONFIG_DIR_NAME)
+            .join(DSH_DIR_NAME)
             .join(DSH_SETTINGS_FILE_NAME);
         let mut settings = DeepSeekHarnessSettingsFile::default();
         settings.llm_pi_ai.providers.insert(

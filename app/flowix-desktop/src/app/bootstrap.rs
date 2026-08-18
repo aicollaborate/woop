@@ -226,7 +226,7 @@ pub fn run() {
     let deepseek_harness_manager = Arc::new(DeepSeekHarnessManager::new(
         thread_manager_arc.clone(),
         user_config.clone(),
-        user_config_dir.join("dsh-sessions"),
+        user_config.dsh_sessions_dir(),
     ));
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
         codex_cli_manager,

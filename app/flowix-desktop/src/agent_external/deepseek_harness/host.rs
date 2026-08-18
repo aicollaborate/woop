@@ -31,6 +31,7 @@ impl DshHostClient {
     pub async fn spawn(
         api_key: Option<&str>,
         session_root: &Path,
+        dsh_home: &Path,
         settings_path: &Path,
         plugin_settings_path: &Path,
     ) -> Result<Arc<Self>, String> {
@@ -42,6 +43,7 @@ impl DshHostClient {
             .env_clear()
             .envs(allowed_parent_environment())
             .env("FLOWIX_DSH_SESSION_ROOT", session_root)
+            .env("FLOWIX_DSH_HOME", dsh_home)
             .env("FLOWIX_DSH_ROOT", &host_root)
             .env("DSH_SETTINGS_PATH", settings_path)
             .env("FLOWIX_DSH_PLUGIN_SETTINGS_PATH", plugin_settings_path)

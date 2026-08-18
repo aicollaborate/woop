@@ -15,6 +15,7 @@ export function requireRequest(value: unknown): JsonRpcRequest {
 
 export function requireRuntimeSpec(value: unknown): RuntimeSpec {
   const params = requireRecord(value, 'runtime.ensure params')
+  const sessionId = optionalString(params.sessionId)
   const workspacePaths = params.workspacePaths === undefined
     ? []
     : requireStringArray(params.workspacePaths, 'workspacePaths')
@@ -38,7 +39,7 @@ export function requireRuntimeSpec(value: unknown): RuntimeSpec {
   }
   return {
     threadId: requireString(params.threadId, 'threadId'),
-    sessionId: requireString(params.sessionId, 'sessionId'),
+    ...(sessionId === undefined ? {} : { sessionId }),
     cwd: requireString(params.cwd, 'cwd'),
     workspacePaths,
     provider: requireString(params.provider, 'provider'),

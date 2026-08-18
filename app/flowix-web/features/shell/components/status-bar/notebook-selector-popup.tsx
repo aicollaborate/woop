@@ -360,7 +360,7 @@ export function NotebookSelectorPopup({
         sideOffset={sideOffset}
         onExitComplete={handleExitComplete}
         className={cn(
-          'flowix-notebook-selector-popup ml-1.5 flex h-[480px] w-[390px] flex-col overflow-hidden rounded-xl bg-[var(--popover)]',
+          'flowix-notebook-selector-popup ml-1.5 flex h-auto max-h-[calc(100vh-8px)] w-[390px] flex-col overflow-hidden rounded-xl bg-[var(--popover)] pb-2',
           side === 'bottom' && 'flowix-notebook-selector-popup--bottom',
         )}
       >

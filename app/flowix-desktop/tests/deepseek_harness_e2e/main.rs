@@ -110,10 +110,11 @@ fn main() {
         });
     }
 
+    let dsh_sessions = user_config.dsh_sessions_dir();
     let manager = Arc::new(DeepSeekHarnessManager::new(
         thread_manager.clone(),
         user_config,
-        temp.path().join("dsh-sessions"),
+        dsh_sessions,
     ));
 
     // 6. React → IPC 边界: 前端发出的就是这团 camelCase JSON。用反序列化还原,

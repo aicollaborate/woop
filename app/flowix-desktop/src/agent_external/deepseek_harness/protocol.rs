@@ -19,7 +19,7 @@ pub fn initialize_request(id: u64) -> Value {
 pub fn runtime_ensure_request(
     id: u64,
     thread_id: &str,
-    session_id: &str,
+    session_id: Option<&str>,
     cwd: &str,
     workspace_paths: &[String],
     provider: &str,
@@ -30,23 +30,26 @@ pub fn runtime_ensure_request(
     agent_preset: &str,
     permission_mode: &str,
 ) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "cwd": cwd,
+        "workspacePaths": workspace_paths,
+        "provider": provider,
+        "providerName": provider_name,
+        "apiProtocol": api_protocol,
+        "baseUrl": base_url,
+        "model": model,
+        "agentPreset": agent_preset,
+        "permissionMode": permission_mode
+    });
+    if let Some(session_id) = session_id {
+        params["sessionId"] = json!(session_id);
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": "runtime.ensure",
-        "params": {
-            "threadId": thread_id,
-            "sessionId": session_id,
-            "cwd": cwd,
-            "workspacePaths": workspace_paths,
-            "provider": provider,
-            "providerName": provider_name,
-            "apiProtocol": api_protocol,
-            "baseUrl": base_url,
-            "model": model,
-            "agentPreset": agent_preset,
-            "permissionMode": permission_mode
-        }
+        "params": params
     })
 }
 

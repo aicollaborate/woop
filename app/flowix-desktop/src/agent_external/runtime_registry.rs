@@ -195,6 +195,7 @@ mod tests {
         let threads = ThreadManager::for_tests();
         let temp = tempfile::tempdir().unwrap();
         let user_config = Arc::new(UserConfigStore::new(temp.path().to_path_buf()));
+        let dsh_sessions = user_config.dsh_sessions_dir();
         let registry = ExternalRuntimeRegistry::new(
             Arc::new(CodexCliManager::new(threads.clone())),
             Arc::new(ClaudeCliManager::new(threads.clone())),
@@ -203,7 +204,7 @@ mod tests {
             Arc::new(DeepSeekHarnessManager::new(
                 threads,
                 user_config,
-                temp.path().join("dsh-sessions"),
+                dsh_sessions,
             )),
         );
 

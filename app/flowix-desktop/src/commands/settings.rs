@@ -57,7 +57,7 @@ pub fn set_ai_config(
 }
 
 /// DeepSeek Harness model configuration. This is persisted by llm-pi-ai's
-/// settings-file provider at `~/.flowix/dsh-settings.yaml`, independently of
+/// settings-file provider at `~/.flowix/dsh/settings.yaml`, independently of
 /// the Flowix Agent's `agent-config.toml`.
 #[tauri::command]
 pub fn get_deepseek_harness_config(state: State<AppState>) -> Result<AiConfigFile, String> {

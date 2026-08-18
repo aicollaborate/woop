@@ -102,6 +102,10 @@ export function NotebookList({
     };
   }, [cloudSyncedNotebookIds, experimental]);
 
+  const handleCreateNotebook = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'));
+  }, []);
+
   return (
     <div className="flex min-h-0 max-h-[52px] shrink-0 flex-col">
       <OverlayScrollbar
@@ -110,9 +114,13 @@ export function NotebookList({
       >
         <div className="space-y-0.5 pb-1">
           {notebooks.length === 0 ? (
-            <div className="px-2 py-2 text-sm text-[var(--muted-foreground)]">
-              {t('status.noNotebooks')}
-            </div>
+            <button
+              type="button"
+              onClick={handleCreateNotebook}
+              className="flex h-12 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+            >
+              {t('status.newNotebook')}
+            </button>
           ) : (
             notebooks.map((notebook) => {
               if (notebook.id !== selectedNotebook?.id) return null;

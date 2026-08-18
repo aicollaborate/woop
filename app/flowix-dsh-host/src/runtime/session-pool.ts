@@ -9,8 +9,10 @@ import { HOST_PROTOCOL_VERSION } from '../protocol/v1.ts'
 import { runtimeLaunch } from './environment.ts'
 import { sessionPoolOptions } from './pool-options.ts'
 
+type ResolvedRuntimeSpec = RuntimeSpec & { sessionId: string }
+
 interface RuntimeSlot {
-  spec: RuntimeSpec
+  spec: ResolvedRuntimeSpec
   harness: DeepSeekHarness
   /** A runtime transport can die without the host process dying. */
   reusable: boolean
@@ -58,8 +60,12 @@ export class SessionPool {
       model: spec.model,
       ...(spec.maxTokens === undefined ? {} : { maxTokens: spec.maxTokens }),
     })
+    // This is the same minting path used by the official SDK. Flowix only
+    // supplies an id when resuming a previously mapped Harness session.
+    const sessionId = spec.sessionId ?? harness.session().id
+    const resolvedSpec: ResolvedRuntimeSpec = { ...spec, sessionId }
     this.slots.set(spec.threadId, {
-      spec,
+      spec: resolvedSpec,
       harness,
       reusable: true,
       generation,
@@ -68,7 +74,7 @@ export class SessionPool {
       idleTimer: undefined,
       currentRun: undefined,
     })
-    return { sessionId: spec.sessionId, generation }
+    return { sessionId, generation }
   }
 
   startRun(params: RunStartParams): void {
@@ -243,7 +249,7 @@ async function readSessionUsage(slot: RuntimeSlot): Promise<SessionUsageResult |
 
 function sameSpec(left: RuntimeSpec, right: RuntimeSpec): boolean {
   return left.threadId === right.threadId
-    && left.sessionId === right.sessionId
+    && (left.sessionId === undefined || right.sessionId === undefined || left.sessionId === right.sessionId)
     && left.cwd === right.cwd
     && sameStrings(left.workspacePaths, right.workspacePaths)
     && left.provider === right.provider

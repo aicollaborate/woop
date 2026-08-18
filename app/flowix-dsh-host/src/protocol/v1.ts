@@ -11,7 +11,8 @@ export interface JsonRpcRequest {
 
 export interface RuntimeSpec {
   threadId: string
-  sessionId: string
+  /** Persisted Harness id; omitted on first use so the SDK can mint one. */
+  sessionId?: string
   cwd: string
   /** All Flowix-selected workspace roots. `cwd` is always included by the host. */
   workspacePaths: string[]

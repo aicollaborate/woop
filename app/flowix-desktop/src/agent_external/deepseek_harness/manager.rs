@@ -24,10 +24,7 @@ use crate::agent_flowix::provider::{
 };
 use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::ThreadManager;
-use crate::config::{
-    AiConfigFile, AiModelConfig, AiModelEntry, UserConfigStore, DSH_PLUGIN_SETTINGS_FILE_NAME,
-    DSH_SETTINGS_FILE_NAME,
-};
+use crate::config::{AiConfigFile, AiModelConfig, AiModelEntry, UserConfigStore};
 
 struct ActiveRun {
     started_at: i64,
@@ -378,11 +375,13 @@ impl DeepSeekHarnessManager {
                 )
             }
         };
+        let dsh_home = self.user_config.dsh_dir();
         let host = match tokio::time::timeout(
             HARNESS_PROBE_TIMEOUT,
             DshHostClient::spawn(
                 runtime_config.api_key.as_deref(),
                 &self.session_root,
+                &dsh_home,
                 &probe_settings_path,
                 &self.plugin_settings_path(),
             ),
@@ -422,7 +421,7 @@ impl DeepSeekHarnessManager {
         let ensure = protocol::runtime_ensure_request(
             host.next_request_id(),
             &thread_id,
-            &session_id,
+            Some(&session_id),
             &cwd.to_string_lossy(),
             &[],
             &runtime_config.provider,
@@ -571,8 +570,7 @@ impl DeepSeekHarnessManager {
             .thread_manager
             .get_external_session(thread_id, AGENT_TYPE)
             .await
-            .map_err(|error| error.to_string())?
-            .unwrap_or_else(|| stable_session_id(thread_id));
+            .map_err(|error| error.to_string())?;
 
         let instance = self
             .thread_manager
@@ -641,7 +639,7 @@ impl DeepSeekHarnessManager {
         let ensure = protocol::runtime_ensure_request(
             host.next_request_id(),
             thread_id,
-            &session_id,
+            session_id.as_deref(),
             &cwd,
             &workspace_paths,
             &runtime_config.provider,
@@ -652,7 +650,11 @@ impl DeepSeekHarnessManager {
             agent_preset,
             permission,
         );
-        host.request_value(ensure).await?;
+        let session_id = resolved_session_id(host.request_value(ensure).await?)?;
+        self.thread_manager
+            .upsert_external_session(thread_id, AGENT_TYPE, &session_id, None)
+            .await
+            .map_err(|error| error.to_string())?;
         let result = timed_host_request(
             &host,
             protocol::session_usage_request(host.next_request_id(), &session_id),
@@ -759,8 +761,7 @@ impl DeepSeekHarnessManager {
             .thread_manager
             .get_external_session(&thread_id, AGENT_TYPE)
             .await
-            .map_err(|error| error.to_string())?
-            .unwrap_or_else(|| stable_session_id(&thread_id));
+            .map_err(|error| error.to_string())?;
         let stream_end_emitted = Arc::new(AtomicBool::new(false));
         {
             let mut active = self.active.lock().await;
@@ -774,7 +775,7 @@ impl DeepSeekHarnessManager {
                     started_at: now,
                     last_event_at: now,
                     run_id: run_id.clone(),
-                    session_id: session_id.clone(),
+                    session_id: session_id.clone().unwrap_or_default(),
                     stream_end_emitted: stream_end_emitted.clone(),
                     host_key: None,
                 },
@@ -791,7 +792,13 @@ impl DeepSeekHarnessManager {
                 .emit_stream_start(&app_handle, &thread_id, &message, &run_id)
                 .await;
             let result = manager
-                .run(&thread_id, &run_id, &session_id, &message, &app_handle)
+                .run(
+                    &thread_id,
+                    &run_id,
+                    session_id.as_deref(),
+                    &message,
+                    &app_handle,
+                )
                 .await;
             let reason = match result {
                 Ok(reason) => reason,
@@ -820,7 +827,7 @@ impl DeepSeekHarnessManager {
         &self,
         thread_id: &str,
         run_id: &str,
-        session_id: &str,
+        session_id: Option<&str>,
         message: &AgentUserMessage,
         app_handle: &tauri::AppHandle,
     ) -> Result<Option<String>, String> {
@@ -829,7 +836,7 @@ impl DeepSeekHarnessManager {
             thread_id,
             |message, _| message.cwd_for_runtime(AGENT_TYPE).map(PathBuf::from),
             message,
-            Some(session_id),
+            session_id.as_deref(),
             None,
         )
         .await?;
@@ -861,9 +868,11 @@ impl DeepSeekHarnessManager {
             agent_preset,
             permission,
         );
-        host.request_value(ensure).await?;
+        let session_id = resolved_session_id(host.request_value(ensure).await?)?;
+        self.set_active_session_id(thread_id, run_id, &session_id)
+            .await;
         self.thread_manager
-            .upsert_external_session(thread_id, AGENT_TYPE, session_id, None)
+            .upsert_external_session(thread_id, AGENT_TYPE, &session_id, None)
             .await
             .map_err(|error| error.to_string())?;
         let mut events = host.subscribe(thread_id, run_id).await;
@@ -975,11 +984,13 @@ impl DeepSeekHarnessManager {
         }
         std::fs::create_dir_all(&self.session_root)
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
-        let settings_path = self.user_config.config_dir().join(DSH_SETTINGS_FILE_NAME);
+        let dsh_home = self.user_config.dsh_dir();
+        let settings_path = self.user_config.dsh_settings_path();
         let plugin_settings_path = self.plugin_settings_path();
         let host = DshHostClient::spawn(
             runtime_config.api_key.as_deref(),
             &self.session_root,
+            &dsh_home,
             &settings_path,
             &plugin_settings_path,
         )
@@ -1000,12 +1011,14 @@ impl DeepSeekHarnessManager {
         }
         std::fs::create_dir_all(&self.session_root)
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
-        let settings_path = self.user_config.config_dir().join(DSH_SETTINGS_FILE_NAME);
+        let dsh_home = self.user_config.dsh_dir();
+        let settings_path = self.user_config.dsh_settings_path();
         let plugin_settings_path = self.plugin_settings_path();
         Ok((
             DshHostClient::spawn(
                 None,
                 &self.session_root,
+                &dsh_home,
                 &settings_path,
                 &plugin_settings_path,
             )
@@ -1015,9 +1028,7 @@ impl DeepSeekHarnessManager {
     }
 
     fn plugin_settings_path(&self) -> PathBuf {
-        self.user_config
-            .config_dir()
-            .join(DSH_PLUGIN_SETTINGS_FILE_NAME)
+        self.user_config.dsh_plugin_settings_path()
     }
 
     pub async fn stop_chat(
@@ -1132,6 +1143,14 @@ impl DeepSeekHarnessManager {
         if let Some(active) = self.active.lock().await.get_mut(thread_id) {
             if active.run_id == run_id {
                 active.host_key = Some(host_key);
+            }
+        }
+    }
+
+    async fn set_active_session_id(&self, thread_id: &str, run_id: &str, session_id: &str) {
+        if let Some(active) = self.active.lock().await.get_mut(thread_id) {
+            if active.run_id == run_id {
+                active.session_id = session_id.to_string();
             }
         }
     }
@@ -1319,18 +1338,13 @@ fn validate_plugin_key(plugin_key: &str) -> Result<(), String> {
     Err("DeepSeek Harness 插件标识无效".to_string())
 }
 
-fn stable_session_id(thread_id: &str) -> String {
-    let safe = thread_id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    format!("flowix-{safe}")
+fn resolved_session_id(value: serde_json::Value) -> Result<String, String> {
+    value
+        .get("sessionId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "DeepSeek Harness did not return a session id".to_string())
 }
 
 #[cfg(test)]
@@ -1380,11 +1394,6 @@ mod tests {
         assert_eq!(normalize_agent_preset(Some("minimal")), "minimal");
         assert_eq!(normalize_agent_preset(Some("cordis")), "cordis");
         assert_eq!(normalize_agent_preset(Some("unknown")), "standard");
-    }
-
-    #[test]
-    fn session_ids_are_path_safe_and_stable() {
-        assert_eq!(stable_session_id("thread/a b"), "flowix-thread_a_b");
     }
 
     #[test]

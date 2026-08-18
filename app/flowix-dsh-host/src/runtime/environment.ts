@@ -35,6 +35,10 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
     if (value !== undefined && value !== '') env[key] = value
   }
   env.DSH_CWD = spec.cwd
+  // Flowix owns the harness home. Point the harness's own resolver (skills,
+  // AGENTS.md, storage domains) at the single dsh root instead of ~/.dsh.
+  const dshHome = process.env.FLOWIX_DSH_HOME
+  if (dshHome !== undefined && dshHome !== '') env.DSH_HOME = dshHome
   // The vendored sandbox consumes this as a write-root list. Keep the JSON
   // boundary explicit so paths never become shell syntax or prompt text.
   env.DSH_WORKSPACE_ROOTS = JSON.stringify([...new Set([spec.cwd, ...spec.workspacePaths])])
@@ -47,7 +51,9 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   env.DSH_PERMISSION_MODE = spec.permissionMode
   env.DSH_AGENT_PRESET = spec.agentPreset
   env.DSH_AGENT_PRESET_ROOT = presetRootPath(disabled)
-  env.DSH_SESSION_ROOT = sessionRoot(spec.sessionId)
+  // Match the official Harness layout: the persistence plugin itself owns
+  // the project/session-id directories beneath <DSH_HOME>/sessions.
+  env.DSH_SESSION_ROOT = sessionBaseRoot()
   env.DSH_CORDIS_CONFIG = cordisConfigPath(disabled)
   const mcpCli = flowixCliPath()
   if (mcpCli !== undefined) env.FLOWIX_DSH_MCP_CLI = mcpCli
@@ -151,11 +157,6 @@ function presetRootPath(disabled = disabledPluginKeys()): string {
   return root
 }
 
-function sessionRoot(sessionId: string): string {
-  const base = sessionBaseRoot()
-  return `${base.replace(/[\\/]$/, '')}/${safeSegment(sessionId)}`
-}
-
 function sessionBaseRoot(): string {
   return process.env.FLOWIX_DSH_SESSION_ROOT ?? join(hostRoot(), '.sessions')
 }
@@ -187,10 +188,6 @@ function flowixCliPath(): string | undefined {
     join(hostRoot(), '../flowix-desktop/binaries/flowix-cli'),
   ]
   return candidates.find(existsSync)
-}
-
-function safeSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, '_')
 }
 
 function hasScopeDisables(disabled: ReadonlySet<string>, scope: 'host' | 'preset'): boolean {

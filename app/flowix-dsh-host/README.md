@@ -80,7 +80,11 @@ the generic `dsh-llm-pi-ai` provider adapter and is
 embedded in the host executable and materialized into the session root in
 packaged builds, so no source-tree resource is required. Session JSONL and
 checkpoints are stored beneath the Flowix user-config directory in
-`dsh-sessions/` and reused through the stable external session id.
+`dsh/sessions/` and reused through Flowix's persisted thread-to-session mapping.
+The persistence root follows the official Harness layout: project directories
+and encoded Harness session ids are created directly beneath `dsh/sessions/`;
+Flowix keeps its thread-to-Harness-session mapping separately and does not add
+an extra per-thread directory layer.
 
 The runtime uses one internal `flowix` route. Flowix passes the selected
 provider name, model, API protocol, endpoint and credential to each child
@@ -93,6 +97,7 @@ Development overrides:
 - `FLOWIX_DSH_RUNTIME_PATH`: Harness runtime executable
 - `FLOWIX_DSH_CORDIS_CONFIG`: alternate Cordis composition
 - `FLOWIX_DSH_SESSION_ROOT`: session persistence root
+- `FLOWIX_DSH_HOME`: harness home passed to each runtime as `DSH_HOME`
 - `FLOWIX_DSH_ROOT`: source/development host root
 - `FLOWIX_DSH_MAX_IDLE_RUNTIMES`: retained idle runtime cap (default `2`)
 - `FLOWIX_DSH_IDLE_TTL_MS`: idle runtime lifetime in milliseconds (default `300000`)
