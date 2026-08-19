@@ -142,6 +142,8 @@ interface NotebookIconProps {
   className?: string;
   imageClassName?: string;
   fallbackClassName?: string;
+  /** 关闭图标自带的原生 title tooltip (例如用作 hover 下拉窗触发器时避免遮挡)。 */
+  disableTitle?: boolean;
 }
 
 export function NotebookIcon({
@@ -150,6 +152,7 @@ export function NotebookIcon({
   className,
   imageClassName,
   fallbackClassName,
+  disableTitle,
 }: NotebookIconProps) {
   const option = getNotebookIconOption(icon);
   const iconMarkup = option ? NOTEBOOK_ICON_MARKUP_BY_ID[option.id] : null;
@@ -161,7 +164,7 @@ export function NotebookIcon({
           "flex shrink-0 items-center justify-center overflow-hidden text-[#3f3f46] dark:text-white [[data-theme='dark']_&]:text-white",
           className,
         )}
-        title={option.label}
+        title={disableTitle ? undefined : option.label}
       >
         <span
           aria-hidden="true"

@@ -47,6 +47,10 @@ interface DropdownMenuContentProps {
 	sideOffset?: number;
 	className?: string;
 	style?: React.CSSProperties;
+	// Content 经 portal 渲染到 body, 触发器的 onMouseLeave 在其移入菜单时会先触发;
+	// 由调用方配合延迟关闭实现 hover 型下拉窗。
+	onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+	onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 interface MenuPosition {
@@ -158,6 +162,8 @@ function DropdownMenuContent({
 	sideOffset = 4,
 	className,
 	style,
+	onMouseEnter,
+	onMouseLeave,
 }: DropdownMenuContentProps) {
 	const { open, setOpen, triggerRef } = useDropdownContext();
 	const contentRef = React.useRef<HTMLDivElement>(null);
@@ -251,6 +257,8 @@ function DropdownMenuContent({
 	return createPortal(
 		<div
 			ref={contentRef}
+			onMouseEnter={onMouseEnter}
+			onMouseLeave={onMouseLeave}
 			className={cn(
 				"fixed z-[1500] min-w-[160px] bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-1 animate-in fade-in-0 zoom-in-95",
 				className
