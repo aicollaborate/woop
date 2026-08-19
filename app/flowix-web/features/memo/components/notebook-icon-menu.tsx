@@ -18,7 +18,7 @@ interface NotebookIconMenuProps {
 }
 
 // hover 打开下拉窗的延迟: 指针悬停多久后展示菜单。
-const HOVER_OPEN_DELAY_MS = 1200;
+const HOVER_OPEN_DELAY_MS = 800;
 // hover 打开下拉窗的关闭延迟: 给指针留出从图标(trigger)跨越到 portal 菜单的间隙。
 const HOVER_CLOSE_DELAY_MS = 150;
 
