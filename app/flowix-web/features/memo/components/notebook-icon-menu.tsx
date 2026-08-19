@@ -5,6 +5,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { useI18n } from '@/lib/i18n';
@@ -13,7 +14,8 @@ import { cn } from '@/lib/utils';
 
 interface NotebookIconMenuProps {
   onToggleNoteNavigation: () => void;
-  onOpenPreferences: () => void;
+  /** 打开偏好设置窗口; 可传入偏好 tab id (如 'theme' / 'dsh' / 'mcp' / 'aiAgent')。 */
+  onOpenPreferences: (tab?: string) => void;
   buttonClassName?: string;
 }
 
@@ -107,21 +109,62 @@ export function NotebookIconMenu({
         align="start"
         side="bottom"
         sideOffset={2}
-        className="w-[12.8rem] px-1 py-1.5 bg-[var(--popover)]"
+        className="w-[12.8rem] px-1 py-1.5 space-y-1 bg-[var(--popover)]"
         onMouseEnter={cancelClose}
         onMouseLeave={scheduleClose}
       >
+        <DropdownMenuItem
+          onClick={() => window.dispatchEvent(new CustomEvent('flowix:create-memo'))}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('shell.commandPalette.action.newMemo')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'))}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('shell.commandPalette.action.newNotebook')}
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={onToggleNoteNavigation}
           className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
         >
           {t('shell.statusBar.noteNav')}
         </DropdownMenuItem>
+        {/* 与筛选/排序等其它下拉窗一致的分割线样式 */}
+        <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+        <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+          {t('memo.list.notebookMenu.preferences')}
+        </DropdownMenuLabel>
         <DropdownMenuItem
-          onClick={onOpenPreferences}
+          onClick={() => onOpenPreferences('format')}
           className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
         >
-          {t('status.preferences')}
+          {t('memo.list.notebookMenu.editorFormat')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onOpenPreferences('theme')}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('memo.list.notebookMenu.appearanceTheme')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onOpenPreferences('dsh')}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('preferences.tabs.dsh')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onOpenPreferences('mcp')}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('preferences.tabs.mcp')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onOpenPreferences('aiAgent')}
+          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+        >
+          {t('memo.list.notebookMenu.otherAgents')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

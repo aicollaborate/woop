@@ -11,7 +11,7 @@ interface MemoListTitlebarMacProps {
   selectedNotebook: Notebook | null;
   onCollapseSidebar: () => void;
   onToggleNoteNavigation: () => void;
-  onOpenPreferences: () => void;
+  onOpenPreferences: (tab?: string) => void;
 }
 
 export function MemoListTitlebarMac({

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
@@ -740,7 +740,7 @@ export function MainLayout() {
                     selectedNotebook={selectedNotebook}
                     onCollapseSidebar={closeMemoListAndNoteNavigation}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
-                    onOpenPreferences={() => windows.openPreferences()}
+                    onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   />
                 ) : (
                   <MemoListTitlebarMac
@@ -748,7 +748,7 @@ export function MainLayout() {
                     selectedNotebook={selectedNotebook}
                     onCollapseSidebar={closeMemoListAndNoteNavigation}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
-                    onOpenPreferences={() => windows.openPreferences()}
+                    onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   />
                 )
               )}
