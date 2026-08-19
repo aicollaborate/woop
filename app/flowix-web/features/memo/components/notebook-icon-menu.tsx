@@ -8,7 +8,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
+import { Palette, Plug, Type } from 'lucide-react';
+import { StarFourIcon } from '@phosphor-icons/react';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import productLogo from '@/assets/productlogo.png';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +26,39 @@ interface NotebookIconMenuProps {
 const HOVER_OPEN_DELAY_MS = 800;
 // hover 打开下拉窗的关闭延迟: 给指针留出从图标(trigger)跨越到 portal 菜单的间隙。
 const HOVER_CLOSE_DELAY_MS = 150;
+
+// 偏好设置分组下的分区直达项, 图标与偏好设置窗口侧栏保持一致。
+const PREFERENCE_SHORTCUTS: {
+  tab: string;
+  labelKey: I18nKey;
+  icon: React.ReactNode;
+}[] = [
+  {
+    tab: 'format',
+    labelKey: 'memo.list.notebookMenu.editorFormat',
+    icon: <Type className="h-4 w-4 shrink-0" />,
+  },
+  {
+    tab: 'theme',
+    labelKey: 'memo.list.notebookMenu.appearanceTheme',
+    icon: <Palette className="h-4 w-4 shrink-0" />,
+  },
+  {
+    tab: 'dsh',
+    labelKey: 'preferences.tabs.dsh',
+    icon: <AgentIcon typeKey="deepseek-harness" alt="" className="h-4 w-4 shrink-0 object-contain" />,
+  },
+  {
+    tab: 'mcp',
+    labelKey: 'preferences.tabs.mcp',
+    icon: <Plug className="h-4 w-4 shrink-0" />,
+  },
+  {
+    tab: 'aiAgent',
+    labelKey: 'memo.list.notebookMenu.otherAgents',
+    icon: <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" />,
+  },
+];
 
 /**
  * 中间列顶部的图标 (统一展示产品图标):
@@ -136,36 +172,16 @@ export function NotebookIconMenu({
         <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
           {t('memo.list.notebookMenu.preferences')}
         </DropdownMenuLabel>
-        <DropdownMenuItem
-          onClick={() => onOpenPreferences('format')}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('memo.list.notebookMenu.editorFormat')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onOpenPreferences('theme')}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('memo.list.notebookMenu.appearanceTheme')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onOpenPreferences('dsh')}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('preferences.tabs.dsh')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onOpenPreferences('mcp')}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('preferences.tabs.mcp')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onOpenPreferences('aiAgent')}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('memo.list.notebookMenu.otherAgents')}
-        </DropdownMenuItem>
+        {PREFERENCE_SHORTCUTS.map(({ tab, labelKey, icon }) => (
+          <DropdownMenuItem
+            key={tab}
+            onClick={() => onOpenPreferences(tab)}
+            className="gap-1.5 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+          >
+            {icon}
+            <span>{t(labelKey)}</span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
