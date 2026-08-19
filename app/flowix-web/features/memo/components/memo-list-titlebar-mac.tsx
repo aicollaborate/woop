@@ -9,10 +9,15 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
-import productLogo from '@/assets/product-logo.svg';
+import { ChevronDown } from 'lucide-react';
+import { NotebookIcon, getNotebookIconOption } from './notebook-icon';
+import productLogo from '@/assets/productlogo.png';
+import { cn } from '@/lib/utils';
+import type { Notebook } from '../store';
 
 interface MemoListTitlebarMacProps {
   noteNavigationVisible: boolean;
+  selectedNotebook: Notebook | null;
   onCollapseSidebar: () => void;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: () => void;
@@ -20,6 +25,7 @@ interface MemoListTitlebarMacProps {
 
 export function MemoListTitlebarMac({
   noteNavigationVisible,
+  selectedNotebook,
   onCollapseSidebar,
   onToggleNoteNavigation,
   onOpenPreferences,
@@ -28,21 +34,46 @@ export function MemoListTitlebarMac({
   return (
     <div
       data-tauri-drag-region
-      className="h-12 px-3 shrink-0 flex items-center justify-between gap-1"
+      className="h-12 px-1 shrink-0 flex items-center justify-between gap-1"
     >
-      <div className={`${noteNavigationVisible ? '-ml-2' : 'ml-[72px]'} flex items-center`}>
+      <div className={`${noteNavigationVisible ? 'ml-0' : 'ml-[82px]'} flex items-center`}>
+        {selectedNotebook && (
+          <button
+            type="button"
+            onClick={onToggleNoteNavigation}
+            aria-label={t("memo.list.notebookNavToggle")}
+            title={selectedNotebook.name}
+            className="group ml-1 flex shrink-0 items-center cursor-pointer"
+          >
+            {getNotebookIconOption(selectedNotebook.icon) ? (
+              <NotebookIcon
+                icon={selectedNotebook.icon}
+                name={selectedNotebook.name}
+                className={cn(
+                  'h-6 w-6 text-[11px] font-semibold text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]',
+                  selectedNotebook.missing && 'opacity-70',
+                )}
+              />
+            ) : (
+              <img
+                src={productLogo}
+                alt=""
+                aria-hidden="true"
+                className="h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
+              />
+            )}
+          </button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
               aria-label="Flowix menu"
-              className="w-8 h-8 flex items-center justify-center rounded-md select-none transition-colors hover:bg-[var(--muted)]"
+              className="group w-4 h-8 flex items-center justify-center rounded-md select-none transition-colors data-[state=open]:bg-[var(--muted)]"
             >
-              <img
-                src={productLogo}
-                alt=""
-                aria-hidden="true"
-                className="h-4 w-4 shrink-0 rounded opacity-75 [[data-theme='dark']_&]:brightness-0 [[data-theme='dark']_&]:invert"
+              <ChevronDown
+                className="w-3 h-3 text-[var(--muted-foreground)] shrink-0 transition-colors group-hover:text-[var(--foreground)]"
+                strokeWidth={2.5}
               />
             </button>
           </DropdownMenuTrigger>
@@ -72,7 +103,7 @@ export function MemoListTitlebarMac({
           type="button"
           onClick={onCollapseSidebar}
           aria-label={t("memo.list.collapseSidebar")}
-          className="w-8 h-8 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+          className="w-8 h-8 mr-0.5 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
         >
           <SidebarToggleIcon className="w-5 h-5" />
         </button>

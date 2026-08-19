@@ -835,7 +835,7 @@ export function MemoList() {
     <div className="memo-list relative flex h-full select-none flex-col bg-[var(--card)]">
       <>
       {/* Memo Tab */}
-      <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
+      <div className="flex items-center justify-between pl-2 pr-3 pb-2 gap-2">
         <div className="min-w-0 flex-1">
           <DropdownMenu open={notebookDropdownOpen} onOpenChange={setNotebookDropdownOpen}>
             <DropdownMenuTrigger asChild>

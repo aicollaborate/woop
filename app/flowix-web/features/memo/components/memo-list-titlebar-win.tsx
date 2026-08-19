@@ -9,15 +9,21 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
-import productLogo from '@/assets/product-logo.svg';
+import { ChevronDown } from 'lucide-react';
+import { NotebookIcon, getNotebookIconOption } from './notebook-icon';
+import productLogo from '@/assets/productlogo.png';
+import { cn } from '@/lib/utils';
+import type { Notebook } from '../store';
 
 interface MemoListTitlebarWinProps {
+  selectedNotebook: Notebook | null;
   onCollapseSidebar: () => void;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: () => void;
 }
 
 export function MemoListTitlebarWin({
+  selectedNotebook,
   onCollapseSidebar,
   onToggleNoteNavigation,
   onOpenPreferences,
@@ -29,44 +35,68 @@ export function MemoListTitlebarWin({
       data-tauri-drag-region
       className="h-9 px-2 shrink-0 flex items-center justify-between gap-1"
     >
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <div className="ml-1 flex items-center">
+        {selectedNotebook && (
           <button
             type="button"
-            aria-label="Flowix menu"
-            className="flex h-7 items-center gap-1 rounded-md pl-1 pr-2 select-none transition-colors hover:bg-[var(--muted)]"
-          >
-            <img
-              src={productLogo}
-              alt=""
-              aria-hidden="true"
-              className="h-[12.6px] w-[12.6px] shrink-0 rounded [[data-theme='dark']_&]:brightness-0 [[data-theme='dark']_&]:invert [[data-theme='dark']_&]:opacity-75"
-            />
-            <span className="leading-none translate-y-[1px] text-[13px] font-semibold tracking-tight text-[color-mix(in_oklch,var(--foreground)_86%,transparent)]">
-              Flowix
-            </span>
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          side="bottom"
-          sideOffset={2}
-          className="w-[12.8rem] p-1 bg-[var(--popover)]"
-        >
-          <DropdownMenuItem
             onClick={onToggleNoteNavigation}
-            className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+            aria-label={t("memo.list.notebookNavToggle")}
+            title={selectedNotebook.name}
+            className="group flex shrink-0 items-center cursor-pointer"
           >
-            {t('shell.statusBar.noteNav')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={onOpenPreferences}
-            className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+            {getNotebookIconOption(selectedNotebook.icon) ? (
+              <NotebookIcon
+                icon={selectedNotebook.icon}
+                name={selectedNotebook.name}
+                className={cn(
+                  'h-6 w-6 text-[11px] font-semibold text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]',
+                  selectedNotebook.missing && 'opacity-70',
+                )}
+              />
+            ) : (
+              <img
+                src={productLogo}
+                alt=""
+                aria-hidden="true"
+                className="h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
+              />
+            )}
+          </button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Flowix menu"
+              className="group flex h-7 w-3.5 items-center justify-center rounded-md select-none transition-colors data-[state=open]:bg-[var(--muted)]"
+            >
+              <ChevronDown
+                className="w-3 h-3 text-[var(--muted-foreground)] shrink-0 transition-colors group-hover:text-[var(--foreground)]"
+                strokeWidth={2.5}
+              />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            side="bottom"
+            sideOffset={2}
+            className="w-[12.8rem] p-1 bg-[var(--popover)]"
           >
-            {t('status.preferences')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuItem
+              onClick={onToggleNoteNavigation}
+              className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+            >
+              {t('shell.statusBar.noteNav')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={onOpenPreferences}
+              className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+            >
+              {t('status.preferences')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <div className="flex items-center gap-1">
         <Tooltip content="Collapse sidebar" shortcut="panel.memoList.toggle">
           <button

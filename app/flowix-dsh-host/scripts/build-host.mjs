@@ -9,6 +9,12 @@ const root = resolve(import.meta.dirname, '..')
 const repo = resolve(root, '../..')
 const outdir = resolve(repo, '.build/flowix-dsh-host')
 const vendor = resolve(root, 'vendor/deepseek-harness')
+const tooling = resolve(root, 'scripts/tooling')
+const buildEnv = {
+  ...process.env,
+  CI: 'true',
+  PATH: `${tooling}:${process.env.PATH ?? ''}`,
+}
 await mkdir(outdir, { recursive: true })
 
 // Generate (or reuse) a build identity for the dual-mode DSH SEA and write
@@ -56,7 +62,7 @@ if (!vendorReady) {
     const child = spawn(corepackCmd, ['pnpm@11.7.0', 'install', '--frozen-lockfile', '--prod=false'], {
       cwd: vendor,
       stdio: 'inherit',
-      env: { ...process.env, CI: 'true' },
+      env: buildEnv,
       // Windows refuses to spawn .cmd without shell=true since Node 20 (CVE-2024-27980).
       shell: process.platform === 'win32',
     })
@@ -133,7 +139,7 @@ if (!existsSync(runtimeBinary)) {
     const child = spawn(corepackCmd, ['pnpm@11.7.0', 'exec', 'tsx', 'scripts/build-exe-for-python-sdk.ts', '--skip-build'], {
       cwd: vendor,
       stdio: 'inherit',
-      env: { ...process.env, CI: 'true' },
+      env: buildEnv,
       shell: process.platform === 'win32',
     })
     child.once('error', fail)

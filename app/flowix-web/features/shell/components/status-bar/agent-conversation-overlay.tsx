@@ -17,7 +17,6 @@ import {
 } from '@features/agent/store/conversation-run-index';
 import { useDocumentStore } from '@features/document';
 import { useI18n } from '@/lib/i18n';
-import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 
 interface AgentConversationOverlayProps {
@@ -73,8 +72,6 @@ export function AgentConversationOverlay({
   ).format(new Date(timestamp));
 
   const openConversation = async (instance: AgentConversationInstance) => {
-    const source = instance.source;
-    if (!source.memoId && !source.documentPath) return;
     if (instance.threadId) {
       // Keep the active-thread pointer in canonical session metadata.
       const session = useAgentSessionStore.getState();
@@ -87,15 +84,8 @@ export function AgentConversationOverlay({
         activeAgentTypeKey: instance.agentType,
       }));
     }
-    if (source.memoId) {
-      await openNoteByMemoId(source.memoId);
-      onClose();
-      return;
-    }
-    if (source.documentPath) {
-      await useDocumentStore.getState().openExternalDocument(source.documentPath);
-      onClose();
-    }
+    await useDocumentStore.getState().openAgentConversation(instance.instanceId);
+    onClose();
   };
 
   const activeInstances = useMemo(
@@ -180,21 +170,14 @@ export function AgentConversationOverlay({
             ) : (
               <div>
                 {activeInstances.map((instance) => {
-                  const canOpen = Boolean(instance.source.memoId || instance.source.documentPath);
                   const running = isAgentConversationRunning(instance, conversationRunIndex);
                   return (
                     <button
                       key={instance.instanceId}
                       type="button"
-                      disabled={!canOpen}
                       onClick={() => void openConversation(instance)}
-                      title={canOpen ? t('status.agent.openRun') : t('status.agent.originUnavailable')}
-                      className={cn(
-                        'flex h-14 w-full items-center gap-3 rounded-xl border border-transparent bg-transparent px-4 text-left transition-colors',
-                        canOpen
-                          ? 'hover:border-[color-mix(in_oklch,var(--border)_76%,transparent)] hover:bg-[color-mix(in_oklch,var(--card)_76%,transparent)]'
-                          : 'cursor-not-allowed opacity-55',
-                      )}
+                      title={t('status.agent.openConversation')}
+                      className="flex h-14 w-full items-center gap-3 rounded-xl border border-transparent bg-transparent px-4 text-left transition-colors hover:border-[color-mix(in_oklch,var(--border)_76%,transparent)] hover:bg-[color-mix(in_oklch,var(--card)_76%,transparent)]"
                     >
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center">
                         <img

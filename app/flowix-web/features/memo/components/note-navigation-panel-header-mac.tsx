@@ -31,7 +31,7 @@ export function NoteNavigationPanelHeaderMac({
   return (
     <div
       data-tauri-drag-region
-      className="shrink-0 h-12 pl-[90px] pr-2 flex items-center justify-end"
+      className="shrink-0 h-12 pl-[90px] flex items-center justify-end"
     >
       <Tooltip content={t("memo.navigation.collapsePanelTooltip")}>
         <button

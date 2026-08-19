@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { StickyNotePlus } from 'lucide-react';
 
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
+import { buildInitialInstanceRuntimeConfig } from '@features/agent/store/initial-runtime-config';
 import { useDocumentStore } from '@features/document';
 import { useMemoStore } from '@features/memo';
 import { agentClient } from '@features/agent/store/agent-client';
@@ -19,6 +21,12 @@ import { createLogger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@shared/ui/dropdown-menu';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 
 /**
@@ -188,51 +196,102 @@ export function AgentConversationList() {
     await useDocumentStore.getState().openAgentConversation(instance.instanceId);
   }, []);
 
+  // 独立对话: 无文档 (memoId / documentPath 均为 null), 但归属当前选中的
+  // notebook。notebook 未选中时不可新建 (cwd 无法解析到笔记本路径)。
+  const createConversation = useCallback(
+    (typeKey: AgentTypeKey) => {
+      if (!currentNotebookId) return;
+      const instance = useAgentSessionStore.getState().createInstance({
+        agentType: typeKey,
+        title: '',
+        threadId: null,
+        source: {
+          kind: 'dedicated',
+          notebookId: currentNotebookId,
+          memoId: null,
+          documentPath: null,
+        },
+        role: undefined,
+        runtimeConfig: buildInitialInstanceRuntimeConfig(typeKey),
+      });
+      setSelectedInstanceId(instance.instanceId);
+      void useDocumentStore.getState().openAgentConversation(instance.instanceId);
+    },
+    [currentNotebookId],
+  );
+
   return (
     <section className="flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('document.agent.conversationsTitle')}>
       {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
           左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
-        <div className="min-w-0 flex-1">
-          <span className="block min-w-0 truncate py-0.5 pl-1 pr-2 text-[15px] font-medium text-[var(--foreground)]">
+        <div className="flex min-w-0 flex-1 items-center">
+          <span className="min-w-0 shrink truncate py-0.5 pl-1 pr-2 text-[15px] font-medium text-[var(--foreground)]">
             {t('document.agent.conversationsTitle')}
           </span>
+          {activeAgentTypes.length >= 2 && (
+            <div
+              className="flex shrink-0 items-center gap-1"
+              role="group"
+              aria-label={t('document.agent.filterByAgent')}
+            >
+              {activeAgentTypes.map(({ type, count }) => {
+                const active = effectiveFilter === type.key;
+                const label = t('document.agent.filterByAgentCount', {
+                  name: displayName(type),
+                  count,
+                });
+                return (
+                  <button
+                    key={type.key}
+                    type="button"
+                    aria-pressed={active}
+                    title={label}
+                    aria-label={label}
+                    onClick={() => setFilterType((prev) => (prev === type.key ? null : type.key))}
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors',
+                      active
+                        ? 'border-transparent bg-[var(--muted)]'
+                        : 'border-[var(--border)] opacity-20 hover:opacity-100',
+                    )}
+                  >
+                    <AgentIcon typeKey={type.key} alt="" className="h-full w-full object-contain" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-        {activeAgentTypes.length >= 2 && (
-          <div
-            className="flex items-center gap-1 shrink-0"
-            role="group"
-            aria-label={t('document.agent.filterByAgent')}
-          >
-            {activeAgentTypes.map(({ type, count }) => {
-              const active = effectiveFilter === type.key;
-              const label = t('document.agent.filterByAgentCount', {
-                name: displayName(type),
-                count,
-              });
-              return (
-                <button
+        <div className="flex items-center gap-1 shrink-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                disabled={!currentNotebookId}
+                aria-label={t('agent.chat.newThread')}
+                title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <StickyNotePlus className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-[182px] px-1 py-1.5 space-y-1 bg-[var(--popover)]">
+              {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
+                <DropdownMenuItem
                   key={type.key}
-                  type="button"
-                  aria-pressed={active}
-                  title={label}
-                  aria-label={label}
-                  onClick={() => setFilterType((prev) => (prev === type.key ? null : type.key))}
-                  className={cn(
-                    'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors',
-                    active
-                      ? 'border-transparent bg-[var(--muted)]'
-                      : 'border-[var(--border)] opacity-60 hover:opacity-100',
-                  )}
+                  onClick={() => createConversation(type.key)}
+                  className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
                 >
-                  <AgentIcon typeKey={type.key} alt="" className="h-full w-full object-contain" />
-                </button>
-              );
-            })}
-          </div>
-        )}
+                  <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="flex h-full flex-col overflow-y-auto px-2 py-2">
+      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2">
         {isLoading ? null : scopedConversations.length === 0 ? (
           <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-[var(--muted-foreground)]">
             {t('status.agent.noConversations')}
@@ -244,24 +303,23 @@ export function AgentConversationList() {
                 <h3 className="px-2 text-xs font-medium text-[var(--muted-foreground)]">
                   {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
                 </h3>
+                {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
+                <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
                 {group.items.map((instance) => {
                   const agent = getAgentType(instance.agentType);
-                  const canOpen = Boolean(instance.threadId);
                   const selected = instance.instanceId === selectedInstanceId;
                   const running = isAgentConversationRunning(instance, conversationRunIndex);
                   return (
                     <button
                       key={instance.instanceId}
                       type="button"
-                      disabled={!canOpen}
                       onClick={() => void revealConversation(instance)}
-                      title={canOpen ? t('status.agent.openRun') : t('status.agent.originUnavailable')}
+                      title={t('status.agent.openConversation')}
                       className={cn(
                         'flex h-9 w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors',
                         selected
                           ? 'bg-[var(--muted)] text-[var(--foreground)]'
                           : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
-                        !canOpen && 'cursor-not-allowed opacity-55',
                       )}
                     >
                       <span className={cn(

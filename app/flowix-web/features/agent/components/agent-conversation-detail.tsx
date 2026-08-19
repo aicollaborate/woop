@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { getAgentType } from '@/lib/agent-types';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
+import { createLogger } from '@/lib/logger';
 import { deepseekHarness, windows } from '@platform/tauri/client';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { acquireThreadInterest } from '@features/agent/store/thread-interest';
@@ -24,6 +25,8 @@ import { ExternalAgentSettingsController } from '@features/agent/thread-card/set
 import { AgentConversationSurfaceController } from '@features/agent/thread-card/surface/agent-conversation-surface-controller';
 import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
 import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
+import { createExternalAgentRuntimeHandle } from '@features/agent/services/external-agent-runtime-service';
+import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
@@ -32,6 +35,7 @@ const SCROLL_DELTA_EPSILON_PX = 0.5;
 const INPUT_DRAFT_MAX_CHARS = 500;
 const EMPTY_MESSAGES: ThreadState['messages'] = [];
 const DETAIL_DRAFT_KEY_PREFIX = 'flowix:agent-conversation-draft:';
+const logger = createLogger('agent-conversation-detail');
 
 function detailDraftKey(instanceId: string): string {
   return `${DETAIL_DRAFT_KEY_PREFIX}${instanceId}`;
@@ -102,6 +106,8 @@ export function AgentConversationDetail({
   const isLoadingRef = useRef(isLoading);
   const instanceRef = useRef(instance);
   const threadIdRef = useRef(threadId);
+  const runtimeHandleRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
   const languageRef = useRef(language);
   const tRef = useRef(t);
   const submitRef = useRef<() => void>(() => undefined);
@@ -115,34 +121,65 @@ export function AgentConversationDetail({
   languageRef.current = language;
   tRef.current = t;
 
-  const submit = useCallback(() => {
+  const submit = useCallback(async () => {
+    // 线程绑定是异步的; submittingRef 挡住"创建中"期间的重入, 避免快速双击
+    // 在 threadId 尚未回写时重复 createThread (笔记内嵌卡片的 isCreating 同理)。
+    if (submittingRef.current || isLoadingRef.current) return;
     const input = inputRef.current;
     const currentInstance = instanceRef.current;
-    const currentThreadId = threadIdRef.current;
     const content = input?.value.trim() ?? '';
     const imagePaths = composerImagesControllerRef.current?.readyImages.map((image) => image.path) ?? [];
-    if (!input || (!content && imagePaths.length === 0) || !currentInstance || !currentThreadId || isLoadingRef.current) return;
+    if (!input || (!content && imagePaths.length === 0) || !currentInstance) return;
 
-    input.value = '';
-    persistDetailDraft(currentInstance.instanceId, null);
-    composerControllerRef.current?.resetHistoryNavigation();
-    composerControllerRef.current?.clearDraft();
-    composerControllerRef.current?.updateMultiLineState();
-    composerImagesControllerRef.current?.clearAfterSubmit();
-    void useAgentSessionStore.getState().sendMessageToThread(
-      currentThreadId,
-      content || 'Analyze the attached image(s).',
-      currentInstance.agentType,
-      {
-        instanceId: currentInstance.instanceId,
-        conversationTitle: currentInstance.title,
-        // An existing thread must not receive the source note as fresh
-        // first-message context merely because it opened outside its note.
-        isFirstMessage: false,
-        runtimeConfig: currentInstance.runtimeConfig ?? null,
-        imagePaths,
-      },
-    );
+    submittingRef.current = true;
+    try {
+      let targetThreadId = threadIdRef.current;
+      let conversationTitle = currentInstance.title;
+      let runtimeConfig = currentInstance.runtimeConfig ?? null;
+      const isFirstMessage = !targetThreadId;
+
+      if (!targetThreadId) {
+        // 空独立对话的首条消息: 先绑定产品线程 (flowix -> createThread;
+        // 外部 CLI -> local thread id), 再冻结 workspace snapshot, 最后才 dispatch。
+        if (!runtimeHandleRef.current) {
+          runtimeHandleRef.current = createExternalAgentRuntimeHandle();
+        }
+        const ensured = await ensureAgentConversationDetailThread({
+          instanceId: currentInstance.instanceId,
+          typeKey: currentInstance.agentType,
+          prompt: content || 'Analyze the attached image(s).',
+          runtimeHandleId: runtimeHandleRef.current,
+        });
+        targetThreadId = ensured.threadId;
+        conversationTitle = ensured.title;
+        runtimeConfig = ensured.runtimeConfig;
+      }
+
+      input.value = '';
+      persistDetailDraft(currentInstance.instanceId, null);
+      composerControllerRef.current?.resetHistoryNavigation();
+      composerControllerRef.current?.clearDraft();
+      composerControllerRef.current?.updateMultiLineState();
+      composerImagesControllerRef.current?.clearAfterSubmit();
+      void useAgentSessionStore.getState().sendMessageToThread(
+        targetThreadId,
+        content || 'Analyze the attached image(s).',
+        currentInstance.agentType,
+        {
+          instanceId: currentInstance.instanceId,
+          conversationTitle,
+          isFirstMessage,
+          runtimeConfig,
+          imagePaths,
+        },
+      );
+    } catch (err) {
+      // 仅线程创建/绑定失败会走到这里; 输入与草稿保持原样以便重试。
+      logger.error('Failed to create conversation thread', { error: String(err) });
+      toast.error(tRef.current('agent.chat.sendFailed'));
+    } finally {
+      submittingRef.current = false;
+    }
   }, []);
   submitRef.current = submit;
 
@@ -328,7 +365,7 @@ export function AgentConversationDetail({
     rolePickerRef.current?.refreshIcon();
   }, [isLoading, messages]);
 
-  if (!instance || !threadId) {
+  if (!instance) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
         {t('status.agent.originUnavailable')}
@@ -375,7 +412,7 @@ export function AgentConversationDetail({
         <div className="agent-thread-card__agent">
           <span className="agent-thread-card__badge-hover-wrapper">
             <BadgeHoverCard
-              sessionId={renderThreadId ?? threadId}
+              sessionId={renderThreadId ?? threadId ?? ''}
               model={badgeData.model}
               usage={badgeData.usage}
               onRequestRuntimeInfo={

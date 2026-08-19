@@ -327,9 +327,10 @@ export function NotebookAccessFilesList({
           <button
             type="button"
             onClick={handleAddFolder}
-            className="group relative flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md pl-1.5 pr-2 text-left text-sm transition-colors text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
+            className="group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
+            style={{ paddingLeft: 6 }}
           >
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]">
+            <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 rounded-md text-[var(--muted-foreground)]">
               <Plus className="h-3.5 w-3.5" />
             </span>
             <span className="min-w-0 flex-1 truncate">

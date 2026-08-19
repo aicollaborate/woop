@@ -737,6 +737,7 @@ export function MainLayout() {
               {!isMemoListHidden && (
                 isWindowsPlatform() ? (
                   <MemoListTitlebarWin
+                    selectedNotebook={selectedNotebook}
                     onCollapseSidebar={closeMemoListAndNoteNavigation}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
                     onOpenPreferences={() => windows.openPreferences()}
@@ -744,6 +745,7 @@ export function MainLayout() {
                 ) : (
                   <MemoListTitlebarMac
                     noteNavigationVisible={noteNavigationVisible}
+                    selectedNotebook={selectedNotebook}
                     onCollapseSidebar={closeMemoListAndNoteNavigation}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
                     onOpenPreferences={() => windows.openPreferences()}

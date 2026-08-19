@@ -36,7 +36,6 @@ import { useTagStore } from '@features/memo/store/tag-store';
 import { NotebookIcon } from '@features/memo/components/notebook-icon';
 import type { MemoItem } from '@/types/memo-item';
 import { useDocumentStore } from '@features/document/store/document-store';
-import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import {
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-types';
@@ -369,24 +368,14 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
       }));
     }
 
-    const source = instance.source;
-    if (source.memoId) {
-      await openNoteByMemoId(source.memoId);
-      onClose();
-      return;
-    }
-
-    if (source.documentPath) {
-      await useDocumentStore.getState().openExternalDocument(source.documentPath);
-      onClose();
-    }
+    await useDocumentStore.getState().openAgentConversation(instance.instanceId);
+    onClose();
   };
 
   return (
     <CommandGroup heading="Agent Conversation">
       {runningInstances.map((instance) => {
         const agent = getAgentType(instance.agentType);
-        const canOpen = Boolean(instance.source.memoId || instance.source.documentPath);
         const runSummary = getConversationRunSummary(
           conversationRunIndex,
           instance.threadId,
@@ -396,10 +385,7 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
           <CommandItem
             key={runId}
             value={`agent-running-${runId}`}
-            disabled={!canOpen}
-            onSelect={() => {
-              if (canOpen) void openRunningInstance(instance);
-            }}
+            onSelect={() => void openRunningInstance(instance)}
           >
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5 agent-runtime-list__icon--running">
               <AgentIcon

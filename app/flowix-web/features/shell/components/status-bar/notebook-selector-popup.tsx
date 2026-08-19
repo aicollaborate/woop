@@ -404,7 +404,7 @@ export function NotebookSelectorPopup({
                     onPointerDown={(event) => handleCardPointerDown(notebook, event)}
                     onKeyDown={(event) => handleCardKeyDown(notebook, event)}
                     className={cn(
-                      'group relative flex min-h-[124px] cursor-grab select-none flex-col items-start gap-2 rounded-lg border px-3 py-3 text-left transition-[border-color,background-color,box-shadow] active:cursor-grabbing',
+                      'group relative flex min-h-[124px] cursor-default select-none flex-col items-start gap-2 rounded-lg border px-3 py-3 text-left transition-[border-color,background-color,box-shadow]',
                       isActive
                         ? 'border-[var(--primary)]/50 bg-[color-mix(in_oklch,var(--primary)_10%,transparent)]'
                         : 'border-[var(--border)] hover:border-[var(--primary)]/50 hover:bg-[var(--muted)]/60',

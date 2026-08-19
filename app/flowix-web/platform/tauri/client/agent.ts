@@ -117,7 +117,7 @@ export interface AgentExternalEvent {
 }
 
 export type AgentConversationSource = {
-  kind: 'thread-card';
+  kind: 'thread-card' | 'dedicated';
   documentPath?: string | null;
   memoId?: string | null;
   notebookId?: string | null;

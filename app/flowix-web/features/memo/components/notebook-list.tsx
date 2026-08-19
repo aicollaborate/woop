@@ -24,6 +24,24 @@ interface NotebookListProps {
   onDeleteNotebook: (notebook: Notebook) => void;
 }
 
+// 笔记本路径行 ── 纯 CSS 头部省略: 溢出时浏览器在左缘画 "…", 尾部 (笔记本名)
+// 保持可见。direction:rtl 会把开头的 "/" (双向中立字符) 重排到行尾, 显得像
+// 带尾部斜杠, 故文本前插 LRM (‎) 锚定为 LTR 后再整体 rtl 裁剪。
+function NotebookPathLine({ path }: { path: string }) {
+  const displayPath = path.trim().replace(/[\\/]+$/, '');
+
+  return (
+    <span
+      className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[11px] leading-4 text-[var(--muted-foreground)]"
+      style={{ direction: 'rtl', textAlign: 'left', textOverflow: 'ellipsis' }}
+      title={displayPath}
+    >
+      {'‎'}
+      {displayPath}
+    </span>
+  );
+}
+
 // 笔记本入口 ── 侧边栏仅保留当前笔记本卡片；点击卡片打开完整的笔记本切换弹窗。
 export function NotebookList({
   notebooks,
@@ -231,13 +249,8 @@ export function NotebookList({
                             )}
                           </span>
                         )}
-                        <span
-                          className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[11px] leading-4 text-[var(--muted-foreground)]"
-                          style={{ direction: 'rtl', textAlign: 'left', textOverflow: 'clip' }}
-                          title={notebook.path}
-                        >
-                          {notebook.path.trim().replace(/[\\/]+$/, '')}
-                        </span>
+                        <NotebookPathLine path={notebook.path} />
+
                       </div>
                     )}
                     </div>

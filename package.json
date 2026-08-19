@@ -80,7 +80,7 @@
     "codemirror": "^6.0.2",
     "date-fns": "^4.1.0",
     "katex": "^0.17.0",
-    "lucide-react": "^0.577.0",
+    "lucide-react": "^1.33.0",
     "markmap-lib": "^0.18.12",
     "markmap-view": "^0.18.12",
     "mermaid": "^11.15.0",
@@ -97,12 +97,12 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
-    "@yao-pkg/pkg": "6.21.0",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/svg-pan-zoom": "^3.3.0",
     "@vitejs/plugin-react": "^4.6.0",
+    "@yao-pkg/pkg": "6.21.0",
     "autoprefixer": "^10.4.20",
     "esbuild": "0.25.12",
     "jsdom": "^29.1.1",
