@@ -1,10 +1,40 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, "app/flowix-web");
+
+// KaTeX ships every font in three formats (woff2 / woff / ttf) so it can serve
+// ancient browsers, but Flowix only targets modern Chromium via Tauri. Strip
+// the woff and ttf fallback entries from `katex.min.css` so the bundler emits
+// the woff2 variant only. Each font family goes from ~3 emitted assets down to
+// one (~250 KB total instead of ~1 MB).
+function katexWoff2Only(): Plugin {
+  return {
+    name: "flowix-katex-woff2-only",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.includes("node_modules/katex/dist/katex.min.css")) {
+        return null;
+      }
+      const transformed = code
+        .replace(
+          /,url\([^)]+\.woff\) format\(["']woff["']\)/g,
+          "",
+        )
+        .replace(
+          /,url\([^)]+\.ttf\) format\(["']truetype["']\)/g,
+          "",
+        );
+      if (transformed === code) {
+        return null;
+      }
+      return { code: transformed, map: null };
+    },
+  };
+}
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -20,8 +50,8 @@ export default defineConfig(({ command, mode }) => {
     // CSS, fonts, and lazy chunks resolve beside index.html in the installed
     // app. The dev server still needs an origin-root base for HMR.
     base: command === "build" || isEditorWebView ? "./" : "/",
-    // 前端入口: app/flowix-web/ 作为 Vite 根, 让 index.html / entrypoints /
-    // public 都在同一目录, 避免 Tauri / Vite 路径互相穿越。
+    // 鍓嶇鍏ュ彛: app/flowix-web/ 浣滀负 Vite 鏍? 璁?index.html / entrypoints /
+    // public 閮藉湪鍚屼竴鐩綍, 閬垮厤 Tauri / Vite 璺緞浜掔浉绌胯秺銆?
     root: frontendRoot,
     publicDir: resolve(frontendRoot, "public"),
     build: {
@@ -32,7 +62,7 @@ export default defineConfig(({ command, mode }) => {
       },
     },
 
-    plugins: [react()],
+    plugins: [react(), katexWoff2Only()],
     resolve: {
       alias: {
         "@": frontendRoot,
