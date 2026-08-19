@@ -359,7 +359,9 @@ fn packaged_runtime_candidate() -> Option<PathBuf> {
     let parent = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
     // Prefer the tauri-triple suffix that matches the host triple; fall back
-    // to the bare `dsh-runtime` name for installs that use a single binary.
+    // to the bare `dsh-runtime` name for installs that still ship a runtime
+    // sidecar. Production builds no longer ship dsh-runtime (see
+    // scripts/build-sidecars.mjs); this lookup is kept for diagnostic use only.
     let triple_suffix = rust_target_triple().to_string();
     let triple = parent.join(format!("dsh-runtime-{triple_suffix}{exe_suffix}"));
     if triple.is_file() {

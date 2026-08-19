@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { RuntimeSpec } from '../protocol/v1.ts'
 import { disabledPluginKeys } from './plugin-directory.ts'
@@ -224,24 +224,21 @@ function packagedRuntimeBinary(): string | undefined {
   // The vendored dev bundle runs under node and lives in
   // .build/flowix-dsh-host/; only SEA launches report a real .exe path here.
   if (exeExt === '.exe' || exeExt === '' || exeExt === '.bin') {
-    const parent = dirname(exe)
-    const candidates = [
-      join(parent, `dsh-runtime-${runtimeTriple()}${process.platform === 'win32' ? '.exe' : ''}`),
-      join(parent, `dsh-runtime${process.platform === 'win32' ? '.exe' : ''}`),
-    ]
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return candidate
+    // Dev bundle: the vendored launcher runs as `node dsh-host.cjs`,
+    // so process.execPath points to the node binary. The dispatcher only
+    // exists inside the SEA, so falling through to devPackagedRuntimeBinary
+    // is required; otherwise the host would spawn plain node.exe as the
+    // runtime and the turn would fail with no script.
+    if (basename(exe, exeExt).toLowerCase() === 'node') {
+      return undefined
     }
+    // FLOWIX: dual-mode SEA. The host and the runtime are the same binary.
+    // The dispatcher in scripts/build-exe-for-python-sdk.ts reads
+    // FLOWIX_DSH_RUNTIME_MODE and routes the process into the vendored
+    // packaged-bin entry when the host launches us in runtime mode. A
+    // separate dsh-runtime sidecar would only duplicate the whole closure
+    // inside the NSIS installer, so the install ships dsh-host only.
+    return exe
   }
   return undefined
-}
-
-function runtimeTriple(): string {
-  if (process.platform === 'darwin') {
-    return process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
-  }
-  if (process.platform === 'win32') {
-    return 'x86_64-pc-windows-msvc'
-  }
-  return process.arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu'
 }

@@ -76,7 +76,6 @@
     "externalBin": [
       "binaries/flowix-cli",
       "binaries/dsh-host",
-      "binaries/dsh-runtime"
     ],
     "resources": {
       "resources/skills/.system/**/*": "skills/.system/"

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { basename, resolve } from 'node:path'
+import { basename, delimiter, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const repo = resolve(root, '../..')
@@ -76,77 +76,49 @@ await mkdir(tauriBins, { recursive: true })
 const tooling = resolve(root, 'scripts/tooling')
 const vendorBuildEnv = { ...process.env, NODE_ENV: 'development' }
 await ensureVendorDevDependencies(vendorBuildEnv)
-await run('corepack', ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor, vendorBuildEnv)
+await run(corepackCommand(), ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor, vendorBuildEnv)
+
+// FLOWIX: a single pkg invocation with --launcher produces a dual-mode SEA.
+// The dispatcher in scripts/build-exe-for-python-sdk.ts loads the CJS launcher
+// by default and the vendored ESM packaged-bin entry when launched with
+// FLOWIX_DSH_RUNTIME_MODE=1. Both roles share one Node carrier, one V8 heap,
+// and one copy of every shared dependency, so this halves the sidecar payload
+// that the NSIS installer has to compress.
 await run(vendorBin('tsx'), [
   'scripts/build-exe-for-python-sdk.ts',
   `--targets=${targets.join(',')}`,
   '--skip-build',
   `--keep-packages=${FLOWIX_RUNTIME_ROOTS.join(',')}`,
   `--launcher=${resolve(outdir, 'dsh-host.cjs')}`,
-], vendor, { ...process.env, PATH: `${tooling}:${process.env.PATH ?? ''}` })
+], vendor, { ...process.env, PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}` })
 
-// A second invocation without --launcher produces an independent runtime SEA
-// that runs the vendored packaged-bin entry directly. dsh-host and dsh-runtime
-// share the same build closure but ship as two sidecars so each can be
-// updated, signed, and verified on its own.
-await run(vendorBin('tsx'), [
-  'scripts/build-exe-for-python-sdk.ts',
-  `--targets=${targets.join(',')}`,
-  '--skip-build',
-  `--keep-packages=${FLOWIX_RUNTIME_ROOTS.join(',')}`,
-], vendor, { ...process.env, PATH: `${tooling}:${process.env.PATH ?? ''}` })
 
-// The first pkg invocation (with --launcher) produced the host SEA into the
-// vendored dist-exe dir; we move it aside before the second invocation so
-// its successor can land in the same path without overwriting.
+// Single product per target. Stage it to both the .build mirror and the
+// Tauri binaries dir under the dsh-host name; the host binary becomes the
+// runtime when the host launches it with FLOWIX_DSH_RUNTIME_MODE=1.
 for (const target of targets) {
   const platform = targetPlatform(target)
   const arch = targetArch(target)
-  const upstream = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}`)
+  const upstream = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}${productExtension(target)}`)
   if (!existsSync(upstream)) throw new Error(`upstream product is missing: ${upstream}`)
-  const hostSea = resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}`)
-  await copyFile(upstream, hostSea)
-  const helper = `${upstream}-spawn-helper`
-  if (existsSync(helper)) {
-    await copyFile(helper, `${hostSea}-spawn-helper`)
-  }
-}
 
-// Second invocation has now overwritten the upstream product with the
-// runtime SEA. Stage both products into .build and the Tauri binaries dir.
-for (const target of targets) {
-  const platform = targetPlatform(target)
-  const arch = targetArch(target)
-  const upstreamHost = resolve(vendor, `dist-exe/.flowix-host-sea-${platform}-${arch}`)
-  const upstreamRuntime = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platform}-${arch}`)
-  if (!existsSync(upstreamHost)) throw new Error(`host SEA is missing after staging: ${upstreamHost}`)
-  if (!existsSync(upstreamRuntime)) throw new Error(`runtime SEA is missing after second pkg run: ${upstreamRuntime}`)
-
-  await stripProduct(upstreamHost, target)
+  await stripProduct(upstream, target)
   const hostOut = resolve(outdir, `dsh-host-${platform}-${arch}`)
-  await copyFile(upstreamHost, hostOut)
+  await copyFile(upstream, hostOut)
   await chmod(hostOut, 0o755)
   await copyFile(hostOut, resolve(tauriBins, tauriName('dsh-host', target)))
-  const hostHelper = `${upstreamHost}-spawn-helper`
+  const hostHelper = `${upstream}-spawn-helper`
   if (existsSync(hostHelper)) {
     await copyFile(hostHelper, resolve(tauriBins, tauriName('dsh-host-spawn-helper', target)))
   } else {
     await rm(resolve(tauriBins, tauriName('dsh-host-spawn-helper', target)), { force: true })
   }
 
-  await stripProduct(upstreamRuntime, target)
-  const runtimeOut = resolve(outdir, `dsh-runtime-${platform}-${arch}`)
-  await copyFile(upstreamRuntime, runtimeOut)
-  await chmod(runtimeOut, 0o755)
-  await copyFile(runtimeOut, resolve(tauriBins, tauriName('dsh-runtime', target)))
-  const runtimeHelper = `${upstreamRuntime}-spawn-helper`
-  if (existsSync(runtimeHelper)) {
-    await copyFile(runtimeHelper, resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)))
-  } else {
-    await rm(resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)), { force: true })
-  }
+  // A stale dsh-runtime sidecar would shadow the dual-mode host at startup.
+  // Wipe any prior install artifact so a downgrade cannot resurrect it.
+  await rm(resolve(tauriBins, tauriName('dsh-runtime', target)), { force: true })
+  await rm(resolve(tauriBins, tauriName('dsh-runtime-spawn-helper', target)), { force: true })
 }
-
 // Clean the staging aliases so a re-run does not double up.
 for (const target of targets) {
   const platform = targetPlatform(target)
@@ -183,7 +155,11 @@ function targetPlatform(target) { return target.split('-')[1] }
 function targetArch(target) { return target.split('-')[2] }
 
 function tauriName(name, target) {
-  return `${name}-${tauriTriple(target)}`
+  return `${name}-${tauriTriple(target)}${productExtension(target)}`
+}
+
+function productExtension(target) {
+  return targetPlatform(target) === 'windows' ? '.exe' : ''
 }
 
 function tauriTriple(target) {
@@ -217,15 +193,25 @@ async function stripProduct(product, target) {
 }
 
 async function ensureVendorDevDependencies(env) {
-  await run('corepack', ['pnpm@11.7.0', 'install', '--frozen-lockfile', '--prod=false'], vendor, env)
+  await run(corepackCommand(), ['pnpm@11.7.0', 'install', '--frozen-lockfile', '--prod=false'], vendor, env)
+}
+
+function corepackCommand() {
+  return process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
 }
 
 async function run(command, args, cwd, env = process.env) {
   process.stdout.write(`> ${basename(command)} ${args.join(' ')}\n`)
-  const child = spawn(command, args, { cwd, stdio: 'inherit', env: { ...env, CI: 'true' } })
+  const child = spawn(command, args, {
+    cwd,
+    stdio: 'inherit',
+    env: { ...env, CI: 'true' },
+    shell: process.platform === 'win32' && command.endsWith('.cmd'),
+  })
   const code = await new Promise((resolveExit, reject) => {
     child.once('error', reject)
     child.once('exit', resolveExit)
   })
   if (code !== 0) throw new Error(`${command} exited with ${String(code)}`)
 }
+

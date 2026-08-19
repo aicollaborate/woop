@@ -74,12 +74,11 @@ if (targetPlatform === "win32") {
   production.bundle.targets = ["nsis"];
   production.bundle.windows ??= {};
   production.bundle.externalBin ??= [];
-  // dsh-host comes from tauri.conf.json; we keep this assertion so a future
-  // cleanup of the base config does not silently drop the runtime sidecar.
-  for (const required of ["binaries/dsh-host", "binaries/dsh-runtime"]) {
-    if (!production.bundle.externalBin.includes(required)) {
-      throw new Error(`Windows production bundle is missing ${required}; refusing to build.`);
-    }
+  // dsh-host comes from tauri.conf.json. The runtime shares the host SEA
+  // (see app/flowix-dsh-host/scripts/build-sidecars.mjs), so it is not a
+  // separate externalBin entry any more.
+  if (!production.bundle.externalBin.includes("binaries/dsh-host")) {
+    throw new Error("Windows production bundle is missing binaries/dsh-host; refusing to build.");
   }
   if (production.bundle.macOS) {
     delete production.bundle.macOS.signingIdentity;
@@ -118,13 +117,12 @@ if (targetPlatform === "win32") {
   production.bundle.macOS.entitlements = "entitlements.plist";
   production.bundle.macOS.hardenedRuntime = true;
   production.bundle.externalBin ??= [];
-  // `binaries/dsh-host` and `binaries/dsh-runtime` come from tauri.conf.json;
-  // here we only add the macOS-specific spawn-helper companions that the
-  // base config cannot know about.
-  for (const helper of ["binaries/dsh-host-spawn-helper", "binaries/dsh-runtime-spawn-helper"]) {
-    if (!production.bundle.externalBin.includes(helper)) {
-      production.bundle.externalBin.push(helper);
-    }
+  // `binaries/dsh-host` comes from tauri.conf.json; here we only add the
+  // macOS-specific spawn-helper companion that the base config cannot know
+  // about. dsh-runtime no longer ships as a separate sidecar (it shares the
+  // host SEA via FLOWIX_DSH_RUNTIME_MODE).
+  if (!production.bundle.externalBin.includes("binaries/dsh-host-spawn-helper")) {
+    production.bundle.externalBin.push("binaries/dsh-host-spawn-helper");
   }
 } else {
   if (production.bundle.windows) {

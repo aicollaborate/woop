@@ -11,10 +11,10 @@ const outdir = resolve(repo, '.build/flowix-dsh-host')
 const vendor = resolve(root, 'vendor/deepseek-harness')
 await mkdir(outdir, { recursive: true })
 
-// Generate (or reuse) a build identity for the dsh-host/dsh-runtime pair and
-// write it next to the bundle so the launcher can pass it as an env var. The
-// same identifier is baked into the bundle via esbuild --define so a binary
-// that drifted from its env can be detected at startup.
+// Generate (or reuse) a build identity for the dual-mode DSH SEA and write
+// it next to the bundle so the launcher can pass it as an env var. The
+// same identifier is baked into the bundle via esbuild --define so a
+// binary that drifted from its env can be detected at startup.
 const buildIdPath = resolve(outdir, 'dsh-build-id.txt')
 const envBuildId = process.env.FLOWIX_DSH_BUILD_ID?.trim()
 if (existsSync(buildIdPath)) {

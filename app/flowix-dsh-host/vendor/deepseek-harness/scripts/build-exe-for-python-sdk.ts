@@ -516,8 +516,17 @@ class SingleExeBuild {
       } else {
         await copyFile(this.cli.launcher, join(this.staging, launcherName))
         await writeFile(join(this.staging, dispatcherName), [
+          // FLOWIX: dual-mode SEA. Default launches the CJS host launcher;
+          // FLOWIX_DSH_RUNTIME_MODE=1 dispatches into the upstream ESM
+          // runtime entry. The branches MUST be asymmetric: pkg statically
+          // bundles `require()` calls so the CJS launcher only ends up
+          // inside the SEA when it is loaded via require(); dynamic import
+          // is reserved for the ESM runtime entry because require() cannot
+          // load it. The flowix-host.cjs file is copied into the staging
+          // dir by the surrounding code so the relative path resolves
+          // through pkg`s virtual filesystem.
           "if (process.env.FLOWIX_DSH_RUNTIME_MODE === '1') {",
-          `  require('./${launcherName}')`,
+          `  import('./${ENTRY_BIN}')`,
           '} else {',
           `  require('./${launcherName}')`,
           '}',
@@ -542,11 +551,11 @@ class SingleExeBuild {
       return
     }
     if (!existsSync(manifestPath)) {
-      throw new Error(`build-exe-for-python-sdk: ${manifestPath} missing — pnpm deploy did not produce a staged package.`)
+      throw new Error(`build-exe-for-python-sdk: ${manifestPath} missing 鈥?pnpm deploy did not produce a staged package.`)
     }
     const entryPath = join(this.staging, ENTRY_BIN)
     if (!existsSync(entryPath)) {
-      throw new Error(`build-exe-for-python-sdk: ${entryPath} missing — run without --skip-build so lib/ artifacts exist.`)
+      throw new Error(`build-exe-for-python-sdk: ${entryPath} missing 鈥?run without --skip-build so lib/ artifacts exist.`)
     }
     const entrySource = await readFile(entryPath, 'utf8')
     const shebangEnd = entrySource.startsWith('#!') ? entrySource.indexOf('\n') + 1 : 0
@@ -724,3 +733,4 @@ async function main(): Promise<void> {
 }
 
 await main()
+
