@@ -8,8 +8,8 @@ use crate::models::{
     CloudProduct, DataEnvelope, EntitlementData, MeData, RefreshData,
 };
 use crate::v2::{
-    V2BlobReservationEnvelope, V2Bootstrap, V2ChangesPage, V2PushOperation, V2PushResult,
-    V2SyncStatus, PROTOCOL_EPOCH,
+    V2BlobDownloadEnvelope, V2BlobReservationEnvelope, V2Bootstrap, V2ChangesPage, V2PushOperation,
+    V2PushResult, V2SyncStatus, PROTOCOL_EPOCH,
 };
 
 fn apple_authorization_body(authorization: &AppleAuthorization) -> serde_json::Value {
@@ -303,6 +303,7 @@ impl CloudClient {
         content_hash: &str,
         size_bytes: i64,
         blob_kind: &str,
+        content_type: &str,
     ) -> Result<V2BlobReservationEnvelope, SyncError> {
         self.send::<V2BlobReservationEnvelope>(
             Method::POST,
@@ -313,6 +314,7 @@ impl CloudClient {
                 "contentHash": content_hash,
                 "sizeBytes": size_bytes,
                 "blobKind": blob_kind,
+                "contentType": content_type,
             })),
         )
         .await
@@ -321,28 +323,70 @@ impl CloudClient {
     pub async fn v2_upload_blob(
         &self,
         access_token: &str,
-        upload_path: &str,
+        upload: &crate::v2::V2BlobUpload,
+        content_type: &str,
         content: Vec<u8>,
     ) -> Result<(), SyncError> {
-        if !upload_path.starts_with("/v2/blobs/reservations/") {
+        if upload.method != "PUT" {
             return Err(SyncError::InvalidState(
-                "cloud returned an invalid v2 upload path".into(),
+                "cloud returned an unsupported v2 upload method".into(),
             ));
         }
-        let response = self
-            .http
-            .put(format!("{}{}", self.base_url, upload_path))
-            .bearer_auth(access_token)
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "text/markdown; charset=utf-8",
+        let direct_upload = upload.url.is_some();
+        let response = if let Some(url) = upload.url.as_deref() {
+            Self::validate_direct_blob_url(url)?;
+            let mut request = self
+                .http
+                .put(url)
+                .header(reqwest::header::CONTENT_TYPE, content_type);
+            for (name, value) in &upload.headers {
+                if Self::allowed_capability_header(name) {
+                    request = request.header(name, value);
+                }
+            }
+            request.body(content).send().await?
+        } else if let Some(upload_path) = upload.path.as_deref() {
+            if !upload_path.starts_with("/v2/blobs/reservations/") {
+                return Err(SyncError::InvalidState(
+                    "cloud returned an invalid v2 upload path".into(),
+                ));
+            }
+            self.http
+                .put(format!("{}{}", self.base_url, upload_path))
+                .bearer_auth(access_token)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(content)
+                .send()
+                .await?
+        } else {
+            return Err(SyncError::InvalidState(
+                "cloud returned no v2 upload destination".into(),
+            ));
+        };
+        if direct_upload && response.status().is_success() {
+            // S3-compatible PUT responses normally have no JSON body.
+        } else {
+            Self::decode::<DataEnvelope<serde_json::Value>>(response)
+                .await
+                .map(|_| ())?;
+        }
+        if let Some(completion_path) = upload.completion_path.as_deref() {
+            if !completion_path.starts_with("/v2/blobs/reservations/")
+                || !completion_path.ends_with("/complete")
+            {
+                return Err(SyncError::InvalidState(
+                    "cloud returned an invalid v2 completion path".into(),
+                ));
+            }
+            self.send::<DataEnvelope<serde_json::Value>>(
+                Method::POST,
+                completion_path,
+                Some(access_token),
+                None,
             )
-            .body(content)
-            .send()
             .await?;
-        Self::decode::<DataEnvelope<serde_json::Value>>(response)
-            .await
-            .map(|_| ())
+        }
+        Ok(())
     }
 
     pub async fn v2_push(
@@ -368,12 +412,56 @@ impl CloudClient {
         access_token: &str,
         content_hash: &str,
     ) -> Result<Vec<u8>, SyncError> {
-        let response = self
-            .http
-            .get(format!("{}/v2/blobs/{content_hash}", self.base_url))
-            .bearer_auth(access_token)
-            .send()
-            .await?;
+        let capability = self
+            .send::<V2BlobDownloadEnvelope>(
+                Method::GET,
+                &format!("/v2/blobs/{content_hash}/access"),
+                Some(access_token),
+                None,
+            )
+            .await;
+        let response = match capability {
+            Ok(envelope) => {
+                if envelope.download.method != "GET" {
+                    return Err(SyncError::InvalidState(
+                        "cloud returned an unsupported v2 download method".into(),
+                    ));
+                }
+                if let Some(url) = envelope.download.url.as_deref() {
+                    Self::validate_direct_blob_url(url)?;
+                    let mut request = self.http.get(url);
+                    for (name, value) in &envelope.download.headers {
+                        if Self::allowed_capability_header(name) {
+                            request = request.header(name, value);
+                        }
+                    }
+                    request.send().await?
+                } else if let Some(path) = envelope.download.path.as_deref() {
+                    if !path.starts_with("/v2/blobs/") {
+                        return Err(SyncError::InvalidState(
+                            "cloud returned an invalid v2 download path".into(),
+                        ));
+                    }
+                    self.http
+                        .get(format!("{}{}", self.base_url, path))
+                        .bearer_auth(access_token)
+                        .send()
+                        .await?
+                } else {
+                    return Err(SyncError::InvalidState(
+                        "cloud returned no v2 download source".into(),
+                    ));
+                }
+            }
+            Err(SyncError::Api { status: 404, .. }) => {
+                self.http
+                    .get(format!("{}/v2/blobs/{content_hash}", self.base_url))
+                    .bearer_auth(access_token)
+                    .send()
+                    .await?
+            }
+            Err(error) => return Err(error),
+        };
         if !response.status().is_success() {
             return Self::decode::<DataEnvelope<serde_json::Value>>(response)
                 .await
@@ -381,12 +469,31 @@ impl CloudClient {
         }
         Ok(response.bytes().await?.to_vec())
     }
+
+    fn validate_direct_blob_url(value: &str) -> Result<(), SyncError> {
+        let url = reqwest::Url::parse(value).map_err(|error| {
+            SyncError::InvalidState(format!("cloud returned an invalid blob URL: {error}"))
+        })?;
+        let local_test = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+        if url.scheme() != "https" && !(url.scheme() == "http" && local_test) {
+            return Err(SyncError::InvalidState(
+                "cloud returned an insecure blob URL".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn allowed_capability_header(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name == "content-type" || name == "x-amz-checksum-sha256" || name.starts_with("x-amz-meta-")
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::apple_authorization_body;
+    use super::{apple_authorization_body, CloudClient};
     use crate::models::AppleAuthorization;
+    use crate::v2::V2BlobReservationEnvelope;
     use serde_json::json;
 
     fn authorization(display_name: Option<&str>) -> AppleAuthorization {
@@ -426,5 +533,63 @@ mod tests {
             })
         );
         assert!(body.get("displayName").is_none());
+    }
+
+    #[test]
+    fn blob_upload_contract_accepts_proxy_and_direct_capabilities() {
+        let proxy: V2BlobReservationEnvelope = serde_json::from_value(json!({
+            "data": {
+                "reservationId": "res_proxy",
+                "contentHash": "A".repeat(43),
+                "sizeBytes": 10,
+                "expiresAt": 1000
+            },
+            "upload": { "method": "PUT", "path": "/v2/blobs/reservations/res_proxy" }
+        }))
+        .unwrap();
+        assert!(proxy.upload.url.is_none());
+        assert_eq!(
+            proxy.upload.path.as_deref(),
+            Some("/v2/blobs/reservations/res_proxy")
+        );
+
+        let direct: V2BlobReservationEnvelope = serde_json::from_value(json!({
+            "data": {
+                "reservationId": "res_direct",
+                "contentHash": "A".repeat(43),
+                "sizeBytes": 10,
+                "expiresAt": 1000
+            },
+            "upload": {
+                "method": "PUT",
+                "path": "/v2/blobs/reservations/res_direct",
+                "url": "https://storage.example.test/object?signature=test",
+                "headers": { "x-amz-meta-sha256": "A".repeat(43) },
+                "expiresAt": 1000,
+                "completionPath": "/v2/blobs/reservations/res_direct/complete"
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            direct.upload.path.as_deref(),
+            Some("/v2/blobs/reservations/res_direct")
+        );
+        assert_eq!(direct.upload.expires_at, Some(1000));
+        assert_eq!(
+            direct.upload.completion_path.as_deref(),
+            Some("/v2/blobs/reservations/res_direct/complete")
+        );
+    }
+
+    #[test]
+    fn direct_blob_capabilities_never_forward_cloud_credentials() {
+        assert!(CloudClient::validate_direct_blob_url("https://storage.example.test/blob").is_ok());
+        assert!(CloudClient::validate_direct_blob_url("http://localhost:8787/blob").is_ok());
+        assert!(CloudClient::validate_direct_blob_url("http://storage.example.test/blob").is_err());
+        assert!(CloudClient::allowed_capability_header(
+            "x-amz-checksum-sha256"
+        ));
+        assert!(!CloudClient::allowed_capability_header("authorization"));
+        assert!(!CloudClient::allowed_capability_header("cookie"));
     }
 }

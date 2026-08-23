@@ -19,8 +19,8 @@ use crate::agent_external::{
     resolve_and_freeze_runtime_cwd, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
     MAX_STDOUT_LINE_BYTES, USER_STOPPED_REASON,
 };
-use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::runtime_log;
 
 const APP_EXIT_REASON: &str = "app_exit";
@@ -677,7 +677,25 @@ impl OpenCodeAcpManager {
                 })),
             );
         }
-        protocol_result
+        match protocol_result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let stderr = stderr_text.trim();
+                if stderr.is_empty() || error.contains(stderr) {
+                    Err(error)
+                } else {
+                    // ACP responses are authoritative, but OpenCode may put
+                    // the provider's HTTP/auth/rate-limit explanation only on
+                    // stderr. Preserve the protocol error first and append a
+                    // bounded diagnostic tail so the shared classifier and UI
+                    // can expose the upstream reason without dumping logs.
+                    Err(format!(
+                        "{error}\nOpenCode stderr: {}",
+                        truncate_for_log(stderr)
+                    ))
+                }
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

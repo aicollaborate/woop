@@ -1,7 +1,7 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronRight, Ellipsis, Loader2, Palette, Search } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Check, ChevronRight, Ellipsis, Loader2, Palette, Search } from 'lucide-react';
 import {
   LinkSimpleIcon,
   CopyIcon,
@@ -19,7 +19,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
 } from '@shared/ui/dropdown-menu';
 import { Tooltip } from '@shared/ui/tooltip';
 import {
@@ -43,18 +42,6 @@ import {
 } from '@features/document';
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
 import { toast } from '@/lib/toast';
-import {
-  type AgentConversationInstance,
-} from '@features/agent/store/agent-conversation-types';
-import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
-import {
-  isAgentConversationRunning,
-  useConversationRunIndex,
-  type ConversationRunIndex,
-} from '@features/agent/store/conversation-run-index';
-import { getAgentType, DEFAULT_AGENT_TYPE_KEY } from '@/lib/agent-types';
-import { AgentIcon } from '@features/agent/components/agent-icon';
-import { canonicalPath } from '@/lib/path';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
 
@@ -104,8 +91,6 @@ export interface DocumentTitlebarProps {
 
 const AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT =
   'flowix:agent-thread-card-fullscreen-change';
-const AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT =
-  'flowix:agent-thread-card-request-fullscreen';
 
 /**
  * Document state for the titlebar. Exactly one is active at a time:
@@ -288,115 +273,6 @@ export function MemoColorPicker({
   );
 }
 
-interface AgentThreadTitlebarItem {
-  id: string;
-  title: string;
-  type: string;
-  threadId: string | null;
-  element: HTMLElement | null;
-  isRunning: boolean;
-  updatedAt?: number;
-  createdAt?: number;
-}
-
-interface AgentThreadCardElementMaps {
-  byInstanceId: Map<string, HTMLElement>;
-  byThreadId: Map<string, HTMLElement>;
-}
-
-function getAgentThreadCardElementMaps(): AgentThreadCardElementMaps {
-  const byInstanceId = new Map<string, HTMLElement>();
-  const byThreadId = new Map<string, HTMLElement>();
-  const nodes = Array.from(
-    document.querySelectorAll<HTMLElement>('.document-container .ProseMirror section[data-agent-thread-card]')
-  );
-
-  for (const element of nodes) {
-    const instanceId = element.dataset.instanceId?.trim();
-    const threadId = element.dataset.threadId?.trim();
-    if (instanceId) byInstanceId.set(instanceId, element);
-    if (threadId) byThreadId.set(threadId, element);
-  }
-
-  return { byInstanceId, byThreadId };
-}
-
-function sameCanonicalPath(
-  a: string | null | undefined,
-  b: string | null | undefined,
-): boolean {
-  return !!a && !!b && canonicalPath(a) === canonicalPath(b);
-}
-
-function isConversationForCurrentDocument(
-  instance: AgentConversationInstance,
-  currentDocumentSource: 'memo' | 'external' | null,
-  currentDocumentPath: string | null,
-  activeMemoSession: { memoId: string; path: string } | null,
-): boolean {
-  if (instance.source.kind !== 'thread-card') return false;
-
-  if (currentDocumentSource === 'memo') {
-    if (!activeMemoSession) return false;
-    if (instance.source.memoId && instance.source.memoId === activeMemoSession.memoId) {
-      return true;
-    }
-    return (
-      sameCanonicalPath(instance.source.documentPath, activeMemoSession.path) ||
-      sameCanonicalPath(instance.source.documentPath, currentDocumentPath)
-    );
-  }
-
-  if (currentDocumentSource === 'external') {
-    return sameCanonicalPath(instance.source.documentPath, currentDocumentPath);
-  }
-
-  return false;
-}
-
-function getAgentThreadTitlebarItemsFromConversations(
-  t: (key: I18nKey, params?: I18nParams) => string,
-  instances: Record<string, AgentConversationInstance>,
-  conversationRunIndex: ConversationRunIndex,
-  currentDocumentSource: 'memo' | 'external' | null,
-  currentDocumentPath: string | null,
-  activeMemoSession: { memoId: string; path: string } | null,
-): AgentThreadTitlebarItem[] {
-  const elementMaps = getAgentThreadCardElementMaps();
-
-  return Object.values(instances)
-    .filter((instance) =>
-      isConversationForCurrentDocument(
-        instance,
-        currentDocumentSource,
-        currentDocumentPath,
-        activeMemoSession,
-      ),
-    )
-    .map((instance) => {
-      const element =
-        elementMaps.byInstanceId.get(instance.instanceId) ??
-        (instance.threadId ? elementMaps.byThreadId.get(instance.threadId) : undefined) ??
-        null;
-
-      return {
-        id: instance.instanceId,
-        title: instance.title?.trim() || t('editor.threadCard.title'),
-        type: instance.agentType || DEFAULT_AGENT_TYPE_KEY,
-        threadId: instance.threadId,
-        element,
-        isRunning: isAgentConversationRunning(instance, conversationRunIndex),
-        updatedAt: instance.updatedAt,
-        createdAt: instance.createdAt,
-      };
-    })
-    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-}
-
-function scrollToAgentThreadCard(element: HTMLElement): void {
-  element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-}
-
 function hasFullscreenAgentThreadCard(): boolean {
   if (typeof document === 'undefined') return false;
   return !!document.querySelector('.agent-thread-card--fullscreen');
@@ -419,179 +295,11 @@ function useAgentThreadCardFullscreenActive(): boolean {
   return active;
 }
 
-function openAgentThreadCardFromNavigator(item: AgentThreadTitlebarItem): void {
-  if (!item.element) return;
-
-  if (!hasFullscreenAgentThreadCard()) {
-    scrollToAgentThreadCard(item.element);
-    return;
-  }
-
-  window.dispatchEvent(
-    new CustomEvent(AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT, {
-      detail: {
-        element: item.element,
-        threadId: item.threadId || item.element.dataset.threadId?.trim() || item.id,
-        exitOthers: true,
-      },
-    }),
-  );
-}
-
 function withoutHoverClasses(className: string): string {
   return className
     .split(/\s+/)
     .filter((token) => token && !token.startsWith('hover:'))
     .join(' ');
-}
-
-function formatAgentThreadTime(
-  timestamp: number | undefined,
-  language: AppLanguage,
-  t: (key: I18nKey, params?: I18nParams) => string
-): string {
-  if (!timestamp) return '';
-
-  const intlLocale = language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const now = Date.now();
-  const diffMs = Math.max(0, now - timestamp);
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return t('agent.time.justNow');
-  if (diffMin < 60) return t('agent.time.minutesAgo', { m: diffMin } satisfies I18nParams);
-  if (diffHour < 24) return t('agent.time.hoursAgo', { h: diffHour } satisfies I18nParams);
-  if (diffDay < 7) return t('agent.time.daysAgo', { d: diffDay } satisfies I18nParams);
-  return new Date(timestamp).toLocaleDateString(intlLocale);
-}
-
-function AgentThreadNavigator({
-  iconButtonClass,
-}: {
-  iconButtonClass: string;
-}) {
-  const { t, language } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<AgentThreadTitlebarItem[]>([]);
-  const conversationInstances = useAgentSessionStore(
-    (state) => state.conversationRegistry.instances,
-  );
-  const conversationRunIndex = useConversationRunIndex(conversationInstances);
-  const currentDocumentPath = useDocumentStore((state) => state.currentDocumentPath);
-  const currentDocumentSource = useDocumentStore((state) => state.currentDocumentSource);
-  const activeMemoSession = useDocumentStore((state) => state.activeMemoSession);
-  const isMacStyle = iconButtonClass.includes('rounded-xl');
-  const triggerButtonClass = isMacStyle
-    ? 'inline-flex h-8 shrink-0 items-center justify-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--bg-titlebar)] px-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]'
-    : `${iconButtonClass} shrink-0 gap-0.5`;
-  const triggerItem = items.find((item) => item.isRunning) ?? items[0] ?? null;
-  const triggerAgentType = getAgentType(triggerItem?.type ?? DEFAULT_AGENT_TYPE_KEY);
-
-  const refreshItems = useCallback(() => {
-    const nextItems = getAgentThreadTitlebarItemsFromConversations(
-      t,
-      conversationInstances,
-      conversationRunIndex,
-      currentDocumentSource,
-      currentDocumentPath,
-      activeMemoSession,
-    );
-    setItems(nextItems);
-    return nextItems;
-  }, [
-    activeMemoSession,
-    conversationInstances,
-    conversationRunIndex,
-    currentDocumentPath,
-    currentDocumentSource,
-    t,
-  ]);
-
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) {
-      refreshItems();
-    }
-    setOpen(nextOpen);
-  };
-
-  useEffect(() => {
-    refreshItems();
-  }, [refreshItems]);
-
-  return (
-    <div className="inline-flex shrink-0 items-center">
-      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label={t('document.agent.menu')}
-            title={t('document.agent.menuTooltip')}
-            className={triggerButtonClass}
-          >
-            <span
-              aria-hidden="true"
-              className={`agent-thread-navigator__trigger-icon ${
-                triggerItem?.isRunning ? 'agent-thread-navigator__icon--running' : ''
-              }`}
-            >
-              <AgentIcon
-                typeKey={triggerAgentType.key}
-                alt=""
-                className="h-3.5 w-3.5 object-contain"
-              />
-            </span>
-            <ChevronDown className="h-3 w-3" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[224px] p-1">
-          <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            {t('document.agent.conversationsTitle')}
-          </DropdownMenuLabel>
-          <div className="max-h-[300px] space-y-1 overflow-y-auto">
-          {items.length > 0 ? (
-            items.map((item, index) => {
-              const timeLabel = formatAgentThreadTime(item.updatedAt || item.createdAt, language, t);
-              const agentType = getAgentType(item.type);
-              return (
-                <DropdownMenuItem
-                  key={`${item.id}-${index}`}
-                  onClick={() => openAgentThreadCardFromNavigator(item)}
-                  className="flex min-w-0 items-center gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
-                >
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-1 ${
-                      item.isRunning ? 'agent-thread-navigator__icon--running' : ''
-                    }`}
-                  >
-                    <AgentIcon
-                      typeKey={agentType.key}
-                      alt=""
-                      className="h-full w-full object-contain"
-                    />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-left text-sm text-[var(--agent-foreground)]">
-                    {item.title}
-                  </span>
-                  {timeLabel && (
-                    <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
-                      {timeLabel}
-                    </span>
-                  )}
-                </DropdownMenuItem>
-              );
-            })
-          ) : (
-            <div className="px-2 py-2 text-xs text-[var(--muted-foreground)]">
-              {t('document.agent.empty')}
-            </div>
-          )}
-          </div>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
 }
 
 // =====================================================================
@@ -637,7 +345,6 @@ function VersionHistorySubmenu({
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<MemoVersionMeta[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const requestSeqRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -652,7 +359,6 @@ function VersionHistorySubmenu({
 
     const requestSeq = ++requestSeqRef.current;
     setLoading(true);
-    setError(null);
 
     void memosClient.listVersions(memoId)
       .then((items) => {
@@ -662,7 +368,8 @@ function VersionHistorySubmenu({
       .catch((err) => {
         if (!mountedRef.current || requestSeqRef.current !== requestSeq) return;
         logger.error('list versions failed', { error: err, memoId });
-        setError(t("document.version.loadFailed"));
+        setOpen(false);
+        toast.error(t("document.version.loadFailed"));
       })
       .finally(() => {
         if (mountedRef.current && requestSeqRef.current === requestSeq) {
@@ -717,17 +424,13 @@ function VersionHistorySubmenu({
               </div>
             )}
 
-            {!loading && error && (
-              <div className="px-2 py-3 text-xs text-[var(--destructive)]">{error}</div>
-            )}
-
-            {!loading && !error && orderedVersions.length === 0 && (
+            {!loading && orderedVersions.length === 0 && (
               <div className="px-2 py-3 text-xs text-[var(--muted-foreground)]">
                 {t("document.version.empty")}
               </div>
             )}
 
-            {!loading && !error && orderedVersions.map((version) => {
+            {!loading && orderedVersions.map((version) => {
               const isRestoring = restoringVersionId === version.id;
               return (
               <button
@@ -872,9 +575,6 @@ export function MemoActions({
 
   return (
     <>
-      {(memo.agents?.length ?? 0) > 0 && (
-        <AgentThreadNavigator iconButtonClass={iconButtonClass} />
-      )}
       <MemoColorPicker
         colors={memo.colors}
         iconButtonClass={iconButtonClass}

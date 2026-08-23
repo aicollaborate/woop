@@ -14,7 +14,7 @@ function event<K extends AgentEvent["kind"]>(
 
 const userMessage = (text: string, id: string): AgentEvent =>
   event("user_message", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 1000,
@@ -27,7 +27,7 @@ const userMessage = (text: string, id: string): AgentEvent =>
 
 const textDelta = (text: string, messageId?: string): AgentEvent =>
   event("text_delta", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 2000,
@@ -42,7 +42,7 @@ const textDelta = (text: string, messageId?: string): AgentEvent =>
 
 const reasoningDelta = (text: string): AgentEvent =>
   event("reasoning_delta", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 3000,
@@ -57,7 +57,7 @@ const reasoningDelta = (text: string): AgentEvent =>
 
 const streamStart = (runId: string): AgentEvent =>
   event("stream_start", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId,
     timestamp: 0,
@@ -66,7 +66,7 @@ const streamStart = (runId: string): AgentEvent =>
 
 const streamEnd = (runId: string, reason: string | null = null): AgentEvent =>
   event("stream_end", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId,
     timestamp: 9000,
@@ -75,7 +75,7 @@ const streamEnd = (runId: string, reason: string | null = null): AgentEvent =>
 
 const errorEvent = (message: string): AgentEvent =>
   event("error", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 9500,
@@ -84,7 +84,7 @@ const errorEvent = (message: string): AgentEvent =>
 
 const toolCall = (id: string, name: string): AgentEvent =>
   event("tool_call", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 4000,
@@ -100,7 +100,7 @@ const toolCall = (id: string, name: string): AgentEvent =>
 
 const toolResult = (id: string, name: string): AgentEvent =>
   event("tool_result", {
-    agentType: "flowix",
+    agentType: "deepseek-harness",
     threadId: "t1",
     runId: "r1",
     timestamp: 5000,
@@ -246,6 +246,39 @@ describe("reduceProjection / text streaming lifecycle", () => {
     expect(p.runs.isLoading).toBe(false);
   });
 
+  it("collapses duplicate stdout/process-exit errors for one run", () => {
+    let p = emptyProjection();
+    const base = {
+      agentType: "claude" as const,
+      threadId: "t1",
+      runId: "r1",
+      timestamp: 9500,
+      messageId: "msg:claude:r1:error:error",
+    };
+    p = reduceProjection(p, {
+      kind: "error",
+      ...base,
+      message: "provider rate limit reached",
+      errorDetails: {
+        category: "rate_limited",
+        statusCode: 429,
+        retryable: true,
+      },
+    });
+    p = reduceProjection(p, {
+      kind: "error",
+      ...base,
+      timestamp: 9600,
+      message: "Claude Code CLI exited with status exit status: 1",
+    });
+
+    expect(p.messages).toHaveLength(1);
+    expect(p.messages[0]).toMatchObject({
+      content: "provider rate limit reached",
+      errorDetails: { statusCode: 429 },
+    });
+  });
+
   it("marks DeepSeek Harness errors as reconnect failures and preserves the reason", () => {
     let p = emptyProjection();
     p = reduceProjection(
@@ -371,7 +404,7 @@ describe("reduceProjection / session_resolved is a no-op", () => {
     const after = reduceProjection(
       p,
       event("session_resolved", {
-        agentType: "flowix",
+        agentType: "deepseek-harness",
         threadId: "t1",
         runId: "test-run",
         timestamp: 9999,
@@ -389,7 +422,7 @@ describe("reduceProjection / usage accumulates into runs", () => {
     p = reduceProjection(
       p,
       event("usage", {
-        agentType: "flowix",
+        agentType: "deepseek-harness",
         threadId: "t1",
         runId: "r1",
         timestamp: 8000,

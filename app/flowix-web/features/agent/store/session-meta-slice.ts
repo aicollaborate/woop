@@ -74,10 +74,14 @@ export function createSessionMetaSlice(
       set((state) => ({
         sessionMeta: {
           ...state.sessionMeta,
-          threadLists: { ...state.sessionMeta.threadLists, flowix: list },
+          threadLists: {
+            ...state.sessionMeta.threadLists,
+            "deepseek-harness": list,
+          },
         },
       })),
-    setActiveThreadId: (threadId) => setActiveThread("flowix", threadId, false),
+    setActiveThreadId: (threadId) =>
+      setActiveThread("deepseek-harness", threadId, false),
     setActiveCodexThreadId: (threadId) =>
       setActiveThread("codex", threadId, false),
     setActiveClaudeThreadId: (threadId) =>

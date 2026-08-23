@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::agent_flowix::{AgentChunk, UsageInfo};
+use crate::agent_wire::{AgentChunk, UsageInfo};
 
 pub const HOST_PROTOCOL_VERSION: u64 = 1;
 
@@ -25,6 +25,7 @@ pub fn runtime_ensure_request(
     provider: &str,
     provider_name: &str,
     api_protocol: &str,
+    api_key_env: &str,
     base_url: &str,
     model: &str,
     agent_preset: &str,
@@ -37,6 +38,7 @@ pub fn runtime_ensure_request(
         "provider": provider,
         "providerName": provider_name,
         "apiProtocol": api_protocol,
+        "apiKeyEnv": api_key_env,
         "baseUrl": base_url,
         "model": model,
         "agentPreset": agent_preset,
@@ -345,6 +347,10 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
         "run.error" => AdaptedEvent::Chunk(AgentChunk::Error {
             thread_id,
             message: visible_error_message(event),
+            error_details: Some(crate::agent_external::classify_agent_error(
+                &visible_error_message(event),
+                "protocol",
+            )),
         }),
         "run.completed" => AdaptedEvent::Completed(
             event

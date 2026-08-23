@@ -15,7 +15,7 @@ const assistantMsg = (id: string, content: string): ChatMessage => ({
 
 const run = (runId: string, status: AgentRunState["status"] = "running"): AgentRunState => ({
   runId,
-  agentType: "flowix",
+  agentType: "deepseek-harness",
   threadId: "tid",
   startedAt: 1,
   status,
@@ -29,7 +29,7 @@ describe("mergeThreadProjections", () => {
     to.runs.activeRunId = "r1";
     to.runs.runs.r1 = run("r1");
 
-    const merged = mergeThreadProjections(undefined, to, "flowix");
+    const merged = mergeThreadProjections(undefined, to, "deepseek-harness");
 
     expect(merged.messages).toEqual(to.messages);
     expect(merged.runs.activeRunId).toBe("r1");
@@ -41,7 +41,7 @@ describe("mergeThreadProjections", () => {
     from.messages = [assistantMsg("a1", "hi")];
     from.runs.activeRunId = "r-from";
 
-    const merged = mergeThreadProjections(from, undefined, "flowix");
+    const merged = mergeThreadProjections(from, undefined, "deepseek-harness");
 
     expect(merged.messages).toEqual(from.messages);
     expect(merged.runs.activeRunId).toBe("r-from");
@@ -56,7 +56,7 @@ describe("mergeThreadProjections", () => {
     const to = emptyProjection();
     to.messages = [assistantMsg("a2", "shared"), assistantMsg("a3", "later-to")];
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     // mergeHistoricalMessages 走 stable key 去重. to 在前, from 在后:
     // - "a2" (shared) 出现两次, 应只剩一条 (to 优先).
@@ -73,7 +73,7 @@ describe("mergeThreadProjections", () => {
     const to = emptyProjection();
     to.pending.reasoningId = "to-reasoning";
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     // to.assistantId is null → from fills in
     expect(merged.pending.assistantId).toBe("from-assistant");
@@ -89,7 +89,7 @@ describe("mergeThreadProjections", () => {
     to.runs.isLoading = false;
     to.pagination.hasMoreHistory = true;
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     expect(merged.runs.isLoading).toBe(true);
     expect(merged.pagination.hasMoreHistory).toBe(true);
@@ -102,7 +102,7 @@ describe("mergeThreadProjections", () => {
     const to = emptyProjection();
     // to's oldestSequence is null → from fills in
     // to's activeRunId is null → from fills in
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     expect(merged.pagination.oldestSequence).toBe(10);
     expect(merged.runs.activeRunId).toBe("r-from");
@@ -116,7 +116,7 @@ describe("mergeThreadProjections", () => {
     to.pagination.oldestSequence = 5;
     to.runs.activeRunId = "r-to";
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     // to 的非 null 值优先
     expect(merged.pagination.oldestSequence).toBe(5);
@@ -130,7 +130,7 @@ describe("mergeThreadProjections", () => {
     to.runs.runs.r2 = run("r2", "running");
     to.runs.runs.r3 = run("r3");
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     expect(Object.keys(merged.runs.runs).sort()).toEqual(["r1", "r2", "r3"]);
     expect(merged.runs.runs.r1?.status).toBe("completed");
@@ -138,14 +138,14 @@ describe("mergeThreadProjections", () => {
   });
 
   it("uses to.lastRun first, falling back to from", () => {
-    const fromLast = { runId: "r-from", agentType: "flowix" as const, status: "completed" as const, startedAt: 1, endedAt: 2 };
-    const toLast = { runId: "r-to", agentType: "flowix" as const, status: "completed" as const, startedAt: 3, endedAt: 4 };
+    const fromLast = { runId: "r-from", agentType: "deepseek-harness" as const, status: "completed" as const, startedAt: 1, endedAt: 2 };
+    const toLast = { runId: "r-to", agentType: "deepseek-harness" as const, status: "completed" as const, startedAt: 3, endedAt: 4 };
     const from = emptyProjection();
     from.runs.lastRun = fromLast;
     const to = emptyProjection();
     to.runs.lastRun = toLast;
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     expect(merged.runs.lastRun?.runId).toBe("r-to");
   });
@@ -158,7 +158,7 @@ describe("mergeThreadProjections", () => {
     to.pagination.loadingInitial = true;
     to.pagination.loadingMore = false;
 
-    const merged = mergeThreadProjections(from, to, "flowix");
+    const merged = mergeThreadProjections(from, to, "deepseek-harness");
 
     // loading 状态以 to (canonical session) 为准, 不用 from 覆盖
     expect(merged.pagination.loadingInitial).toBe(true);

@@ -12,7 +12,7 @@ const sessionStoreMock = vi.hoisted(() => ({
   state: {
     sessionMeta: {
       activeThreadIds: {} as Record<string, string | undefined>,
-      activeAgentTypeKey: "flowix" as const,
+      activeAgentTypeKey: "deepseek-harness" as const,
       threadTypes: {},
       externalSessionResolutions: {} as Record<string, string>,
       lastRunningRunsReconciledAt: null,

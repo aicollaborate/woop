@@ -25,8 +25,8 @@ describe("thread-titles helpers", () => {
     languageState.language = "en-US";
   });
 
-  it("isExternalAgentType returns true for non-flowix", () => {
-    expect(isExternalAgentType("flowix")).toBe(false);
+  it("isExternalAgentType returns true for all supported runtimes", () => {
+    expect(isExternalAgentType("deepseek-harness")).toBe(true);
     expect(isExternalAgentType("codex")).toBe(true);
     expect(isExternalAgentType("claude")).toBe(true);
     expect(isExternalAgentType("deepseek-harness")).toBe(true);
@@ -36,7 +36,7 @@ describe("thread-titles helpers", () => {
   });
 
   it("persists every agent title in the product database", () => {
-    expect(canPersistThreadTitle("flowix")).toBe(true);
+    expect(canPersistThreadTitle("deepseek-harness")).toBe(true);
     expect(canPersistThreadTitle("codex")).toBe(true);
     expect(canPersistThreadTitle("claude")).toBe(true);
     expect(canPersistThreadTitle("deepseek-harness")).toBe(true);
@@ -61,7 +61,7 @@ describe("thread-titles helpers", () => {
   });
 
   it("defaultThreadTitle falls back per agent family", () => {
-    expect(defaultThreadTitle("flowix")).toBe("Untitled conversation");
+    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness Chat");
     expect(defaultThreadTitle("hermes")).toBe("Hermes session");
     expect(defaultThreadTitle("codex")).toBe("Codex session");
     expect(defaultThreadTitle("claude")).toBe("Claude Code session");
@@ -154,8 +154,8 @@ describe("thread-titles helpers", () => {
     expect(getConversationTitleForThread(state3, "codex", "t-missing")).toBe(
       "Codex session",
     );
-    expect(getConversationTitleForThread(state3, "flowix", "t-missing")).toBe(
-      "New conversation",
+    expect(getConversationTitleForThread(state3, "deepseek-harness", "t-missing")).toBe(
+      "DeepSeek Harness session",
     );
   });
 });

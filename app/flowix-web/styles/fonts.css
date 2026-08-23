@@ -1,7 +1,17 @@
-@import '@fontsource/inter/latin.css';
-@import '@fontsource/inter/latin-ext.css';
-@import '@fontsource/inter/latin-italic.css';
-@import '@fontsource/inter/latin-ext-italic.css';
+/* Flowix runs in modern WebViews, so only the used Latin weights and woff2
+ * assets are bundled. CJK and less common scripts intentionally use the
+ * platform font stack. */
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 300; src: url('@fontsource/inter/files/inter-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 400; src: url('@fontsource/inter/files/inter-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 500; src: url('@fontsource/inter/files/inter-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 600; src: url('@fontsource/inter/files/inter-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 700; src: url('@fontsource/inter/files/inter-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 800; src: url('@fontsource/inter/files/inter-latin-800-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-display: swap; font-weight: 300; src: url('@fontsource/inter/files/inter-latin-300-italic.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-display: swap; font-weight: 400; src: url('@fontsource/inter/files/inter-latin-400-italic.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-display: swap; font-weight: 500; src: url('@fontsource/inter/files/inter-latin-500-italic.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-display: swap; font-weight: 600; src: url('@fontsource/inter/files/inter-latin-600-italic.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-display: swap; font-weight: 700; src: url('@fontsource/inter/files/inter-latin-700-italic.woff2') format('woff2'); }
 
 /* Nunito Sans - variable font (300-800 weight), kept for the optional
  * document font preference.

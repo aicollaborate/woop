@@ -1,8 +1,8 @@
 use super::*;
 use crate::models::CloudUser;
 use crate::v2::{
-    V2CloudAccount, V2EntityType, V2FreezeOperation, V2NoteState, V2OperationKind, V2RemoteApply,
-    PROTOCOL_EPOCH,
+    V2CloudAccount, V2EntityType, V2FreezeOperation, V2NotePut, V2NoteState, V2OperationData,
+    V2OperationKind, V2PushOperation, V2RemoteApply, PROTOCOL_EPOCH,
 };
 
 #[test]
@@ -123,14 +123,53 @@ fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
         .unwrap();
     assert_eq!(second.generation, 2);
 
+    let operation = V2PushOperation::NotePut {
+        operation_id: frozen.operation_id.clone(),
+        base_revision: Some("rev_1".into()),
+        note: V2NotePut {
+            id: "abc12345".into(),
+            notebook_id: "nb_1".into(),
+            filename: "abc12345.md".into(),
+            content_hash: "hash-a".into(),
+            size_bytes: 6,
+            attachments: Vec::new(),
+        },
+    };
+    let data = V2OperationData {
+        entity_type: "note".into(),
+        entity_id: "abc12345".into(),
+        revision: "rev_2".into(),
+        sync_seq: 2,
+        deleted: false,
+        resolution: "fast_forward".into(),
+        base_revision: Some("rev_1".into()),
+        replaced_revision: Some("rev_1".into()),
+        content_hash: Some("hash-a".into()),
+    };
+
     store
         .acknowledge_v2_operation(
             &frozen.operation_id,
             V2EntityType::Note,
             "abc12345",
             frozen.generation,
+            &operation,
+            &data,
         )
         .unwrap();
+    assert_eq!(
+        store.v2_note_state("abc12345").unwrap(),
+        Some(V2NoteState {
+            note_id: "abc12345".into(),
+            notebook_id: "nb_1".into(),
+            revision: "rev_2".into(),
+            content_hash: Some("hash-a".into()),
+            filename: "abc12345.md".into(),
+            deleted: false,
+            last_seq: 2,
+            attachments: Vec::new(),
+        })
+    );
     let connection = store.open().unwrap();
     let generation = connection
         .query_row(

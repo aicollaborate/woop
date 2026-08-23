@@ -568,9 +568,92 @@ impl SyncStore {
         entity_type: V2EntityType,
         entity_id: &str,
         generation: i64,
+        operation: &crate::v2::V2PushOperation,
+        data: &crate::v2::V2OperationData,
     ) -> Result<(), SyncError> {
         let mut connection = self.open()?;
         let transaction = connection.transaction()?;
+        if data.entity_id != entity_id || data.entity_type != entity_type.as_str() {
+            return Err(SyncError::InvalidState(format!(
+                "cloud operation result does not match inflight entity: expected={}:{} actual={}:{}",
+                entity_type.as_str(),
+                entity_id,
+                data.entity_type,
+                data.entity_id
+            )));
+        }
+        match operation {
+            crate::v2::V2PushOperation::NotebookPut { notebook, .. } => {
+                Self::write_v2_notebook_state_if_newer(
+                    &transaction,
+                    &V2NotebookState {
+                        notebook_id: notebook.id.clone(),
+                        revision: data.revision.clone(),
+                        metadata_hash: crate::v2::v2_notebook_metadata_hash(
+                            &notebook.name,
+                            notebook.icon.as_deref(),
+                            notebook.sort_order,
+                        ),
+                        deleted: data.deleted,
+                        last_seq: data.sync_seq,
+                    },
+                )?;
+            }
+            crate::v2::V2PushOperation::NotebookDelete { notebook_id, .. } => {
+                let current = Self::read_v2_notebook_state(&transaction, notebook_id)?
+                    .ok_or_else(|| {
+                        SyncError::InvalidState(format!(
+                            "cannot acknowledge notebook delete without a local server head: {notebook_id}"
+                        ))
+                    })?;
+                Self::write_v2_notebook_state_if_newer(
+                    &transaction,
+                    &V2NotebookState {
+                        notebook_id: notebook_id.clone(),
+                        revision: data.revision.clone(),
+                        metadata_hash: current.metadata_hash,
+                        deleted: data.deleted,
+                        last_seq: data.sync_seq,
+                    },
+                )?;
+            }
+            crate::v2::V2PushOperation::NotePut { note, .. } => {
+                Self::write_v2_note_state_if_newer(
+                    &transaction,
+                    &V2NoteState {
+                        note_id: note.id.clone(),
+                        notebook_id: note.notebook_id.clone(),
+                        revision: data.revision.clone(),
+                        content_hash: Some(note.content_hash.clone()),
+                        filename: note.filename.clone(),
+                        deleted: data.deleted,
+                        last_seq: data.sync_seq,
+                        attachments: note.attachments.clone(),
+                    },
+                )?;
+            }
+            crate::v2::V2PushOperation::NoteDelete { note_id, .. } => {
+                let current =
+                    Self::read_v2_note_state(&transaction, note_id)?.ok_or_else(|| {
+                        SyncError::InvalidState(format!(
+                            "cannot acknowledge note delete without a local server head: {note_id}"
+                        ))
+                    })?;
+                Self::write_v2_note_state_if_newer(
+                    &transaction,
+                    &V2NoteState {
+                        note_id: note_id.clone(),
+                        notebook_id: current.notebook_id,
+                        revision: data.revision.clone(),
+                        content_hash: None,
+                        filename: current.filename,
+                        deleted: data.deleted,
+                        last_seq: data.sync_seq,
+                        attachments: Vec::new(),
+                    },
+                )?;
+            }
+        }
         transaction.execute(
             "DELETE FROM v2_inflight_operations WHERE operation_id = ?1",
             [operation_id],
@@ -832,6 +915,17 @@ impl SyncStore {
         Ok(())
     }
 
+    fn write_v2_note_state_if_newer(
+        connection: &Connection,
+        state: &V2NoteState,
+    ) -> Result<(), SyncError> {
+        let current = Self::read_v2_note_state(connection, &state.note_id)?;
+        if current.is_none_or(|value| value.last_seq <= state.last_seq) {
+            Self::write_v2_note_state(connection, state)?;
+        }
+        Ok(())
+    }
+
     fn write_v2_notebook_state(
         connection: &Connection,
         state: &V2NotebookState,
@@ -852,6 +946,17 @@ impl SyncStore {
                 chrono::Utc::now().timestamp_millis()
             ],
         )?;
+        Ok(())
+    }
+
+    fn write_v2_notebook_state_if_newer(
+        connection: &Connection,
+        state: &V2NotebookState,
+    ) -> Result<(), SyncError> {
+        let current = Self::read_v2_notebook_state(connection, &state.notebook_id)?;
+        if current.is_none_or(|value| value.last_seq <= state.last_seq) {
+            Self::write_v2_notebook_state(connection, state)?;
+        }
         Ok(())
     }
 

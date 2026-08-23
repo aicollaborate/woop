@@ -74,11 +74,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/flowix-cli",
-      "binaries/dsh-host"
-    ],
-    "resources": {
-      "resources/skills/.system/**/*": "skills/.system/"
-    }
+      "binaries/flowix-cli"
+    ]
   }
 }

@@ -19,12 +19,11 @@ describe("canonical agent message identity", () => {
     },
   );
 
-  it("is idempotent and preserves Flowix compatibility", () => {
+  it("is idempotent and preserves the canonical user-message identity", () => {
     const canonical = "msg:codex:run-1:assistant:source-1";
     expect(
       canonicalAgentMessageId("codex", "run-1", "assistant", canonical),
     ).toBe(canonical);
-    expect(completedRunUserMessageId("flowix", "run-1")).toBe("user-run-1");
     expect(completedRunUserMessageId("deepseek-harness", "run-1")).toBe(
       "msg:deepseek-harness:run-1:user:user-run-1",
     );

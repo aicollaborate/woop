@@ -20,11 +20,12 @@ use super::runtime::{diagnostics_enabled, persist_and_emit_codex_chunk, persist_
 use super::stream::read_codex_stdout;
 use super::AGENT_TYPE;
 use crate::agent_external::{
-    read_stderr_to_string, resolve_and_freeze_runtime_cwd, select_external_session_for_runtime,
-    truncate_for_log, ExternalRunRegistry, USER_STOPPED_REASON,
+    read_stderr_to_string, resolve_and_freeze_runtime_cwd, resolve_external_failure,
+    select_external_session_for_runtime, truncate_for_log, ExternalRunRegistry,
+    USER_STOPPED_REASON,
 };
-use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::{AgentChunk, AgentUserMessage};
 use crate::runtime_log;
 
 pub struct CodexCliManager {
@@ -165,7 +166,7 @@ impl CodexCliManager {
         true
     }
 
-    pub async fn running_threads(&self) -> HashMap<String, crate::agent_flowix::RunInfo> {
+    pub async fn running_threads(&self) -> HashMap<String, crate::agent_wire::RunInfo> {
         self.runs.running_threads().await
     }
 
@@ -342,8 +343,6 @@ impl CodexCliManager {
         // stdout reader 排空后返回;只有未正常完成的 turn 才可能执行 rollout
         // 恢复。StreamEnd 统一由 chat_stream 尾部 / stop_chat / watchdog 通过
         // CAS 发送。
-        stdout_result?;
-
         let mut child = self.runs.remove_if_run_id(thread_id, Some(run_id)).await;
         let status = if let Some(running) = child.as_mut() {
             running.child.wait().await.map_err(|e| e.to_string())?
@@ -378,8 +377,21 @@ impl CodexCliManager {
                 "stderr_preview": truncate_for_log(stderr_text.trim()),
             })),
         );
+        // Propagate reader failures only after the child has been removed from
+        // the registry and reaped. Otherwise a transient pipe error leaves the
+        // thread permanently looking busy until the watchdog runs.
+        let provider_error = stdout_result?;
         if !status.success() {
-            return Err(format_codex_failure(&status.to_string(), &stderr_text));
+            return Err(resolve_external_failure(
+                provider_error.as_deref(),
+                None,
+                &stderr_text,
+                "Codex CLI",
+                &status.to_string(),
+            ));
+        }
+        if let Some(provider_error) = provider_error {
+            return Err(provider_error);
         }
         if !stderr_text.trim().is_empty() {
             tracing::info!("[CodexCli] stderr: {}", stderr_text.trim());
@@ -388,6 +400,7 @@ impl CodexCliManager {
     }
 }
 
+#[cfg(test)]
 fn format_codex_failure(status: &str, detail: &str) -> String {
     let detail = strip_codex_stderr_dump(detail);
     if detail.is_empty() {
@@ -408,6 +421,7 @@ fn format_codex_failure(status: &str, detail: &str) -> String {
 /// Codex CLI 的 stderr 在 models refresh 失败等场景会把上游返回的整段 JSON
 /// 原样 inline 成 `... ; body: {"object":"list","data":[...]}`, 一段就能上百
 /// KB。`body:` 之后是诊断噪音, 不参与用户可读 message, 这里切掉只留前半段。
+#[cfg(test)]
 fn strip_codex_stderr_dump(detail: &str) -> String {
     let detail = detail.trim();
     if detail.is_empty() {

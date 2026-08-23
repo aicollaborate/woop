@@ -37,12 +37,12 @@ describe("external-session helpers", () => {
   it("resolveExternalChunkAgentType falls back to source thread type then target", () => {
     const textChunk = chunk("text");
     const threadTypes: Record<string, AgentTypeKey> = {
-      "thread-local": "flowix",
+      "thread-local": "deepseek-harness",
       "session-A": "codex",
     };
     expect(
       resolveExternalChunkAgentType(textChunk, "thread-local", "session-A", threadTypes),
-    ).toBe("flowix");
+    ).toBe("deepseek-harness");
 
     expect(
       resolveExternalChunkAgentType(textChunk, "missing", "session-A", threadTypes),
@@ -90,7 +90,7 @@ describe("external-session helpers", () => {
           "thread-local": fromState,
           "session-A": toState,
         },
-        threadTypes: { "thread-local": "flowix" },
+        threadTypes: { "thread-local": "deepseek-harness" },
         externalSessionResolutions: {},
       },
       "thread-local",

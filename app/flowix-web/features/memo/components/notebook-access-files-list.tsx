@@ -254,16 +254,21 @@ export function NotebookAccessFilesList({
                     : undefined
                 }
                 className={cn(
-                  'relative flex h-8 w-full select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors text-[var(--foreground)]',
+                  'relative flex h-7 w-full select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
                   canBrowse && 'cursor-pointer',
-                  isBrowsing && 'bg-[var(--muted)]',
+                  isBrowsing
+                    ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'text-[var(--foreground)]',
                   item.missing && 'opacity-70',
                 )}
                 style={{ paddingLeft: 6 }}
               >
                 <span
                   aria-label={isWorkspace ? t('agent.access.workspaceBadge') : undefined}
-                  className="relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 overflow-hidden rounded-md text-[var(--foreground)] opacity-90"
+                  className={cn(
+                    'relative inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center -ml-1 mr-1 overflow-hidden rounded-md opacity-90',
+                    isBrowsing ? 'text-[var(--primary-foreground)]' : 'text-[var(--foreground)]',
+                  )}
                 >
                   {item.missing ? (
                     <NotebookIcon

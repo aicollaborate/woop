@@ -49,8 +49,21 @@ function AppToaster() {
   );
 }
 
+function removeAppLoading() {
+  document.getElementById("app-loading")?.remove();
+}
+
+function AppReadySignal() {
+  useEffect(() => {
+    removeAppLoading();
+  }, []);
+
+  return null;
+}
+
 function MainWindowReadySignal() {
   useEffect(() => {
+    removeAppLoading();
     void windows.showMain().catch((error) => {
       logger.error("show main window failed", { error });
     });
@@ -86,11 +99,6 @@ function App() {
   }, [loadInitial, refreshAgentRuntime]);
 
   useEffect(() => {
-    const loading = document.getElementById("app-loading");
-    if (loading) loading.remove();
-  }, []);
-
-  useEffect(() => {
     const handleHashChange = () => setHash(window.location.hash);
     window.addEventListener("hashchange", handleHashChange);
 
@@ -115,6 +123,7 @@ function App() {
               <ShortcutsProvider overrides={shortcutOverrides}>
                 <Suspense fallback={null}>
                   <TabWindow />
+                  <AppReadySignal />
                 </Suspense>
               </ShortcutsProvider>
             </TooltipProvider>
@@ -133,9 +142,10 @@ function App() {
           <ThemeProvider>
             <TooltipProvider>
               <ShortcutsProvider overrides={shortcutOverrides}>
-                <Suspense fallback={null}>
-                  <PreferencesView initialTab={tab} />
-                </Suspense>
+              <Suspense fallback={null}>
+                <PreferencesView initialTab={tab} />
+                <AppReadySignal />
+              </Suspense>
               </ShortcutsProvider>
             </TooltipProvider>
           </ThemeProvider>

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StickyNotePlus } from 'lucide-react';
-
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
@@ -25,9 +24,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { AgentIcon } from '@features/agent/components/agent-icon';
+import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
 
 /**
  * The "Conversations" navigation view. It deliberately lists conversation
@@ -221,75 +222,97 @@ export function AgentConversationList() {
   );
 
   return (
-    <section className="flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('document.agent.conversationsTitle')}>
+    <section className="flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('memo.navigation.conversations')}>
       {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
           左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
-        <div className="flex min-w-0 flex-1 items-center">
-          <span className="min-w-0 shrink truncate py-0.5 pl-1 pr-2 text-[15px] font-medium text-[var(--foreground)]">
-            {t('document.agent.conversationsTitle')}
-          </span>
-          {activeAgentTypes.length >= 2 && (
-            <div
-              className="flex shrink-0 items-center gap-1"
-              role="group"
-              aria-label={t('document.agent.filterByAgent')}
+          <div className="flex min-w-0 flex-1 items-center">
+            <MemoNavigationDropdown
+              title={t('memo.navigation.conversations')}
+              ariaLabel={t('memo.navigation.menuTitle')}
             >
-              {activeAgentTypes.map(({ type, count }) => {
-                const active = effectiveFilter === type.key;
-                const label = t('document.agent.filterByAgentCount', {
-                  name: displayName(type),
-                  count,
-                });
-                return (
-                  <button
+              <div className="space-y-1">
+                <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+                  {t('agent.chat.newThread')}
+                </DropdownMenuLabel>
+                {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
+                  <DropdownMenuItem
                     key={type.key}
-                    type="button"
-                    aria-pressed={active}
-                    title={label}
-                    aria-label={label}
-                    onClick={() => setFilterType((prev) => (prev === type.key ? null : type.key))}
-                    className={cn(
-                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors',
-                      active
-                        ? 'border-transparent bg-[var(--muted)]'
-                        : 'border-[var(--border)] opacity-20 hover:opacity-100',
-                    )}
+                    disabled={!currentNotebookId}
+                    onClick={() => createConversation(type.key)}
+                    className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
                   >
-                    <AgentIcon typeKey={type.key} alt="" className="h-full w-full object-contain" />
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                disabled={!currentNotebookId}
-                aria-label={t('agent.chat.newThread')}
-                title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                    <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                    <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
+                  </DropdownMenuItem>
+                ))}
+              </div>
+            </MemoNavigationDropdown>
+            {activeAgentTypes.length >= 2 && (
+              <div
+                className="flex shrink-0 items-center gap-1"
+                role="group"
+                aria-label={t('document.agent.filterByAgent')}
               >
-                <StickyNotePlus className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-[182px] px-1 py-1.5 space-y-1 bg-[var(--popover)]">
-              {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
-                <DropdownMenuItem
-                  key={type.key}
-                  onClick={() => createConversation(type.key)}
-                  className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
+                {activeAgentTypes.map(({ type, count }) => {
+                  const active = effectiveFilter === type.key;
+                  const label = t('document.agent.filterByAgentCount', {
+                    name: displayName(type),
+                    count,
+                  });
+                  return (
+                    <button
+                      key={type.key}
+                      type="button"
+                      aria-pressed={active}
+                      title={label}
+                      aria-label={label}
+                      onClick={() => setFilterType((prev) => (prev === type.key ? null : type.key))}
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors',
+                        active
+                          ? 'border-transparent bg-[var(--muted)]'
+                          : 'border-[var(--border)] opacity-20 hover:opacity-100',
+                      )}
+                    >
+                      <AgentIcon typeKey={type.key} alt="" className="h-full w-full object-contain" />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={!currentNotebookId}
+                  aria-label={t('agent.chat.newThread')}
+                  title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
-                  <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+                  <StickyNotePlus className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 px-1 py-1.5">
+                <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+                  {t('agent.chat.newThread')}
+                </DropdownMenuLabel>
+                {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
+                  <DropdownMenuItem
+                    key={type.key}
+                    disabled={!currentNotebookId}
+                    onClick={() => createConversation(type.key)}
+                    className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
+                  >
+                    <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                    <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
       </div>
       <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2">
         {isLoading ? null : scopedConversations.length === 0 ? (

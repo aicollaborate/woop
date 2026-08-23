@@ -50,7 +50,6 @@ function disposeMenuRoot(root: Root, container: HTMLDivElement) {
 }
 
 const AGENT_THREAD_TYPE_BY_SLASH_ID: Record<AgentThreadSlashMenuItemId, AgentTypeKey> = {
-  'agent-thread-flowix': 'flowix',
   'agent-thread-codex': 'codex',
   'agent-thread-claude': 'claude',
   'agent-thread-gemini': 'gemini',
@@ -537,11 +536,11 @@ function handleSelect(item: SlashMenuItem): void {
   if (isAgentThreadSlashMenuItemId(item.id)) {
     const agentThreadType = AGENT_THREAD_TYPE_BY_SLASH_ID[item.id];
     const runtimeStatus = useAgentRuntimeStore.getState().statusByType[agentThreadType];
-    // DeepSeek Harness is bundled and its slash action creates a card; model
-    // credentials are validated when the run starts. Do not turn a transient
-    // or incomplete runtime status into a redirect back to preferences.
-    if (agentThreadType !== 'deepseek-harness' && runtimeStatus?.available === false) {
+    if (runtimeStatus?.available === false) {
       closeMenu();
+      if (agentThreadType === 'deepseek-harness') {
+        void windows.openPreferences('agents');
+      }
       return;
     }
     const replaceRange = isBlockStartTrigger(editor)

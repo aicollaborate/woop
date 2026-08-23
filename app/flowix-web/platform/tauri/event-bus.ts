@@ -34,6 +34,7 @@
  */
 
 import { listen, type Event, type UnlistenFn } from '@tauri-apps/api/event';
+import { createLogger } from '@/lib/logger';
 
 // 重导出 UnlistenFn 类型, 让消费者不必直接 import @tauri-apps/api/event
 export type { UnlistenFn } from '@tauri-apps/api/event';
@@ -49,11 +50,11 @@ const retryTimers = new Map<string, number>();
 const retryAttempts = new Map<string, number>();
 const LISTENER_RETRY_BASE_DELAY_MS = 1000;
 const LISTENER_RETRY_MAX_DELAY_MS = 30_000;
+const logger = createLogger('event-bus');
 
 /** 错误日志聚合: 防止某个 handler 异常影响其他 handler。 */
 function logHandlerError(event: string, err: unknown): void {
-  // eslint-disable-next-line no-console
-  console.warn(`[event-bus] handler for "${event}" threw:`, err);
+  logger.warn(`handler for "${event}" threw`, { error: String(err) });
 }
 
 function notifyListenerReady(event: string): void {
@@ -140,8 +141,7 @@ function ensureTauriListener(event: string): void {
       // failure must not strand a Webview without live events for its entire
       // lifetime.
       scheduleListenerRetry(event);
-      // eslint-disable-next-line no-console
-      console.warn(`[event-bus] failed to listen for "${event}":`, err);
+      logger.warn(`failed to listen for "${event}"`, { error: String(err) });
     });
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
+import { ArrowUp, Loader2 } from 'lucide-react';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
@@ -15,10 +16,23 @@ import { useDocumentHistoryStore, useDocumentStore, type DocumentHistoryEntry, t
 import { useMemoStore, type MemoItem, type Notebook } from '@features/memo';
 import { useSettingsStore } from '@features/shell';
 import { useShallow } from 'zustand/react/shallow';
-import { notebooks as notebooksClient, windows } from '@platform/tauri/client';
+import {
+  agent,
+  dshIntegration,
+  boot,
+  notebooks as notebooksClient,
+  windows,
+  type DshDownloadProgress,
+} from '@platform/tauri/client';
+import { subscribe } from '@platform/tauri/event-bus';
 import { notebookDeleteErrorMessage } from '@platform/tauri/errors';
 import { WindowsTitlebarControls } from '@shared/window-titlebar-controls';
 import { toast } from '@/lib/toast';
+import iconCodex from '@/assets/codex.svg';
+import iconClaudeCode from '@/assets/icon-claude-code.svg';
+import iconDeepseek from '@/assets/icon-deepseek.svg';
+import iconFlowixAgent from '@/assets/flowix-agent.svg';
+import iconOpenCode from '@/assets/icon-opencode.svg';
 import { canonicalPath, getDocumentInstanceKey } from '@/lib/path';
 import { navigateDocumentHistory } from '@features/document/use-cases/document-navigation';
 import { StatusBar } from '@features/shell/components/status-bar/status-bar';
@@ -27,10 +41,19 @@ import { MarkdownFileDropOverlay } from '@features/shell/components/drag-overlay
 import { useDocumentCommands } from '@features/document/components/use-document-commands';
 import { useNotebookTodoCount } from '@features/memo/components/use-notebook-todo-count';
 import { useResizablePanels } from '@features/shell/hooks/use-resizable-panels';
+import { useDeferredUnmount } from '@features/shell/hooks/use-deferred-unmount';
 import { useMacosTrackpadSwipe, type MacosTrackpadSwipeDirection } from '@features/shell/hooks/use-macos-trackpad-swipe';
 import { useI18n } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
+import { Button } from '@shared/ui/button';
+import { DialogDescription, DialogHeader, DialogTitle } from '@shared/ui/dialog';
+import { UpdateProgress } from '@shared/ui/update-progress';
+import { useDshRuntimeInstaller } from '@features/preferences/hooks/use-dsh-runtime-installer';
+import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
+import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { useAppUpdater, type AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 import { getPluginNoteInfo } from '@features/plugin';
+import { FloatingPrompt, FloatingPromptStack } from '@features/shell/components/floating-prompt';
 import {
   ThirdColumnSurfaceHost,
   getThirdColumnSurfaceDefinition,
@@ -39,12 +62,25 @@ import {
 } from '@features/surface';
 import type { PluginDescriptor } from '@platform/tauri/client';
 
-const NOTE_NAVIGATION_PANEL_WIDTH = 192;
+const NOTE_NAVIGATION_PANEL_WIDTH = 238;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
 const NOTE_NAVIGATION_PANEL_MAX_WIDTH = 420;
 const DOCUMENT_PANEL_MIN_WIDTH = 420;
 const PANEL_DIVIDER_WIDTH = 1;
 const logger = createLogger('main-layout');
+
+const LOCAL_AGENT_INTRO_OPTIONS = [
+  { key: 'codex', nameKey: 'agent.types.codex.name', icon: iconCodex },
+  { key: 'claude', nameKey: 'agent.types.claude.name', icon: iconClaudeCode },
+  { key: 'opencode', nameKey: 'agent.types.opencode.name', icon: iconOpenCode },
+] as const;
+type LocalAgentIntroOption = (typeof LOCAL_AGENT_INTRO_OPTIONS)[number];
+
+function isActiveDshDownload(progress: DshDownloadProgress | null): boolean {
+  return progress?.phase === 'checking'
+    || progress?.phase === 'downloading'
+    || progress?.phase === 'downloaded';
+}
 
 function isWindowsPlatform(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
@@ -108,6 +144,28 @@ export function MainLayout() {
   const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const activeSort = useMemoStore((s) => s.activeSort);
   const isAgentConversationView = activeFilter === 'agents';
+  const [dshDownload, setDshDownload] = useState<DshDownloadProgress | null>(null);
+  const productUpdatesEnabled = useUserSettings((settings) => settings.productUpdates.enabled);
+  const userSettingsLoading = useUserSettingsStore((state) => state.isLoading);
+  const updater = useAppUpdater({
+    autoCheck: !userSettingsLoading,
+    enabled: productUpdatesEnabled,
+  });
+
+  useEffect(() => {
+    const applyProgress = (progress: DshDownloadProgress) => {
+      setDshDownload(isActiveDshDownload(progress) ? progress : null);
+    };
+    const unsubscribe = subscribe<DshDownloadProgress>('dsh-download-progress', applyProgress);
+    void dshIntegration.downloadStatus()
+      .then((progress) => {
+        if (progress) applyProgress(progress);
+      })
+      .catch(() => {
+        // The Preferences window remains the detailed recovery surface.
+      });
+    return unsubscribe;
+  }, []);
 
   const memoActions = useMemoStore(
     useShallow((s) => ({
@@ -204,6 +262,41 @@ export function MainLayout() {
     width: NOTE_NAVIGATION_PANEL_WIDTH,
   });
   const noteNavigationPanelWidthRef = useRef(NOTE_NAVIGATION_PANEL_WIDTH);
+
+  const [dshInstallPromptOpen, setDshInstallPromptOpen] = useState(false);
+
+  // The boot record is the single source of truth for whether the DSH
+  // introduction has already been displayed. Missing values deserialize as
+  // false, so fresh installs show the prompt.
+  useEffect(() => {
+    let cancelled = false;
+
+    void boot.getFeatures().then((features) => {
+      if (cancelled) return;
+      if (!features.isIntroductDisplayed) setDshInstallPromptOpen(true);
+    }).catch(() => {
+      // Do not show the prompt when the boot state cannot be read.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleDshPromptClose = useCallback(() => {
+    void boot.setIntroDisplayed().catch((error) => {
+      logger.warn('persist DSH intro display state failed', { error });
+    });
+    setDshInstallPromptOpen(false);
+  }, []);
+
+  const handleDshInstalled = useCallback(() => {
+    setDshInstallPromptOpen(false);
+  }, []);
+
+  const handleDshIntroDisplayed = useCallback(() => {
+    void boot.setIntroDisplayed().catch((error) => {
+      logger.warn('persist DSH intro display state failed', { error });
+    });
+  }, []);
+  const memoListMounted = useDeferredUnmount(memoListVisible);
   // tags 面板独立成最左列, 宽度走自己的 state。
   const noteNavigationColumnWidth = noteNavigationVisible ? noteNavigationPanelWidth : 0;
   const {
@@ -226,6 +319,7 @@ export function MainLayout() {
   } = useMemoListHoverPreview(isMemoListHidden);
   const memoListPreviewVisible =
     isMemoListHidden && memoListPreviewPhase !== 'closed';
+  const documentTitlebarHeight = isWindowsPlatform() ? 36 : 48;
 
   useEffect(() => {
     if (!isAgentConversationView && wasAgentConversationViewRef.current) {
@@ -359,9 +453,13 @@ export function MainLayout() {
     }
   }, [noteNavigationVisible, setMemoListVisible, setNoteNavigationVisible]);
 
-  // document 顶栏的侧栏 toggle: 打开走纯开, 关闭走级联 (带笔记导航),
-  // 行为与 memo-list 顶栏的折叠按钮对齐 ── 任一入口关闭都同步收起左侧
-  // 两列。
+  const collapseMemoList = useCallback(() => {
+    setMemoListVisible(false);
+  }, [setMemoListVisible]);
+
+  // document 顶栏的侧栏 toggle: 打开走纯开, 关闭走级联 (带笔记导航)。
+  // 中间列自己的标题栏按钮使用 collapseMemoList, 只折叠中间列并保留
+  // 最左侧的笔记本/标签导航。
   const handleToggleMemoList = useCallback(() => {
     if (memoListVisible) {
       closeMemoListAndNoteNavigation();
@@ -466,6 +564,15 @@ export function MainLayout() {
       sort: activeSort,
     });
   }, [activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
+
+  // 状态栏 Agents 星标: 打开中间列展示 AgentConversationList,
+  // 已在 agents 视图则 no-op, 不再回退。
+  const handleOpenAgentConversationView = useCallback(() => {
+    if (isAgentConversationView) return;
+    closePluginSurface();
+    setActiveFilter('agents');
+    setMemoListVisible(true);
+  }, [closePluginSurface, isAgentConversationView, setActiveFilter, setMemoListVisible]);
 
   const handleOpenPlugin = useCallback(async (plugin: PluginDescriptor) => {
     if (plugin.manifest.kind === 'artifact-tool') {
@@ -678,7 +785,7 @@ export function MainLayout() {
       <MarkdownFileDropOverlay />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col flex-1 overflow-hidden">
-          <div className="flex flex-1 h-full overflow-hidden">
+          <div className="relative flex flex-1 h-full overflow-hidden">
           {/* Tags column (leftmost) */}
           <div
             className={`flex flex-col overflow-hidden will-change-[width] ${
@@ -734,11 +841,11 @@ export function MainLayout() {
               }`}
               style={{ width: memoListPreviewVisible ? 0 : memoColWidth }}
             >
-              {!isMemoListHidden && (
+              {memoListMounted && (
                 isWindowsPlatform() ? (
                   <MemoListTitlebarWin
                     selectedNotebook={selectedNotebook}
-                    onCollapseSidebar={closeMemoListAndNoteNavigation}
+                    onCollapseMemoList={collapseMemoList}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
                     onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   />
@@ -746,7 +853,7 @@ export function MainLayout() {
                   <MemoListTitlebarMac
                     noteNavigationVisible={noteNavigationVisible}
                     selectedNotebook={selectedNotebook}
-                    onCollapseSidebar={closeMemoListAndNoteNavigation}
+                    onCollapseMemoList={collapseMemoList}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
                     onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   />
@@ -765,12 +872,17 @@ export function MainLayout() {
                 }
                 className={
                   memoListPreviewVisible
-                      ? 'fixed left-1 top-[6vh] z-[1200] flex h-[88vh] w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-lg [&>div]:pt-2 ' +
+                      ? 'absolute z-[1200] flex w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] pt-2 shadow-lg ' +
                       (memoListPreviewPhase === 'open'
                         ? 'flowix-hover-preview-enter'
                         : 'flowix-hover-preview-leave')
                     : 'flex-1 min-h-0'
                 }
+                style={memoListPreviewVisible ? {
+                  left: noteNavigationColumnWidth + 2,
+                  top: documentTitlebarHeight,
+                  bottom: 0,
+                } : undefined}
               >
                 {/* 中间列三态: 资料文件树 → 对话列表 → memo 列表。
                     activeFileBrowserPath 由侧栏资料行单击置位 (memo-store)。 */}
@@ -842,6 +954,10 @@ export function MainLayout() {
             onOpenTodos={handleOpenTodos}
             onToggleNoteNavigation={handleToggleNoteNavigation}
             onOpenPreferences={() => windows.openPreferences()}
+            onOpenDshPreferences={() => windows.openPreferences('dsh')}
+            onOpenAgentConversationView={handleOpenAgentConversationView}
+            dshDownload={dshDownload}
+            updater={updater}
           />
         </div>
       </div>
@@ -851,6 +967,274 @@ export function MainLayout() {
         onCancel={() => setNotebookToDelete(null)}
         onConfirm={handleConfirmDeleteNotebook}
       />
+
+      <FloatingPromptStack>
+        <AppUpdatePrompt updater={updater} />
+        <DshInstallPrompt
+          open={dshInstallPromptOpen}
+          onClose={handleDshPromptClose}
+          onIntroDisplayed={handleDshIntroDisplayed}
+          onInstalled={handleDshInstalled}
+        />
+      </FloatingPromptStack>
     </div>
+  );
+}
+
+function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
+  const { t } = useI18n();
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  const [installError, setInstallError] = useState(false);
+  const update = updater.update;
+  const isInstalling = updater.status === 'installing';
+
+  useEffect(() => {
+    if (update?.version && update.version !== dismissedVersion) {
+      setInstallError(false);
+    }
+  }, [dismissedVersion, update?.version]);
+
+  if (!update || (updater.status !== 'available' && updater.status !== 'installing') || update.version === dismissedVersion) {
+    return null;
+  }
+
+  const handleInstall = async () => {
+    setInstallError(false);
+    try {
+      await updater.installNow();
+    } catch {
+      setInstallError(true);
+    }
+  };
+
+  const downloadPercent = updater.progress?.phase === 'progress' && updater.progress.contentLength
+    ? Math.min(100, Math.round((updater.progress.downloadedBytes / updater.progress.contentLength) * 100))
+    : null;
+
+  return (
+    <FloatingPrompt open onClose={() => setDismissedVersion(update.version)} className="p-0">
+        <div className="px-5 py-5 text-left">
+          <DialogHeader className="mb-0">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
+              <ArrowUp className="h-7 w-7" aria-hidden="true" />
+            </div>
+            <DialogTitle className="mt-3 text-base">{t('appUpdates.available')}</DialogTitle>
+            <DialogDescription className="mt-1 whitespace-pre-line text-xs leading-5">
+              {update.body || t('appUpdates.description', { version: update.version })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+            {t('productUpdates.version', { version: update.version })}
+          </p>
+
+          {isInstalling && updater.progress && (
+            <UpdateProgress
+              className="mt-5"
+              value={{
+                percent: downloadPercent,
+                downloadedBytes: updater.progress.phase === 'progress' ? updater.progress.downloadedBytes : undefined,
+                totalBytes: updater.progress.phase === 'progress' ? updater.progress.contentLength : undefined,
+              }}
+              label={t('appUpdates.progress', { percent: downloadPercent ?? 0 })}
+            />
+          )}
+
+          {installError && <p className="mt-3 text-xs text-[var(--destructive)]">{t('appUpdates.installFailed')}</p>}
+
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setDismissedVersion(update.version)}>
+              {t('dialog.cancel')}
+            </Button>
+            <Button type="button" onClick={() => void handleInstall()} disabled={isInstalling}>
+              {isInstalling && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isInstalling ? t('appUpdates.installing') : t('appUpdates.install')}
+            </Button>
+          </div>
+        </div>
+    </FloatingPrompt>
+  );
+}
+
+function DshInstallPrompt({
+  open,
+  onClose,
+  onIntroDisplayed,
+  onInstalled,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onIntroDisplayed: () => void;
+  onInstalled: () => void;
+}) {
+  const { t } = useI18n();
+  const { busy, error, progress, install, cancel } = useDshRuntimeInstaller();
+  const canCancel = busy && progress?.phase !== 'downloaded';
+  const [slide, setSlide] = useState<'intro' | 'download'>('intro');
+  const [checkingLocalAgents, setCheckingLocalAgents] = useState(false);
+  const [localAgent, setLocalAgent] = useState<LocalAgentIntroOption | null>(null);
+  const lastToastedInstallErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !error) {
+      lastToastedInstallErrorRef.current = null;
+      return;
+    }
+    if (error && error !== lastToastedInstallErrorRef.current) {
+      lastToastedInstallErrorRef.current = error;
+      toast.error(`${t('preferences.dsh.setup.error')}: ${error}`);
+    }
+  }, [error, open, t]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setCheckingLocalAgents(true);
+    setLocalAgent(null);
+    void agent.runtimeStatus()
+      .then((status) => {
+        if (cancelled) return;
+        const detected = LOCAL_AGENT_INTRO_OPTIONS.find(({ key }) => status[key]?.available);
+        setLocalAgent(detected ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setLocalAgent(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingLocalAgents(false);
+      });
+    return () => { cancelled = true; };
+  }, [open]);
+
+  const handleInstall = async () => {
+    onIntroDisplayed();
+    const status = await install();
+    if (status) {
+      toast.success(t('preferences.dsh.setup.installSuccess'));
+      onInstalled();
+    }
+  };
+
+  const handleCancel = async () => {
+    if (await cancel()) toast.info(t('preferences.dsh.setup.cancelled'));
+  };
+
+  return (
+    <FloatingPrompt open={open} onClose={onClose} className="max-h-[calc(100vh-2rem)] p-0">
+        <div className="px-5 py-5 text-left">
+          <div
+            className="mb-5 flex items-center gap-1.5"
+            role="tablist"
+            aria-label={t('preferences.dsh.setup.carousel')}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={slide === 'intro'}
+              aria-label={t('preferences.dsh.setup.intro.slide')}
+              onClick={() => setSlide('intro')}
+              className={`h-1.5 rounded-full transition-[width,background-color] ${slide === 'intro' ? 'w-7 bg-[var(--primary)]' : 'w-3 bg-[var(--muted)]'}`}
+            />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={slide === 'download'}
+              aria-label={t('preferences.dsh.setup.download.slide')}
+              onClick={() => setSlide('download')}
+              className={`h-1.5 rounded-full transition-[width,background-color] ${slide === 'download' ? 'w-7 bg-[var(--primary)]' : 'w-3 bg-[var(--muted)]'}`}
+            />
+          </div>
+
+          <div
+            className="relative overflow-hidden"
+            aria-live="polite"
+          >
+            <div
+              className="flex w-[200%] items-start transition-transform duration-300 ease-out will-change-transform"
+              style={{ transform: slide === 'intro' ? 'translateX(0)' : 'translateX(-50%)' }}
+            >
+              <section className="w-1/2 shrink-0" aria-hidden={slide !== 'intro'}>
+                <DialogHeader className="mb-0">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)]">
+                    <img
+                      src={checkingLocalAgents ? iconFlowixAgent : localAgent?.icon ?? iconFlowixAgent}
+                      alt=""
+                      className="h-7 w-7 object-contain"
+                    />
+                  </div>
+                  <DialogTitle className="mt-3 text-base">
+                    {checkingLocalAgents
+                      ? t('preferences.dsh.setup.intro.checking')
+                      : localAgent
+                        ? t('preferences.dsh.setup.intro.detected', { agent: t(localAgent.nameKey) })
+                        : t('preferences.dsh.setup.intro.none')}
+                  </DialogTitle>
+                  {!checkingLocalAgents && (
+                    <DialogDescription className="mt-1 whitespace-pre-line text-xs leading-5">
+                      {t(
+                        localAgent
+                          ? 'preferences.dsh.setup.intro.description'
+                          : 'preferences.dsh.setup.intro.noAgentDescription',
+                      )}
+                    </DialogDescription>
+                  )}
+                </DialogHeader>
+              </section>
+
+              <section className="w-1/2 shrink-0" aria-hidden={slide !== 'download'}>
+                <DialogHeader className="mb-0">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)]">
+                    <img src={iconDeepseek} alt="" className="h-7 w-7 object-contain" />
+                  </div>
+                  <DialogTitle className="mt-3 text-base">
+                    {t('preferences.dsh.setup.promptTitle')}
+                  </DialogTitle>
+                  <DialogDescription className="mt-1 whitespace-pre-line text-xs leading-5">
+                    {t('preferences.dsh.setup.promptDescription')}
+                  </DialogDescription>
+                </DialogHeader>
+
+                {busy && progress && (
+                  <UpdateProgress
+                    className="mt-5 text-left"
+                    value={progress}
+                    label={t('preferences.dsh.setup.downloadProgress')}
+                    resumedLabel={t('preferences.dsh.setup.resumed')}
+                  />
+                )}
+
+              </section>
+            </div>
+          </div>
+
+          <div className="relative mt-6 min-h-8">
+            <div
+              className={`absolute inset-y-0 right-0 flex items-center gap-2 transition-opacity duration-200 ${slide === 'intro' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              aria-hidden={slide !== 'intro'}
+            >
+              <Button type="button" onClick={() => setSlide('download')}>
+                {t('preferences.dsh.setup.next')}
+              </Button>
+            </div>
+            <div
+              className={`absolute inset-y-0 right-0 flex items-center gap-2 transition-opacity duration-200 ${slide === 'download' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              aria-hidden={slide !== 'download'}
+            >
+              <Button type="button" variant="outline" onClick={() => setSlide('intro')}>
+                {t('preferences.dsh.setup.previous')}
+              </Button>
+              <Button type="button" onClick={() => void handleInstall()} disabled={busy}>
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                {busy ? t('preferences.dsh.setup.installing') : t('preferences.dsh.setup.install')}
+              </Button>
+              {canCancel && (
+                <Button type="button" variant="outline" onClick={() => void handleCancel()}>
+                  {t('preferences.dsh.setup.cancel')}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+    </FloatingPrompt>
   );
 }

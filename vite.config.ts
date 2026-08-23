@@ -11,17 +11,20 @@ const frontendRoot = resolve(__dirname, "app/flowix-web");
 // the woff and ttf fallback entries from `katex.min.css` so the bundler emits
 // the woff2 variant only. Each font family goes from ~3 emitted assets down to
 // one (~250 KB total instead of ~1 MB).
-function katexWoff2Only(): Plugin {
+function modernFontWoff2Only(): Plugin {
   return {
-    name: "flowix-katex-woff2-only",
+    name: "flowix-modern-font-woff2-only",
     enforce: "pre",
     transform(code, id) {
-      if (!id.includes("node_modules/katex/dist/katex.min.css")) {
+      if (
+        !id.includes("node_modules/katex/dist/katex.min.css")
+        && !id.includes("node_modules/@fontsource/inter/")
+      ) {
         return null;
       }
       const transformed = code
         .replace(
-          /,url\([^)]+\.woff\) format\(["']woff["']\)/g,
+          /,\s*url\([^)]+\.woff\) format\(["']woff["']\)/g,
           "",
         )
         .replace(
@@ -57,12 +60,52 @@ export default defineConfig(({ command, mode }) => {
     build: {
       outDir: resolve(__dirname, isEditorWebView ? ".build/ios-editor" : ".build/web-dist"),
       emptyOutDir: true,
+      // The bundle budget follows the desktop startup graph through this
+      // manifest instead of looking only at index.html.
+      manifest: !isEditorWebView,
       rollupOptions: {
         input: resolve(frontendRoot, isEditorWebView ? "editor-webview.html" : "index.html"),
+        output: {
+          // Keep dependencies of dynamic imports in their dynamic graph.
+          // Without this, Rollup may absorb shared dependencies into an
+          // explicit vendor chunk and turn optional Mermaid into an entry
+          // modulepreload.
+          onlyExplicitManualChunks: true,
+          manualChunks(id) {
+            // Language grammars use literal dynamic imports and intentionally
+            // remain separate chunks. Grouping @shikijs/langs here would turn
+            // one requested grammar back into the entire curated language set.
+            if (id.includes("node_modules/@shikijs/themes/")) {
+              return "shiki-theme";
+            }
+            if (id.includes("node_modules/shiki/") || id.includes("node_modules/@shiki/")) {
+              return "shiki-core";
+            }
+            // 重型 vendor: 每个 400-700KB, 单独命名避免被 Rollup 兜底合并。
+            // mermaid 主包本身 (~600KB) + 各 diagram 子包 (c4/flow/gantt/...
+            // 各 ~50KB) 合在一起会被 Rollup heuristic 拖成 2.5MB 兜底块。
+            // 这里锁住 mermaid 主包, 让子包按各自依赖图独立。
+            if (
+              id.includes("node_modules/mermaid/dist/mermaid") ||
+              id.includes("node_modules/mermaid/dist/mermaid.esm") ||
+              id.includes("node_modules/mermaid/src/")
+            ) {
+              return "vendor-mermaid";
+            }
+            if (id.includes("node_modules/katex")) {
+              return "vendor-katex";
+            }
+            // 图标库: lucide-react + @phosphor-icons 单次下载量大,
+            // 集中后 browser cache 友好。
+            if (id.includes("node_modules/lucide-react") || id.includes("node_modules/@phosphor-icons")) {
+              return "vendor-icons";
+            }
+          },
+        },
       },
     },
 
-    plugins: [react(), katexWoff2Only()],
+    plugins: [react(), modernFontWoff2Only()],
     resolve: {
       alias: {
         "@": frontendRoot,

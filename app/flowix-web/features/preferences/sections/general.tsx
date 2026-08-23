@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, ExternalLink } from 'lucide-react';
-import { openUrl } from '@platform/tauri/opener';
+import { Check } from 'lucide-react';
+import { useAppUpdater } from '@features/shell/hooks/use-app-updater';
 import { CheckSquareIcon, PushPin, StarFourIcon } from '@phosphor-icons/react';
 import {
   Select,
@@ -12,9 +12,10 @@ import {
 } from '@shared/ui/select';
 import { Textarea } from '@shared/ui/textarea';
 import { Button } from '@shared/ui/button';
+import { UpdateProgress } from '@shared/ui/update-progress';
 import { Tooltip } from '@shared/ui/tooltip';
 import { useComposingValue } from '@shared/hooks/use-composing-value';
-import { product, type ProductInfo, type ProductUpdateNotice } from '@platform/tauri/client';
+import { product, type ProductInfo } from '@platform/tauri/client';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -177,15 +178,14 @@ function MemoCardVariantOption({
   );
 }
 
-export function GeneralSection({ settings, language, region, memoCardVariant, updateSettings }: GeneralSectionProps) {
+export function GeneralSection({ settings, language, memoCardVariant, updateSettings }: GeneralSectionProps) {
   const { t } = useI18n();
   const customInstruction = useComposingValue(
     settings.customInstruction,
     (next) => updateSettings({ personalize: { customInstruction: next } }),
   );
   const [productInfo, setProductInfo] = useState<ProductInfo | null>(null);
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [manualNotice, setManualNotice] = useState<ProductUpdateNotice | null>(null);
+  const updater = useAppUpdater();
   const currentLanguageLabel =
     LANGUAGE_OPTIONS.find((option) => option.value === language)?.label ?? language;
   const responseLengthLabelByValue: Record<string, string> = {
@@ -217,31 +217,32 @@ export function GeneralSection({ settings, language, region, memoCardVariant, up
   };
 
   const handleCheckProductUpdates = async () => {
-    setCheckingUpdates(true);
     try {
-      const notice = await product.checkUpdateNotice(language, region);
-      setManualNotice(notice);
+      const update = await updater.checkNow();
       await updateSettings({ productUpdates: { lastCheckedAt: Date.now() } });
       toast.info(
-        notice
+        update
           ? t('preferences.general.productUpdates.found')
           : t('preferences.general.productUpdates.none'),
       );
     } catch {
       toast.error(t('preferences.general.productUpdates.failed'));
-    } finally {
-      setCheckingUpdates(false);
     }
   };
 
-  const handleOpenNoticeLink = async () => {
-    if (!manualNotice?.ctaUrl) return;
+  const handleInstallUpdate = async () => {
     try {
-      await openUrl(manualNotice.ctaUrl);
+      await updater.installNow();
     } catch {
-      toast.error(t('productUpdates.openFailed'));
+      toast.error(t('appUpdates.installFailed'));
     }
   };
+
+  const checkingUpdates = updater.status === 'checking';
+  const installingUpdate = updater.status === 'installing';
+  const downloadPercent = updater.progress?.phase === 'progress' && updater.progress.contentLength
+    ? Math.min(100, Math.round((updater.progress.downloadedBytes / updater.progress.contentLength) * 100))
+    : null;
 
   return (
     <div className="space-y-6 pb-16">
@@ -364,7 +365,7 @@ export function GeneralSection({ settings, language, region, memoCardVariant, up
           variant="outline"
           className="px-3"
           onClick={handleCheckProductUpdates}
-          disabled={checkingUpdates}
+          disabled={checkingUpdates || installingUpdate}
         >
           {checkingUpdates
             ? t('preferences.general.productUpdates.checking')
@@ -372,26 +373,34 @@ export function GeneralSection({ settings, language, region, memoCardVariant, up
         </Button>
       </FieldRow>
 
-      {manualNotice && (
+      {updater.update && (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className={FIELD_TITLE_CLASS}>{manualNotice.title}</div>
-              <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm leading-5 text-[var(--muted-foreground)]">
-                {manualNotice.body}
-              </p>
-              {manualNotice.version && (
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  {t('productUpdates.version', { version: manualNotice.version })}
+              <div className={FIELD_TITLE_CLASS}>{t('appUpdates.available')}</div>
+              {updater.update.body && (
+                <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm leading-5 text-[var(--muted-foreground)]">
+                  {updater.update.body}
                 </p>
               )}
+              <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                {t('productUpdates.version', { version: updater.update.version })}
+              </p>
+              {installingUpdate && updater.progress && (
+                <UpdateProgress
+                  className="mt-3"
+                  value={{
+                    percent: downloadPercent,
+                    downloadedBytes: updater.progress.phase === 'progress' ? updater.progress.downloadedBytes : undefined,
+                    totalBytes: updater.progress.phase === 'progress' ? updater.progress.contentLength : undefined,
+                  }}
+                  label={t('appUpdates.progress', { percent: downloadPercent ?? 0 })}
+                />
+              )}
             </div>
-            {manualNotice.ctaUrl && (
-              <Button variant="outline" size="sm" onClick={handleOpenNoticeLink}>
-                <ExternalLink className="w-3.5 h-3.5" />
-                {t('status.upgrade')}
-              </Button>
-            )}
+            <Button variant="outline" size="sm" onClick={handleInstallUpdate} disabled={installingUpdate}>
+              {t('appUpdates.install')}
+            </Button>
           </div>
         </div>
       )}

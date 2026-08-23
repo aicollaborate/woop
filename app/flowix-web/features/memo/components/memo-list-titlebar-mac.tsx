@@ -9,7 +9,7 @@ import type { Notebook } from '../store';
 interface MemoListTitlebarMacProps {
   noteNavigationVisible: boolean;
   selectedNotebook: Notebook | null;
-  onCollapseSidebar: () => void;
+  onCollapseMemoList: () => void;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: (tab?: string) => void;
 }
@@ -17,7 +17,7 @@ interface MemoListTitlebarMacProps {
 export function MemoListTitlebarMac({
   noteNavigationVisible,
   selectedNotebook,
-  onCollapseSidebar,
+  onCollapseMemoList,
   onToggleNoteNavigation,
   onOpenPreferences,
 }: MemoListTitlebarMacProps) {
@@ -25,22 +25,22 @@ export function MemoListTitlebarMac({
   return (
     <div
       data-tauri-drag-region
-      className="h-12 px-1 shrink-0 flex items-center justify-between gap-1"
+      className="relative h-12 px-1 shrink-0 flex items-center justify-between gap-1"
     >
       <div className={`${noteNavigationVisible ? 'ml-0' : 'ml-[82px]'} flex items-center`}>
         {selectedNotebook && (
           <NotebookIconMenu
             onToggleNoteNavigation={onToggleNoteNavigation}
             onOpenPreferences={onOpenPreferences}
-            buttonClassName="ml-1"
+            buttonClassName="ml-1 h-6 w-6"
           />
         )}
       </div>
-      <Tooltip content={t("memo.list.collapseSidebarTooltip")} shortcut="panel.memoList.toggle">
+      <Tooltip content={t("memo.list.collapseMemoListTooltip")} shortcut="panel.memoList.toggle">
         <button
           type="button"
-          onClick={onCollapseSidebar}
-          aria-label={t("memo.list.collapseSidebar")}
+          onClick={onCollapseMemoList}
+          aria-label={t("memo.list.collapseMemoList")}
           className="w-8 h-8 mr-0.5 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
         >
           <SidebarToggleIcon className="w-5 h-5" />

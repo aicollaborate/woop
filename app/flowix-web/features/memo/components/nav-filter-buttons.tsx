@@ -1,10 +1,11 @@
 'use client';
 
-import { StarFourIcon } from '@phosphor-icons/react';
 import { Layers, ListTodo } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
 import { cn } from '@/lib/utils';
 import { useMemoStore } from '@features/memo';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import { useI18n } from '@/lib/i18n';
 
 interface NavFilterButtonsProps {
@@ -66,19 +67,19 @@ export function NavFilterButtons({
           }
         }}
         className={cn(
-          'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
           isFilterActive('all')
-            ? 'bg-[var(--muted)] text-[var(--foreground)]'
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
             : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
         )}
         style={{ paddingLeft: 6 }}
         aria-pressed={isFilterActive('all')}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <Layers className="h-3.5 w-3.5 text-[var(--foreground)]" />
+          <Layers className="h-3.5 w-3.5" />
         </span>
-        <span className="min-w-0 flex-1 truncate">{t("memo.list.filterAll")}</span>
-        <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
+        <span className="min-w-0 flex-1 truncate">{t("memo.navigation.allNotes")}</span>
+        <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('all') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
           {totalMemoCount}
         </span>
       </div>
@@ -93,22 +94,28 @@ export function NavFilterButtons({
           }
         }}
         className={cn(
-          'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
           isFilterActive('agents')
-            ? 'bg-[var(--muted)] text-[var(--foreground)]'
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
             : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
         )}
         style={{ paddingLeft: 6 }}
         aria-pressed={isFilterActive('agents')}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <StarFourIcon
-            className="h-3.5 w-3.5 text-[var(--foreground)]"
-            weight="bold"
+          <AgentIcon
+            typeKey="deepseek-harness"
+            alt=""
+            className="h-3.5 w-3.5"
+            style={
+              isFilterActive('agents')
+                ? ({ '--agent-icon-color': 'var(--primary-foreground)' } as CSSProperties)
+                : undefined
+            }
           />
         </span>
-        <span className="min-w-0 flex-1 truncate">{t("memo.list.filterAgents")}</span>
-        <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
+        <span className="min-w-0 flex-1 truncate">{t("memo.navigation.conversations")}</span>
+        <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('agents') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
           {agentMemoCount}
         </span>
       </div>
@@ -123,19 +130,19 @@ export function NavFilterButtons({
           }
         }}
         className={cn(
-          'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
           isFilterActive('todos')
-            ? 'bg-[var(--muted)] text-[var(--foreground)]'
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
             : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
         )}
         style={{ paddingLeft: 6 }}
         aria-pressed={isFilterActive('todos')}
       >
         <span className="mr-2 shrink-0 opacity-90">
-          <ListTodo className="h-3.5 w-3.5 text-[var(--foreground)]" />
+          <ListTodo className="h-3.5 w-3.5" />
         </span>
         <span className="min-w-0 flex-1 truncate">{t("memo.list.filterTasks")}</span>
-        <span className="ml-2 shrink-0 tabular-nums text-xs text-[var(--muted-foreground)]">
+        <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('todos') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
           {todoMemoCount}
         </span>
       </div>

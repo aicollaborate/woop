@@ -19,6 +19,7 @@
     "core:window:allow-unmaximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "core:window:allow-destroy"
+    "core:window:allow-destroy",
+    "updater:default"
   ]
 }

@@ -10,6 +10,8 @@ import { ProductUpdatePill } from '@features/shell/components/status-bar/product
 import { useI18n } from '@/lib/i18n';
 import { useDocumentMetricsStore } from '@features/document';
 import { useMemoStore } from '@features/memo';
+import type { DshDownloadProgress } from '@platform/tauri/client';
+import type { AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 
 interface StatusBarProps {
   onSelectNotebook: (notebook: Notebook) => void;
@@ -19,6 +21,46 @@ interface StatusBarProps {
   onOpenTodos: () => void;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: () => void;
+  onOpenDshPreferences: () => void;
+  onOpenAgentConversationView: () => void;
+  dshDownload: DshDownloadProgress | null;
+  updater: AppUpdaterState;
+}
+
+function DshDownloadProgressIcon({ percent }: { percent: number | null | undefined }) {
+  const radius = 5;
+  const circumference = 2 * Math.PI * radius;
+  const progress = percent == null ? 0.25 : Math.min(100, Math.max(0, percent)) / 100;
+
+  return (
+    <svg
+      aria-hidden="true"
+      className={`h-3.5 w-3.5 shrink-0${percent == null ? ' animate-spin' : ''}`}
+      viewBox="0 0 12 12"
+    >
+      <circle
+        cx="6"
+        cy="6"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity="0.25"
+        strokeWidth="1.5"
+      />
+      <circle
+        cx="6"
+        cy="6"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - progress)}
+        transform="rotate(-90 6 6)"
+      />
+    </svg>
+  );
 }
 
 /**
@@ -43,6 +85,10 @@ export function StatusBar({
   onOpenTodos,
   onToggleNoteNavigation,
   onOpenPreferences,
+  onOpenDshPreferences,
+  onOpenAgentConversationView,
+  dshDownload,
+  updater,
 }: StatusBarProps) {
   const { t } = useI18n();
   const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
@@ -85,8 +131,19 @@ export function StatusBar({
         </button>
         {charCount > 0 && <span className="text-[var(--muted-foreground)]">{t('status.characters')} {charCount}</span>}
         <div className="flex-1" />
-        <ProductUpdatePill />
-        <Tooltip content={t('shell.statusBar.noteNavTooltip')}>
+        {dshDownload && (
+          <button
+            type="button"
+            onClick={onOpenDshPreferences}
+            className="inline-flex h-[22px] items-center gap-1 rounded-md px-2 text-xs leading-none text-[var(--primary)] hover:bg-[var(--muted)]"
+            title={t('preferences.dsh.runtime.downloadProgress')}
+          >
+            <DshDownloadProgressIcon percent={dshDownload.percent} />
+            <span>{t('preferences.dsh.runtime.downloading')}</span>
+          </button>
+        )}
+        <ProductUpdatePill updater={updater} />
+        <Tooltip content={t('shell.statusBar.noteNavTooltip')} shortcut="panel.noteNavigation.toggle">
           <button
             type="button"
             onClick={onToggleNoteNavigation}
@@ -96,7 +153,7 @@ export function StatusBar({
             <Hash className="w-3.5 h-3.5" />
           </button>
         </Tooltip>
-        <AgentRuntimeStatusMenu />
+        <AgentRuntimeStatusMenu onOpen={onOpenAgentConversationView} />
         <Tooltip content={t('status.preferences')} shortcut="menu.open" side="top">
           <button
             type="button"

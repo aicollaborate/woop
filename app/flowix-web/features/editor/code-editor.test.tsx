@@ -22,7 +22,7 @@ vi.mock(
         'python',
       ],
     }),
-    loadHighlighter: () => Promise.resolve(),
+    loadLanguage: () => Promise.resolve(true),
   }),
 );
 

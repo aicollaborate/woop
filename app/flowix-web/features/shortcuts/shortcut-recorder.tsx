@@ -18,6 +18,7 @@ import {
 import { getAction } from '@/lib/shortcuts/registry';
 import { RotateCcw } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { toast } from '@/lib/toast';
 import { getShortcutActionTitle } from '@features/preferences/sections/shortcut-i18n';
 
 /**
@@ -63,7 +64,6 @@ export function ShortcutRecorder({
 }: ShortcutRecorderProps) {
   const { t } = useI18n();
   const [captured, setCaptured] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const action = getAction(actionId);
 
@@ -71,7 +71,6 @@ export function ShortcutRecorder({
   useEffect(() => {
     if (open) {
       setCaptured(null);
-      setError(null);
     }
   }, [open]);
 
@@ -106,7 +105,6 @@ export function ShortcutRecorder({
       // Backspace 单独按 = 清空 captured (给用户"重录"的机会)
       if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         setCaptured(null);
-        setError(null);
         return;
       }
 
@@ -125,12 +123,11 @@ export function ShortcutRecorder({
       // 用 parser 二次校验, 防止边缘 case
       const parsed = tryParseChord(chord);
       if (!parsed) {
-        setError(t('preferences.shortcuts.recorder.unrecognized'));
+        toast.error(t('preferences.shortcuts.recorder.unrecognized'));
         setCaptured(null);
         return;
       }
 
-      setError(null);
       setCaptured(chord);
     };
 
@@ -180,7 +177,6 @@ export function ShortcutRecorder({
                 type="button"
                 onClick={() => {
                   setCaptured(null);
-                  setError(null);
                 }}
                 className="text-xs text-[var(--muted-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
               >
@@ -188,10 +184,6 @@ export function ShortcutRecorder({
               </button>
             )}
           </div>
-
-          {error && (
-            <p className="text-xs text-[var(--destructive)]">{error}</p>
-          )}
 
           {conflictAction && (
             <div className="rounded-md border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-3 py-2 text-xs text-[var(--destructive)]">

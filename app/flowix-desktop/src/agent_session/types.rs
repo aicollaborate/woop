@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agent_types::AgentId;
+use crate::agent_wire::AgentErrorDetails;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,8 @@ pub struct ChatMessage {
     pub tool_calls: Option<serde_json::Value>,
     pub reasoning: Option<String>,
     pub is_completed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_details: Option<AgentErrorDetails>,
     pub is_collapsed: Option<bool>,
 }
 

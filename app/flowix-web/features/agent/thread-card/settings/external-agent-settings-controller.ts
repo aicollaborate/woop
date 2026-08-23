@@ -1,5 +1,6 @@
 import type { AppLanguage, I18nKey } from "@/lib/i18n";
 import { translate } from "@/lib/i18n";
+import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
 import type {
   AgentCodexModel,
   AgentCodexReasoningEffort,
@@ -20,6 +21,8 @@ import {
 } from "@features/agent/runtime/agent-runtime-spec";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { useMemoStore } from "@features/memo/store/memo-store";
+import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { agent, deepseekHarness } from "@platform/tauri/client";
 import {
   applyPopoverPosition,
@@ -28,6 +31,7 @@ import {
 import {
   createCodexSettingsItem,
   createExternalAgentEmptyControl,
+  createExternalAgentWorkspaceDisplay,
   updateExternalAgentEmptyControl,
   type ExternalAgentEmptyControlKind,
 } from "@features/agent/thread-card/settings/external-agent-settings";
@@ -107,6 +111,7 @@ export class ExternalAgentSettingsController {
   private reasoningButton: HTMLButtonElement | null = null;
   private modeButton: HTMLButtonElement | null = null;
   private permissionButton: HTMLButtonElement | null = null;
+  private workspaceDisplay: HTMLDivElement | null = null;
   private anchor: HTMLButtonElement | null = null;
   private kind: AgentRuntimeSettingKind | null = null;
   private open = false;
@@ -387,7 +392,7 @@ export class ExternalAgentSettingsController {
               }))
               .filter((model) => model.id.length > 0)
               .filter((model) => {
-                const key = `${model.providerId ?? "flowix"}\u0000${model.id}`;
+                const key = `${model.providerId ?? model.providerName}\u0000${model.id}`;
                 if (seen.has(key)) return false;
                 seen.add(key);
                 return true;
@@ -450,6 +455,12 @@ export class ExternalAgentSettingsController {
     empty.className =
       "agent-thread-card__empty agent-thread-card__empty--codex-settings";
 
+    this.workspaceDisplay = createExternalAgentWorkspaceDisplay(
+      this.t("agent.workspace.title"),
+      this.getCurrentWorkspaceLabel(),
+    );
+    empty.append(this.workspaceDisplay);
+
     this.modelButton = this.supportsRuntimeSetting("model")
       ? this.createEmptyControl(
           "model",
@@ -484,6 +495,12 @@ export class ExternalAgentSettingsController {
   }
 
   refreshEmptySettings(): void {
+    if (this.workspaceDisplay) {
+      const value = this.workspaceDisplay.querySelector<HTMLElement>(
+        ".agent-thread-card__empty-workspace-value",
+      );
+      if (value) value.textContent = this.getCurrentWorkspaceLabel();
+    }
     if (this.modelButton) {
       updateExternalAgentEmptyControl(
         this.modelButton,
@@ -508,6 +525,45 @@ export class ExternalAgentSettingsController {
         this.getCurrentCodexReasoningLabel(),
       );
     }
+  }
+
+  private getCurrentWorkspaceLabel(): string {
+    const instance = this.getInstanceId()
+      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
+      : undefined;
+    const runtimeConfig = instance?.runtimeConfig;
+    const snapshot = runtimeConfig?.workspaceSnapshot;
+    const snapshotPath =
+      snapshot && typeof snapshot === "object" && typeof snapshot.cwd === "string"
+        ? snapshot.cwd.trim()
+        : "";
+    const configuredNotebookId = runtimeConfig?.notebookId;
+    const memoState = useMemoStore.getState();
+    const notebook =
+      (configuredNotebookId
+        ? memoState.notebooks.find((item) => item.id === configuredNotebookId)
+        : null) ?? memoState.selectedNotebook;
+    const notebookPath = notebook?.path?.trim();
+    const defaultFiles = resolveAuthorizedDefaultFiles(
+      useAgentAccessStore.getState().config,
+      configuredNotebookId ?? notebook?.id,
+    );
+    const primary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
+    const path = snapshotPath || (primary.kind === "empty" ? "" : primary.path);
+    if (!path) return this.t("agent.workspace.unset");
+
+    const normalize = (value: string): string =>
+      value.replace(/[\\/]+$/, "").toLowerCase();
+    const entry = useAgentAccessStore
+      .getState()
+      .config.entries.find(
+        (item) => item.kind === "folder" && normalize(item.path) === normalize(path),
+      );
+    if (entry?.name?.trim()) return entry.name.trim();
+    if (notebook && normalize(notebook.path) === normalize(path) && notebook.name?.trim()) {
+      return notebook.name.trim();
+    }
+    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
   }
 
   toggleSettingsPopover(

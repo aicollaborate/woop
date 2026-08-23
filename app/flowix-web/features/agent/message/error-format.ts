@@ -62,7 +62,7 @@ function truncateErrorMessage(value: string): string {
 /**
  * 把 agent 错误消息里夹带的原始 JSON 收敛成人类可读的 message。
  *
- * flowix agent (rllm/llm) 失败时, Rust 侧 `format_llm_unavailable_message`
+ * 历史内置 provider 失败时, Rust 侧 `format_llm_unavailable_message`
  * 会合成 `(LLM 暂时不可用，原因: Stream failed: Response format error:
  * API error 400. Raw response: {"error":{"message":...}})` —— `Raw response:`
  * 后面是上游返回的整段 JSON, 直接展示既刺眼又把 `request_id` 之类噪音暴露
@@ -75,7 +75,7 @@ function truncateErrorMessage(value: string): string {
  */
 export function formatAgentErrorMessage(content: string): string {
   if (!content) return content;
-  // Guard: only the flowix-agent LLM-unavailable envelope starts with "(LLM ".
+  // Guard: only the legacy LLM-unavailable envelope starts with "(LLM ".
   // Requiring it (plus the "Raw response:" marker) keeps normal assistant text
   // -- even a debugging answer that happens to quote "Raw response: {json}" --
   // untouched.
@@ -101,7 +101,7 @@ function extractJsonErrorMessage(text: string): string | null {
 
 /**
  * Brace-match `text` 里首个 `{...}` JSON 对象, 跳过字符串字面量内的大括号,
- * 避免被 JSON 内部的 `}` 提前截断。rllm 把上游 body 原样拼在 `Raw response:`
+ * 避免被 JSON 内部的 `}` 提前截断。旧 provider 把上游 body 原样拼在 `Raw response:`
  * 之后, body 之后可能还跟别的文本, 所以不能直接 `JSON.parse` 整段。
  */
 function extractFirstJsonObject(text: string): string | null {

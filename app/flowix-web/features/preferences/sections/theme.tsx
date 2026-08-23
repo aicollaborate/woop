@@ -107,7 +107,7 @@ function ThemeCard({
 
 export function ThemeSection({ settings, updateSettings }: ThemeSectionProps) {
   const { t } = useI18n();
-  const active = settings.theme ?? 'system';
+  const active = settings.theme ?? DEFAULT_THEME_ID;
 
   return (
     <div className="space-y-6 pb-16">

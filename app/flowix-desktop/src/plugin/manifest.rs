@@ -70,7 +70,6 @@ impl PluginParser {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(super) enum PluginRuntime {
-    Flowix,
     Codex,
     Claude,
     Hermes,
@@ -83,7 +82,6 @@ impl PluginRuntime {
             return Ok(None);
         };
         let runtime = match raw.to_ascii_lowercase().as_str() {
-            "flowix" => Self::Flowix,
             "codex" => Self::Codex,
             "claude" => Self::Claude,
             "hermes" => Self::Hermes,
@@ -95,7 +93,6 @@ impl PluginRuntime {
 
     pub(super) fn key(self) -> &'static str {
         match self {
-            Self::Flowix => "flowix",
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Hermes => "hermes",

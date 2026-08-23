@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { ChevronDown, MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
 import { ArrowClockwiseIcon, CaretRightIcon, FolderSimpleIcon, MinusSquareIcon } from '@phosphor-icons/react';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -27,6 +27,7 @@ import {
 } from '@features/memo/components/use-folder-tree';
 import { FileTypeIcon } from '@features/memo/components/file-type-icon';
 import { useI18n } from '@/lib/i18n';
+import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
 
 const TREE_EDGE_GUTTER = 6;
 const ITEM_INLINE_PADDING = 6;
@@ -76,7 +77,6 @@ export function FolderFileTree({
 }) {
   const { t } = useI18n();
   const tree = useFolderTree(folderPath);
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   // 新建/重命名行的受控输入态: null = 无进行中的行内编辑。
   const [draftRow, setDraftRow] = useState<{ parentPath: string; kind: 'file' | 'folder'; value: string } | null>(null);
   const [renaming, setRenaming] = useState<{ item: DocTreeItem; value: string } | null>(null);
@@ -85,8 +85,11 @@ export function FolderFileTree({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const currentDocumentPath = useDocumentStore((s) => s.currentDocumentPath);
+  const currentDocumentSource = useDocumentStore((s) => s.currentDocumentSource);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const setActiveFileBrowserPath = useMemoStore((s) => s.setActiveFileBrowserPath);
+  const setActiveFileBrowserDocument = useMemoStore((s) => s.setActiveFileBrowserDocument);
+  const setSelectedMemo = useMemoStore((s) => s.setSelectedMemo);
   const accessConfig = useAgentAccessStore((s) => s.config);
   const setDefaultFiles = useAgentAccessStore((s) => s.setDefaultFiles);
   const notebookId = selectedNotebook?.id;
@@ -102,10 +105,13 @@ export function FolderFileTree({
     selectedNotebook?.path;
   const isCurrentFolderTracked = folderPaths.includes(folderPath);
   const isWorkspace = effectiveWorkspace === folderPath;
-  // 第三列文档变化时同步 active 行 (从历史导航回来也能正确高亮)。
+  // The persisted document may be nested below a collapsed folder. Once the
+  // root has loaded, expand its parent chain so the restored selection is
+  // actually visible in the tree.
   useEffect(() => {
-    if (currentDocumentPath) setActiveFilePath(currentDocumentPath);
-  }, [currentDocumentPath]);
+    if (tree.loading || currentDocumentSource !== 'external' || !currentDocumentPath) return;
+    void tree.expandTo(currentDocumentPath);
+  }, [currentDocumentPath, currentDocumentSource, tree.expandTo, tree.loading]);
 
   // 滚动 / 缩放时收起「…」下拉 (对齐右键菜单的消失逻辑, DropdownMenu 自身不含此逻辑)。
   useEffect(() => {
@@ -122,9 +128,19 @@ export function FolderFileTree({
   const visibleNodes = useMemo(() => flattenVisibleTree(tree), [tree]);
 
   const openDocument = useCallback((item: DocTreeItem) => {
-    setActiveFilePath(item.fullPath);
-    void useDocumentStore.getState().openExternalDocument(item.fullPath, { scopePath: folderPath });
-  }, [folderPath]);
+    // 资料文档不是 memo。清掉 selectedMemo，避免重启时 memo 恢复逻辑
+    // 抢先打开旧笔记；文档路径本身在 open 成功后写入持久化 store。
+    setSelectedMemo(null);
+    void useDocumentStore.getState()
+      .openExternalDocument(item.fullPath, { scopePath: folderPath })
+      .then(() => {
+        setActiveFileBrowserDocument({ path: item.fullPath, scopePath: folderPath });
+      })
+      .catch(() => {
+        // 文档切换失败时保留原来的持久化选择，避免下次启动恢复到
+        // 实际没有打开成功的文件。
+      });
+  }, [folderPath, setActiveFileBrowserDocument, setSelectedMemo]);
 
   const handleDelete = useCallback(async (item: DocTreeItem) => {
     const ok = await files.delete(item.fullPath, folderPath);
@@ -248,7 +264,9 @@ export function FolderFileTree({
     const isExpanded = tree.expanded.has(itemKey);
     const children = isFolder ? (tree.nodes.get(itemKey)?.children ?? []) : [];
     const openable = !isFolder;
-    const isActive = activeFilePath === item.fullPath;
+    const isActive = currentDocumentSource === 'external'
+      && !!currentDocumentPath
+      && canonicalPath(currentDocumentPath) === canonicalPath(item.fullPath);
     const isRenamingRow = renaming?.item.id === item.id;
     const creationParentPath = isFolder
       ? item.fullPath
@@ -484,24 +502,12 @@ export function FolderFileTree({
       {/* 标题行 ── 标题右侧下拉菜单用于在访达中显示当前资料文件夹。 */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
         <div className="min-w-0 flex-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={t('memo.fileTree.reveal')}
-                title={t('memo.fileTree.reveal')}
-                className="group flex max-w-full min-w-0 items-center gap-1 overflow-hidden rounded-md py-0.5 pl-1 pr-2 transition-colors"
-              >
-                <span
-                  className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--foreground)] transition-colors duration-150 group-hover:text-[color-mix(in_oklch,var(--foreground)_80%,white)]"
-                  title={tree.error ? t('memo.fileTree.unreadable') : folderName}
-                >
-                  {closeLabel}
-                </span>
-                <ChevronDown className="h-3 w-3 shrink-0 text-[var(--muted-foreground)]" strokeWidth={2.5} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="bottom" className="w-[160px] px-1 py-1">
+          <MemoNavigationDropdown
+            title={closeLabel}
+            titleTooltip={tree.error ? t('memo.fileTree.unreadable') : folderName}
+            ariaLabel={t('memo.fileTree.navigationMenu')}
+          >
+            <div className="space-y-1">
               <DropdownMenuItem
                 onClick={() => void handleCopyFolderPath()}
                 className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
@@ -538,8 +544,8 @@ export function FolderFileTree({
                   {t('agent.access.contextDelete')}
                 </DropdownMenuItem>
               )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </div>
+          </MemoNavigationDropdown>
         </div>
         <div className="flex items-center gap-0 shrink-0">
           <button

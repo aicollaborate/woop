@@ -38,7 +38,6 @@ export type SlashMenuItemId =
   | 'image'
   | 'video'
   | 'file'
-  | 'agent-thread-flowix'
   | 'agent-thread-codex'
   | 'agent-thread-claude'
   | 'agent-thread-gemini'
@@ -112,7 +111,6 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     keywords: ['dsh', 'deepseek', 'harness', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
     icon: getAgentType('deepseek-harness').icon,
     sectionKey: 'editor.slash.section.agent',
-    alwaysVisible: true,
   },
   {
     id: 'agent-thread-codex',
@@ -136,14 +134,6 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     description: 'AI Agent',
     keywords: ['opencode', 'open code', 'acp', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
     icon: getAgentType('opencode').icon,
-    sectionKey: 'editor.slash.section.agent',
-  },
-  {
-    id: 'agent-thread-flowix',
-    label: getAgentType('flowix').name,
-    description: 'AI Agent',
-    keywords: ['ai', 'agent', 'thread', 'chat', 'duihua', 'flowix', '任务', 'renwu', 'task'],
-    icon: getAgentType('flowix').icon,
     sectionKey: 'editor.slash.section.agent',
   },
   {

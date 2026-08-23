@@ -3,6 +3,23 @@ import { createCheckIcon } from "@features/agent/thread-card/agent-thread-card-i
 
 export type ExternalAgentEmptyControlKind = AgentRuntimeSettingKind;
 
+export function createExternalAgentWorkspaceDisplay(
+  label: string,
+  value: string,
+): HTMLDivElement {
+  const display = document.createElement("div");
+  display.className = "agent-thread-card__empty-workspace";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "agent-thread-card__empty-workspace-label";
+  labelEl.textContent = label;
+  const valueEl = document.createElement("span");
+  valueEl.className = "agent-thread-card__empty-workspace-value";
+  valueEl.textContent = value;
+  display.append(labelEl, valueEl);
+  return display;
+}
+
 export function createDropdownChevron(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");

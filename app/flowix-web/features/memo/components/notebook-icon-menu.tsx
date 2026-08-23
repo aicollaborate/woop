@@ -9,9 +9,10 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { useI18n, type I18nKey } from '@/lib/i18n';
-import { Palette, Plug, Type } from 'lucide-react';
+import { ArrowLeftToLine, Palette, Plug, Type } from 'lucide-react';
 import { StarFourIcon } from '@phosphor-icons/react';
 import { AgentIcon } from '@features/agent/components/agent-icon';
+import { ShortcutKbd } from '@shared/ui/shortcut-kbd';
 import productLogo from '@/assets/productlogo.png';
 import { cn } from '@/lib/utils';
 
@@ -63,7 +64,7 @@ const PREFERENCE_SHORTCUTS: {
 /**
  * 中间列顶部的图标 (统一展示产品图标):
  * - hover 图标 → 延迟展示 Flowix 下拉菜单 (笔记导航 / 偏好设置)
- * - 点击图标 → 切换笔记导航侧边栏 (原有逻辑不变, 不开关下拉窗)
+ * - 点击整个产品图标按钮 → 展示下拉菜单
  */
 export function NotebookIconMenu({
   onToggleNoteNavigation,
@@ -103,12 +104,6 @@ export function NotebookIconMenu({
     closeTimerRef.current = window.setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY_MS);
   }, [cancelOpen, cancelClose]);
 
-  // 点击图标仅切换侧边栏, 并取消 hover 打开的排队。
-  const handleIconClick = useCallback(() => {
-    cancelOpen();
-    onToggleNoteNavigation();
-  }, [cancelOpen, onToggleNoteNavigation]);
-
   useEffect(() => {
     return () => {
       if (openTimerRef.current !== null) window.clearTimeout(openTimerRef.current);
@@ -120,16 +115,15 @@ export function NotebookIconMenu({
     <DropdownMenu
       open={open}
       onOpenChange={(next) => {
-        // 下拉窗只由 hover 打开; 点击图标仅切换侧边栏。
-        // 这里只接受"关闭"请求(点击外部 / Escape / 点击菜单项 / 点击图标时收起 hover 预览)。
-        if (!next) setOpen(false);
+        setOpen(next);
       }}
     >
-      <DropdownMenuTrigger asChild onClick={handleIconClick}>
+      <DropdownMenuTrigger asChild onClick={() => setOpen(true)}>
         <button
           type="button"
-          aria-label={t('memo.list.notebookNavToggle')}
-          className={cn('group flex shrink-0 items-center cursor-pointer', buttonClassName)}
+          aria-label={t('memo.list.notebookMenu.open')}
+          title={t('memo.list.notebookMenu.open')}
+          className={cn('group relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center', buttonClassName)}
           onMouseEnter={scheduleOpen}
           onMouseLeave={scheduleClose}
         >
@@ -138,6 +132,15 @@ export function NotebookIconMenu({
             alt=""
             aria-hidden="true"
             className="h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-[3px] right-[3px] h-0 w-0 border-b-[5px] border-l-[5px] border-l-transparent"
+            style={{
+              borderBottomColor: open
+                ? 'var(--foreground)'
+                : 'color-mix(in oklch, var(--foreground) 30%, var(--bg-titlebar))',
+            }}
           />
         </button>
       </DropdownMenuTrigger>
@@ -150,22 +153,15 @@ export function NotebookIconMenu({
         onMouseLeave={scheduleClose}
       >
         <DropdownMenuItem
-          onClick={() => window.dispatchEvent(new CustomEvent('flowix:create-memo'))}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('shell.commandPalette.action.newMemo')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'))}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
-        >
-          {t('shell.commandPalette.action.newNotebook')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
           onClick={onToggleNoteNavigation}
-          className="rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
+          className="gap-1.5 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
         >
-          {t('shell.statusBar.noteNav')}
+          <ArrowLeftToLine className="h-4 w-4 shrink-0" />
+          <span>{t('memo.list.notebookMenu.expandNavigation')}</span>
+          <ShortcutKbd
+            actionId="panel.noteNavigation.toggle"
+            className="ml-auto text-[var(--muted-foreground)]"
+          />
         </DropdownMenuItem>
         {/* 与筛选/排序等其它下拉窗一致的分割线样式 */}
         <hr className="mx-2 border-t border-[var(--border)] opacity-50" />

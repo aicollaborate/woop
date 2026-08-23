@@ -12,8 +12,8 @@ use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::{ChatMessage, NewAgentExternalEvent, ThreadManager};
+use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::events as dispatcher;
 use crate::runtime_log;
 

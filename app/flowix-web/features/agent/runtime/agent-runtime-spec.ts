@@ -116,14 +116,6 @@ export function normalizeDshPermissionMode(
 }
 
 const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
-  flowix: {
-    typeKey: "flowix",
-    emptySettings: [],
-    accessOptions: NO_ACCESS_OPTIONS,
-    buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
-      flowix: { cwd, workspacePaths },
-    }),
-  },
   codex: {
     typeKey: "codex",
     emptySettings: ["model", "reasoning", "permission"],
@@ -186,7 +178,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   },
   "deepseek-harness": {
     typeKey: "deepseek-harness",
-    // DSH follows the Flowix provider configuration but allows a per-card
+    // DSH follows the native llm-pi-ai provider configuration but allows a per-card
     // model override (runtime_config.deepseek_harness.model, "inherit" falls
     // back to the global dsh-settings model). Its tool Agent preset and
     // per-card permission mode are configurable here as well.

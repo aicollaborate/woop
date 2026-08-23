@@ -24,7 +24,9 @@ export interface AgentSessionMeta {
 
 export const DEFAULT_AGENT_SESSION_META: AgentSessionMeta = {
   activeThreadIds: {},
-  activeAgentTypeKey: "flowix",
+  // DSH is optional and separately installed; a fresh Flowix session must not
+  // select a runtime that may be absent.
+  activeAgentTypeKey: "codex",
   threadTypes: {},
   threadLists: {},
   currentThreadTitles: {},

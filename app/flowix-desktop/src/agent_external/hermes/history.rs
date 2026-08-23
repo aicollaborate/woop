@@ -245,6 +245,7 @@ fn value_to_message(value: &Value, index: usize) -> Option<ChatMessage> {
         tool_calls,
         reasoning: extract_reasoning(value),
         is_completed: None,
+        error_details: None,
         is_collapsed: None,
     })
 }
@@ -554,6 +555,7 @@ mod tests {
                 tool_calls: None,
                 reasoning: None,
                 is_completed: None,
+                error_details: None,
                 is_collapsed: None,
             })
             .collect::<Vec<_>>();

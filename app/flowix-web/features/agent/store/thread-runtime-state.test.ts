@@ -57,7 +57,7 @@ describe("thread-runtime-state helpers", () => {
       ...t,
       isLoading: true,
       activeRunId: "run-1",
-      runs: { "run-1": { runId: "run-1", agentType: "flowix" as const, threadId: "t1", startedAt: 1, status: "running" as const } },
+      runs: { "run-1": { runId: "run-1", agentType: "deepseek-harness" as const, threadId: "t1", startedAt: 1, status: "running" as const } },
     };
     expect(isThreadRunActive(running)).toBe(true);
 
@@ -72,7 +72,7 @@ describe("thread-runtime-state helpers", () => {
     const t = emptyThreadState();
     const event: AgentEvent = {
       kind: "text_delta",
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       threadId: "t1",
       runId: "run-1",
       text: "hello",
@@ -89,7 +89,7 @@ describe("thread-runtime-state helpers", () => {
     const t = emptyThreadState();
     const streamStart: AgentEvent = {
       kind: "stream_start",
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       threadId: "t1",
       runId: "run-1",
       timestamp: 1234,
@@ -98,7 +98,7 @@ describe("thread-runtime-state helpers", () => {
 
     const usage: AgentEvent = {
       kind: "usage",
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       threadId: "t1",
       runId: "run-1",
       timestamp: 1234,
@@ -118,7 +118,7 @@ describe("thread-runtime-state helpers", () => {
       runs: {
         "run-existing": {
           runId: "run-existing",
-          agentType: "flowix" as const,
+          agentType: "deepseek-harness" as const,
           threadId: "t1",
           startedAt: 1000,
           status: "running" as const,
@@ -127,7 +127,7 @@ describe("thread-runtime-state helpers", () => {
     };
     const event: AgentEvent = {
       kind: "tool_call",
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       threadId: "t1",
       runId: "run-newer",
       toolCallId: "tc-1",
@@ -146,14 +146,14 @@ describe("thread-runtime-state helpers", () => {
       ...emptyThreadState(),
       lastRun: {
         runId: "run-1",
-        agentType: "flowix" as const,
+        agentType: "deepseek-harness" as const,
         startedAt: 1000,
         status: "cancelled" as const,
       },
     };
     const lateText: AgentEvent = {
       kind: "text_delta",
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       threadId: "t1",
       runId: "run-1",
       text: "leftover",

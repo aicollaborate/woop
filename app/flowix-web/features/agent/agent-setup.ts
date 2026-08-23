@@ -1,5 +1,4 @@
 import { openUrl } from '@platform/tauri/opener';
-import { windows } from '@platform/tauri/client';
 import type { AgentTypeKey } from '@/types/agent';
 import { isAgentTypeComingSoon } from '@/lib/agent-types';
 
@@ -14,11 +13,6 @@ const AGENT_SETUP_URLS: Partial<Record<AgentTypeKey, string>> = {
 
 export async function openAgentSetup(typeKey: AgentTypeKey): Promise<void> {
   if (isAgentTypeComingSoon(typeKey)) return;
-
-  if (typeKey === 'flowix') {
-    await windows.openPreferences('agent');
-    return;
-  }
 
   const url = AGENT_SETUP_URLS[typeKey];
   if (url) {

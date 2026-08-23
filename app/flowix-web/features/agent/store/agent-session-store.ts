@@ -24,16 +24,14 @@ import type {
   RuntimeConfig,
 } from "@/types/agent";
 import { agentClient } from "@features/agent/store/agent-client";
+import { DEFAULT_AGENT_TYPE_KEY } from "@/lib/agent-types";
 import type { AgentConversationInstance } from "@features/agent/store/agent-conversation-types";
 import { type ThreadProjection } from "@features/agent/store/session-reducer";
 import { STORAGE_KEYS } from "@/lib/constants";
 import {
-  DEFAULT_AGENT_TYPE_KEY,
   getAgentType,
-  isAgentTypeSelectable,
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
-import { normalizeCodexPermissionMode } from "@features/agent/runtime/agent-runtime-spec";
 import {
   createStreamEventDispatcher,
 } from "@features/agent/store/stream-event-dispatcher";
@@ -62,14 +60,15 @@ import {
 import { createSendErrorMessage, prepareUserMessage } from "@features/agent/store/user-message";
 import { dispatchChatStream } from "@features/agent/store/chat-stream";
 import { translate } from "@/lib/i18n";
+import { createLogger } from "@/lib/logger";
 import { applyRunStopped } from "@features/agent/store/run-lifecycle";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import { createAgentSessionStateStorage } from "@features/agent/store/window-session-storage";
 import { installGlobalAgentSettingsSync } from "@features/agent/store/global-agent-settings-sync";
 import {
   DEFAULT_AGENT_SESSION_META,
-  type AgentSessionMeta,
 } from "@features/agent/store/session-state";
+import { rehydrateSessionMeta } from "@features/agent/store/session-persistence";
 import {
   createSessionMetaSlice,
   type SessionMetaSlice,
@@ -103,6 +102,7 @@ import {
 
 const RUNNING_RUN_OPTIMISTIC_GRACE_MS = 3000;
 const RUN_MISSING_FROM_SNAPSHOT_REASON = "missing_from_snapshot";
+const logger = createLogger("agent-session-store");
 
 // --------------------------------------------------------------------
 // Types
@@ -185,7 +185,7 @@ function ensureConversationInstanceForSession(
   if (existing) {
     const shouldUpdateTitle =
       title &&
-      (type === "flowix" || !options?.defaultTitle || title !== options.defaultTitle);
+      (!options?.defaultTitle || title !== options.defaultTitle);
     return session.upsertInstance(existing.instanceId, {
       agentType: type,
       ...(shouldUpdateTitle ? { title } : {}),
@@ -199,99 +199,6 @@ function ensureConversationInstanceForSession(
     source: { kind: "thread-card" },
     runtimeConfig: buildInitialInstanceRuntimeConfig(type),
   });
-}
-
-// --------------------------------------------------------------------
-// Persist (Phase 5 阶段0): session-store 接管 sessionMeta 持久化
-// --------------------------------------------------------------------
-
-/**
- * 迁移旧 chat-store persist 格式 (STORAGE_KEYS.CHAT, 扁平 8 字段) → sessionMeta
- * (嵌套 settings). 首次升级到 session-store persist 时, 若 AGENT_SESSION key 无
- * 数据, 从旧 key 读一次迁移; 之后 session-store 自持久化并删除旧 key。
- * threadLists / lastRunningRunsReconciledAt 不持久化
- * (runtime-fetched / runtime-only), 用 DEFAULT.
- */
-function migrateChatPersistToSessionMeta(): AgentSessionMeta | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CHAT);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { state?: Record<string, unknown> };
-    const old = parsed.state;
-    if (!old || typeof old !== "object") return null;
-    const d = DEFAULT_AGENT_SESSION_META;
-    return {
-      ...d,
-      activeThreadIds:
-        (old.activeThreadIds as AgentSessionMeta["activeThreadIds"] | undefined) ??
-        d.activeThreadIds,
-      activeAgentTypeKey:
-        (old.activeAgentTypeKey as AgentSessionMeta["activeAgentTypeKey"] | undefined) ??
-        d.activeAgentTypeKey,
-      threadTypes:
-        (old.threadTypes as AgentSessionMeta["threadTypes"] | undefined) ??
-        d.threadTypes,
-      currentThreadTitles:
-        (old.currentThreadTitles as AgentSessionMeta["currentThreadTitles"] | undefined) ??
-        d.currentThreadTitles,
-      externalSessionResolutions:
-        (old.externalSessionResolutions as AgentSessionMeta["externalSessionResolutions"] | undefined) ??
-        d.externalSessionResolutions,
-      threadLists: d.threadLists,
-      lastRunningRunsReconciledAt: d.lastRunningRunsReconciledAt,
-      settings: {
-        ...d.settings,
-        agentPermissionMode:
-          (old.agentPermissionMode as AgentSessionMeta["settings"]["agentPermissionMode"] | undefined) ??
-          d.settings.agentPermissionMode,
-        agentCodexModel:
-          (old.agentCodexModel as AgentSessionMeta["settings"]["agentCodexModel"] | undefined) ??
-          d.settings.agentCodexModel,
-        agentCodexReasoningEffort:
-          (old.agentCodexReasoningEffort as AgentSessionMeta["settings"]["agentCodexReasoningEffort"] | undefined) ??
-          d.settings.agentCodexReasoningEffort,
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * zustand persist merge: 优先用 AGENT_SESSION 自有格式 (嵌套 sessionMeta), 否则
- * 从旧 chat-store 格式迁移. 再 normalize (activeAgentTypeKey selectability
- * fallback + agentPermissionMode 规范化) 防止旧脏数据把 runtime 路由弄崩.
- * threadLists / lastRunningRunsReconciledAt 强制 DEFAULT (不持久化).
- */
-function rehydrateSessionMeta(persisted: unknown): AgentSessionMeta {
-  const own = (
-    persisted as { sessionMeta?: AgentSessionMeta } | null | undefined
-  )?.sessionMeta;
-  const d = DEFAULT_AGENT_SESSION_META;
-  const base: AgentSessionMeta =
-    own && typeof own === "object"
-      ? {
-          ...d,
-          ...own,
-          threadLists: d.threadLists,
-          lastRunningRunsReconciledAt: d.lastRunningRunsReconciledAt,
-          settings: { ...d.settings, ...(own.settings ?? {}) },
-        }
-      : migrateChatPersistToSessionMeta() ?? d;
-
-  const normalizedTypeKey = normalizeAgentTypeKey(base.activeAgentTypeKey);
-  base.activeAgentTypeKey = isAgentTypeSelectable(normalizedTypeKey)
-    ? normalizedTypeKey
-    : DEFAULT_AGENT_TYPE_KEY;
-  base.settings.agentPermissionMode = normalizeCodexPermissionMode(
-    base.settings.agentPermissionMode,
-  );
-  try {
-    localStorage.removeItem(STORAGE_KEYS.CHAT);
-  } catch {
-    // SSR / restricted storage: persistence middleware handles the same case.
-  }
-  return base;
 }
 
 // --------------------------------------------------------------------
@@ -417,7 +324,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
                 isFirstMessage && conversationTitle ? conversationTitle : undefined,
             });
           } catch (err) {
-            console.error("Failed to dispatch thread card chat_stream:", err);
+            logger.error("Failed to dispatch thread card chat_stream", { error: String(err) });
             const errorMessage = createSendErrorMessage(
               err,
               translate(getLanguage(), "agent.chat.sendFailed"),
@@ -462,7 +369,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             );
             await agentClient.stopChatStream(threadId, type.key, targetRunId);
           } catch (err) {
-            console.error("Failed to stop stream:", err);
+            logger.error("Failed to stop stream", { error: String(err) });
           }
         },
         dispatchAgentEvent: (event) => streamDispatcher.dispatch(event),
@@ -576,7 +483,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             }
             get().dispatch({
               kind: "stream_end",
-              agentType: activeRun?.agentType ?? "flowix",
+              agentType: activeRun?.agentType ?? DEFAULT_AGENT_TYPE_KEY,
               threadId,
               runId: activeRunId ?? `missing-${threadId}`,
               timestamp: now,

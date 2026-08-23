@@ -12,7 +12,6 @@ export interface ThreadListItem {
 
 // Core message type used throughout the app
 export type AgentTypeKey =
-  | "flowix"
   | "codex"
   | "claude"
   | "gemini"
@@ -45,6 +44,20 @@ export interface AgentRuntimeCapabilities {
   externalSessionBacked: boolean;
 }
 
+/** Structured diagnostics from an external CLI/provider. Raw wire fields are
+ * snake_case; the event/message layers expose this normalized camelCase form.
+ */
+export interface AgentErrorDetails {
+  category: string;
+  statusCode?: number;
+  requestId?: string;
+  retryAfter?: string;
+  exitCode?: number;
+  upstreamMessage?: string;
+  source?: string;
+  retryable: boolean;
+}
+
 export type AgentPermissionMode =
   | "inherit"
   | "read-only"
@@ -69,7 +82,7 @@ export interface CodexRuntimeConfig extends AgentRuntimeConfigBase {
 
 export interface DeepSeekHarnessRuntimeConfig extends CodexRuntimeConfig {
   mode?: AgentHarnessPreset;
-  /** llm-pi-ai provider route; empty means the legacy/default flowix route. */
+  /** Native llm-pi-ai provider route, for example `deepseek` or `openai`. */
   providerId?: string;
 }
 
@@ -84,8 +97,6 @@ export interface HermesRuntimeConfig extends AgentRuntimeConfigBase {
   permissionMode?: AgentPermissionMode;
 }
 
-export interface FlowixRuntimeConfig extends AgentRuntimeConfigBase {}
-
 export interface AgentRuntimeConfig {
   codex?: CodexRuntimeConfig;
   claude?: ClaudeRuntimeConfig;
@@ -94,7 +105,6 @@ export interface AgentRuntimeConfig {
   openclaw?: SimpleCliRuntimeConfig;
   opencode?: CodexRuntimeConfig;
   deepseekHarness?: DeepSeekHarnessRuntimeConfig;
-  flowix?: FlowixRuntimeConfig;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -207,6 +217,7 @@ export interface ChatMessage {
   content: string;
   /** Display-only notice kind for provider-specific runtime failures. */
   notice?: "deepseek-harness-reconnect-failed";
+  errorDetails?: AgentErrorDetails;
   llmContent?: string;
   systemReminderDirectory?: string;
   systemReminderDocumentPath?: string;
@@ -334,10 +345,24 @@ export interface AgentChunkError {
   kind: "error";
   thread_id: string;
   message: string;
+  error_details?: AgentErrorDetailsWire;
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
   source_message_id?: string;
+}
+
+/** Raw Tauri event shape; unlike the normalized message/event model it uses
+ * snake_case because `agent-chunk` is emitted directly by serde. */
+export interface AgentErrorDetailsWire {
+  category: string;
+  status_code?: number;
+  request_id?: string;
+  retry_after?: string;
+  exit_code?: number;
+  upstream_message?: string;
+  source?: string;
+  retryable: boolean;
 }
 
 // 生命周期变体 —— 由后端 `chat_stream` 外层在 insert / remove cancel_flag
@@ -370,7 +395,7 @@ export interface AgentChunkStreamEnd {
 /**
  * Token usage breakdown — nested object emitted on `usage` field of the
  * `AgentChunk::Usage` wire variant. Mirrors Rust
- * [`crate::agent_flowix::UsageInfo`]. Fields are all optional so providers that
+ * [`crate::agent_wire::UsageInfo`]. Fields are all optional so providers that
  * only report `total_tokens` can still send a chunk without zero-filling.
  *
  * `total_tokens` is the sum used by the Rust `token_budget` cross-cycle
@@ -397,7 +422,7 @@ export interface UsageInfo {
 /**
  * Provider-specific status snapshot — nested object emitted on the
  * `status_info` field of `AgentChunk::Usage`. Mirrors Rust
- * [`crate::agent_flowix::StatusInfo`]. Fields use `codex_` / `claude_` /
+ * [`crate::agent_wire::StatusInfo`]. Fields use `codex_` / `claude_` /
  * `hermes_` prefixes for flat namespace; no nested `codex: CodexStatus`
  * sub-struct. Latest-snapshot semantics, not accumulated.
  */
@@ -517,7 +542,11 @@ export type AgentEvent =
       name: string;
       result: unknown;
     })
-  | (AgentEventBase & { kind: "error"; message: string })
+  | (AgentEventBase & {
+      kind: "error";
+      message: string;
+      errorDetails?: AgentErrorDetails;
+    })
   | (AgentEventBase & { kind: "stream_end"; reason: string | null })
   | (AgentEventBase & { kind: "session_resolved"; sessionId: string })
   | (AgentEventBase & {
@@ -546,7 +575,7 @@ export interface RunInfo {
  * 通用 metadata 协议 —— session 的最近一次 run 展示快照。写在
  * `ThreadState.lastRun` 中, run 从 `runs` map 清理后仍作为常驻展示信息保留；
  * 迟到的 usage 事件也会继续合并到这个快照。Provider-agnostic: 对 Codex /
- * Claude / Gemini / Flowix / Hermes / OpenClaw 全部适用, 字段不识别时为 undefined。
+ * Claude / Gemini / Hermes / OpenClaw / DeepSeek Harness 全部适用, 字段不识别时为 undefined。
  */
 
 export interface LastRunSnapshot {

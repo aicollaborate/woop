@@ -1,0 +1,137 @@
+diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.ts
+index ef3a562..bce9ab2 100644
+--- a/packages/sdk/server/src/server.ts
++++ b/packages/sdk/server/src/server.ts
+@@ -26,6 +26,29 @@ import type {
+   SubagentStartedNotification,
+ } from '@deepseek-ai/dsh-sdk-protocol'
+ 
++interface HarnessSdkJsonRpcControl {
++  status(): Promise<unknown>
++  ensureSession(sessionId: string): Promise<{ sessionId: string }>
++  prompt(sessionId: string, text: string): Promise<unknown>
++  disposeSession(sessionId: string): Promise<boolean>
++  cancel(sessionId: string): Promise<boolean>
++}
++
++interface HarnessSdkJsonRpcExtension {
++  readonly methods: readonly string[]
++  attach(
++    transport: { notify(method: string, params?: object): void },
++    control: HarnessSdkJsonRpcControl,
++  ): (() => void) | void
++  handle(method: string, params: Record<string, unknown>): Promise<unknown>
++}
++
++interface HarnessSdkJsonRpcExtensionReadyEvent {
++  methods?: readonly string[]
++  attach?: HarnessSdkJsonRpcExtension['attach']
++  handle?: HarnessSdkJsonRpcExtension['handle']
++}
++
+ interface SessionRecord {
+   handle: AgentHandle
+ }
+@@ -62,6 +85,8 @@ export class HarnessSdkJsonRpcServer {
+   private readonly disposers: (() => void)[] = []
+   private shutdownTask: Promise<Record<string, never>> | undefined
+   private shuttingDown = false
++  private extension: HarnessSdkJsonRpcExtension | undefined
++  private extensionDetach: (() => void) | undefined
+ 
+   constructor(
+     private readonly ctx: Context,
+@@ -69,6 +94,17 @@ export class HarnessSdkJsonRpcServer {
+     private readonly options: HarnessSdkJsonRpcServerOptions = {},
+   ) {
+     const serverOptions = this.options
++    const extensionContext = ctx as unknown as {
++      on(name: string, callback: (service: HarnessSdkJsonRpcExtensionReadyEvent) => void): () => void
++      get(key: string): unknown
++    }
++    this.disposers.push(extensionContext.on('sdk/jsonrpc/extension/ready', (service: HarnessSdkJsonRpcExtensionReadyEvent) => {
++      if (typeof service?.attach === 'function') this.attachExtension(service as HarnessSdkJsonRpcExtension)
++    }))
++    const existingExtension = extensionContext.get('sdkJsonRpcExtension')
++    if (existingExtension !== undefined && typeof (existingExtension as HarnessSdkJsonRpcExtensionReadyEvent).attach === 'function') {
++      this.attachExtension(existingExtension as HarnessSdkJsonRpcExtension)
++    }
+     this.disposers.push(ctx.on('session/event', (session, event) => {
+       const payload: SessionEventNotification = { sessionId: String(session.id), event }
+       this.transport.notify('session.event', payload)
+@@ -168,6 +204,9 @@ export class HarnessSdkJsonRpcServer {
+         failures.push(error)
+       }
+     }
++    try { this.extensionDetach?.() } catch (error) { failures.push(error) }
++    this.extensionDetach = undefined
++    this.extension = undefined
+     const teardownResults = await Promise.allSettled([
+       ...records.map(rec => Promise.resolve().then(() => rec.handle.dispose())),
+       ...(this.llmFiber === undefined ? [] : [Promise.resolve().then(() => this.llmFiber?.dispose())]),
+@@ -197,10 +236,54 @@ export class HarnessSdkJsonRpcServer {
+       case 'shutdown':
+         return this.shutdown()
+       default:
++        if (this.extension?.methods.includes(method) === true) {
++          return this.extension.handle(method, params ?? {})
++        }
+         throw new Error(`unknown DeepSeek Harness SDK runtime method: ${method}`)
+     }
+   }
+ 
++  private attachExtension(service: HarnessSdkJsonRpcExtension): void {
++    if (this.extension === service) return
++    this.extensionDetach?.()
++    this.extension = service
++    const detach = service.attach({
++      notify: (method, params) => this.transport.notify(method, params),
++    }, {
++      status: async () => ({
++          provider: this.provider,
++          model: this.model,
++          cwd: this.cwd,
++          sessions: [...this.sessions.values()].map(record => ({
++            sessionId: String(record.handle.agent.session.id),
++            status: record.handle.agent.status,
++          })),
++      }),
++      ensureSession: async (sessionId) => {
++        const record = await this.getOrCreateSession(sessionId)
++        return { sessionId: String(record.handle.agent.session.id) }
++      },
++      prompt: async (sessionId, text) => {
++        return this.prompt({ sessionId, contentBlocks: [{ type: 'text', text }] })
++      },
++      disposeSession: async (sessionId) => {
++        const record = this.sessions.get(sessionId)
++        if (record === undefined) return false
++        this.sessions.delete(sessionId)
++        await record.handle.dispose()
++        return true
++      },
++      cancel: async (sessionId) => {
++        const record = this.sessions.get(sessionId)
++        if (record === undefined) return false
++        const wasRunning = record.handle.agent.status === 'running'
++        record.handle.agent.cancel({ kind: 'user' })
++        return wasRunning
++      },
++    })
++    this.extensionDetach = typeof detach === 'function' ? detach : undefined
++  }
++
+   private async getOrCreateSession(sessionId: string): Promise<SessionRecord> {
+     if (this.shuttingDown) throw new Error('SDK server is shutting down')
+     const existing = this.sessions.get(sessionId)
+diff --git a/packages/sdk/server/tests/server.spec.ts b/packages/sdk/server/tests/server.spec.ts
+--- a/packages/sdk/server/tests/server.spec.ts
++++ b/packages/sdk/server/tests/server.spec.ts
+@@ -963,6 +963,6 @@ describe('HarnessSdkJsonRpcServer', () => {
+     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+ 
+     await expect(server.shutdown()).rejects.toBe(listenerFailure)
+-    expect(on).toHaveBeenCalledTimes(4)
++    expect(on).toHaveBeenCalledTimes(5)
+   })
+ })

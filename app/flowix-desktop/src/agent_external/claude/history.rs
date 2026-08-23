@@ -527,6 +527,7 @@ fn base_message(id: String, role: &str, content: String, timestamp: String) -> C
         tool_calls: None,
         reasoning: None,
         is_completed: None,
+        error_details: None,
         is_collapsed: None,
     }
 }

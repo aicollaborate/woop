@@ -26,6 +26,7 @@ mod tests {
             tool_calls: None,
             reasoning: None,
             is_completed: None,
+            error_details: None,
             is_collapsed: None,
         }
     }
@@ -339,7 +340,7 @@ mod tests {
         let manager = ThreadManager::for_tests();
         let input = |title: &str, updated_at: i64| UpsertAgentConversationInstance {
             instance_id: "inst-versioned-upsert".to_string(),
-            agent_type: "flowix".to_string(),
+            agent_type: "deepseek-harness".to_string(),
             initial_title: title.to_string(),
             thread_id: Some("thread-versioned-upsert".to_string()),
             runtime_config: None,
@@ -624,6 +625,46 @@ mod tests {
             empty.is_none(),
             "empty events must select external fallback"
         );
+    }
+
+    #[tokio::test]
+    async fn external_error_details_survive_history_materialization() {
+        let manager = ThreadManager::for_tests();
+        let thread_id = "opencode-error-details";
+        for (index, payload) in [
+            r#"{"kind":"user_message","id":"user-1","text":"hello","run_id":"run-1"}"#,
+            r#"{"kind":"error","message_id":"msg:opencode:run-1:error:error","message":"rate limited","run_id":"run-1","error_details":{"category":"rate_limited","status_code":429,"request_id":"req-1","retry_after":"60","source":"runtime","retryable":true}}"#,
+            r#"{"kind":"stream_end","run_id":"run-1"}"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            manager
+                .insert_agent_external_event(NewAgentExternalEvent {
+                    runtime: "opencode".to_string(),
+                    thread_id: thread_id.to_string(),
+                    normalized_json: payload.to_string(),
+                    raw_json: None,
+                    created_at: Some(200 + index as i64),
+                })
+                .await
+                .unwrap();
+        }
+
+        let page = manager
+            .get_opencode_event_messages_page(thread_id, None, 10)
+            .await
+            .unwrap()
+            .expect("external history should exist");
+        let details = page.messages[1]
+            .error_details
+            .as_ref()
+            .expect("error details should survive reload");
+        assert_eq!(details.category, "rate_limited");
+        assert_eq!(details.status_code, Some(429));
+        assert_eq!(details.request_id.as_deref(), Some("req-1"));
+        assert_eq!(details.retry_after.as_deref(), Some("60"));
+        assert!(details.retryable);
     }
 
     #[tokio::test]
@@ -1268,7 +1309,33 @@ mod tests {
     #[tokio::test]
     async fn external_event_log_is_pruned_per_thread() {
         let manager = ThreadManager::for_tests();
-        for i in 0..10_005 {
+        {
+            let mut conn = manager.lock_conn();
+            let tx = conn.transaction().expect("start seed transaction");
+            tx.execute(
+                "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
+                 VALUES ('codex-pruned-events', 'codex', 'Codex thread', 0, 0)",
+                [],
+            )
+            .expect("seed thread");
+            {
+                let mut insert = tx
+                    .prepare(
+                        "INSERT INTO agent_external_events (
+                            runtime, thread_id, normalized_json, raw_json, created_at
+                         ) VALUES ('codex', 'codex-pruned-events', ?1, NULL, ?2)",
+                    )
+                    .expect("prepare event insert");
+                for i in 0..10_000_i64 {
+                    insert
+                        .execute(params![format!(r#"{{"kind":"text","i":{i}}}"#), i])
+                        .expect("seed event");
+                }
+            }
+            tx.commit().expect("commit seeded events");
+        }
+
+        for i in 10_000..10_005 {
             manager
                 .insert_agent_external_event(NewAgentExternalEvent {
                     runtime: "codex".to_string(),

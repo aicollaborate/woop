@@ -6,7 +6,7 @@ import {
   createAgentSessionStateStorage,
 } from "@features/agent/store/window-session-storage";
 
-const value = (activeAgentTypeKey: "flowix" | "codex", permission: string) =>
+const value = (activeAgentTypeKey: "deepseek-harness" | "codex", permission: string) =>
   JSON.stringify({
     state: {
       sessionMeta: {
@@ -45,13 +45,13 @@ describe("createAgentSessionStateStorage", () => {
   });
 
   it("does not let stale navigation writes roll back global settings", () => {
-    localStorage.setItem(STORAGE_KEYS.AGENT_SESSION, value("flowix", "read-only"));
+    localStorage.setItem(STORAGE_KEYS.AGENT_SESSION, value("deepseek-harness", "read-only"));
     const main = createAgentSessionStateStorage("main");
     const tab = createAgentSessionStateStorage("tab-host-1");
     main.getItem(STORAGE_KEYS.AGENT_SESSION);
     tab.getItem(STORAGE_KEYS.AGENT_SESSION);
 
-    main.setItem(STORAGE_KEYS.AGENT_SESSION, value("flowix", "danger-full-access"));
+    main.setItem(STORAGE_KEYS.AGENT_SESSION, value("deepseek-harness", "danger-full-access"));
     tab.setItem(STORAGE_KEYS.AGENT_SESSION, value("codex", "read-only"));
 
     const global = JSON.parse(localStorage.getItem(STORAGE_KEYS.AGENT_SESSION)!);

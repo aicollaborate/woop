@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  aiConfig,
   listenToUserConfigChanges,
   stopListeningToUserConfigChanges,
   type AgentConfig,
@@ -90,12 +89,12 @@ type ConfiguredModelCard = {
 };
 
 interface AgentSectionProps {
-	/** Configuration persistence surface; defaults to the Flowix Agent config. */
-	configStore?: AgentConfigStore;
+	/** Configuration persistence surface (DeepSeek Harness settings). */
+	configStore: AgentConfigStore;
 	/** Event kind emitted after this configuration surface saves. */
-	configChangeKind?: string;
-	/** Override only the connectivity probe. */
-	testConnection?: TestConnection;
+	configChangeKind: string;
+	/** Connectivity probe bound to the same configuration surface. */
+	testConnection: TestConnection;
   /** Optional DeepSeek Harness catalog/discovery surface. */
   modelDirectory?: ModelDirectory;
 }
@@ -300,7 +299,8 @@ function isLockedBaseUrlProvider(provider: string): boolean {
   return (LOCKED_BASE_URL_PROVIDER_IDS as readonly string[]).includes(provider);
 }
 
-/** provider 是否在 Flowix Agent 的当前地区可见 — 0 永远显示, 1 仅 mainland, 2 仅 overseas。 */
+/** Provider visibility for the legacy single-route settings form — 0 always,
+ * 1 mainland only, 2 overseas only. */
 function isProviderVisibleInRegion(
   region: ProviderRegion,
   isMainland: boolean,
@@ -401,14 +401,14 @@ const DEFAULT_CONFIG: AgentConfig = {
 };
 
 export function AgentSection({
-	configStore = aiConfig,
-	configChangeKind = 'ai_config',
-	testConnection = aiConfig.testConnection,
+	configStore,
+	configChangeKind,
+	testConnection,
 	modelDirectory,
-}: AgentSectionProps = {}) {
+}: AgentSectionProps) {
 	const { t } = useI18n();
-	// Flowix Agent 的内置供应商仍按地区展示；DeepSeek Harness 目录不做
-	// 国内/海外隔离，目录中的所有可用供应商都展示。
+	// Legacy single-route settings keep their regional provider visibility;
+	// DeepSeek Harness's catalog does not apply a regional filter.
 	const isMainland = useRegionStore((s) => s.region === 'mainland');
   const dshDefaultModel = useAgentAccessStore(
     (state) => state.config.defaults?.runtime?.['deepseek-harness']?.model,
@@ -831,11 +831,9 @@ export function AgentSection({
   const updateProvider = (provider: string) => {
     if (!localConfig) return;
     if (modelDirectory && provider === CUSTOM_PROVIDER_VALUE) {
-      // A pre-providerId Harness document uses the `flowix` route and keeps
-      // the real provider name in `provider`. When the Add model card starts
-      // from a blank draft, use that saved document as the custom-provider
-      // draft so adding a model edits the existing directory instead of
-      // silently starting a new one.
+      // A pre-providerId Harness document may lack the native route id. When
+      // the Add model card starts from a blank draft, use that saved document
+      // as the custom-provider draft so the user can explicitly repair it.
       const savedExistingCustom = savedConfig &&
         savedConfig.models?.length &&
         (Boolean(savedConfig.providerId?.trim()) ||
@@ -889,7 +887,10 @@ export function AgentSection({
     setLocalConfig({
       ...localConfig,
       provider,
-      providerId: '',
+      // llm-pi-ai routes are first-class configuration identities. Keep the
+      // selected catalog route in the persisted providerId instead of routing
+      // every provider through a Flowix-specific alias.
+      providerId: provider,
       displayName: '',
       apiProtocol: '',
       models: preserveModelDirectory ? localConfig.models ?? savedConfig?.models ?? [] : [],
@@ -962,11 +963,9 @@ export function AgentSection({
       .map((model) => ({ id: model.id, name: model.name ?? '' }));
     const existingProviderId = localConfig.providerId?.trim()
       || savedConfig?.providerId?.trim();
-    // Older Harness configs used the stable `flowix` route without a
-    // providerId, while storing the actual custom provider name in
-    // `provider`. When adding a model to one of those configs, the provider
-    // name is still the route identity; treating it as a brand-new provider
-    // would replace the existing model directory with the submitted model.
+    // Older Harness configs may lack a providerId while storing the route in
+    // `provider`. Treat that as repair input; newly saved configs always use
+    // the native llm-pi-ai route explicitly.
     const legacyProviderName = savedConfig?.provider?.trim()
       || localConfig.provider?.trim();
     const normalizeEndpoint = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase();
@@ -1326,7 +1325,7 @@ export function AgentSection({
       : t('preferences.agent.apiKey.description');
 
   // DSH is sourced exclusively from the installed llm-pi-ai catalog. The
-  // Flowix Agent keeps its independent curated list and regional visibility.
+  // The fallback branch is retained only for legacy single-route settings.
   const providerOptions: ProviderOption[] = modelDirectory
     ? catalogProviderOptions(modelCatalog)
     : [...PROVIDER_OPTIONS];
@@ -1382,8 +1381,8 @@ export function AgentSection({
             ? [{ id: config.model, name: '' }]
             : [];
         return models.map((model) => {
-          // A legacy `flowix` route can contain a model that belongs to a
-          // different installed llm-pi-ai catalog provider. Use the catalog
+          // A legacy route can contain a model that belongs to a different
+          // installed llm-pi-ai catalog provider. Use the catalog
           // as the source of truth for the card preview and construct a
           // route-specific edit draft; otherwise the old bridge metadata
           // makes (for example) GLM appear to be DeepSeek.
@@ -1434,7 +1433,7 @@ export function AgentSection({
     : modelListConfig.providerId;
   // DeepSeek Harness model management is card-driven: the form is opened by
   // Add/Edit and stays closed while the saved model cards are being browsed.
-  // Flowix Agent keeps its original always-visible configuration form.
+  // Legacy single-route settings keep their original always-visible form.
   const showGenericModelConfiguration = !modelDirectory || showModelForm;
 
   const renderModelConfiguration = () => (

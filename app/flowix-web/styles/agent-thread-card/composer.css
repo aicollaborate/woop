@@ -1,26 +1,3 @@
-/* error 提示块 ── 默认 hidden (DOM 写了 hidden 属性), 用 absolute
- * 浮在 composer 之上, 不挤压 body 区域; 视觉上 error 与 composer
- * 间距 6px, 高度由内容决定。折叠态在 .--collapsed 下用 display: none
- * 进一步隐藏 (虽然 hidden 已隐, 双保险)。
- *
- * bottom 数值: composer 实际占位 = 8 (padding-top) + 28.8 (textarea)
- * + 10 (padding-bottom) + 2 (border) + 6 (margin-bottom) = 54.8px ──
- * 圆到 55, error 浮在 composer 顶 + 6px 间距 = bottom: 61px。 */
-.markdown-editor .agent-thread-card__error {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 61px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in oklch, var(--destructive) 30%, transparent);
-  border-radius: 6px;
-  color: var(--destructive);
-  background: color-mix(in oklch, var(--destructive) 8%, transparent);
-  font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
-  z-index: 1;
-}
-
 /* composer 圆角胶囊容器 ── grid auto 行, 高度由内容决定 (auto 行
  * 在子元素 display: none 时收缩到 0, 这是折叠态没有空白区块的关键)。
  * 外层 max-height: --atc-composer-max-h (200px) 兜底封顶; 内部

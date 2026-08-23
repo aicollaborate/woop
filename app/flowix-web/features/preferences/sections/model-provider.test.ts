@@ -24,7 +24,7 @@ const catalog: DeepSeekHarnessModelCatalog = {
 describe('catalogProviderForConfiguredModel', () => {
   it('uses the saved endpoint when a model exists in multiple routes', () => {
     expect(catalogProviderForConfiguredModel(
-      { provider: 'flowix', apiUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/' },
+      { provider: 'zai', apiUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/' },
       'glm-4.5-air',
       catalog,
     )).toBe('zai-coding-cn');
@@ -32,7 +32,7 @@ describe('catalogProviderForConfiguredModel', () => {
 
   it('falls back to the first model match when old settings have no endpoint', () => {
     expect(catalogProviderForConfiguredModel(
-      { provider: 'flowix', apiUrl: '' },
+      { provider: 'zai', apiUrl: '' },
       'glm-4.5-air',
       catalog,
     )).toBe('zai');

@@ -12,12 +12,13 @@ use crate::agent_external::cli_resolver::{
 };
 use crate::agent_external::{
     append_workspace_context, canonical_message_id, default_thread_title,
-    persist_and_emit_external_chunk, persist_external_chunk, read_to_string,
-    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, truncate_for_log,
-    ExternalRunRegistry, USER_STOPPED_REASON,
+    persist_and_emit_external_chunk, persist_external_chunk, provider_error_from_text,
+    read_to_string, resolve_and_freeze_runtime_cwd, resolve_external_failure,
+    select_external_session_for_runtime, truncate_for_log, ExternalRunRegistry,
+    USER_STOPPED_REASON,
 };
-use crate::agent_flowix::{AgentChunk, AgentId, AgentUserMessage};
 use crate::agent_session::{ChatMessage as ThreadChatMessage, ThreadManager};
+use crate::agent_wire::{AgentChunk, AgentId, AgentUserMessage};
 use crate::runtime_log;
 
 const AGENT_TYPE: &str = "hermes";
@@ -167,7 +168,7 @@ impl HermesCliManager {
         true
     }
 
-    pub async fn running_threads(&self) -> HashMap<String, crate::agent_flowix::RunInfo> {
+    pub async fn running_threads(&self) -> HashMap<String, crate::agent_wire::RunInfo> {
         self.runs.running_threads().await
     }
 
@@ -298,8 +299,6 @@ impl HermesCliManager {
             let stdout_task = read_stdout_as_text(
                 thread_id.to_string(),
                 run_id.to_string(),
-                app_handle.clone(),
-                self.thread_manager.clone(),
                 BufReader::new(stdout),
             );
             let stderr_task = read_to_string(BufReader::new(stderr));
@@ -343,32 +342,42 @@ impl HermesCliManager {
                 })),
             );
             if !status.success() {
-                let detail = stderr_text.trim();
-                return Err(if detail.is_empty() {
-                    format!("{DISPLAY_NAME} exited with status {status}")
-                } else {
-                    format!("{DISPLAY_NAME} exited with status {status}: {detail}")
+                let stdout_provider = provider_error_from_text(&assistant_text).or_else(|| {
+                    let text = assistant_text.trim();
+                    (!text.is_empty()).then(|| truncate_for_log(text))
                 });
+                return Err(resolve_external_failure(
+                    stdout_provider.as_deref(),
+                    None,
+                    &stderr_text,
+                    DISPLAY_NAME,
+                    &status.to_string(),
+                ));
             }
             if !stderr_text.trim().is_empty() {
                 tracing::info!("[HermesCli] stderr: {}", stderr_text.trim());
             }
-            self.persist_assistant_message(thread_id, run_id, &assistant_text)
-                .await?;
+            if !assistant_text.trim().is_empty() {
+                persist_and_emit_external_chunk(
+                    app_handle,
+                    &self.thread_manager,
+                    AGENT_TYPE,
+                    &AgentChunk::Text {
+                        thread_id: thread_id.to_string(),
+                        text: assistant_text.clone(),
+                    },
+                    run_id,
+                    None,
+                )
+                .await;
+                self.persist_assistant_message(thread_id, run_id, &assistant_text)
+                    .await?;
+            }
             self.resolve_and_persist_session(thread_id, run_id, started_at_ms, app_handle)
                 .await;
             Ok(())
         }
         .await;
-
-        if let Err(err) = &result {
-            if let Err(persist_err) = self.persist_error_message(thread_id, run_id, err).await {
-                tracing::warn!(
-                    "[HermesCli] failed to persist error message for {thread_id}: {persist_err}"
-                );
-            }
-        }
-
         result
     }
 
@@ -406,6 +415,7 @@ impl HermesCliManager {
                     tool_calls: None,
                     reasoning: None,
                     is_completed: None,
+                    error_details: None,
                     is_collapsed: None,
                 },
             )
@@ -439,42 +449,8 @@ impl HermesCliManager {
                     tool_input: None,
                     tool_calls: None,
                     reasoning: None,
+                    error_details: None,
                     is_completed: None,
-                    is_collapsed: None,
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn persist_error_message(
-        &self,
-        thread_id: &str,
-        run_id: &str,
-        error: &str,
-    ) -> Result<(), String> {
-        let text = format!("Error: {}", error.trim());
-        if text.trim().is_empty() {
-            return Ok(());
-        }
-        self.thread_manager
-            .add_message(
-                thread_id,
-                ThreadChatMessage {
-                    id: canonical_message_id(AGENT_TYPE, run_id, "error", "error"),
-                    role: "assistant".to_string(),
-                    content: text,
-                    llm_content: None,
-                    system_reminder_directory: None,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    is_loading: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_data: None,
-                    tool_input: None,
-                    tool_calls: None,
-                    reasoning: None,
-                    is_completed: Some(true),
                     is_collapsed: None,
                 },
             )
@@ -617,8 +593,6 @@ fn hermes_extra_windows_candidates() -> Vec<PathBuf> {
 async fn read_stdout_as_text<R>(
     thread_id: String,
     run_id: String,
-    app_handle: tauri::AppHandle,
-    thread_manager: Arc<ThreadManager>,
     reader: BufReader<R>,
 ) -> Result<String, String>
 where
@@ -634,18 +608,6 @@ where
             break;
         }
         let text = String::from_utf8_lossy(&buffer[..n]).to_string();
-        persist_and_emit_external_chunk(
-            &app_handle,
-            &thread_manager,
-            AGENT_TYPE,
-            &AgentChunk::Text {
-                thread_id: thread_id.clone(),
-                text: text.clone(),
-            },
-            &run_id,
-            None,
-        )
-        .await;
         output.push_str(&text);
         total_bytes = total_bytes.saturating_add(n);
         if total_bytes >= MAX_OUTPUT_BYTES {

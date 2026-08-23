@@ -227,6 +227,16 @@
   background: var(--editor-block-bg, var(--document-bg));
 }
 
+/* 侧边栏对话详情 (AgentConversationDetail) 是独立 surface, 不在
+ * .markdown-editor .ProseMirror 内, 消息/输入框的 font-family 会退化为
+ * body 的 --font-sans, 与文档内嵌 Thread Card (经 .ProseMirror 继承
+ * --app-font-family) 不一致。这里在 surface 根显式消费同一变量, 让整个
+ * 详情面 (header / 消息 / composer) 与文档内卡片走同一条字体继承链;
+ * 未配置自定义字体时回退 --font-sans, 与默认现状一致。 */
+.markdown-editor.agent-conversation-detail {
+  font-family: var(--app-font-family, var(--font-sans));
+}
+
 .markdown-editor.agent-conversation-detail .agent-conversation-detail__header {
   flex: 0 0 auto;
   width: min(calc(100% - 3rem), 780px);
@@ -263,7 +273,7 @@
   pointer-events: none;
 }
 
-/* 折叠态 ── 隐藏 body / error / composer, 卡片仅保留 header。
+/* 折叠态 ── 隐藏 body / composer, 卡片仅保留 header。
  * grid 容器 (.agent-thread-card__container) 中 1fr 行在 body
  * display: none 时, grid 把它的轨道高缩到 0, composer 行被
  * grid-template-rows 推到 body 顶 ── 视觉上等同于"body 消失,
@@ -278,10 +288,6 @@
 }
 
 .markdown-editor .agent-thread-card--collapsed .agent-thread-card__body {
-  display: none;
-}
-
-.markdown-editor .agent-thread-card--collapsed .agent-thread-card__error {
   display: none;
 }
 

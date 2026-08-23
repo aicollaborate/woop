@@ -187,6 +187,11 @@ export function MobileApp() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchTimerRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    // The mobile app owns its boot screen once React has committed.
+    document.getElementById('app-loading')?.remove();
+  }, []);
+
   useEffect(() => () => {
     if (documentCloseTimerRef.current !== null) window.clearTimeout(documentCloseTimerRef.current);
     if (documentSwipeTimerRef.current !== null) window.clearTimeout(documentSwipeTimerRef.current);

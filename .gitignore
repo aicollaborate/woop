@@ -7,6 +7,7 @@ node_modules/
 # Build outputs
 dist/
 .build/
+flowix-dsh-host/vendor/deepseek-harness
 app/target/
 app/flowix-desktop/target/
 app/flowix-desktop/binaries/

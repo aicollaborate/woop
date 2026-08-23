@@ -7,7 +7,7 @@ use super::history::claude_session_cwd;
 use super::AGENT_TYPE;
 
 pub(crate) fn resolve_claude_cwd(
-    message: &crate::agent_flowix::AgentUserMessage,
+    message: &crate::agent_wire::AgentUserMessage,
     session_id: Option<&str>,
 ) -> Option<PathBuf> {
     // Claude stores conversations under a cwd-derived project directory.

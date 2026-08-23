@@ -292,6 +292,7 @@ function applyErrorToProjection(
       event.agentType === "deepseek-harness"
         ? "deepseek-harness-reconnect-failed"
         : undefined,
+    errorDetails: event.errorDetails,
   });
   const runsNext = applyRunFailed(projectionToRuns(p), event, event.message);
   // pending ids 跟随 run 失败 (applyRunFailed 已清, 但保险起见再次覆盖).

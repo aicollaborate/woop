@@ -8,8 +8,8 @@ use crate::agent_external::{
 
 use std::sync::Arc;
 
-use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::AgentChunk;
 
 pub fn diagnostics_enabled() -> bool {
     std::env::var("FLOWIX_CODEX_DIAGNOSTICS")

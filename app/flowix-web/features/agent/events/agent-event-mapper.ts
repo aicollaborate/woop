@@ -1,4 +1,10 @@
-import type { AgentChunk, AgentEvent, AgentTypeKey } from "@/types/agent";
+import type {
+  AgentChunk,
+  AgentChunkError,
+  AgentErrorDetails,
+  AgentEvent,
+  AgentTypeKey,
+} from "@/types/agent";
 import {
   normalizeAgentTypeKey,
   supportsTextStreaming,
@@ -191,7 +197,21 @@ export function mapAgentChunkToEvent(
         result: chunk.result,
       };
     case "error":
-      return { ...base, kind: "error", message: chunk.message };
+      return {
+        ...base,
+        kind: "error",
+        message: chunk.message,
+        // Errors are run-scoped. A provider may report the same failure once
+        // on stdout and once again when its process exits; using a stable
+        // canonical id lets the reducer collapse those two notifications.
+        messageId: canonicalAgentMessageId(
+          base.agentType,
+          base.runId,
+          "error",
+          base.messageId ?? "error",
+        ),
+        errorDetails: mapAgentErrorDetails(chunk.error_details),
+      };
     case "stream_start":
       return {
         ...base,
@@ -217,4 +237,20 @@ export function mapAgentChunkToEvent(
         statusInfo: chunk.status_info ?? null,
       };
   }
+}
+
+function mapAgentErrorDetails(
+  details: AgentChunkError["error_details"],
+): AgentErrorDetails | undefined {
+  if (!details) return undefined;
+  return {
+    category: details.category,
+    statusCode: details.status_code,
+    requestId: details.request_id,
+    retryAfter: details.retry_after,
+    exitCode: details.exit_code,
+    upstreamMessage: details.upstream_message,
+    source: details.source,
+    retryable: details.retryable,
+  };
 }

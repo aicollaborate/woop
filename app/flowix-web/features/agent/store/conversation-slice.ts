@@ -1,4 +1,5 @@
 import type { AgentTypeKey, RuntimeConfig, RuntimeConfigPatch } from "@/types/agent";
+import { DEFAULT_AGENT_TYPE_KEY } from "@/lib/agent-types";
 import { stripSystemBlock } from "@features/agent/message";
 import { agentClient } from "@features/agent/store/agent-client";
 import type {
@@ -286,7 +287,7 @@ export function createConversationSlice(
       const now = nextUpdatedAt(existing);
       const nextInstance: AgentConversationInstance = {
         instanceId,
-        agentType: patch.agentType ?? existing?.agentType ?? "flowix",
+        agentType: patch.agentType ?? existing?.agentType ?? DEFAULT_AGENT_TYPE_KEY,
         title:
           patch.title !== undefined
             ? normalizeTitle(patch.title)

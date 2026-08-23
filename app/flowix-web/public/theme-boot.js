@@ -6,7 +6,7 @@
  * paint and uses, in order:
  *   1. one-shot ?bootTheme= injected by the desktop window command;
  *   2. localStorage cache written by applyTheme();
- *   3. system color scheme.
+ *   3. the default Rock theme.
  *
  * Keep VALID_RESOLVED_THEMES in sync with app/flowix-web/features/theme/palette.ts,
  * excluding "system" because this script only writes resolved data-theme values.
@@ -22,9 +22,7 @@
     if (VALID_RESOLVED_THEMES.indexOf(cached) !== -1) {
       resolved = cached;
     } else {
-      resolved = window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light';
+      resolved = 'rock';
     }
 
     var root = document.documentElement;

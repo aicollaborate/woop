@@ -1,10 +1,12 @@
-//! 偏好 / AI 配置 IPC —`~/.flowix/boot/preference.json` + `~/.flowix/agent-config.toml`�?//!
-//! 两个 JSON 文件�?`crate::config::UserConfigStore` 管理 (原子�? 0o600)�?//! 写入成功�?emit `user-config-changed` 事件, 让�?窗口 React 树重�?load�?
+//! 偏好 / AI 配置 IPC —— `~/.flowix/boot/preference.json` + DeepSeek Harness
+//! 的 llm-pi-ai settings。文件读写由 `crate::config::UserConfigStore` 管理
+//! (原子写, 0o600)。写入成功后 emit `user-config-changed` 事件,
+//! 让各窗口 React 树重新 load。
 use crate::events as dispatcher;
 use tauri::{AppHandle, State};
 
-use crate::agent_flowix::provider::{probe_chat, TestConnectionResult};
 use crate::config::{AiConfigFile, AiModelConfig, PreferenceFile};
+use crate::connection_probe::TestConnectionResult;
 
 use crate::app::state::AppState;
 
@@ -34,31 +36,9 @@ pub fn set_preference(
         .map_err(|e| e.to_string())?
 }
 
-/// AI 模型配置 (agent-config.toml) —�?~/.flowix/agent-config.toml
-#[tauri::command]
-pub fn get_ai_config(state: State<AppState>) -> AiConfigFile {
-    state.user_config.get_ai_config()
-}
-
-#[tauri::command]
-pub fn set_ai_config(
-    config: AiConfigFile,
-    state: State<AppState>,
-    app: AppHandle,
-) -> Result<(), String> {
-    state
-        .user_config
-        .set_ai_config(config)
-        .map(|_| {
-            dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "ai_config");
-            Ok(())
-        })
-        .map_err(|e| e.to_string())?
-}
-
 /// DeepSeek Harness model configuration. This is persisted by llm-pi-ai's
-/// settings-file provider at `~/.flowix/dsh/settings.yaml`, independently of
-/// the Flowix Agent's `agent-config.toml`.
+/// settings-file provider at `~/.dsh/settings.yaml`, independently of
+/// the retired built-in agent's `agent-config.toml`.
 #[tauri::command]
 pub fn get_deepseek_harness_config(state: State<AppState>) -> Result<AiConfigFile, String> {
     state
@@ -135,28 +115,8 @@ pub fn update_watcher_config(
         .map_err(|e| e.to_string())?
 }
 
-/// One-shot connectivity probe for the AI configuration form.
-///
-/// Distinct from `set_ai_config`:
-/// - **Does not write to disk** 鈥?the user is editing, not committing.
-/// - **Does not emit** `user-config-changed` 鈥?no cross-window reload needed.
-/// - **Bypasses** the `AgentManager` provider cache 鈥?each probe uses a
-///   fresh instance built from the exact config being tested.
-///
-/// Returns a structured `TestConnectionResult` (always 200-shaped for the
-/// IPC boundary; failures live in `result.error.kind`), so the UI can pick
-/// the right hint based on auth vs network vs bad-model etc.
-///
-/// Note: `AiModelConfig` is `#[serde(rename_all = "camelCase")]`, so the
-/// front-end sends `apiUrl` / `apiKeys` directly 鈥?no extra conversion.
-#[tauri::command]
-pub async fn test_ai_connection(config: AiModelConfig) -> TestConnectionResult {
-    probe_chat(&config).await
-}
-
 /// Harness-specific model probe used only by the DeepSeek Harness preferences
-/// page. It intentionally does not replace `test_ai_connection`, which is the
-/// Flowix Agent provider probe.
+/// page.
 #[tauri::command]
 pub async fn test_deepseek_harness_connection(
     config: AiModelConfig,

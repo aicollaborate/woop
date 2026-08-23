@@ -9,4 +9,4 @@ import type { ThemeId } from './types';
 export const THEME_IDS = ['system', 'light', 'dark', 'rock', 'mist', 'ember'] as const satisfies readonly ThemeId[];
 
 /** 启动 / 数据缺失 / 非法值时的兜底主题。 */
-export const DEFAULT_THEME_ID: ThemeId = 'system';
+export const DEFAULT_THEME_ID: ThemeId = 'rock';

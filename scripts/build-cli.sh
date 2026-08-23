@@ -6,7 +6,7 @@
 #   bash scripts/build-cli.sh              # release build, current host
 #   bash scripts/build-cli.sh --debug      # debug build, current host
 #   bash scripts/build-cli.sh --all        # build all 3 host triples into binaries/
-#   bash scripts/build-cli.sh --macos      # macOS only: aarch64 + x86_64 (本地 darwin 发版)
+#   bash scripts/build-cli.sh --macos      # macOS only: aarch64 (本地 darwin 发版)
 #
 # Side-effect:
 # - writes `app/flowix-desktop/binaries/flowix-cli-<host-triple>` (with the right
@@ -23,7 +23,7 @@ CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/.build/cargo-target}"
 export CARGO_TARGET_DIR
 
 PROFILE="release"
-# BUILD_MODE: host (单当前 host) | all (CI 三平台四 triple) | macos (仅 macOS 双架构)
+# BUILD_MODE: host (单当前 host) | all (CI 三平台四 triple) | macos (macOS arm64 + Intel)
 BUILD_MODE="host"
 
 for arg in "$@"; do
@@ -123,7 +123,7 @@ case "$BUILD_MODE" in
     TRIPLES=(x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc)
     ;;
   macos)
-    # 本地 darwin 发版 ── 只编 macOS 双架构, 不碰 linux/windows
+    # 本地 darwin 发版 ── 编译两个 macOS 架构，不碰 linux/windows
     # (macOS 本地缺 linux/windows cross toolchain, --all 会挂)。
     TRIPLES=(aarch64-apple-darwin x86_64-apple-darwin)
     ;;

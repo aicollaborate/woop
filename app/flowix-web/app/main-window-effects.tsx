@@ -21,7 +21,10 @@ import {
   mountOpenTargetListener,
   unmountOpenTargetListener,
 } from "@features/memo/use-cases/open-target-listener";
-import { restorePersistedMemoSession } from '@features/memo/use-cases/open-memo-session';
+import {
+  restorePersistedExternalDocument,
+  restorePersistedMemoSession,
+} from '@features/memo/use-cases/open-memo-session';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('main-window-effects');
@@ -40,7 +43,9 @@ export function MainWindowEffects() {
   }, []);
 
   useEffect(() => {
-    void restorePersistedMemoSession();
+    // Memo restore keeps its existing precedence. If no memo was persisted,
+    // restore the last text/code document selected from the file tree.
+    void restorePersistedMemoSession().then(() => restorePersistedExternalDocument());
 
     let previousSelectedMemoId = useMemoStore.getState().selectedMemo?.id ?? null;
     return useMemoStore.subscribe((state) => {

@@ -69,28 +69,36 @@ describe('agent thread card submit helper', () => {
     expect(chatStoreMock.setActiveAgentThread).not.toHaveBeenCalled();
   });
 
-  it('creates and activates a Flowix thread', async () => {
+  it('starts a DeepSeek Harness thread through the external runtime bridge', async () => {
     const { agent } = await import('@platform/tauri/client');
+    const { beginExternalAgentThreadCardRun } = await import(
+      '@features/agent/services/external-agent-runtime-service',
+    );
     const { ensureAgentThreadCardThread } = await import('./agent-thread-card-submit');
 
     const result = await ensureAgentThreadCardThread({
       prompt: 'hello flowix',
       fallbackTitle: 'AI',
-      typeKey: 'flowix',
+      typeKey: 'deepseek-harness',
       currentThreadId: null,
       runtimeHandleId: 'handle-1',
       instanceId: 'inst-1',
       buildTitle: (prompt) => `Title: ${prompt}`,
     });
 
-    expect(agent.createThread).toHaveBeenCalledWith('Title: hello flowix');
-    // Phase 4 (2026-08-02): 真源切到 session-store.sessionMeta.activeThreadIds.
-    expect(sessionStoreMock.setSessionMeta).toHaveBeenCalled();
-    expect(sessionStoreMock.loadThreadList).toHaveBeenCalled();
+    expect(agent.createThread).not.toHaveBeenCalled();
+    expect(beginExternalAgentThreadCardRun).toHaveBeenCalledWith(
+      'handle-1',
+      'deepseek-harness',
+      null,
+      'inst-1',
+    );
+    expect(sessionStoreMock.setSessionMeta).not.toHaveBeenCalled();
+    expect(sessionStoreMock.loadThreadList).not.toHaveBeenCalled();
     expect(result).toEqual({
-      threadId: 'flowix-thread-1',
+      threadId: 'codex-local-inst-1',
       title: 'Title: hello flowix',
-      typeKey: 'flowix',
+      typeKey: 'deepseek-harness',
     });
   });
 });

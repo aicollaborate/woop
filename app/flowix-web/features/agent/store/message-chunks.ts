@@ -2,6 +2,7 @@ import type {
   ApplyResult,
   LiveMessageState,
 } from "@features/agent/store/chunk-result";
+import type { AgentErrorDetails } from "@/types/agent";
 import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-order";
 
 export interface MessageChunkMetadata {
@@ -12,6 +13,7 @@ export interface MessageChunkMetadata {
   sourceTimestamp?: number;
   sourceSequence?: number;
   sourceSubsequence?: number;
+  errorDetails?: AgentErrorDetails;
 }
 
 let generatedAssistantMessageSequence = 0;
@@ -246,22 +248,46 @@ export function applyReasoningChunk(
 export function applyErrorChunk(
   st: LiveMessageState,
   message: string,
-  metadata: Pick<MessageChunkMetadata, "id" | "notice"> = {},
+  metadata: Pick<MessageChunkMetadata, "id" | "notice" | "errorDetails"> = {},
 ): ApplyResult {
   const closedMessages = st.pendingReasoningId
     ? st.messages.map((m) =>
         m.id === st.pendingReasoningId ? { ...m, isCompleted: true } : m,
       )
     : st.messages;
+  const id = metadata.id ?? `error-${Date.now()}`;
+  const existingIndex = closedMessages.findIndex(
+    (item) => item.id === id && item.role === "assistant",
+  );
+  if (existingIndex >= 0) {
+    // Keep the first error body (usually the provider's stdout error), but
+    // enrich it if a later lifecycle error carries structured diagnostics.
+    const existing = closedMessages[existingIndex];
+    const messages = [...closedMessages];
+    messages[existingIndex] = {
+      ...existing,
+      content: existing.content || message,
+      errorDetails: existing.errorDetails ?? metadata.errorDetails,
+    };
+    return {
+      messages,
+      pendingAssistantId: null,
+      pendingReasoningId: null,
+    };
+  }
+
   return {
     messages: [
       ...closedMessages,
       {
-        id: metadata.id ?? `error-${Date.now()}`,
+        id,
         role: "assistant",
         content: message,
         timestamp: new Date().toISOString(),
         ...(metadata.notice ? { notice: metadata.notice } : {}),
+        ...(metadata.errorDetails
+          ? { errorDetails: metadata.errorDetails }
+          : {}),
       },
     ],
     pendingAssistantId: null,

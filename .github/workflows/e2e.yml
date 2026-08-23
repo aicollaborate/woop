@@ -1,0 +1,35 @@
+name: Rust E2E
+
+# DSH E2E requires a built host, vendored Harness dependencies and a real Wry
+# event loop. Keep it explicit so a provider/runtime environment issue cannot
+# block the ordinary workspace test gate.
+on:
+  workflow_dispatch:
+
+jobs:
+  deepseek-harness:
+    name: DeepSeek Harness integration
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build DSH development host
+        run: |
+          corepack enable
+          npm run dsh:build:dev
+
+      - name: Run DSH Rust E2E
+        run: npm run test:rust:e2e

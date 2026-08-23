@@ -9,8 +9,8 @@ function getLanguage(): AppLanguage {
   return useUserSettingsStore.getState().settings.language;
 }
 
-function isExternalAgentType(type: AgentTypeKey): boolean {
-  return type !== "flowix";
+function isExternalAgentType(_type: AgentTypeKey): boolean {
+  return true;
 }
 
 // Keep runtime/session fallback titles separate from the thread-card title.
@@ -19,7 +19,6 @@ function isExternalAgentType(type: AgentTypeKey): boolean {
 // surface. The exhaustive Record makes adding a new agent type fail here until
 // its title has been reviewed and localized.
 const AGENT_SESSION_TITLE_KEYS: Record<AgentTypeKey, I18nKey> = {
-  flowix: "agent.chat.unnamedConversation",
   codex: "agent.codexSession.title",
   claude: "agent.claudeSession.title",
   gemini: "agent.geminiSession.title",
@@ -88,7 +87,7 @@ function canPersistThreadTitle(_type: AgentTypeKey): boolean {
  * 三段 fallback 拿到 thread 的可显示标题:
  * 1. 真实 threadLists 中的 title
  * 2. 若是当前 active thread, 用 currentThreadTitles 的当前标题
- * 3. external agent 的 default title / flowix 的 "新会话" i18n 文本
+ * 3. runtime 的 default title / "新会话" i18n 文本
  *
  * reconcileRunningRunsFromSnapshot 走这条路径生成 thread card 标题。
  */

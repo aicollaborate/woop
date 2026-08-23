@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatAgentErrorMessage } from "@features/agent/message/error-format";
 
-/** Wrap a raw `reason` in the flowix-agent LLM-unavailable envelope shape. */
+/** Wrap a raw `reason` in the legacy LLM-unavailable envelope shape. */
 function envelope(reason: string): string {
   return `(LLM 暂时不可用，原因: ${reason})`;
 }

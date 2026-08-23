@@ -5,7 +5,7 @@
 //! 混在一起。拆�?
 //!
 //! - [`mod@helpers`]   —跨域 helper (索引 / notebook 切换 / �?�� scope / �?��抑制 / markdown 解析)
-//! - [`mod@settings`]  —`~/.flowix/boot/preference.json` + `~/.flowix/agent-config.toml` 读写
+//! - [`mod@settings`]  —`~/.flowix/boot/preference.json` + DSH settings 读写
 //! - [`mod@kv`]        鈥?`~/.flowix/boot/system.json` system metadata
 //! - [`mod@memo`]      —笔�? CRUD + 搜索 + Doc 合并(�?memo index / .md 文件的全进这)
 //! - [`mod@tag`]       —tag 派生 + (todo: 增删�?stub)
@@ -33,6 +33,7 @@ pub mod boot;
 pub mod cli;
 pub mod cloud;
 pub mod dialog;
+pub mod dsh;
 pub mod external_document;
 pub mod external_document_watch;
 pub mod file;

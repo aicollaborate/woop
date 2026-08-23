@@ -143,19 +143,8 @@ export interface ProductInfo {
   arch: string;
 }
 
-export interface ProductUpdateNotice {
-  id: string;
-  title: string;
-  body: string;
-  version?: string | null;
-  ctaUrl?: string | null;
-  publishedAt?: string | null;
-}
-
 export const product = {
   getInfo: () => invoke<ProductInfo>('get_product_info'),
-  checkUpdateNotice: (language?: string, region?: string) =>
-    invoke<ProductUpdateNotice | null>('check_product_update_notice', { language, region }),
   openLogDir: () => invoke<void>('open_log_dir'),
 };
 
@@ -262,7 +251,8 @@ export const plugins = {
 
 // Agent
 //
-// AI model config is sourced from ~/.flowix/agent-config.toml; see aiConfig.set/get above.
+// Legacy AI config remains available to the backend only for migration; DSH
+// model config is sourced through `deepseekHarness` in general.ts.
 // 骞舵儼鎬ф瀯寤?provider 瀹炰緥 (瑙?backend/src/agent.rs AgentManager::ensure_instance)銆?//
 // 瀛楁鍛藉悕: 鍚庣 AiModelConfig 鐢?`#[serde(rename_all = "camelCase")]`, 鎵€浠?// IPC 浼犺繃鍘诲繀椤绘槸 camelCase 鈹€ snake_case 浼氳 serde 闈欓粯涓㈠純, 瀛楁鍏ㄩ儴鍥為€€
 // 鍒?#[serde(default)] = 绌轰覆, 琛ㄧ幇灏辨槸"淇濆瓨鍚庡埛鏂?apiKey/apiUrl 閮界┖浜?銆?

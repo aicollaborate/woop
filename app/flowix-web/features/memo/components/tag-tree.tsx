@@ -267,7 +267,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setCreateTagError(
+      toast.error(
         message.includes('already exists')
           ? t('memo.tag.createDuplicate')
           : `${t('memo.tag.createFailed')}: ${message}`,
@@ -719,9 +719,9 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                   }
                 }}
                 className={cn(
-                  'group relative flex h-8 w-full cursor-pointer select-none items-center gap-0 rounded-md pr-2 text-left text-sm transition-colors',
+                  'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
                   isSelected
-                    ? 'bg-[var(--accent)] text-[var(--foreground)]'
+                    ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                     : 'text-[var(--foreground)]',
                   isDragging && 'opacity-50',
                   isDropInside && 'tag-drop-target-inside',
@@ -750,6 +750,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                         : t('memo.tag.collapse')
                       : undefined
                   }
+                  style={{ color: isSelected ? 'var(--primary-foreground)' : undefined }}
                   onPointerDown={(event) => {
                     // 阻止事件冒泡到行 ── 避免在图标上按下也启动 drag
                     event.stopPropagation();

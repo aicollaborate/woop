@@ -335,6 +335,26 @@ async fn stderr_reader_preserves_lines_and_newlines() {
     assert_eq!(stderr, "first\nsecond\n");
 }
 
+#[tokio::test]
+async fn stderr_reader_drains_but_bounds_and_redacts_retained_text() {
+    let registry = ExternalRunRegistry::new("codex", "codex");
+    let secret = "sk-abcdefghijklmnopqrstuvwxyz123456";
+    let input = format!(
+        "Authorization: Bearer {secret}\n{}\ntail\n",
+        "x".repeat(MAX_STDERR_CHARS + 1024)
+    );
+    let reader = BufReader::new(input.as_bytes());
+
+    let stderr = read_stderr_to_string("thread_1", Some("run_1"), &registry, reader)
+        .await
+        .expect("stderr reader should succeed");
+
+    assert!(!stderr.contains(secret));
+    assert!(stderr.contains("[REDACTED]"));
+    assert!(stderr.ends_with("...[stderr truncated]"));
+    assert!(stderr.chars().count() <= MAX_STDERR_CHARS + 32);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stderr_reader_touches_matching_run() {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { agent, type AgentRuntimeAvailability } from '@platform/tauri/client';
+import { subscribe } from '@platform/tauri/event-bus';
 import type { AgentTypeKey } from '@/types/agent';
 
 const RUNTIME_STATUS_TTL_MS = 120_000;
@@ -7,6 +8,14 @@ const RUNTIME_STATUS_TTL_MS = 120_000;
 type RuntimeStatusByType = Partial<Record<AgentTypeKey, AgentRuntimeAvailability>>;
 
 let inFlightRefresh: Promise<void> | null = null;
+let dshRuntimeStatusUnsubscribe: (() => void) | null = null;
+
+function ensureDshRuntimeStatusSubscription(): void {
+  if (dshRuntimeStatusUnsubscribe) return;
+  dshRuntimeStatusUnsubscribe = subscribe('dsh-runtime-status-changed', () => {
+    void useAgentRuntimeStore.getState().refresh({ force: true });
+  });
+}
 
 export interface AgentRuntimeState {
   statusByType: RuntimeStatusByType;
@@ -26,6 +35,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
   lastCheckedAt: null,
 
   refresh: async (options) => {
+    ensureDshRuntimeStatusSubscription();
     const { force = false, type } = options ?? {};
     if (!force && isFresh(get().lastCheckedAt)) return;
 

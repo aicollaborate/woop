@@ -5,10 +5,8 @@ export type { AgentTypeKey };
 // Agent 图标集中管理 ─────────────────────────────────────────
 // 所有 agent 类型图标统一在此处 import, 后续要换图标只改这一个文件。
 // 实际静态资源:
-//   - flowix-agent.svg        Flowix 类型图标(正方形画布，从桌面导入)
 //   - codex.svg               Codex CLI 品牌图标(从桌面导入)
 //   - icon-claude-code.svg    Claude Code 品牌图标
-import flowixAgent from '@/assets/flowix-agent.svg';
 import iconCodex from '@/assets/codex.svg';
 import iconClaudeCode from '@/assets/icon-claude-code.svg';
 import iconGeminiCli from '@/assets/icon-gemini-cli.svg';
@@ -17,13 +15,10 @@ import iconOpenClaw from '@/assets/icon-openclaw.svg';
 import iconOpenCode from '@/assets/icon-opencode.svg';
 import iconDeepSeek from '@/assets/icon-deepseek.svg';
 
-export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'flowix';
-
-const STREAMING_PROVIDER_CAPABILITIES: AgentRuntimeCapabilities = {
-  supportsTextStreaming: true,
-  supportsToolEvents: true,
-  externalSessionBacked: false,
-};
+// DSH is an optional separately installed runtime. Keep the product default on
+// an external CLI path so users who never install DSH do not create unusable
+// DSH-backed cards implicitly; persisted/card-level choices still win.
+export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'codex';
 
 const EXTERNAL_CLI_CAPABILITIES: AgentRuntimeCapabilities = {
   supportsTextStreaming: false,
@@ -83,15 +78,6 @@ export const AGENT_TYPES: AgentType[] = [
     nameKey: 'agent.types.opencode.name',
     descKey: 'agent.types.opencode.desc',
     capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
-  },
-  {
-    key: 'flowix',
-    icon: flowixAgent,
-    name: 'Flowix Agent',
-    desc: 'Use Flowix workspace agent',
-    nameKey: 'agent.types.flowix.name',
-    descKey: 'agent.types.flowix.desc',
-    capabilities: STREAMING_PROVIDER_CAPABILITIES,
   },
   {
     key: 'hermes',

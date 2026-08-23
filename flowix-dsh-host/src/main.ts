@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+import { createInterface } from 'node:readline'
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { HOST_PROTOCOL_VERSION, type JsonRpcId, type JsonRpcRequest, type RunEventNotification } from './protocol/v1.ts'
+import {
+  ProtocolInputError,
+  requireRequest,
+  requireRunStart,
+  requireRuntimeSpec,
+  requireThread,
+  requireThreadRun,
+  requireModelDiscover,
+  requireModelResolve,
+  requireSessionUsage,
+} from './protocol/validation.ts'
+import { SessionPool } from './runtime/session-pool.ts'
+import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
+import { catalog as pluginCatalog } from './runtime/plugin-directory.ts'
+import { ensureFlowixProfile } from './runtime/environment.ts'
+import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from './build-meta.ts'
+
+// The development CJS host delegates the `dsh` carrier to the built official
+// CLI. Production SEA builds make the same delegation in their upstream
+// dispatcher; in both cases plugin semantics remain upstream-owned.
+if (process.env.DSH_EMBEDDED_CLI_MODE === '1') {
+  const root = process.env.FLOWIX_DSH_ROOT ?? dirname(resolve(process.argv[1] ?? process.execPath))
+  const cli = join(root, 'vendor/deepseek-harness/apps/cli/lib/bin.js')
+  if (!existsSync(cli)) {
+    process.stderr.write(`[dsh] official CLI is not bundled at ${cli}\n`)
+    process.exit(127)
+  }
+  const result = spawnSync(process.execPath, [cli, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, DSH_EMBEDDED_CLI_MODE: undefined },
+  })
+  process.exit(result.status ?? 1)
+}
+
+
+// Refuse to start when the bundled build identity disagrees with the one the
+// launcher requested. This catches stale Cargo target dirs and dev/prod mixups.
+const requestedBuildId = process.env[SIDECAR_BUILD_ID_ENV]?.trim()
+if (requestedBuildId !== undefined && requestedBuildId !== '' && requestedBuildId !== SIDECAR_BUILD_ID) {
+  process.stderr.write(
+    `[dsh-host] FATAL: bundle buildId "${SIDECAR_BUILD_ID}" disagrees with launcher request "${requestedBuildId}".\n` +
+    '[dsh-host] The dsh-host bundle is out of sync with the rest of the sidecar pair; rebuild via `pnpm dsh:build`.\n',
+  )
+  process.exit(2)
+}
+if (SIDECAR_BUILD_ID === 'uninitialized' || SIDECAR_BUILD_ID === '') {
+  process.stderr.write('[dsh-host] FATAL: build id is empty; the bundle was produced without a build identity.\n')
+  process.exit(2)
+}
+let writeChain = Promise.resolve()
+function writeFrame(frame: unknown): void {
+  writeChain = writeChain.then(async () => {
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${JSON.stringify(frame)}\n`, error => error === null ? resolve() : reject(error))
+    })
+  }).catch(error => {
+    process.stderr.write(`[dsh-host] stdout write failed: ${String(error)}\n`)
+    process.exitCode = 1
+  })
+}
+
+const pool = new SessionPool((params: RunEventNotification) => {
+  writeFrame({ jsonrpc: '2.0', method: 'run.event', params })
+})
+
+async function dispatch(request: JsonRpcRequest): Promise<unknown> {
+  switch (request.method) {
+    case 'host.initialize':
+      return {
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        buildId: SIDECAR_BUILD_ID,
+        host: { name: 'flowix-dsh-host', version: '1.0.0' },
+        harness: { commit: '47f943859bef60e4160492346772ded9b24f765a', version: '0.1.0-rc.5' },
+        capabilities: [
+          'streaming',
+          'reasoning',
+          'tools',
+          'usage',
+          'session-resume',
+          'cancel-by-restart',
+          'model-catalog',
+          'model-discovery',
+          'plugin-catalog',
+          'runtime-profile',
+          'runtime-bridge',
+        ],
+      }
+    case 'host.ping': return { ok: true }
+    case 'runtime.ensure': return await pool.ensure(requireRuntimeSpec(request.params))
+    case 'runtime.status': return { runtimes: pool.status() }
+    case 'runtime.dispose': return { disposed: await pool.dispose(requireThread(request.params).threadId) }
+    case 'session.usage': return (await pool.usage(requireSessionUsage(request.params).sessionId)) ?? null
+    case 'runtime.bridge.capabilities': {
+      const params = requireThread(request.params)
+      return await pool.bridgeCapabilities(params.threadId)
+    }
+    case 'runtime.bridge.status': {
+      const params = requireThread(request.params)
+      return await pool.bridgeStatus(params.threadId)
+    }
+    case 'run.start':
+      pool.startRun(requireRunStart(request.params))
+      return { accepted: true }
+    case 'run.cancel': {
+      const params = requireThreadRun(request.params)
+      return { cancelled: await pool.cancel(params.threadId, params.runId) }
+    }
+    case 'models.catalog': return { providers: catalog() }
+    case 'models.discover': {
+      const params = requireModelDiscover(request.params)
+      const models = await discover({
+        ...(params.provider === undefined ? {} : { provider: params.provider }),
+        ...(params.baseUrl === undefined ? {} : { baseURL: params.baseUrl }),
+        ...(params.api === undefined ? {} : { api: params.api }),
+        ...(params.apiKey === undefined ? {} : { apiKey: params.apiKey }),
+      })
+      return { models }
+    }
+    case 'models.resolve': {
+      const params = requireModelResolve(request.params)
+      return { model: resolveCatalogModel(params.provider, params.model) }
+    }
+    case 'plugins.catalog':
+      ensureFlowixProfile()
+      return { plugins: pluginCatalog() }
+    case 'host.shutdown':
+      await pool.close()
+      setImmediate(() => process.exit(0))
+      return { ok: true }
+    default:
+      throw new ProtocolInputError(-32601, `method not found: ${request.method}`)
+  }
+}
+
+interface IncomingFrame {
+  jsonrpc?: string
+  id?: JsonRpcId
+  method?: string
+  params?: unknown
+}
+
+function responseId(frame: unknown): JsonRpcId | null {
+  if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return null
+  const id = (frame as { id?: unknown }).id
+  return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+}
+
+function errorResponse(id: JsonRpcId | null, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  const code = error instanceof ProtocolInputError ? error.code : -32000
+  writeFrame({ jsonrpc: '2.0', id, error: { code, message } })
+}
+
+const reader = createInterface({ input: process.stdin })
+reader.on('line', (line: string) => {
+  const trimmed = line.trim()
+  if (trimmed === '') return
+  let frame: IncomingFrame
+  try {
+    frame = JSON.parse(trimmed) as IncomingFrame
+  } catch (error) {
+    writeFrame({ jsonrpc: '2.0', id: null, error: { code: -32700, message: `parse error: ${String(error)}` } })
+    return
+  }
+  let request: JsonRpcRequest
+  try {
+    request = requireRequest(frame)
+  } catch (error) {
+    errorResponse(responseId(frame), error)
+    return
+  }
+
+  dispatch(request)
+    .then(result => {
+      writeFrame({ jsonrpc: '2.0', id: request.id, result })
+    })
+    .catch(error => errorResponse(request.id, error))
+})
+
+process.on('SIGTERM', () => process.exit(0))
+process.on('SIGINT', () => process.exit(0))

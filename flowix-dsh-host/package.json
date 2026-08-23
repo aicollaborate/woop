@@ -1,0 +1,25 @@
+{
+  "name": "@flowix/dsh-host",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  },
+  "scripts": {
+    "vendor:sync": "node scripts/sync-upstream.mjs",
+    "vendor:ensure": "node scripts/ensure-upstream.mjs",
+    "vendor:install": "npm run vendor:ensure && corepack pnpm@11.7.0 --dir vendor/deepseek-harness install --frozen-lockfile",
+    "build": "node scripts/build-host.mjs",
+    "build:dev": "node scripts/build-host.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "build:sidecars": "node scripts/build-sidecars.mjs",
+    "build:macos": "node scripts/build-sidecars.mjs --targets=node24-macos-arm64,node24-macos-x64",
+    "stage:sidecars": "node scripts/build-sidecars.mjs",
+    "stage:sidecars:macos": "node scripts/build-sidecars.mjs --targets=node24-macos-arm64,node24-macos-x64",
+    "test": "vendor/deepseek-harness/node_modules/.bin/tsx --test tests/*.test.ts",
+    "test:e2e": "npm run build && node --test tests/host-e2e.test.mjs tests/plugin-cli-e2e.test.mjs",
+    "test:sidecar:e2e": "node --test tests/sidecar-e2e.test.mjs",
+    "check": "vendor/deepseek-harness/node_modules/.bin/tsc --noEmit -p tsconfig.json && npm test"
+  }
+}

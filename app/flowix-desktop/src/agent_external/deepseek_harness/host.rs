@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::process::Stdio;
@@ -14,6 +15,7 @@ use super::protocol;
 use crate::agent_external::shared::{
     configure_unix_process_group, kill_child_tree, read_capped_line, MAX_STDOUT_LINE_BYTES,
 };
+use crate::config::user::atomic_write_yaml;
 
 type RouteKey = (String, String);
 type PendingSender = oneshot::Sender<Result<Value, String>>;
@@ -29,10 +31,10 @@ pub struct DshHostClient {
 
 impl DshHostClient {
     pub async fn spawn(
-        api_key: Option<&str>,
         session_root: &Path,
         dsh_home: &Path,
         settings_path: &Path,
+        credentials_path: &Path,
         plugin_settings_path: &Path,
     ) -> Result<Arc<Self>, String> {
         let (mut command, host_root) = resolve_host_command()?;
@@ -43,15 +45,16 @@ impl DshHostClient {
             .env_clear()
             .envs(allowed_parent_environment())
             .env("FLOWIX_DSH_SESSION_ROOT", session_root)
-            .env("FLOWIX_DSH_HOME", dsh_home)
+            .env("DSH_HOME", dsh_home)
             .env("FLOWIX_DSH_ROOT", &host_root)
             .env("DSH_SETTINGS_PATH", settings_path)
+            .env("DSH_CREDENTIALS_PATH", credentials_path)
             .env("FLOWIX_DSH_PLUGIN_SETTINGS_PATH", plugin_settings_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
-            command.env("DSH_API_KEY", api_key);
+        if let Some(cli) = bundled_flowix_cli_path() {
+            command.env("FLOWIX_DSH_MCP_CLI", cli);
         }
         // dsh-host resolves the runtime path itself by scanning the directory
         // that holds its own executable. The launcher no longer hands it a
@@ -129,7 +132,13 @@ impl DshHostClient {
             }
         } else {
             tracing::info!(build_id = %host_build_id, "dsh-host reported build identity");
-        }        for required in ["model-catalog", "model-discovery", "plugin-catalog"] {
+        }
+        for required in [
+            "model-catalog",
+            "model-discovery",
+            "plugin-catalog",
+            "runtime-profile",
+        ] {
             if !capabilities
                 .iter()
                 .any(|value| value.as_str() == Some(required))
@@ -209,6 +218,71 @@ impl DshHostClient {
     }
 }
 
+/// Bridge the existing Flowix secret store into the DSH-owned credentials
+/// document. The runtime never receives the value in its environment; the
+/// upstream credentials-local plugin reads this file and resolves the
+/// reference per request. This bridge is temporary until Flowix can call a
+/// first-class DSH credentials UI/API without starting a separate web host.
+pub(crate) fn sync_credential_file(
+    path: &Path,
+    reference: &str,
+    value: &str,
+) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Ok(());
+    }
+    if !is_credential_reference(reference) {
+        return Err("invalid DSH credential reference".to_string());
+    }
+    let Some(parent) = path.parent() else {
+        return Err("DSH credentials path has no parent directory".to_string());
+    };
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create DSH credentials directory: {error}"))?;
+    let lock_path = path.with_extension("yaml.flowix-lock");
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| format!("failed to open DSH credentials lock: {error}"))?;
+    set_owner_only_file(&lock_path);
+    fs2::FileExt::lock_exclusive(&lock)
+        .map_err(|error| format!("failed to lock DSH credentials document: {error}"))?;
+
+    let mut credentials = match fs::read_to_string(path) {
+        Ok(content) if !content.trim().is_empty() => {
+            serde_yaml::from_str::<BTreeMap<String, String>>(&content)
+                .map_err(|_| "DSH credentials document is invalid".to_string())?
+        }
+        Ok(_) => BTreeMap::new(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+        Err(error) => return Err(format!("failed to read DSH credentials document: {error}")),
+    };
+    credentials.insert(reference.to_string(), value.to_string());
+    let content = serde_yaml::to_string(&credentials)
+        .map_err(|_| "failed to serialize DSH credentials document".to_string())?;
+    atomic_write_yaml(path, &content)
+        .map_err(|error| format!("failed to write DSH credentials document: {error}"))?;
+    Ok(())
+}
+
+fn is_credential_reference(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(first) if first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+#[cfg(unix)]
+fn set_owner_only_file(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_file(_path: &Path) {}
+
 fn spawn_stdout_reader(
     client: Arc<DshHostClient>,
     mut reader: BufReader<tokio::process::ChildStdout>,
@@ -275,8 +349,12 @@ async fn fail_all(client: &DshHostClient, message: String) {
 }
 
 fn resolve_host_command() -> Result<(Command, PathBuf), String> {
+    if !crate::dsh::status().installed {
+        return Err("DeepSeek Harness runtime is not installed".to_string());
+    }
+
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source_root = root.join("app/flowix-dsh-host");
+    let source_root = root.join("flowix-dsh-host");
     if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
         return command_for_host_path_with_root(configured, Some(source_root.clone()));
     }
@@ -294,23 +372,43 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
             dev_script.display(),
         ));
     }
-    if let Some(parent) = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-    {
-        let candidate = parent.join(if cfg!(windows) {
-            "dsh-host.exe"
-        } else {
-            "dsh-host"
-        });
-        if candidate.is_file() {
-            return command_for_host_path(candidate);
+    // Production clients use only the independently downloaded, versioned DSH
+    // runtime. The Flowix application intentionally does not ship a DSH host;
+    // selecting DSH in the UI must be what causes this installation to exist.
+    if let Some(managed) = crate::dsh::managed_host_path() {
+        return command_for_host_path(managed);
+    }
+    Err("DeepSeek Harness runtime is not installed".to_string())
+}
+
+/// Resolve the Flowix CLI that the independently installed DSH memory plugin
+/// should invoke. The DSH host lives under the user data directory, while the
+/// CLI remains the one executable shipped by Flowix.app.
+fn bundled_flowix_cli_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let parent = executable.parent()?;
+    let packaged = parent.join(if cfg!(windows) {
+        "flowix-cli.exe"
+    } else {
+        "flowix-cli"
+    });
+    if packaged.is_file() {
+        return Some(packaged);
+    }
+
+    if cfg!(debug_assertions) {
+        let development = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(if cfg!(windows) {
+                "flowix-cli.exe"
+            } else {
+                "flowix-cli"
+            });
+        if development.is_file() {
+            return Some(development);
         }
     }
-    if dev_script.is_file() {
-        return command_for_host_path_with_root(dev_script, Some(source_root));
-    }
-    Err("dsh-host is not built; run `npm --prefix app/flowix-dsh-host run build`".to_string())
+    None
 }
 
 fn command_for_host_path(path: PathBuf) -> Result<(Command, PathBuf), String> {
@@ -470,18 +568,26 @@ fn macos_https_proxy() -> Option<String> {
     None
 }
 
-
 /// Locate the build identity shared by the dsh-host and dsh-runtime sidecars.
 /// `None` means the env var simply will not be set; the host still validates
 /// that `initialize` returns a non-empty buildId but does not enforce equality.
 fn sidecar_build_id() -> Option<String> {
+    // A downloaded DSH package owns its host/runtime build identity. Do not
+    // inject a repository build id when a local release bundle is testing the
+    // independently installed runtime.
+    if crate::dsh::managed_host_path().is_some() {
+        return None;
+    }
     // Production builds install the file under the same directory as flowix-cli.
     // Walk up from `current_exe` until the file is found, mirroring how tauri
     // bundles keep .build next to the bundled resources.
     let start = std::env::current_exe().ok()?;
     let mut directory = Some(start.as_path());
     while let Some(dir) = directory {
-        let candidate = dir.join(".build").join("flowix-dsh-host").join("dsh-build-id.txt");
+        let candidate = dir
+            .join(".build")
+            .join("flowix-dsh-host")
+            .join("dsh-build-id.txt");
         if candidate.is_file() {
             let raw = std::fs::read_to_string(&candidate).ok()?;
             let trimmed = raw.trim().to_string();
@@ -509,5 +615,82 @@ fn rust_target_triple() -> &'static str {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         _ => "unknown-unknown-unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_credential_file;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn sync_credential_file_merges_provider_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "secret-a").unwrap();
+        sync_credential_file(&path, "FLOWIX_DSH_MINIMAX_API_KEY", "secret-b").unwrap();
+
+        let values: BTreeMap<String, String> =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(
+            values.get("FLOWIX_DSH_OPENAI_API_KEY"),
+            Some(&"secret-a".to_string())
+        );
+        assert_eq!(
+            values.get("FLOWIX_DSH_MINIMAX_API_KEY"),
+            Some(&"secret-b".to_string())
+        );
+    }
+
+    #[test]
+    fn sync_credential_file_preserves_existing_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        std::fs::write(&path, "EXTERNAL_API_KEY: external-secret\n").unwrap();
+
+        sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "flowix-secret").unwrap();
+
+        let values: BTreeMap<String, String> =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(
+            values.get("EXTERNAL_API_KEY"),
+            Some(&"external-secret".to_string())
+        );
+        assert_eq!(
+            values.get("FLOWIX_DSH_OPENAI_API_KEY"),
+            Some(&"flowix-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn sync_credential_file_rejects_invalid_documents_and_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let invalid_path = temp.path().join("invalid.yaml");
+        std::fs::write(&invalid_path, "not: [valid").unwrap();
+        assert!(sync_credential_file(&invalid_path, "FLOWIX_DSH_API_KEY", "secret").is_err());
+
+        let valid_path = temp.path().join("valid.yaml");
+        assert!(sync_credential_file(&valid_path, "not-a-reference", "secret").is_err());
+        assert!(!valid_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_credential_file_secures_document_and_lock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "secret").unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let lock = path.with_extension("yaml.flowix-lock");
+        assert_eq!(
+            std::fs::metadata(lock).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

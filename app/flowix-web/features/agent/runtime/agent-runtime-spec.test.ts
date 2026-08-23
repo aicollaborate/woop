@@ -35,7 +35,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
 
   it("资料主空间存在时, cwd = 资料主空间, workspacePaths = 资料 folders + 当前笔记本", () => {
     const result = buildAgentRuntimeConfig({
-      typeKey: "flowix",
+      typeKey: "deepseek-harness",
       notebookPath: "D:\\当前笔记本",
       permissionMode: "workspace-write",
       codexModel: "inherit",
@@ -46,8 +46,8 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
         notebooks: [],
       },
     });
-    expect(result.flowix?.cwd).toBe("D:\\资料主空间");
-    expect(result.flowix?.workspacePaths).toEqual([
+    expect(result.deepseekHarness?.cwd).toBe("D:\\资料主空间");
+    expect(result.deepseekHarness?.workspacePaths).toEqual([
       "D:\\资料主空间",
       "D:\\第二份资料",
       "D:\\当前笔记本",
@@ -56,7 +56,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
 
   it("没设资料主空间, cwd 取资料 folders[0]", () => {
     const result = buildAgentRuntimeConfig({
-      typeKey: "flowix",
+      typeKey: "deepseek-harness",
       notebookPath: "D:\\当前笔记本",
       permissionMode: "workspace-write",
       codexModel: "inherit",
@@ -67,20 +67,20 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
         notebooks: [],
       },
     });
-    expect(result.flowix?.cwd).toBe("D:\\第一份");
+    expect(result.deepseekHarness?.cwd).toBe("D:\\第一份");
   });
 
   it("资料列表为空 (没添加资料), cwd 退到当前笔记本路径", () => {
     const result = buildAgentRuntimeConfig({
-      typeKey: "flowix",
+      typeKey: "deepseek-harness",
       notebookPath: "D:\\当前笔记本",
       permissionMode: "workspace-write",
       codexModel: "inherit",
       codexReasoningEffort: "low",
       defaultFiles: { folders: [], notebooks: [], workspace: undefined },
     });
-    expect(result.flowix?.cwd).toBe("D:\\当前笔记本");
-    expect(result.flowix?.workspacePaths).toEqual(["D:\\当前笔记本"]);
+    expect(result.deepseekHarness?.cwd).toBe("D:\\当前笔记本");
+    expect(result.deepseekHarness?.workspacePaths).toEqual(["D:\\当前笔记本"]);
   });
 
   it("未传 defaultFiles 时, 仅当前笔记本作为 cwd 与 workspacePaths", () => {
@@ -187,8 +187,8 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(selected.deepseekHarness?.model).toBe("deepseek-v4-pro");
   });
 
-  it("flowix supports empty-card runtime settings for files (空状态设置区仍可用)", () => {
-    expect(supportsAgentEmptySettings("flowix")).toBe(false);
+  it("DeepSeek Harness supports empty-card runtime settings for files (空状态设置区仍可用)", () => {
+    expect(supportsAgentEmptySettings("deepseek-harness")).toBe(true);
     expect(supportsAgentEmptySettings("codex")).toBe(true);
     expect(supportsAgentEmptySettings("claude")).toBe(true);
     expect(supportsAgentEmptySettings("deepseek-harness")).toBe(true);

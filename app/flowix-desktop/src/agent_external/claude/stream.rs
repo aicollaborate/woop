@@ -16,8 +16,8 @@ use crate::agent_external::{
     AgentChunkMetadata, ExternalRunRegistry, StreamingEmitBuffer, MAX_STDOUT_LINE_BYTES,
     STREAM_FLUSH_INTERVAL, STREAM_FLUSH_MAX_BYTES,
 };
-use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::AgentChunk;
 use crate::runtime_log;
 
 type ClaudeTurnEvents = TurnEvents;
@@ -144,7 +144,7 @@ pub(crate) async fn read_claude_stdout<R>(
     thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
     reader: BufReader<R>,
-) -> Result<(), String>
+) -> Result<Option<String>, String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -161,6 +161,7 @@ where
     // �?flush �?emit, 保证呈现顺序�?
     let mut emit_buf = StreamingEmitBuffer::new(thread_id.clone());
     let mut turn_events = ClaudeTurnEvents::default();
+    let mut provider_error: Option<String> = None;
     // 帧级 flush 计时 ── 与前�?rAF 帧率 (~16ms) 对齐。每读完一整�?检�?elapsed,
     // burst 期间约每�?flush 一欰�?    //
     // 不用 select! + interval: read_capped_line �?> BufReader 容量 (8 KiB) 的长�?    // 时会跨�?�?fill_buf �?�� out, select! 在中�?drop �?future 会丢失已�?��的部�?    // �?(reader cursor �?consume �?out �?��), 导致�?tool_result 行损�?-> JSON
@@ -419,6 +420,14 @@ where
                             }
                         }
                     }
+                    if let AgentChunk::Error { message, .. } = &chunk {
+                        provider_error = Some(message.clone());
+                        // Terminal errors are emitted once by the lifecycle
+                        // tail after the child status is known. Keeping them
+                        // out of the live stream avoids a duplicate error when
+                        // the process also exits non-zero.
+                        continue;
+                    }
                     observe_claude_turn(&mut turn_events, &chunk, &metadata, &run_id);
                     emit_chunk_with_run_id_and_metadata(
                         &app_handle,
@@ -449,7 +458,7 @@ where
         Some(AGENT_TYPE),
         None,
     );
-    Ok(())
+    Ok(provider_error)
 }
 
 fn non_json_stdout_text(parsed: &ParsedClaudeStdoutLine, line: &str) -> Option<String> {

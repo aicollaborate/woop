@@ -183,6 +183,7 @@ fn history_message(id: String, role: &str, content: String, timestamp: i64) -> C
         tool_calls: None,
         reasoning: None,
         is_completed: Some(true),
+        error_details: None,
         is_collapsed: None,
     }
 }

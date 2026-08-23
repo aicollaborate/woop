@@ -196,6 +196,25 @@ CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和
 | `APPLE_ID` | notarytool 备用（仅 keychain-profile 模式不需要） |
 | `APPLE_KEYCHAIN_PROFILE` | notarytool 走 keychain auth（推荐）；可替换为 `APPLE_APP_SPECIFIC_PASSWORD` fallback |
 
+### Flowix / DSH 共享 minisign 密钥
+
+私钥不写入仓库或本文件，已存入 macOS login Keychain：
+
+- service: `com.flowix.minisign.private-key`
+- account: `flowix-shared`
+- 私钥密码条目: service `com.flowix.minisign`，account `flowix-shared`
+- key ID: `EA276A3620424B50`
+
+本地签名前动态读取即可；下面的命令不会把私钥打印到终端或写入文件：
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(security find-generic-password -s com.flowix.minisign.private-key -a flowix-shared -w)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(security find-generic-password -s com.flowix.minisign -a flowix-shared -w)"
+export FLOWIX_DSH_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | base64 -D)"
+```
+
+`flowix-home/src/dsh/flowix-shared.pub` 只保存公钥。不要把 `security find-generic-password -w` 的输出复制到 Markdown、日志或 Git 文件中。
+
 ### 关键路径与发现
 
 | 知识点 | 详细 |

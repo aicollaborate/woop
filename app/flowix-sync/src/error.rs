@@ -34,4 +34,18 @@ impl SyncError {
     pub(crate) fn is_unauthorized(&self) -> bool {
         matches!(self, Self::Api { status: 401, .. })
     }
+
+    /// Only this response proves that the persisted refresh credential is no
+    /// longer usable. Transport failures and other server errors must keep the
+    /// local credential so startup can retry without logging the user out.
+    pub fn is_invalid_refresh_token(&self) -> bool {
+        matches!(
+            self,
+            Self::Api {
+                status: 401,
+                code,
+                ..
+            } if code == "INVALID_REFRESH_TOKEN"
+        )
+    }
 }

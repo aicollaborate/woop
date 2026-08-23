@@ -57,15 +57,15 @@
 
 ## dsh-flowix-memory 插件
 
-[dsh-flowix-memory](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) 是一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，通过捆绑的 `flowix-cli` MCP server 把任何 Harness Agent 连接到你的**本地 Flowix 笔记**：安装后 Agent 获得 `mcp__dsh-flowix-memory__flowix_memo` 工具，可搜索、读取、创建和编辑 Flowix 笔记（包括思维导图）。
+[dsh-flowix-memory](flowix-dsh-host/bundles/dsh-flowix-memory/README.md) 是一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，通过捆绑的 `flowix-cli` MCP server 把任何 Harness Agent 连接到你的**本地 Flowix 笔记**：安装后 Agent 获得 `mcp__dsh-flowix-memory__flowix_memo` 工具，可搜索、读取、创建和编辑 Flowix 笔记（包括思维导图）。
 
 安装到某个 Harness profile（`--profile <name>` 必填；内置 profile：`web`、`headless`），从 flowix-main checkout 安装（尚未发布到 npm）：
 
 ```sh
-dsh plugin --profile <name> add ./app/flowix-dsh-host/bundles/dsh-flowix-memory
+dsh plugin --profile <name> add ./flowix-dsh-host/bundles/dsh-flowix-memory
 ```
 
-需要 `flowix` CLI 位于 `PATH`（或设置 `FLOWIX_CLI_PATH`），并可访问你的笔记数据（`~/.flowix`）。详见[插件 README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md)。
+需要 `flowix` CLI 位于 `PATH`（或设置 `FLOWIX_CLI_PATH`），并可访问你的笔记数据（`~/.flowix`）。详见[插件 README](flowix-dsh-host/bundles/dsh-flowix-memory/README.md)。
 
 ---
 

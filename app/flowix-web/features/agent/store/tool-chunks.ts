@@ -22,6 +22,12 @@ function toolMessageTimestamp(sourceTimestamp?: number): string {
     : new Date().toISOString();
 }
 
+function toolCallIdsMatch(left: string | undefined, right: string): boolean {
+  if (left === right) return true;
+  return left?.endsWith(`:tool-call:${right}`) === true ||
+    right.endsWith(`:tool-call:${left ?? ""}`);
+}
+
 /**
  * tool_call chunk ── 插入一条 `role: "tool"` 的消息, `isLoading=true` 等
  * tool_result 收尾。 tool 行作为流式断点, 显式清 `pendingAssistantId` ─
@@ -59,7 +65,7 @@ export function applyToolCallChunk(
     isLoading: true,
   };
   const existingIndex = st.messages.findIndex(
-    (message) => message.role === "tool" && message.toolCallId === id,
+    (message) => message.role === "tool" && toolCallIdsMatch(message.toolCallId, id),
   );
   if (existingIndex >= 0) {
     const existing = st.messages[existingIndex];
@@ -110,11 +116,11 @@ export function applyToolResultChunk(
   const resultContent = summarizeToolResult(result);
   const resultToolName = name && name !== "tool_result" ? name : "";
   const hasMatchingCall = st.messages.some(
-    (message) => message.role === "tool" && message.toolCallId === id,
+    (message) => message.role === "tool" && toolCallIdsMatch(message.toolCallId, id),
   );
   const messages = hasMatchingCall
     ? st.messages.map((m) =>
-        m.role === "tool" && m.toolCallId === id
+        m.role === "tool" && toolCallIdsMatch(m.toolCallId, id)
           ? {
               ...m,
               content: resultContent,

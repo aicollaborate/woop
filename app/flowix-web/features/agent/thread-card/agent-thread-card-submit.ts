@@ -1,8 +1,6 @@
-import { agent } from '@platform/tauri/client';
 import type { AgentTypeKey } from '@/types/agent';
 import { getAgentType } from '@/lib/agent-types';
 import { stripSystemBlock } from '@features/agent/message';
-import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { beginExternalAgentThreadCardRun } from '@features/agent/services/external-agent-runtime-service';
 
 export interface EnsureAgentThreadCardThreadInput {
@@ -14,7 +12,6 @@ export interface EnsureAgentThreadCardThreadInput {
   instanceId: string;
   buildTitle: (prompt: string, fallback: string) => string;
 }
-
 export interface EnsureAgentThreadCardThreadResult {
   threadId: string;
   title: string;
@@ -33,33 +30,14 @@ export async function ensureAgentThreadCardThread(
     .replace(/\s+/g, ' ')
     .trim() || fallbackTitle;
   const type = getAgentType(input.typeKey);
-  if (type.key !== 'flowix') {
-    return {
-      threadId: beginExternalAgentThreadCardRun(
-        input.runtimeHandleId,
-        type.key,
-        input.currentThreadId,
-        input.instanceId,
-      ),
-      title: nextTitle,
-      typeKey: type.key,
-    };
-  }
-
-  const thread = await agent.createThread(nextTitle);
-  // Store the new active thread in canonical session metadata.
-  useAgentSessionStore.getState().setSessionMeta((meta) => ({
-    ...meta,
-    activeThreadIds: {
-      ...meta.activeThreadIds,
-      [type.key]: thread.threadId,
-    },
-    activeAgentTypeKey: type.key,
-  }));
-  void useAgentSessionStore.getState().loadThreadList();
   return {
-    threadId: thread.threadId,
-    title: stripSystemBlock(thread.title || nextTitle).replace(/\s+/g, ' ').trim(),
+    threadId: beginExternalAgentThreadCardRun(
+      input.runtimeHandleId,
+      type.key,
+      input.currentThreadId,
+      input.instanceId,
+    ),
+    title: nextTitle,
     typeKey: type.key,
   };
 }

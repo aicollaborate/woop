@@ -4,15 +4,19 @@ name: Release
 #   - push of a tag matching v* (e.g. v1.0.3)
 #   - manual workflow_dispatch (for ad-hoc dry runs)
 #
-# Cross-platform matrix builds everything that `npm run tauri:build` can
-# produce. `tauri-action` is the official Tauri integration: it consumes
-# TAURI_SIGNING_PRIVATE_KEY, signs updater artifacts, and creates the
-# GitHub release with the right assets and an `update.json` manifest.
+# Flowix and standalone DSH products are built from the same tag workflow,
+# but remain separate artifacts. Flowix installers never embed DSH; the DSH
+# matrix publishes signed archives and one merged manifest after all targets.
 #
 # Required secrets (set in repo Settings → Secrets and variables):
 #   TAURI_SIGNING_PRIVATE_KEY         - minisign private key contents
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD - optional, only if your key has one
 #   GITHUB_TOKEN                      - provided automatically by Actions
+#   CLOUDFLARE_API_TOKEN              - R2 upload token for DSH publishing
+#   CLOUDFLARE_ACCOUNT_ID             - Cloudflare account used by R2
+#
+# Flowix updater and DSH archives intentionally share TAURI_SIGNING_PRIVATE_KEY.
+# The DSH public-key text is derived from tauri.conf.production.json.
 #
 # Optional (only needed for native installer signing, NOT required for
 # tauri-plugin-updater's minisign signature):
@@ -31,8 +35,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  dsh-gate:
+    name: DSH preflight gate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare locked Harness checkout
+        run: |
+          corepack enable
+          npm --prefix flowix-dsh-host run vendor:install
+
+      - name: Run DSH host gate before packaging
+        run: |
+          npm --prefix flowix-dsh-host run check
+          npm --prefix flowix-dsh-host run test:e2e
+
   release:
     name: build (${{ matrix.platform }})
+    needs: dsh-gate
     strategy:
       fail-fast: false
       matrix:
@@ -78,6 +109,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Derive shared DSH public key
+        shell: bash
+        run: |
+          {
+            echo 'FLOWIX_DSH_UPDATE_PUBLIC_KEY<<FLOWIX_DSH_PUBLIC_KEY_EOF'
+            node scripts/derive-dsh-public-key.mjs
+            echo 'FLOWIX_DSH_PUBLIC_KEY_EOF'
+          } >> "$GITHUB_ENV"
+
       - name: Build + sign + publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -108,3 +148,129 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
+
+  dsh-build:
+    name: build DSH (${{ matrix.name }})
+    needs: dsh-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            platform: macos-latest
+            targets: node24-macos-arm64,node24-macos-x64
+          - name: linux
+            platform: ubuntu-22.04
+            targets: node24-linux-x64
+          - name: windows
+            platform: windows-latest
+            targets: node24-windows-x64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust (minisign CLI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install minisign
+        shell: bash
+        run: cargo install minisign --locked
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build DSH sidecars
+        shell: bash
+        run: |
+          corepack enable
+          if [[ "${{ matrix.name }}" == "macos" ]]; then
+            npm run dsh:build:macos
+          else
+            npm run dsh:build -- --targets=${{ matrix.targets }}
+          fi
+
+      - name: Check DSH host
+        run: npm --prefix flowix-dsh-host run check
+
+      - name: Run DSH sidecar E2E
+        run: npm --prefix flowix-dsh-host run test:sidecar:e2e
+
+      - name: Package signed DSH archive
+        shell: bash
+        env:
+          FLOWIX_DSH_REQUIRE_SIGNATURE: "1"
+          FLOWIX_DSH_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: npm run dsh:package -- --targets=${{ matrix.targets }}
+
+      - name: Upload DSH artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-${{ matrix.name }}
+          path: |
+            .build/releases/dsh/Flowix-DSH_*
+            .build/releases/dsh/dsh-latest.json
+          if-no-files-found: error
+
+  dsh-publish:
+    name: publish DSH manifest
+    needs: dsh-build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download DSH artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-*
+          path: .build/dsh-artifacts
+
+      - name: Merge platform manifests
+        id: manifest
+        shell: bash
+        run: |
+          mapfile -t manifests < <(find .build/dsh-artifacts -name dsh-latest.json -type f -print)
+          test "${#manifests[@]}" -gt 0
+          node scripts/merge-dsh-manifests.mjs .build/dsh-latest.json "${manifests[@]}" \
+            --require-platforms=darwin-aarch64,darwin-x86_64,linux-x86_64,windows-x86_64
+          version="$(node -p "JSON.parse(require('fs').readFileSync('.build/dsh-latest.json', 'utf8')).version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Wrangler
+        run: npm install --global wrangler@4
+
+      - name: Publish DSH archives and manifests to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DSH_R2_BUCKET: ${{ vars.FLOWIX_DSH_R2_BUCKET || 'flowix-downloads' }}
+          DSH_VERSION: ${{ steps.manifest.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="dsh/v${DSH_VERSION}"
+          while IFS= read -r archive; do
+            name="$(basename "$archive")"
+            wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$name" --file "$archive" --remote
+            if [[ -f "${archive}.minisig" ]]; then
+              wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$name.minisig" --file "${archive}.minisig" --remote
+            fi
+          done < <(find .build/dsh-artifacts -name 'Flowix-DSH_*' -type f -print)
+          wrangler r2 object put "$DSH_R2_BUCKET/$prefix/dsh-latest.json" \
+            --file .build/dsh-latest.json --remote
+          wrangler r2 object put "$DSH_R2_BUCKET/dsh/latest.json" \
+            --file .build/dsh-latest.json --remote

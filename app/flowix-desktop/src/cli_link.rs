@@ -230,7 +230,7 @@ fn link_points_to(link: &Path, target: &Path) -> bool {
 /// 命中任一即可�?Prod 优先 (跟主二进制同�?��), 然后 dev fallback
 /// (`CARGO_MANIFEST_DIR/binaries/flowix-cli`)�?后者�? dev 模式�?/// 也能验证 symlink 行为 ── 链接会指向用�?checkout 里的 cargo 产物,
 /// 鍒囧洖 prod 瀹夎鍖呮椂, 涓嬫鍚姩浼氳 `paths_match` 妫€娴嬪埌閿欐寚骞堕噸寤恒€?
-fn current_sidecar_path() -> Option<PathBuf> {
+pub(crate) fn current_sidecar_path() -> Option<PathBuf> {
     // 1. prod: sidecar 跟主二进制同�?�� (Tauri 2 `externalBin` 布局)�?
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {

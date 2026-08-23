@@ -10,9 +10,9 @@ use flowix_core::memo_file::{
     sanitize_filename_component, IsMd, MergeOverrides,
 };
 use flowix_sync::{
-    collect_v2_attachments, v2_content_hash, CloudCheckout, CloudMembership, CloudNotebook,
-    CloudProduct, CloudState, SyncError, V2AccountSyncReport, V2LocalNote, V2LocalNotebook,
-    V2RemoteApply, V2SyncedNotebook,
+    collect_v2_attachments, v2_content_hash, v2_local_content_diverged, CloudCheckout,
+    CloudMembership, CloudNotebook, CloudProduct, CloudState, SyncError, V2AccountSyncReport,
+    V2LocalNote, V2LocalNotebook, V2RemoteApply, V2SyncedNotebook,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
@@ -345,14 +345,15 @@ fn apply_v2_note_changes(
                 .ok()
                 .flatten()
                 .and_then(|stored| stored.content_hash);
-            let locally_edited = state
+            let has_pending_change = state
                 .cloud_sync
                 .has_pending_v2_note_change(note_id)
-                .unwrap_or(false)
-                || matches!(
-                    (baseline_hash.as_deref(), disk_hash.as_deref()),
-                    (Some(base), Some(disk)) if base != disk
-                );
+                .unwrap_or(false);
+            let locally_edited = v2_local_content_diverged(
+                disk_hash.as_deref(),
+                baseline_hash.as_deref(),
+                has_pending_change,
+            );
             if locally_edited {
                 continue;
             }

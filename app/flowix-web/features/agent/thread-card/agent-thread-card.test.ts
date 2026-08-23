@@ -4,6 +4,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types/agent";
+import type { AgentConversationInstanceUpsert } from "@platform/tauri/client";
 
 const memoStateMock = vi.hoisted(() => ({
   memos: [] as Array<unknown>,
@@ -28,6 +29,13 @@ const agentAccessState = vi.hoisted(() => ({
     };
   },
 }));
+
+const toastMock = vi.hoisted(() => ({
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+
+vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(async () => undefined),
@@ -61,11 +69,6 @@ vi.mock("@platform/tauri/client", () => ({
       updatedAt: Date.now(),
     })),
     getThread: vi.fn(async () => ({ messages: [] })),
-    getThreadPage: vi.fn(async () => ({
-      messages: [],
-      oldestSequence: null,
-      hasMore: false,
-    })),
     getCodexThread: vi.fn(async () => ({ messages: [] })),
     getCodexThreadPage: vi.fn(async () => ({
       messages: [],
@@ -78,11 +81,19 @@ vi.mock("@platform/tauri/client", () => ({
       oldestSequence: null,
       hasMore: false,
     })),
+    listDeepSeekHarnessThreads: vi.fn(async () => []),
+    getDeepSeekHarnessThread: vi.fn(async () => ({ messages: [] })),
+    getDeepSeekHarnessThreadPage: vi.fn(async () => ({
+      messages: [],
+      oldestSequence: null,
+      hasMore: false,
+    })),
+    getDeepSeekHarnessSessionId: vi.fn(async () => null),
     getCodexSessionId: vi.fn(async () => null),
     getClaudeSessionId: vi.fn(async () => null),
     getCodexDefaultModel: vi.fn(async () => "gpt-5.5"),
     listConversationInstances: vi.fn(async () => []),
-    upsertConversationInstance: vi.fn(async (instance: any) => ({
+    upsertConversationInstance: vi.fn(async (instance: AgentConversationInstanceUpsert) => ({
       ...instance,
       threadTitle: instance.initialTitle,
     })),
@@ -97,6 +108,25 @@ vi.mock("@platform/tauri/client", () => ({
   windows: {
     openPreferences: vi.fn(async () => undefined),
     openMarkdownPathTab: vi.fn(async () => undefined),
+  },
+  deepseekHarness: {
+    get: vi.fn(async () => ({
+      model: {
+        provider: "deepseek",
+        model: "deepseek-chat",
+        apiUrl: "",
+        apiKeys: {},
+      },
+    })),
+    list: vi.fn(async () => [{
+      model: {
+        provider: "deepseek",
+        model: "deepseek-chat",
+        apiUrl: "",
+        apiKeys: {},
+      },
+    }]),
+    sessionUsage: vi.fn(async () => null),
   },
   listenToAgentStream: vi.fn(),
 }));
@@ -204,7 +234,7 @@ async function waitForEnabledSendButton(
 }
 
 async function seedRenderableMessages(
-  _typeKey: "flowix" | "codex" | "claude" | "gemini" | "hermes" | "openclaw",
+  _typeKey: "deepseek-harness" | "codex" | "claude" | "gemini" | "hermes" | "openclaw",
   threadId: string,
   messages: ChatMessage[],
 ): Promise<void> {
@@ -378,7 +408,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "DOM Flow",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -390,7 +420,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(card).not.toBeNull();
 
     const store = useChatStore.getState();
-    store.bindThreadType(threadId, "flowix");
+    store.bindThreadType(threadId, "deepseek-harness");
     store.dispatchAgentChunk({ kind: "stream_start", thread_id: threadId });
     store.dispatchAgentChunk({
       kind: "text",
@@ -551,7 +581,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const threadId = "thread-card-conversation-run-source";
     const instance = useAgentConversationStore.getState().createInstance({
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       title: "Conversation Run Source",
       threadId,
       source: { kind: "thread-card" },
@@ -560,7 +590,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       kind: "stream_start",
       thread_id: threadId,
       run_id: "run-conversation-source",
-      agent_type: "flowix",
+      agent_type: "deepseek-harness",
     });
 
     const host = document.createElement("div");
@@ -578,7 +608,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: instance.instanceId,
               threadId,
               title: "Conversation Run Source",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -615,7 +645,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     };
 
     useChatStore.setState((state) => ({
-      threadTypes: { ...state.threadTypes, [threadId]: "flowix" },
+      threadTypes: { ...state.threadTypes, [threadId]: "deepseek-harness" },
       threadStates: {
         ...state.threadStates,
         [threadId]: {
@@ -631,7 +661,7 @@ describe("AgentThreadCard NodeView streaming", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("deepseek-harness", threadId, [
       firstMessage,
       streamingMessage,
     ]);
@@ -647,7 +677,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Incremental",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -677,7 +707,7 @@ describe("AgentThreadCard NodeView streaming", () => {
         },
       };
     });
-    await seedRenderableMessages("flowix", threadId, patchedMessages);
+    await seedRenderableMessages("deepseek-harness", threadId, patchedMessages);
 
     await flushAnimationFrame();
 
@@ -700,7 +730,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     const content = `${"A".repeat(ASSISTANT_MESSAGE_DISPLAY_MAX_CHARS + 20)}${tail}`;
 
     useChatStore.setState((state) => ({
-      threadTypes: { ...state.threadTypes, [threadId]: "flowix" },
+      threadTypes: { ...state.threadTypes, [threadId]: "deepseek-harness" },
       threadStates: {
         ...state.threadStates,
         [threadId]: {
@@ -716,7 +746,7 @@ describe("AgentThreadCard NodeView streaming", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("deepseek-harness", threadId, [
       {
         id: "assistant-large",
         role: "assistant",
@@ -736,7 +766,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Display Budget",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -774,7 +804,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Editable title",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -788,7 +818,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(title).not.toBeNull();
 
     const store = useChatStore.getState();
-    store.bindThreadType(threadId, "flowix");
+    store.bindThreadType(threadId, "deepseek-harness");
     store.dispatchAgentChunk({ kind: "stream_start", thread_id: threadId });
     store.dispatchAgentChunk({
       kind: "text",
@@ -839,7 +869,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       "@features/agent/thread-card/runtime/thread-card-conversation"
     );
     const instance = useAgentConversationStore.getState().createInstance({
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       title: "User renamed title",
       threadId: "thread-existing-title",
       source: { kind: "thread-card" },
@@ -848,7 +878,7 @@ describe("AgentThreadCard NodeView streaming", () => {
 
     const result = await upsertAgentThreadCardConversationInstance({
       instanceId: instance.instanceId,
-      agentType: "flowix",
+      agentType: "deepseek-harness",
       title: "Prompt generated title",
       threadId: "thread-existing-title",
       source: { kind: "thread-card" },
@@ -937,7 +967,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Submit Flow",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -960,9 +990,9 @@ describe("AgentThreadCard NodeView streaming", () => {
       threadId,
       expect.objectContaining({
         content: "write a short answer",
-        agentType: "flowix",
+        agentType: "deepseek-harness",
         runtimeConfig: expect.objectContaining({
-          flowix: expect.any(Object),
+          deepseekHarness: expect.any(Object),
         }),
       }),
     );
@@ -994,7 +1024,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       releaseInitialization = resolve;
     });
     vi.mocked(agent.upsertConversationInstance).mockImplementationOnce(
-      async (instance: any) => {
+      async (instance: AgentConversationInstanceUpsert) => {
         await initializationPending;
         return { ...instance, threadTitle: instance.initialTitle };
       },
@@ -1011,7 +1041,7 @@ describe("AgentThreadCard NodeView streaming", () => {
           attrs: {
             threadId: "thread-awaited-initialization",
             title: "Awaited initialization",
-            typeKey: "flowix",
+            typeKey: "deepseek-harness",
             collapsed: false,
           },
         }],
@@ -1048,7 +1078,7 @@ describe("AgentThreadCard NodeView streaming", () => {
           attrs: {
             threadId: null,
             title: "Failed initialization",
-            typeKey: "flowix",
+            typeKey: "deepseek-harness",
             collapsed: false,
           },
         }],
@@ -1061,9 +1091,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     (await waitForEnabledSendButton(card)).click();
     await vi.waitFor(() => {
-      expect(
-        card.querySelector<HTMLElement>(".agent-thread-card__error")?.hidden,
-      ).toBe(false);
+      expect(toastMock.error).toHaveBeenCalledWith("thread initialization failed");
     });
     expect(agent.chatStream).not.toHaveBeenCalled();
   });
@@ -1088,7 +1116,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-draft",
               title: "Draft",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -1135,7 +1163,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-long-draft",
               title: "Long Draft",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               inputDraft: "short",
             },
@@ -1181,7 +1209,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Clear Draft",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               inputDraft: "send me",
             },
@@ -1489,11 +1517,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     const getThreadMock = agent.getThread as unknown as {
       mockClear: () => void;
     };
-    const getThreadPageMock = agent.getThreadPage as unknown as {
+    const getDeepSeekHarnessThreadPageMock = agent.getDeepSeekHarnessThreadPage as unknown as {
       mockClear: () => void;
     };
     getThreadMock.mockClear();
-    getThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockClear();
 
     editor = new Editor({
       element: host,
@@ -1506,7 +1534,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Collapsed History",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: true,
             },
           },
@@ -1517,7 +1545,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).not.toHaveBeenCalled();
+    expect(agent.getDeepSeekHarnessThreadPage).not.toHaveBeenCalled();
 
     host
       .querySelector<HTMLButtonElement>(".agent-thread-card__collapse")
@@ -1526,7 +1554,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).toHaveBeenCalledWith(threadId, null, 10);
+    expect(agent.getDeepSeekHarnessThreadPage).toHaveBeenCalledWith(threadId, null, 10);
   });
 
   it("rerenders cached messages when expanding a previously loaded collapsed Thread Card", async () => {
@@ -1543,10 +1571,10 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
     vi.stubGlobal("cancelIdleCallback", vi.fn());
 
-    const getThreadPageMock = agent.getThreadPage as unknown as {
+    const getDeepSeekHarnessThreadPageMock = agent.getDeepSeekHarnessThreadPage as unknown as {
       mockClear: () => void;
     };
-    getThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockClear();
 
     editor = new Editor({
       element: host,
@@ -1559,7 +1587,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Cached",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -1570,7 +1598,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    await seedRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("deepseek-harness", threadId, [
       {
         id: "assistant-cached",
         role: "assistant",
@@ -1596,7 +1624,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       card?.querySelector(".agent-thread-card__message-content"),
     ).toBeNull();
 
-    getThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockClear();
 
     host
       .querySelector<HTMLButtonElement>(".agent-thread-card__collapse")
@@ -1605,7 +1633,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).not.toHaveBeenCalled();
+    expect(agent.getDeepSeekHarnessThreadPage).not.toHaveBeenCalled();
     expect(card?.textContent).toContain("cached answer after finish");
   });
 
@@ -1649,7 +1677,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Skeleton History",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -1692,7 +1720,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       oldestSequence: null;
       hasMore: false;
     }) => void = () => undefined;
-    const getThreadPageMock = agent.getThreadPage as unknown as {
+    const getDeepSeekHarnessThreadPageMock = agent.getDeepSeekHarnessThreadPage as unknown as {
       mockClear: () => void;
       mockImplementationOnce: (
         implementation: () => Promise<{
@@ -1702,8 +1730,8 @@ describe("AgentThreadCard NodeView streaming", () => {
         }>,
       ) => void;
     };
-    getThreadPageMock.mockClear();
-    getThreadPageMock.mockImplementationOnce(
+    getDeepSeekHarnessThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveThread = resolve;
@@ -1721,7 +1749,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Fullscreen Skeleton",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: true,
             },
           },
@@ -1796,11 +1824,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     const getThreadMock = agent.getThread as unknown as {
       mockClear: () => void;
     };
-    const getThreadPageMock = agent.getThreadPage as unknown as {
+    const getDeepSeekHarnessThreadPageMock = agent.getDeepSeekHarnessThreadPage as unknown as {
       mockClear: () => void;
     };
     getThreadMock.mockClear();
-    getThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockClear();
 
     editor = new Editor({
       element: host,
@@ -1813,7 +1841,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Viewport History",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -1824,13 +1852,13 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).not.toHaveBeenCalled();
+    expect(agent.getDeepSeekHarnessThreadPage).not.toHaveBeenCalled();
 
     triggerIntersection(true);
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).toHaveBeenCalledWith(threadId, null, 10);
+    expect(agent.getDeepSeekHarnessThreadPage).toHaveBeenCalledWith(threadId, null, 10);
   });
 
   it("loads Thread Card history when a collapsed card enters fullscreen", async () => {
@@ -1850,11 +1878,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     const getThreadMock = agent.getThread as unknown as {
       mockClear: () => void;
     };
-    const getThreadPageMock = agent.getThreadPage as unknown as {
+    const getDeepSeekHarnessThreadPageMock = agent.getDeepSeekHarnessThreadPage as unknown as {
       mockClear: () => void;
     };
     getThreadMock.mockClear();
-    getThreadPageMock.mockClear();
+    getDeepSeekHarnessThreadPageMock.mockClear();
 
     editor = new Editor({
       element: host,
@@ -1867,7 +1895,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Fullscreen History",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: true,
             },
           },
@@ -1878,7 +1906,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).not.toHaveBeenCalled();
+    expect(agent.getDeepSeekHarnessThreadPage).not.toHaveBeenCalled();
 
     host
       .querySelector<HTMLButtonElement>(".agent-thread-card__fullscreen")
@@ -1887,7 +1915,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getThreadPage).toHaveBeenCalledWith(threadId, null, 10);
+    expect(agent.getDeepSeekHarnessThreadPage).toHaveBeenCalledWith(threadId, null, 10);
   });
 
   it("persists fullscreen toggles in the Thread Card node attrs", async () => {
@@ -1908,7 +1936,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-fullscreen-persist",
               threadId: "thread-fullscreen-persist",
               title: "Fullscreen Persist",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: false,
             },
@@ -1947,7 +1975,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-fullscreen-first",
               threadId: "thread-fullscreen-first",
               title: "First Fullscreen",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: true,
             },
@@ -1958,7 +1986,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-fullscreen-second",
               threadId: "thread-fullscreen-second",
               title: "Second Fullscreen",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: true,
             },
@@ -2006,7 +2034,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const threadId = "thread-restored-fullscreen-bottom";
-    await seedRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("deepseek-harness", threadId, [
       {
         id: "cached-assistant-message",
         role: "assistant",
@@ -2029,7 +2057,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-restored-fullscreen-bottom",
               threadId,
               title: "Restored Fullscreen Bottom",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: true,
             },
@@ -2068,7 +2096,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-legacy-fullscreen-restore",
               title: "Legacy Fullscreen Restore",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: true,
             },
@@ -2109,7 +2137,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const threadId = "thread-stale-restore-frame";
-    await seedRenderableMessages("flowix", threadId, [
+    await seedRenderableMessages("deepseek-harness", threadId, [
       {
         id: "stale-frame-message",
         role: "assistant",
@@ -2131,7 +2159,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-stale-restore-frame",
               threadId,
               title: "Stale Restore Frame",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: true,
             },
@@ -2182,7 +2210,7 @@ describe("AgentThreadCard NodeView streaming", () => {
               instanceId: "instance-before-document-switch",
               threadId: "thread-before-document-switch",
               title: "Before Document Switch",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
               fullscreen: false,
             },
@@ -2201,7 +2229,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             instanceId: "instance-after-document-switch",
             threadId: "thread-after-document-switch",
             title: "After Document Switch",
-            typeKey: "flowix",
+            typeKey: "deepseek-harness",
             collapsed: false,
             fullscreen: true,
           },
@@ -2246,7 +2274,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId,
               title: "Fullscreen Selection",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2297,7 +2325,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-click-focus",
               title: "Click Focus",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2339,7 +2367,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-event-boundary",
               title: "Event Boundary",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2382,7 +2410,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-focus-deselect",
               title: "Focus Deselect",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2441,7 +2469,7 @@ describe("AgentThreadCard NodeView streaming", () => {
             attrs: {
               threadId: "thread-card-outside-blur",
               title: "Outside Blur",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2716,7 +2744,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Empty",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2753,7 +2781,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "History",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2795,7 +2823,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -2833,7 +2861,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Draft",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2863,7 +2891,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -2903,7 +2931,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Draft not overwritten",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -2933,7 +2961,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -2990,7 +3018,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Down idle",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3019,7 +3047,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -3050,7 +3078,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Typing",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3080,7 +3108,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -3118,7 +3146,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Caret boundaries",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3148,7 +3176,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -3191,7 +3219,7 @@ describe("AgentThreadCard input history navigation", () => {
             attrs: {
               threadId,
               title: "Unmodified",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3221,7 +3249,7 @@ describe("AgentThreadCard input history navigation", () => {
         },
       },
     }));
-    await seedRenderableMessages("flowix", threadId, messages);
+    await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
     const input = host.querySelector<HTMLTextAreaElement>(
@@ -3311,7 +3339,7 @@ describe("AgentThreadCard input latency optimizations", () => {
             attrs: {
               threadId,
               title: "Lite",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3461,7 +3489,7 @@ describe("AgentThreadCard composer during agent run", () => {
             attrs: {
               threadId,
               title: "Busy",
-              typeKey: "flowix",
+              typeKey: "deepseek-harness",
               collapsed: false,
             },
           },
@@ -3480,7 +3508,7 @@ describe("AgentThreadCard composer during agent run", () => {
         runs: {
           "run-1": {
             runId: "run-1",
-            agentType: "flowix",
+            agentType: "deepseek-harness",
             threadId,
             startedAt: Date.now(),
             status: "running",

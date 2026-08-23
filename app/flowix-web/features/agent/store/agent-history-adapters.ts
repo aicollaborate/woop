@@ -21,20 +21,6 @@ export interface AgentHistoryAdapter {
   ): Promise<ThreadHistoryPage>;
 }
 
-function createFlowixHistoryAdapter(): AgentHistoryAdapter {
-  return {
-    typeKey: "flowix",
-    listThreads: () => agentClient.listThreads(),
-    async getFullHistory(threadId) {
-      return (await agentClient.getThread(threadId)).messages;
-    },
-    getInitialHistory: (threadId, limit) =>
-      agentClient.getThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getThreadPage(threadId, beforeSequence, limit),
-  };
-}
-
 function createCodexHistoryAdapter(): AgentHistoryAdapter {
   return {
     typeKey: "codex",
@@ -125,7 +111,6 @@ function createDeepSeekHarnessHistoryAdapter(): AgentHistoryAdapter {
 }
 
 const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
-  flowix: createFlowixHistoryAdapter(),
   // Codex history is materialized by the backend from compact DB snapshots.
   // The rollout transcript is a display-only fallback when DB events are empty.
   codex: createCodexHistoryAdapter(),

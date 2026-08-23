@@ -1,12 +1,29 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const PROTOCOL_EPOCH: i64 = 2;
 
 pub fn v2_content_hash(bytes: &[u8]) -> String {
     base64_url_no_pad(&Sha256::digest(bytes))
+}
+
+/// Decide whether a local file must be preserved instead of applying a pulled
+/// Cloud head. A persisted dirty generation is authoritative. Comparing the
+/// current bytes with the last acknowledged server hash also closes the short
+/// watcher window between an atomic file save and dirty-queue persistence.
+pub fn v2_local_content_diverged(
+    local_hash: Option<&str>,
+    acknowledged_hash: Option<&str>,
+    has_pending_change: bool,
+) -> bool {
+    has_pending_change
+        || matches!(
+            (local_hash, acknowledged_hash),
+            (Some(local), Some(acknowledged)) if local != acknowledged
+        )
+        || matches!((local_hash, acknowledged_hash), (Some(_), None))
 }
 
 pub fn new_v2_operation_id() -> String {
@@ -480,9 +497,46 @@ pub struct V2BlobReservationEnvelope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct V2BlobUpload {
     pub method: String,
-    pub path: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub completion_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2BlobDownloadEnvelope {
+    pub data: V2BlobDownload,
+    pub download: V2BlobDownloadCapability,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2BlobDownload {
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2BlobDownloadCapability {
+    pub method: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -586,7 +640,8 @@ pub struct V2PushResult {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_v2_attachments, new_v2_operation_id, v2_content_hash, V2NotePut, V2PushOperation,
+        collect_v2_attachments, new_v2_operation_id, v2_content_hash, v2_local_content_diverged,
+        V2NotePut, V2PushOperation,
     };
 
     #[test]
@@ -607,6 +662,23 @@ mod tests {
         assert!(first
             .chars()
             .all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '-'));
+    }
+
+    #[test]
+    fn local_divergence_covers_dirty_and_watcher_settle_windows() {
+        assert!(!v2_local_content_diverged(
+            Some("same"),
+            Some("same"),
+            false
+        ));
+        assert!(v2_local_content_diverged(
+            Some("local"),
+            Some("cloud"),
+            false
+        ));
+        assert!(v2_local_content_diverged(Some("new"), None, false));
+        assert!(v2_local_content_diverged(None, Some("cloud"), true));
+        assert!(!v2_local_content_diverged(None, Some("cloud"), false));
     }
 
     #[test]

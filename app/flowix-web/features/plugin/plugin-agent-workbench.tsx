@@ -32,6 +32,7 @@ import {
   PluginFieldControl,
   type PluginFieldValue,
 } from './plugin-field-control';
+import { DEFAULT_AGENT_TYPE_KEY } from '@/lib/agent-types';
 import { PluginMarkmapControls } from './plugin-markmap-controls';
 
 function fieldList(plugin: PluginDescriptor): PluginField[] {
@@ -54,7 +55,7 @@ export function AgentPluginWorkbench({
   currentNoteContent: string;
 }) {
   const [values, setValues] = useState<Record<string, PluginFieldValue>>({ prompt: '' });
-  const [agentType, setAgentType] = useState<AgentTypeKey>('flowix');
+  const [agentType, setAgentType] = useState<AgentTypeKey>(DEFAULT_AGENT_TYPE_KEY);
   const [artifact, setArtifact] = useState<PluginArtifact | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);

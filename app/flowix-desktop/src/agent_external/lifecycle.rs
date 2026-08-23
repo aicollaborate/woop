@@ -10,7 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::shared::{emit_stream_end_once, ExternalWatchdogFinalizedRun};
-use crate::agent_flowix::{AgentChunk, AgentUserMessage};
+use crate::agent_wire::{AgentChunk, AgentUserMessage};
 
 #[async_trait]
 pub trait ExternalLifecycleEmitter: Send + Sync {
@@ -64,11 +64,14 @@ pub trait ExternalLifecycleEmitter: Send + Sync {
         message: String,
         run_id: &str,
     ) {
+        let message = crate::agent_external::safe_user_error_message(&message);
+        let error_details = crate::agent_external::classify_agent_error(&message, "runtime");
         self.emit_and_persist_lifecycle_chunk(
             app_handle,
             &AgentChunk::Error {
                 thread_id: thread_id.to_string(),
                 message,
+                error_details: Some(error_details),
             },
             run_id,
         )
@@ -153,6 +156,9 @@ fn watchdog_chunks(run: &ExternalWatchdogFinalizedRun) -> Vec<AgentChunk> {
         chunks.push(AgentChunk::Error {
             thread_id: run.thread_id.clone(),
             message: reason.clone(),
+            error_details: Some(crate::agent_external::classify_agent_error(
+                reason, "watchdog",
+            )),
         });
     }
     chunks.push(AgentChunk::StreamEnd {
@@ -207,8 +213,6 @@ mod tests {
             permission_mode: None,
             codex_model: None,
             codex_reasoning_effort: None,
-            agent_role_memo_id: None,
-            agent_role_name: None,
             conversation_title: None,
         };
 

@@ -10,11 +10,12 @@
       见 `scripts/sign-cli.sh`。
 
       v4 rationale:
-      - allow-jit / allow-unsigned-executable-memory ── rllm crate 跟部分 Rust
-        动态库需要运行时生成可执行内存, Apple notarization 允许这两条
+      - allow-jit / allow-unsigned-executable-memory ── embedded JavaScript
+        runtimes and some native dependencies may need executable memory;
+        Apple notarization allows these with the hardened runtime.
         entitlement 配合 hardened runtime。
       - disable-library-validation ── 允许加载未 Apple 签名的 .dylib
-        (rllm / 第三方 Rust 依赖)。
+        (third-party native dependencies).
       - network.client ── IPC 跟 AI provider 走 https。
       - network.server ── tauri://localhost webview 跟 IPC bridge。
     -->

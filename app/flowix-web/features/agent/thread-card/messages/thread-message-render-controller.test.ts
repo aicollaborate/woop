@@ -62,9 +62,9 @@ function createController(typeKey: AgentTypeKey) {
 }
 
 describe("ThreadMessageRenderController empty settings", () => {
-  it("flowix empty card no longer renders runtime settings (主空间由侧边栏资料决定)", () => {
+  it("DeepSeek Harness empty card renders runtime settings", () => {
     const { body, controller, createExternalAgentEmptySettings } =
-      createController("flowix");
+      createController("deepseek-harness");
 
     controller.render({
       messages: [],
@@ -74,12 +74,10 @@ describe("ThreadMessageRenderController empty settings", () => {
       isThreadCacheLoading: false,
     });
 
-    // flowix 没有 model/permission/reasoning/files 等可配置项, supportsAgentEmptySettings
-    // 返回 false ── 不再渲染空设置区。
-    expect(createExternalAgentEmptySettings).not.toHaveBeenCalled();
+    expect(createExternalAgentEmptySettings).toHaveBeenCalledTimes(1);
     expect(
       body.querySelector(".agent-thread-card__empty--codex-settings"),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
   it("codex empty card renders runtime settings", () => {
@@ -151,7 +149,7 @@ describe("ThreadMessageRenderController empty settings", () => {
 
   it("does not render runtime settings while thread cache is loading", () => {
     const { body, controller, createExternalAgentEmptySettings } =
-      createController("flowix");
+      createController("deepseek-harness");
 
     controller.render({
       messages: [],
@@ -175,7 +173,7 @@ describe("ThreadMessageRenderController run-end re-parse", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", () => undefined);
     try {
-      const { body, controller } = createController("flowix");
+      const { body, controller } = createController("deepseek-harness");
       const streaming = {
         id: "a1",
         role: "assistant" as const,

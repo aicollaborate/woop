@@ -60,7 +60,7 @@ verify_dmg_contents() (
     return 1
   fi
 
-  for name in flowix-cli dsh-host dsh-host-spawn-helper; do
+  for name in flowix-cli; do
     binary="$mounted_app/Contents/MacOS/$name"
     if [ ! -x "$binary" ]; then
       echo "ERROR: packaged sidecar is missing or not executable: $binary" >&2
@@ -76,6 +76,10 @@ verify_dmg_contents() (
   done
   codesign --verify --deep --strict --verbose=2 "$mounted_app"
   verify_team_identifier "$mounted_app"
+  if find "$mounted_app" -type f \( -iname 'dsh-host' -o -iname 'dsh-host.exe' -o -iname 'dsh-host-spawn-helper' -o -iname 'dsh-host-spawn-helper.exe' -o -iname '*dsh-web-ui*' -o -iname '*dsh-client-ui-*' \) -print -quit | grep -q .; then
+    echo "ERROR: signed macOS app contains the separately distributed DSH runtime or UI" >&2
+    return 1
+  fi
   echo "==> Verified DMG contents: all $EXPECTED_ARCH sidecars + valid nested signatures"
 )
 

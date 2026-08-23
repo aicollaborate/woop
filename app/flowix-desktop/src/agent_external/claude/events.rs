@@ -1,9 +1,9 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
-use crate::agent_external::AgentChunkMetadata;
-use crate::agent_flowix::AgentChunk;
+use crate::agent_external::{provider_error_from_json, AgentChunkMetadata};
 use crate::agent_types::UsageInfo;
+use crate::agent_wire::AgentChunk;
 
 pub(crate) struct ParsedClaudeStdoutLine {
     pub value: Option<Value>,
@@ -473,8 +473,18 @@ pub(crate) fn claude_event_to_chunks_with_state(
         return chunks;
     }
 
-    // [stream path] type=result 鈹€鈹€ CLI 缁堟鏍囪,娓叉煋鍓嶄涪寮冦€?
+    // [stream path] type=result — CLI terminal marker. Error results carry
+    // the provider's actual message in `result` (or `error.message`); keep it
+    // instead of reducing the failure to the child process exit code.
     if event_type == "result" {
+        if let Some(text) = provider_error_from_json(value) {
+            let error_details = crate::agent_external::classify_agent_error(&text, "stdout");
+            return vec![AgentChunk::Error {
+                thread_id: thread_id.to_string(),
+                message: text,
+                error_details: Some(error_details),
+            }];
+        }
         return Vec::new();
     }
 
@@ -483,9 +493,11 @@ pub(crate) fn claude_event_to_chunks_with_state(
     if event_type == "system" {
         if value.get("subtype").and_then(Value::as_str) == Some("error") {
             if let Some(text) = first_string(value, &["message", "error"]) {
+                let error_details = crate::agent_external::classify_agent_error(&text, "stdout");
                 return vec![AgentChunk::Error {
                     thread_id: thread_id.to_string(),
                     message: text,
+                    error_details: Some(error_details),
                 }];
             }
         }
@@ -898,5 +910,33 @@ mod tests {
             &chunks[5],
             AgentChunk::Error { message, .. } if message == "Claude transport error"
         ));
+    }
+
+    #[test]
+    fn preserves_provider_error_from_result_event() {
+        let value = serde_json::json!({
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": true,
+            "result": "API Error: Request rejected (429) · usage limit reached (2056)"
+        });
+
+        let chunks = claude_event_to_chunks("thread_error", &value);
+        assert!(matches!(
+            chunks.as_slice(),
+            [AgentChunk::Error { message, .. }] if message.contains("usage limit reached")
+        ));
+    }
+
+    #[test]
+    fn ignores_successful_result_event() {
+        let value = serde_json::json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "result": "completed"
+        });
+
+        assert!(claude_event_to_chunks("thread_success", &value).is_empty());
     }
 }

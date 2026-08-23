@@ -20,8 +20,8 @@ use crate::agent_external::shared::TurnEvents;
 use crate::agent_external::{
     emit_chunk_with_run_id_and_metadata, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
 };
-use crate::agent_flowix::AgentChunk;
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::AgentChunk;
 use crate::runtime_log;
 
 type CodexTurnEvents = TurnEvents;
@@ -81,7 +81,7 @@ pub(crate) async fn read_codex_stdout<R>(
     reader: BufReader<R>,
     stream_end_emitted: Arc<AtomicBool>,
     started_at_millis: i64,
-) -> Result<(), String>
+) -> Result<Option<String>, String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -95,6 +95,7 @@ where
     let mut blocked_post_completion_chunks = 0usize;
     let mut source_sequence = 0u64;
     let mut turn_events = CodexTurnEvents::default();
+    let mut provider_error: Option<String> = None;
     loop {
         let line_result = read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await;
         let Some((line, line_truncated_by_reader)) = (match line_result {
@@ -248,6 +249,12 @@ where
             .into_iter()
             .enumerate()
         {
+            if let AgentChunk::Error { message, .. } = &chunk {
+                provider_error = Some(message.clone());
+                // The lifecycle tail emits the terminal error once after the
+                // process status is known; do not emit a duplicate here.
+                continue;
+            }
             if !should_emit_following_stdout_chunks(terminal_signal) {
                 blocked_post_completion_chunks += 1;
                 continue;
@@ -349,7 +356,7 @@ where
             "blocked_post_completion_chunks": blocked_post_completion_chunks,
         })),
     );
-    Ok(())
+    Ok(provider_error)
 }
 
 fn should_reconcile_rollout(terminal_signal: CodexRunSignal, stream_end_emitted: bool) -> bool {
@@ -719,7 +726,7 @@ mod tests {
                     thread_id: "session-1".to_string(),
                     model_id: None,
                     last_run_at: None,
-                    usage: Some(crate::agent_flowix::UsageInfo {
+                    usage: Some(crate::agent_wire::UsageInfo {
                         total_tokens: Some(total_tokens),
                         context_used_tokens: None,
                         ..Default::default()

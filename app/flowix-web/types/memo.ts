@@ -58,7 +58,7 @@ export type MemoEvent =
       path: string;
       notebookId: string;
       derivedChanged: MemoDerivedChanged;
-      source?: MemoChangeSource;
+      source: MemoChangeSource;
     } & MemoContentCommit)
   | {
       kind: 'tags_renamed';

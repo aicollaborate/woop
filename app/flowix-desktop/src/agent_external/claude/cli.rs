@@ -21,11 +21,11 @@ use super::stream::read_claude_stdout;
 use super::AGENT_TYPE;
 use crate::agent_external::{
     persist_and_emit_external_chunk, persist_external_chunk, read_stderr_to_string,
-    resolve_and_freeze_runtime_cwd, select_external_session_for_runtime, truncate_for_log,
-    ExternalRunRegistry, USER_STOPPED_REASON,
+    resolve_and_freeze_runtime_cwd, resolve_external_failure, select_external_session_for_runtime,
+    truncate_for_log, ExternalRunRegistry, USER_STOPPED_REASON,
 };
-use crate::agent_flowix::{AgentChunk, AgentUserMessage};
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::{AgentChunk, AgentUserMessage};
 use crate::runtime_log;
 
 fn append_attached_image_context(mut prompt: String, image_paths: &[String]) -> String {
@@ -192,7 +192,7 @@ impl ClaudeCliManager {
         true
     }
 
-    pub async fn running_threads(&self) -> HashMap<String, crate::agent_flowix::RunInfo> {
+    pub async fn running_threads(&self) -> HashMap<String, crate::agent_wire::RunInfo> {
         self.runs.running_threads().await
     }
 
@@ -401,7 +401,7 @@ impl ClaudeCliManager {
             return Ok(());
         };
 
-        stdout_result?;
+        let provider_error = stdout_result?;
         let stderr_text = stderr_text.unwrap_or_default();
         runtime_log::record_agent_event(
             if status.success() { "info" } else { "error" },
@@ -420,12 +420,16 @@ impl ClaudeCliManager {
             })),
         );
         if !status.success() {
-            let detail = stderr_text.trim();
-            return Err(if detail.is_empty() {
-                format!("Claude Code CLI exited with status {status}")
-            } else {
-                format!("Claude Code CLI exited with status {status}: {detail}")
-            });
+            return Err(resolve_external_failure(
+                provider_error.as_deref(),
+                None,
+                &stderr_text,
+                "Claude Code CLI",
+                &status.to_string(),
+            ));
+        }
+        if let Some(provider_error) = provider_error {
+            return Err(provider_error);
         }
         if !stderr_text.trim().is_empty() {
             tracing::info!("[ClaudeCli] stderr: {}", stderr_text.trim());

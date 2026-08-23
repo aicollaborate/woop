@@ -556,12 +556,14 @@ impl SyncManager {
                                 SyncError::InvalidState("memo content length exceeds i64".into())
                             })?,
                             "note",
+                            "text/markdown; charset=utf-8",
                         )
                         .await?;
                     self.client
                         .v2_upload_blob(
                             access_token,
-                            &reservation.upload.path,
+                            &reservation.upload,
+                            "text/markdown; charset=utf-8",
                             note.content.clone(),
                         )
                         .await?;
@@ -573,12 +575,14 @@ impl SyncManager {
                                 &attachment.metadata.content_hash,
                                 attachment.metadata.size_bytes,
                                 "attachment",
+                                &attachment.metadata.mime_type,
                             )
                             .await?;
                         self.client
                             .v2_upload_blob(
                                 access_token,
-                                &reservation.upload.path,
+                                &reservation.upload,
+                                &attachment.metadata.mime_type,
                                 attachment.content.clone(),
                             )
                             .await?;
@@ -666,6 +670,18 @@ impl SyncManager {
                 .iter()
                 .map(|item| (item.operation_id.as_str(), item))
                 .collect();
+            let operations_by_id: HashMap<&str, &V2PushOperation> = operations
+                .iter()
+                .map(|operation| {
+                    let operation_id = match operation {
+                        V2PushOperation::NotebookPut { operation_id, .. }
+                        | V2PushOperation::NotebookDelete { operation_id, .. }
+                        | V2PushOperation::NotePut { operation_id, .. }
+                        | V2PushOperation::NoteDelete { operation_id, .. } => operation_id,
+                    };
+                    (operation_id.as_str(), operation)
+                })
+                .collect();
             for item in batch {
                 let response = by_id.get(item.operation_id.as_str()).ok_or_else(|| {
                     SyncError::InvalidState(format!(
@@ -674,14 +690,28 @@ impl SyncManager {
                     ))
                 })?;
                 if response.ok {
-                    if let Some(data) = response.data.as_ref() {
-                        self_sync_seqs.insert(data.sync_seq);
-                    }
+                    let data = response.data.as_ref().ok_or_else(|| {
+                        SyncError::InvalidState(format!(
+                            "cloud omitted successful operation data {}",
+                            item.operation_id
+                        ))
+                    })?;
+                    let operation = operations_by_id
+                        .get(item.operation_id.as_str())
+                        .ok_or_else(|| {
+                            SyncError::InvalidState(format!(
+                                "local push batch omitted operation {}",
+                                item.operation_id
+                            ))
+                        })?;
+                    self_sync_seqs.insert(data.sync_seq);
                     self.store.acknowledge_v2_operation(
                         &item.operation_id,
                         item.entity_type,
                         &item.entity_id,
                         item.generation,
+                        operation,
+                        data,
                     )?;
                     match item.operation_kind {
                         V2OperationKind::Put => uploaded += 1,

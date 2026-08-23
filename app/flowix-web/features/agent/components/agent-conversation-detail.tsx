@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
-import { getAgentType } from '@/lib/agent-types';
+import { DEFAULT_AGENT_TYPE_KEY, getAgentType } from '@/lib/agent-types';
+import type { AgentTypeKey } from '@/types/agent';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
@@ -101,7 +102,7 @@ export function AgentConversationDetail({
   const draftRef = useRef<string | null>(null);
   const destroyedRef = useRef(false);
   const renderThreadIdRef = useRef<string | null>(renderThreadId);
-  const typeKeyRef = useRef(instance?.agentType ?? 'flowix');
+  const typeKeyRef = useRef<AgentTypeKey>(instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY);
   const messagesRef = useRef(messages);
   const isLoadingRef = useRef(isLoading);
   const instanceRef = useRef(instance);
@@ -113,7 +114,7 @@ export function AgentConversationDetail({
   const submitRef = useRef<() => void>(() => undefined);
 
   renderThreadIdRef.current = renderThreadId;
-  typeKeyRef.current = instance?.agentType ?? 'flowix';
+  typeKeyRef.current = instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY;
   messagesRef.current = messages;
   isLoadingRef.current = isLoading;
   instanceRef.current = instance;
@@ -460,7 +461,12 @@ export function AgentConversationDetail({
         </div>
       </div>
       <div ref={domRef} className="agent-thread-card agent-conversation-detail__card flex min-h-0 flex-1 flex-col">
-        <div ref={bodyRef} className="agent-thread-card__body" onScroll={() => messagesControllerRef.current?.handleScroll()}>
+        <div
+          ref={bodyRef}
+          className="agent-thread-card__body"
+          data-no-context-menu-scroll
+          onScroll={() => messagesControllerRef.current?.handleScroll()}
+        >
           <div ref={loadingIndicatorRef} className="agent-thread-card__loading-indicator" role="status" aria-live="polite">
             <span className="agent-thread-card__loading-cells" aria-hidden="true">
               {[0, 1, 2, 3].map((step) => (

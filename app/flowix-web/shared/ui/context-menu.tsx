@@ -135,7 +135,16 @@ function ContextMenuContent({ children, className, style }: ContextMenuContentPr
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") setOpen(false);
 		};
-		const handleScroll = () => setOpen(false);
+		// scroll 触发场景里, 部分容器是"自身内容增长驱动的滚动" (例如 agent
+		// thread card 在 streaming 期间每帧 `body.scrollTop = scrollHeight`) ──
+		// 滚动事件是组件自身的内部行为, 不应牵连到全局右键菜单. 业务侧声明豁免
+		// 容器: 在元素上加 `data-no-context-menu-scroll`, 这里的 closest 命中即
+		// 跳过 setOpen(false)。`shared/ui/` 不依赖任何业务类名。
+		const handleScroll = (e: Event) => {
+			const target = e.target as Element | null;
+			if (target?.closest?.("[data-no-context-menu-scroll]")) return;
+			setOpen(false);
+		};
 		const handleResize = () => setOpen(false);
 
 		document.addEventListener("keydown", handleKeyDown);

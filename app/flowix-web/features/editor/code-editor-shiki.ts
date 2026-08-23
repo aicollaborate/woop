@@ -14,7 +14,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 
 import {
   getShiki,
-  loadHighlighter,
+  loadLanguage,
 } from '@features/editor/extensions/codeblock-shiki/shiki/shiki-highlighter';
 
 const THEME_CHANGE_EVENT = 'app-theme-changed';
@@ -177,7 +177,7 @@ class ShikiDecorations {
     this.language = language;
     this.compute();
     // The Oniguruma WASM engine loads lazily; recolor once it is ready.
-    void loadHighlighter().then(() => {
+    void loadLanguage(this.language).then(() => {
       if (this.disposed) return;
       this.compute();
     });

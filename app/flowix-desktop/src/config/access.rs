@@ -170,49 +170,6 @@ impl AgentAccessStore {
         removed
     }
 
-    pub fn ensure_skill_folder(&self, path: &Path) {
-        const SKILLS_FOLDER_ID: &str = "fld_skills_auto";
-        const DISPLAY_NAME: &str = "Skills (auto)";
-
-        let path_str = trim_path(&path.to_string_lossy());
-        let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
-        let now = chrono::Utc::now().timestamp_millis();
-        let mut dirty = false;
-
-        match guard.entries.iter_mut().find(|e| e.id == SKILLS_FOLDER_ID) {
-            Some(entry) => {
-                if entry.path != path_str {
-                    entry.path = path_str;
-                    entry.updated_at = now;
-                    dirty = true;
-                }
-                if entry.name != DISPLAY_NAME {
-                    entry.name = DISPLAY_NAME.to_string();
-                    entry.updated_at = now;
-                    dirty = true;
-                }
-            }
-            None => {
-                guard.entries.push(AgentAccessEntry {
-                    id: SKILLS_FOLDER_ID.to_string(),
-                    kind: AgentAccessKind::Folder,
-                    path: path_str,
-                    name: DISPLAY_NAME.to_string(),
-                    enabled: true,
-                    workspace: false,
-                    added_at: now,
-                    updated_at: now,
-                    missing: false,
-                });
-                dirty = true;
-            }
-        }
-
-        if dirty {
-            let _ = self.persist_locked(&guard);
-        }
-    }
-
     fn persist(&self) -> Result<(), UserConfigError> {
         let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
         self.persist_locked(&guard)
@@ -414,7 +371,7 @@ mod tests {
     #[test]
     fn config_defaults_round_trip_shape() {
         let defaults = serde_json::json!({
-            "runtime": { "flowix": { "model": "gpt-5" } },
+            "runtime": { "deepseek-harness": { "model": "gpt-5" } },
             "files": { "workspacePaths": ["/tmp"] }
         });
         let cfg = AgentAccessConfig {

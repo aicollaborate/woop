@@ -1,0 +1,13 @@
+{
+  "name": "dsh-profile-flowix",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@flowix/dsh-flowix-bridge",
+        "dsh-flowix-memory"
+      ]
+    }
+  }
+}

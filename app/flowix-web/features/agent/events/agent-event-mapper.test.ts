@@ -45,7 +45,7 @@ describe("agent event mapper", () => {
         kind: "text",
         thread_id: "flowix-thread",
         text: "hello",
-        agent_type: "flowix",
+        agent_type: "deepseek-harness",
         run_id: "run-1",
       },
       state(),
@@ -91,6 +91,40 @@ describe("agent event mapper", () => {
       sourceTimestamp: 456,
       sourceSequence: 7,
       sourceSubsequence: 0,
+    });
+  });
+
+  it("preserves structured upstream error details and gives errors a run-scoped id", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "error",
+        thread_id: "claude-thread",
+        run_id: "run-1",
+        agent_type: "claude",
+        message: "Claude Code CLI exited with status exit status: 1",
+        error_details: {
+          category: "rate_limited",
+          status_code: 429,
+          request_id: "req-1",
+          upstream_message: "5 hour usage limit reached",
+          retryable: false,
+        },
+      },
+      state(),
+      () => 123,
+    );
+
+    expect(event).toMatchObject({
+      kind: "error",
+      messageId: "msg:claude:run-1:error:error",
+      message: "Claude Code CLI exited with status exit status: 1",
+      errorDetails: {
+        category: "rate_limited",
+        statusCode: 429,
+        requestId: "req-1",
+        upstreamMessage: "5 hour usage limit reached",
+        retryable: false,
+      },
     });
   });
 
@@ -149,7 +183,7 @@ describe("agent event mapper", () => {
         kind: "reasoning",
         thread_id: "thread-1",
         text: "thinking",
-        agent_type: "flowix",
+        agent_type: "deepseek-harness",
       },
       state({
         threadStates: {

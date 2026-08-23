@@ -7,10 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-use super::host::DshHostClient;
+use super::host::{sync_credential_file, DshHostClient};
 use super::protocol::{self, AdaptedEvent, ThinkingSegment};
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
@@ -19,12 +18,12 @@ use crate::agent_external::{
     persist_external_chunk_for_thread_with_metadata, resolve_and_freeze_runtime_cwd,
     AgentChunkMetadata, StreamingEmitBuffer, STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
-use crate::agent_flowix::provider::{
-    TestConnectionError, TestConnectionErrorKind, TestConnectionResult,
-};
-use crate::agent_flowix::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::agent_session::ThreadManager;
-use crate::config::{AiConfigFile, AiModelConfig, AiModelEntry, UserConfigStore};
+use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
+use crate::config::{
+    dsh_credential_ref_for_route, AiConfigFile, AiModelConfig, AiModelEntry, UserConfigStore,
+};
+use crate::connection_probe::{TestConnectionError, TestConnectionErrorKind, TestConnectionResult};
 
 struct ActiveRun {
     started_at: i64,
@@ -94,6 +93,7 @@ pub struct HarnessRuntimeConfig {
     pub(crate) provider: String,
     pub(crate) provider_name: String,
     pub(crate) api_protocol: String,
+    pub(crate) api_key_env: String,
     pub(crate) base_url: String,
     pub(crate) model: String,
     pub(crate) api_key: Option<String>,
@@ -101,26 +101,41 @@ pub struct HarnessRuntimeConfig {
 
 impl HarnessRuntimeConfig {
     /// Stable non-secret identity used for host caching and cancellation.
-    /// The raw key is only retained for child-process environment injection.
+    /// Credentials are owned by DSH and may rotate without restarting a host.
     fn host_key(&self) -> String {
-        self.api_key
-            .as_deref()
-            .filter(|key| !key.is_empty())
-            .map(|key| format!("sha256:{:x}", Sha256::digest(key.as_bytes())))
-            .unwrap_or_default()
+        format!("credential-ref:{}", self.api_key_env)
     }
 }
 
-/// Resolve the current Flowix model configuration into the stable Harness
-/// route. Harness remains a separate agent runtime; Flowix only supplies the
-/// selected provider connection and model.
+/// Resolve the current model configuration into the native llm-pi-ai route.
+/// Flowix supplies the selected connection and model, but never invents a
+/// provider route of its own.
 pub fn resolve_runtime_config(
     config: &AiModelConfig,
     runtime_model: Option<&str>,
 ) -> Result<HarnessRuntimeConfig, String> {
-    let provider_name = config.provider.trim();
+    let provider_route = config.provider_id.trim().to_string();
+    if provider_route.is_empty() {
+        return Err(
+            "DeepSeek Harness provider route is not configured; open Models and configure a provider"
+                .to_string(),
+        );
+    }
+    if provider_route == "flowix" {
+        return Err(
+            "The saved DeepSeek Harness provider uses the obsolete Flowix route; open Models and reconfigure it"
+                .to_string(),
+        );
+    }
+    let provider_name = if config.display_name.trim().is_empty() {
+        config.provider.trim()
+    } else {
+        config.display_name.trim()
+    };
     if provider_name.is_empty() {
-        return Err("AI provider is not configured".to_string());
+        return Err(format!(
+            "DeepSeek Harness provider route {provider_route} has no display name; open Models and reconfigure it"
+        ));
     }
     let model = runtime_model
         .map(str::trim)
@@ -132,7 +147,7 @@ pub fn resolve_runtime_config(
         .ok_or("AI model is not configured")?;
 
     let normalized = normalize_provider(provider_name);
-    let (inferred_api_protocol, default_base_url, requires_api_key) = match normalized.as_str() {
+    let (inferred_api_protocol, default_base_url, _requires_api_key) = match normalized.as_str() {
         "anthropic" | "claude" => (
             "anthropic-messages",
             Some("https://api.anthropic.com/v1"),
@@ -160,19 +175,17 @@ pub fn resolve_runtime_config(
             false,
         ),
         "google" | "gemini" => {
-            return Err(
-                "DeepSeek Harness does not yet support Google/Gemini in the Flowix route"
-                    .to_string(),
-            )
+            return Err(format!(
+            "DeepSeek Harness does not yet support Google/Gemini provider route {provider_route}"
+        ))
         }
         _ => ("openai-completions", None, true),
     };
-    let api_protocol =
-        if config.provider_id.trim().is_empty() || config.api_protocol.trim().is_empty() {
-            inferred_api_protocol
-        } else {
-            config.api_protocol.trim()
-        };
+    let api_protocol = if config.api_protocol.trim().is_empty() {
+        inferred_api_protocol
+    } else {
+        config.api_protocol.trim()
+    };
     let base_url = config
         .api_url
         .trim()
@@ -188,26 +201,26 @@ pub fn resolve_runtime_config(
         ));
     }
 
-    let api_key_bucket = if config.provider_id.trim().is_empty() {
-        provider_name
-    } else {
-        config.provider_id.trim()
-    };
+    let api_key_bucket = provider_route.as_str();
     let api_key = config.effective_api_key(api_key_bucket).trim().to_string();
-    if requires_api_key && api_key.is_empty() {
-        return Err(format!(
-            "API key is not configured for provider {provider_name}"
-        ));
-    }
+    // A missing key is no longer a Flowix preflight failure. DSH's
+    // credentials service resolves the reference at request time, so a key
+    // stored by DSH (or rotated after startup) remains usable without an
+    // environment-variable injection or host restart.
+
+    let api_key_env = if config.api_key_env.trim().is_empty() {
+        dsh_credential_ref_for_route(&provider_route)
+    } else {
+        config.api_key_env.trim().to_string()
+    };
 
     Ok(HarnessRuntimeConfig {
-        provider: (!config.provider_id.trim().is_empty())
-            .then(|| config.provider_id.trim().to_string())
-            .unwrap_or_else(|| "flowix".to_string()),
+        provider: provider_route,
         provider_name: (!config.display_name.trim().is_empty())
             .then(|| config.display_name.trim().to_string())
             .unwrap_or_else(|| provider_name.to_string()),
         api_protocol: api_protocol.to_string(),
+        api_key_env,
         base_url,
         model: model.to_string(),
         api_key: (!api_key.is_empty()).then_some(api_key),
@@ -223,17 +236,9 @@ fn select_harness_config(
 ) -> Result<AiModelConfig, String> {
     let requested = provider_id.map(str::trim).filter(|value| !value.is_empty());
     let selected = match requested {
-        Some(route) => {
-            if route == "flowix" {
-                configs
-                    .into_iter()
-                    .find(|config| config.model.provider_id.trim().is_empty())
-            } else {
-                configs
-                    .into_iter()
-                    .find(|config| config.model.provider_id.trim() == route)
-            }
-        }
+        Some(route) => configs
+            .into_iter()
+            .find(|config| config.model.provider_id.trim() == route),
         None => configs.into_iter().next(),
     };
     selected
@@ -376,13 +381,29 @@ impl DeepSeekHarnessManager {
             }
         };
         let dsh_home = self.user_config.dsh_dir();
+        let probe_credentials_path = probe_settings_path.with_file_name(".credentials.yaml");
+        if let Some(api_key) = runtime_config.api_key.as_deref() {
+            if let Err(error) = sync_credential_file(
+                &probe_credentials_path,
+                &runtime_config.api_key_env,
+                api_key,
+            ) {
+                let _ = fs::remove_file(&probe_settings_path);
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::Other,
+                    error,
+                );
+            }
+        }
         let host = match tokio::time::timeout(
             HARNESS_PROBE_TIMEOUT,
             DshHostClient::spawn(
-                runtime_config.api_key.as_deref(),
                 &self.session_root,
                 &dsh_home,
                 &probe_settings_path,
+                &probe_credentials_path,
                 &self.plugin_settings_path(),
             ),
         )
@@ -427,6 +448,7 @@ impl DeepSeekHarnessManager {
             &runtime_config.provider,
             &runtime_config.provider_name,
             &runtime_config.api_protocol,
+            &runtime_config.api_key_env,
             &runtime_config.base_url,
             &runtime_config.model,
             "minimal",
@@ -441,7 +463,6 @@ impl DeepSeekHarnessManager {
                 error,
             );
         }
-
         let events = host.subscribe(&thread_id, &run_id).await;
         let start = protocol::run_start_request(
             host.next_request_id(),
@@ -546,22 +567,6 @@ impl DeepSeekHarnessManager {
         result
     }
 
-    /// Return the plugin rows from the same host and agent-preset compositions
-    /// used by dsh-host. This is metadata only and does not require a model or
-    /// API key, so the preferences page can load it before the first chat.
-    pub async fn plugin_catalog(&self) -> Result<serde_json::Value, String> {
-        let (host, ephemeral) = self.model_host().await?;
-        let result = timed_host_request(
-            &host,
-            protocol::plugins_catalog_request(host.next_request_id()),
-        )
-        .await;
-        if ephemeral {
-            host.shutdown().await;
-        }
-        result
-    }
-
     pub async fn session_usage(
         &self,
         thread_id: &str,
@@ -645,6 +650,7 @@ impl DeepSeekHarnessManager {
             &runtime_config.provider,
             &runtime_config.provider_name,
             &runtime_config.api_protocol,
+            &runtime_config.api_key_env,
             &runtime_config.base_url,
             &runtime_config.model,
             agent_preset,
@@ -666,6 +672,35 @@ impl DeepSeekHarnessManager {
         serde_json::from_value(result)
             .map(Some)
             .map_err(|error| format!("invalid DeepSeek Harness session usage: {error}"))
+    }
+
+    /// Return the plugin rows from the same host and agent-preset compositions
+    /// used by dsh-host. This is metadata only and does not require a model or
+    /// API key, so the preferences page can load it before the first chat.
+    pub async fn plugin_catalog(&self) -> Result<serde_json::Value, String> {
+        let (host, ephemeral) = self.model_host().await?;
+        let result = timed_host_request(
+            &host,
+            protocol::plugins_catalog_request(host.next_request_id()),
+        )
+        .await;
+        if ephemeral {
+            host.shutdown().await;
+        }
+        result.and_then(|value| {
+            value
+                .get("plugins")
+                .filter(|plugins| plugins.is_object())
+                .cloned()
+                .or_else(|| {
+                    // Accept the unwrapped shape too so the desktop client
+                    // remains compatible with hosts that expose the catalog
+                    // directly.
+                    (value.get("host").is_some() && value.get("presets").is_some())
+                        .then_some(value.clone())
+                })
+                .ok_or_else(|| "DeepSeek Harness returned an invalid plugin catalog".to_string())
+        })
     }
 
     pub async fn set_plugin_enabled(
@@ -755,6 +790,10 @@ impl DeepSeekHarnessManager {
         message: AgentUserMessage,
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
+        if !crate::dsh::status().installed {
+            return Err("DeepSeek Harness runtime is not installed".to_string());
+        }
+
         let thread_id = thread_id.to_string();
         let run_id = crate::agent_external::resolve_run_id(&thread_id, message.run_id.as_deref());
         let session_id = self
@@ -863,6 +902,7 @@ impl DeepSeekHarnessManager {
             &runtime_config.provider,
             &runtime_config.provider_name,
             &runtime_config.api_protocol,
+            &runtime_config.api_key_env,
             &runtime_config.base_url,
             &runtime_config.model,
             agent_preset,
@@ -978,20 +1018,24 @@ impl DeepSeekHarnessManager {
         runtime_config: &HarnessRuntimeConfig,
     ) -> Result<Arc<DshHostClient>, String> {
         let host_key = runtime_config.host_key();
+        let dsh_home = self.user_config.dsh_dir();
+        let credentials_path = dsh_home.join(".credentials.yaml");
+        if let Some(api_key) = runtime_config.api_key.as_deref() {
+            sync_credential_file(&credentials_path, &runtime_config.api_key_env, api_key)?;
+        }
         let mut hosts = self.hosts.lock().await;
         if let Some(host) = hosts.get(&host_key).filter(|host| !host.is_closed()) {
             return Ok(host.clone());
         }
         std::fs::create_dir_all(&self.session_root)
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
-        let dsh_home = self.user_config.dsh_dir();
         let settings_path = self.user_config.dsh_settings_path();
         let plugin_settings_path = self.plugin_settings_path();
         let host = DshHostClient::spawn(
-            runtime_config.api_key.as_deref(),
             &self.session_root,
             &dsh_home,
             &settings_path,
+            &credentials_path,
             &plugin_settings_path,
         )
         .await?;
@@ -1013,13 +1057,14 @@ impl DeepSeekHarnessManager {
             .map_err(|error| format!("failed to create DSH session root: {error}"))?;
         let dsh_home = self.user_config.dsh_dir();
         let settings_path = self.user_config.dsh_settings_path();
+        let credentials_path = dsh_home.join(".credentials.yaml");
         let plugin_settings_path = self.plugin_settings_path();
         Ok((
             DshHostClient::spawn(
-                None,
                 &self.session_root,
                 &dsh_home,
                 &settings_path,
+                &credentials_path,
                 &plugin_settings_path,
             )
             .await?,
@@ -1181,6 +1226,24 @@ impl DeepSeekHarnessManager {
         }
         Ok(())
     }
+
+    /// Shut down every dsh-host child before the managed runtime is
+    /// uninstalled. Refuses while a Harness run is active: deleting the
+    /// binary underneath a live session would strand the run without its
+    /// final StreamEnd. `~/.dsh` user state is untouched by the caller.
+    pub async fn prepare_uninstall(&self) -> Result<(), String> {
+        if !self.active.lock().await.is_empty() {
+            return Err("DeepSeek Harness 正在运行任务，请先停止后再卸载".to_string());
+        }
+        let hosts = {
+            let mut hosts = self.hosts.lock().await;
+            hosts.drain().map(|(_, host)| host).collect::<Vec<_>>()
+        };
+        for host in hosts {
+            host.shutdown().await;
+        }
+        Ok(())
+    }
 }
 
 fn append_thinking_segments(
@@ -1272,6 +1335,7 @@ async fn cleanup_probe_host(host: &Arc<DshHostClient>, thread_id: &str, settings
     dispose_probe_runtime(host, thread_id).await;
     host.shutdown().await;
     let _ = fs::remove_file(settings_path);
+    let _ = fs::remove_file(settings_path.with_file_name(".credentials.yaml"));
 }
 
 fn harness_probe_failure(
@@ -1307,32 +1371,21 @@ fn normalize_agent_preset(value: Option<&str>) -> &'static str {
 }
 
 fn validate_plugin_key(plugin_key: &str) -> Result<(), String> {
-    let mut parts = plugin_key.splitn(4, ':');
-    let scope = parts.next().unwrap_or_default();
-    let preset_or_index = parts.next().unwrap_or_default();
-    let index_or_id = parts.next().unwrap_or_default();
-    let rest = parts.next().unwrap_or(index_or_id);
-    if rest.is_empty() {
+    let parts = plugin_key.split(':').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.is_empty()) {
         return Err("DeepSeek Harness 插件标识无效".to_string());
     }
-    if scope == "host" {
-        if !preset_or_index
-            .chars()
-            .all(|character| character.is_ascii_digit())
-            || parts.next().is_some()
-        {
-            return Err("DeepSeek Harness 插件标识无效".to_string());
-        }
+    if matches!(parts.as_slice(), ["host", _])
+        || matches!(parts.as_slice(), ["host", index, _]
+            if index.chars().all(|character| character.is_ascii_digit()))
+    {
         return Err("Host 级 Harness 插件由 Flowix 组合管理，不可单独关闭".to_string());
     }
-    if scope == "preset" {
-        let preset = preset_or_index;
-        let index = index_or_id;
-        if !matches!(preset, "standard" | "code" | "minimal" | "cordis")
-            || !index.chars().all(|character| character.is_ascii_digit())
-        {
-            return Err("DeepSeek Harness 插件标识无效".to_string());
-        }
+    let valid_preset = |preset: &str| matches!(preset, "standard" | "code" | "minimal" | "cordis");
+    if matches!(parts.as_slice(), ["preset", preset, _] if valid_preset(preset))
+        || matches!(parts.as_slice(), ["preset", preset, index, _]
+            if valid_preset(preset) && index.chars().all(|character| character.is_ascii_digit()))
+    {
         return Ok(());
     }
     Err("DeepSeek Harness 插件标识无效".to_string())
@@ -1364,9 +1417,10 @@ mod tests {
     #[test]
     fn host_cache_key_is_a_stable_non_secret_fingerprint() {
         let first = HarnessRuntimeConfig {
-            provider: "flowix".to_string(),
+            provider: "openai".to_string(),
             provider_name: "GLM".to_string(),
             api_protocol: "openai-completions".to_string(),
+            api_key_env: "FLOWIX_DSH_API_KEY".to_string(),
             base_url: "https://example.test/v1".to_string(),
             model: "glm".to_string(),
             api_key: Some("secret-a".to_string()),
@@ -1381,9 +1435,9 @@ mod tests {
         };
 
         assert_eq!(first.host_key(), same.host_key());
-        assert_ne!(first.host_key(), other.host_key());
+        assert_eq!(first.host_key(), other.host_key());
         assert!(!first.host_key().contains("secret-a"));
-        assert!(first.host_key().starts_with("sha256:"));
+        assert_eq!(first.host_key(), "credential-ref:FLOWIX_DSH_API_KEY");
     }
 
     #[test]
@@ -1480,17 +1534,18 @@ mod tests {
     fn non_deepseek_provider_is_resolved_as_a_harness_agent_route() {
         let config = AiModelConfig {
             provider: "MiniMax Coding Plan".to_string(),
+            provider_id: "minimax".to_string(),
             model: "MiniMax-M3".to_string(),
             api_url: "https://api.minimaxi.com/v1/".to_string(),
             api_keys: std::collections::HashMap::from([(
-                "MiniMax Coding Plan".to_string(),
+                "minimax".to_string(),
                 "secret".to_string(),
             )]),
             max_total_tokens: 180_000,
             ..AiModelConfig::default()
         };
         let resolved = resolve_runtime_config(&config, None).unwrap();
-        assert_eq!(resolved.provider, "flowix");
+        assert_eq!(resolved.provider, "minimax");
         assert_eq!(resolved.provider_name, "MiniMax Coding Plan");
         assert_eq!(resolved.api_protocol, "openai-completions");
         assert_eq!(resolved.model, "MiniMax-M3");
@@ -1499,9 +1554,52 @@ mod tests {
     }
 
     #[test]
+    fn display_name_does_not_replace_the_llm_pi_ai_route() {
+        let config = AiModelConfig {
+            provider: "OpenAI Chat Completions".to_string(),
+            provider_id: "openai".to_string(),
+            display_name: "OpenAI Chat Completions".to_string(),
+            model: "deepseek-v4-flash".to_string(),
+            api_url: "https://api.deepseek.com".to_string(),
+            api_keys: std::collections::HashMap::from([(
+                "openai".to_string(),
+                "secret".to_string(),
+            )]),
+            max_total_tokens: 180_000,
+            ..AiModelConfig::default()
+        };
+
+        let resolved = resolve_runtime_config(&config, None).unwrap();
+        assert_eq!(resolved.provider, "openai");
+        assert_eq!(resolved.provider_name, "OpenAI Chat Completions");
+        assert_eq!(resolved.api_protocol, "openai-completions");
+    }
+
+    #[test]
+    fn genuine_custom_route_is_not_redirected_to_flowix() {
+        let config = AiModelConfig {
+            provider: "acme-gateway".to_string(),
+            provider_id: "acme-gateway".to_string(),
+            display_name: "OpenAI Chat Completions".to_string(),
+            model: "acme-large".to_string(),
+            api_url: "https://gateway.acme.example/v1".to_string(),
+            api_keys: std::collections::HashMap::from([(
+                "acme-gateway".to_string(),
+                "secret".to_string(),
+            )]),
+            max_total_tokens: 180_000,
+            ..AiModelConfig::default()
+        };
+
+        let resolved = resolve_runtime_config(&config, None).unwrap();
+        assert_eq!(resolved.provider, "acme-gateway");
+    }
+
+    #[test]
     fn runtime_model_override_is_supported_for_any_provider() {
         let config = AiModelConfig {
             provider: "DeepSeek".to_string(),
+            provider_id: "deepseek".to_string(),
             model: "deepseek-v4-flash".to_string(),
             api_url: String::new(),
             api_keys: std::collections::HashMap::from([(
@@ -1543,6 +1641,7 @@ mod tests {
     fn missing_active_provider_key_is_not_replaced_by_another_provider_key() {
         let config = AiModelConfig {
             provider: "MiniMax".to_string(),
+            provider_id: "minimax".to_string(),
             model: "MiniMax-M3".to_string(),
             api_url: "https://example.test/v1".to_string(),
             api_keys: std::collections::HashMap::from([(
@@ -1552,10 +1651,9 @@ mod tests {
             max_total_tokens: 180_000,
             ..AiModelConfig::default()
         };
-        let error = resolve_runtime_config(&config, None)
-            .err()
-            .expect("missing active provider key should fail");
-        assert!(error.contains("MiniMax"));
+        let resolved = resolve_runtime_config(&config, None).unwrap();
+        assert_eq!(resolved.api_key, None);
+        assert_eq!(resolved.api_key_env, "FLOWIX_DSH_MINIMAX_API_KEY");
     }
 
     fn route_config(route: &str, model: &str) -> AiConfigFile {
@@ -1589,16 +1687,21 @@ mod tests {
     }
 
     #[test]
-    fn legacy_flowix_route_is_selected_by_empty_provider_id() {
+    fn obsolete_flowix_route_is_not_selected() {
         let legacy = AiConfigFile {
             model: AiModelConfig {
                 provider: "DeepSeek".to_string(),
-                provider_id: String::new(),
+                provider_id: "flowix".to_string(),
                 model: "deepseek-chat".to_string(),
                 ..AiModelConfig::default()
             },
         };
-        let selected = select_harness_config(vec![legacy], Some("flowix")).unwrap();
-        assert_eq!(selected.provider, "DeepSeek");
+        let selected = select_harness_config(vec![legacy], Some("flowix"));
+        assert!(selected.is_ok());
+        let error = match resolve_runtime_config(&selected.unwrap(), None) {
+            Ok(_) => panic!("obsolete Flowix route must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.contains("obsolete Flowix route"));
     }
 }

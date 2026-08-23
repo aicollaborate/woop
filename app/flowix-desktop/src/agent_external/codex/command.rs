@@ -13,7 +13,7 @@ use crate::agent_external::node::node_runtime_target;
 /// 1. `message.cwd_for_runtime` from IPC runtime_config.
 /// 2. The original cwd persisted in Codex session metadata.
 pub(crate) fn resolve_codex_cwd(
-    message: &crate::agent_flowix::AgentUserMessage,
+    message: &crate::agent_wire::AgentUserMessage,
     session_id: Option<&str>,
 ) -> Option<PathBuf> {
     let from_ipc = message

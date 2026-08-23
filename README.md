@@ -57,15 +57,15 @@ Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **
 
 ## dsh-flowix-memory plugin
 
-[dsh-flowix-memory](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) is a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that connects any Harness agent to your **local Flowix notes** through the bundled `flowix-cli` MCP server: the agent gets the `mcp__dsh-flowix-memory__flowix_memo` tool to search, read, create, and edit Flowix memos (including mind maps).
+[dsh-flowix-memory](flowix-dsh-host/bundles/dsh-flowix-memory/README.md) is a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that connects any Harness agent to your **local Flowix notes** through the bundled `flowix-cli` MCP server: the agent gets the `mcp__dsh-flowix-memory__flowix_memo` tool to search, read, create, and edit Flowix memos (including mind maps).
 
 Install it into a Harness profile (`--profile <name>` is required; shipped profiles: `web`, `headless`), from the flowix-main checkout (not yet published to npm):
 
 ```sh
-dsh plugin --profile <name> add ./app/flowix-dsh-host/bundles/dsh-flowix-memory
+dsh plugin --profile <name> add ./flowix-dsh-host/bundles/dsh-flowix-memory
 ```
 
-Requires the `flowix` CLI on `PATH` (or set `FLOWIX_CLI_PATH`) with access to your notebook data (`~/.flowix`). See the [plugin README](app/flowix-dsh-host/bundles/dsh-flowix-memory/README.md) for details.
+Requires the `flowix` CLI on `PATH` (or set `FLOWIX_CLI_PATH`) with access to your notebook data (`~/.flowix`). See the [plugin README](flowix-dsh-host/bundles/dsh-flowix-memory/README.md) for details.
 
 ---
 

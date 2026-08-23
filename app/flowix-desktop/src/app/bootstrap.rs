@@ -5,7 +5,6 @@ use crate::agent_external::hermes::HermesCliManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
 use crate::agent_external_config::AgentExternalConfig;
-use crate::agent_flowix::AgentManager;
 use crate::agent_session::ThreadManager;
 use crate::app::panic::install_panic_log_hook;
 use crate::app::paths::{get_app_data_path, get_user_config_dir};
@@ -109,8 +108,6 @@ pub fn run() {
         }
     };
 
-    // 三个需要与 AgentManager 共享的依�? 提前建好 Arc �?clone�?    // refcount 期望: user_config=2 (AppState + AgentManager), thread_manager=2,
-    // memo_file=2 ── �?`commands.rs::AppState` 注释�?
     let memo_file_arc = Arc::new(RwLock::new(memo_file));
     let thread_manager = match ThreadManager::new(thread_db_path.clone()) {
         Ok(manager) => manager,
@@ -150,50 +147,7 @@ pub fn run() {
     ));
 
     // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    // Skills 鈹€鈹€ `~/.flowix/skills/` 鍗曟牴, 鎵弿涓や釜鍖哄煙:
-    //   1. `.system/<name>/SKILL.md`  系统内置 (�?bundle 一次�?seed)
-    //   2. `<name>/SKILL.md`          用户�?���?    //
-    // 流程: 创建用户�?�� �?seed-once (�?bundle 拷一份到 .system/) �?默�?
-    // �?agent-access.json 加一�?Folder entry (id=`fld_skills_auto`) �?    // �?��整个根目�?�?构�?SkillStore �?�?AppState / AgentManager 共享
-    // ── SkillStore �?��后不�?��, Arc 共享, 无需 RwLock�?    // ──────────────────────────────────────────────────────────────────
-    let skills_root = user_config_dir.join("skills");
-    if let Err(e) = std::fs::create_dir_all(&skills_root) {
-        tracing::warn!(
-            "[startup] failed to create skills root {}: {e}",
-            skills_root.display()
-        );
-    }
-
-    // Seed-once: bundled `resources/skills/.system/*` 鈫?`~/.flowix/skills/.system/*`.
-    // 三个候选路�? 命中�?���?��用的就停 ── �?    // `crate::agent_flowix::skills::scanner::resolve_bundled_root`�?
-    if let Some(bundled) = crate::agent_flowix::skills::scanner::resolve_bundled_root() {
-        let report = crate::agent_flowix::skills::seed_system_skills(&bundled, &skills_root);
-        if !report.copied.is_empty() || !report.skipped.is_empty() {
-            tracing::info!(
-                "[startup] skills seed: copied {}, skipped {} (already present)",
-                report.copied.len(),
-                report.skipped.len()
-            );
-        }
-    } else {
-        tracing::debug!(
-            "[startup] no bundled skills found; user can drop SKILL.md into ~/.flowix/skills/"
-        );
-    }
-
-    // 默�?�?Agent `~/.flowix/skills/` 的�?权限 ── LLM �?��直接 `read` / `grep`
-    // Let the agent read registered skills directly when needed.
-    agent_access_arc.ensure_skill_folder(&skills_root);
-
-    let skill_store = Arc::new(crate::agent_flowix::skills::SkillStore::load(&skills_root));
-    tracing::info!(
-        "[startup] loaded {} skill(s) from {}",
-        skill_store.len(),
-        skill_store.root().display()
-    );
-
     // 监听 user-config-changed �?���?whitelist �? 也需�?user_config_arc,
-    // 单独 clone 一�?(后续会�? move �?AgentManager::new)�?
     let user_config_for_watcher = user_config_arc.clone();
 
     // AppState �?`.setup()` �?��里构造。Tauri 2 �?`.manage(state)` �?    // "一次�?�?��, 所以所有共�?��赖都在进入闭包前准�?好�?    //
@@ -211,14 +165,6 @@ pub fn run() {
     // impl Clone ── 直接 move �?setup �?��, 那里
     // move 杩?AppState銆?
     let search_init = RwLock::new(MemoIndex::new(Arc::new(BigramTokenizer)));
-    let agent_manager = Arc::new(AgentManager::new(
-        user_config_arc,
-        thread_manager_arc.clone(),
-        memo_file_arc.clone(),
-        agent_access_arc.clone(),
-        security_bookmarks_arc.clone(),
-        skill_store,
-    ));
     let codex_cli_manager = Arc::new(CodexCliManager::new(thread_manager_arc.clone()));
     let claude_cli_manager = Arc::new(ClaudeCliManager::new(thread_manager_arc.clone()));
     let hermes_cli_manager = Arc::new(HermesCliManager::new(thread_manager_arc.clone()));
@@ -269,7 +215,6 @@ pub fn run() {
             // Populate the external CLI registry once at startup.
             agent_external_config.run_startup_detect();
 
-            // ── 2) 构�?AppState �?manage ──
             let app_state = AppState {
                 user_config: user_config_for_state.clone(),
                 cloud_sync: cloud_sync_for_state.clone(),
@@ -277,7 +222,7 @@ pub fn run() {
                 agent_external_config,
                 memo_file: memo_file_for_state.clone(),
                 search: search_init,
-                agent_manager: agent_manager.clone(),
+                search_rebuild: Default::default(),
                 external_runtimes: external_runtimes.clone(),
                 deepseek_harness: deepseek_harness_manager.clone(),
                 thread_manager: thread_manager_for_state.clone(),
@@ -286,10 +231,6 @@ pub fn run() {
                 plugin_runs: crate::plugin::PluginRunCoordinator::default(),
             };
             app.manage(app_state);
-            // 注入 AppHandle 给 agent 工具链，使其 delete 等 memo 写入工具能
-            // mark_self_write + emit memo-event（构造 AgentManager 时还在 builder
-            // 链上，拿不到 handle）。
-            agent_manager.set_app_handle(app.handle().clone());
             commands::cloud::start_cloud_sync_polling(app.handle().clone());
             if let Ok(Some(refresh_token)) = user_config_for_state.load_cloud_refresh_token() {
                 let cloud_sync = cloud_sync_for_state.clone();
@@ -309,7 +250,13 @@ pub fn run() {
                         }
                         Err(error) => {
                             tracing::warn!("failed to restore Flowix Cloud session: {error}");
-                            let _ = user_config.delete_cloud_refresh_token();
+                            if error.is_invalid_refresh_token() {
+                                let _ = user_config.delete_cloud_refresh_token();
+                            } else {
+                                tracing::warn!(
+                                    "keeping the persisted cloud refresh token after a transient restore failure"
+                                );
+                            }
                             if let Ok(state) = cloud_sync.state() {
                                 let _ = app_handle.emit("cloud-state-changed", state);
                             }
@@ -461,7 +408,6 @@ pub fn run() {
                 let uc_for_evt = user_config_for_watcher.clone();
                 app.listen("user-config-changed", move |event| {
                     // payload �?kind 字�?�?("preference" / "ai_config" / "watcher")
-                    // ── ai_config �?~/.flowix/agent-config.toml (TOML), 其余�?JSON
                     // event.payload() 返回 serde_json 序列化结�?(带引�? �?"\"preference\""),
                     // 直接 == 比�?会恒�?false, 这里反序列化还原成裸字�?串�?
                     let kind = serde_json::from_str::<String>(event.payload()).unwrap_or_default();
@@ -494,7 +440,6 @@ pub fn run() {
             // 偏好 (JSON, �?user_config)
             commands::product::get_product_info,
             commands::product::get_diagnostics,
-            commands::product::check_product_update_notice,
             commands::product::open_log_dir,
             commands::plugin::plugin_list,
             commands::plugin::plugin_refresh,
@@ -508,21 +453,27 @@ pub fn run() {
             commands::plugin::plugin_resolve_note,
             commands::settings::get_preference,
             commands::settings::set_preference,
-            commands::settings::get_ai_config,
-            commands::settings::set_ai_config,
             commands::settings::get_deepseek_harness_config,
             commands::settings::get_deepseek_harness_configs,
             commands::settings::set_deepseek_harness_config,
             commands::settings::add_deepseek_harness_model,
-            commands::settings::test_ai_connection,
             commands::settings::test_deepseek_harness_connection,
             commands::settings::deepseek_harness_model_catalog,
             commands::settings::deepseek_harness_plugin_catalog,
             commands::settings::set_deepseek_harness_plugin_enabled,
             commands::settings::discover_deepseek_harness_models,
+            commands::dsh::dsh_status,
+            commands::dsh::dsh_download_status,
+            commands::dsh::dsh_install_runtime,
+            commands::dsh::dsh_update,
+            commands::dsh::dsh_ensure_runtime,
+            commands::dsh::dsh_cancel_update,
+            commands::dsh::dsh_uninstall,
+            commands::dsh::dsh_manage_profile_plugin,
             commands::settings::get_watcher_config,
             commands::settings::update_watcher_config,
             commands::boot::get_boot_features,
+            commands::boot::set_boot_intro_displayed,
             commands::cloud::cloud_get_state,
             commands::cloud::cloud_register,
             commands::cloud::cloud_login,

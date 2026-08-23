@@ -11,10 +11,12 @@ export const preferences = {
 
 export interface BootFeatures {
   experimental: boolean;
+  isIntroductDisplayed: boolean;
 }
 
 export const boot = {
   getFeatures: () => invoke<BootFeatures>('get_boot_features'),
+  setIntroDisplayed: () => invoke<void>('set_boot_intro_displayed'),
 };
 
 export interface FontCacheStatus {
@@ -64,32 +66,11 @@ export const web = {
   parsePage: (url: string) => invoke<WebPageMetadata>('parse_web_page', { url }),
 };
 
-// AI Config (backend ~/.flowix/agent-config.toml)
-// 鈹€ 鐪熸簮鍦ㄥ悗绔枃浠? 鍋忓ソ璁剧疆鐨?AI 妯″瀷 tab 鐢?get/set 鍔犺浇涓庝繚瀛樸€?
-//   chat 璋冪敤璧?backend AgentManager, 鏃犻渶鍓嶇鍐?init銆?
-export const aiConfig = {
-  get: () => invoke<{ model: AgentConfig }>('get_ai_config'),
-  set: (config: AgentConfig) => invoke<void>('set_ai_config', { config: { model: config } }),
-  /**
-   * One-shot connectivity probe for the form the user is editing.
-   *
-   * Distinct from `set`: doesn't write to disk, doesn't broadcast
-   * `user-config-changed`, and uses a fresh provider instance per call
-   * (so a failing probe can't poison the production chat cache).
-   *
-   * The backend (`commands/settings.rs::test_ai_connection`) returns a
-   * `TestConnectionResult` even on failure — the IPC boundary stays
-   * 200-shaped and the failure is expressed via `result.error.kind`.
-   */
-  testConnection: (config: AgentConfig) =>
-    invoke<TestConnectionResult>('test_ai_connection', { config }),
-};
-
-/** DeepSeek Harness model probe. This uses dsh-host/runtime and is separate
- * from the Flowix Agent provider probe above. */
+/** DeepSeek Harness model probe. This uses dsh-host/runtime and owns its
+ * provider configuration separately from the legacy AI config document. */
 export const deepseekHarness = {
-  // DeepSeek Harness uses its own llm-pi-ai settings document, separate from
-  // the Flowix Agent's agent-config.toml.
+  // DeepSeek Harness uses its own llm-pi-ai settings document. The old
+  // agent-config.toml is read only as a migration source by the backend.
   get: () => invoke<{ model: AgentConfig }>('get_deepseek_harness_config'),
   // The Rust command returns Vec<AiConfigFile> directly. Each item keeps the
   // same `{ model: ... }` envelope as the single-config response above.
@@ -109,6 +90,11 @@ export const deepseekHarness = {
       pluginKey,
       enabled,
     }),
+  manageProfilePlugin: (action: 'add' | 'remove' | 'update', packageSpec?: string) =>
+    invoke<string>('dsh_manage_profile_plugin', {
+      action,
+      package: packageSpec?.trim() || null,
+    }),
   discoverModels: (config: AgentConfig) =>
     invoke<DeepSeekHarnessModelListing>('discover_deepseek_harness_models', { config }),
   sessionUsage: async (threadId: string): Promise<DeepSeekHarnessSessionSnapshot | null> => {
@@ -119,6 +105,33 @@ export const deepseekHarness = {
     if (usage === null) return null;
     return snapshotFromHarnessUsage(usage);
   },
+};
+
+export interface DshIntegrationStatus {
+  installed: boolean;
+  executablePath?: string | null;
+  version?: string | null;
+  source?: string | null;
+  profile: string;
+  message?: string | null;
+}
+
+export interface DshDownloadProgress {
+  phase: 'checking' | 'downloading' | 'downloaded' | 'installed' | 'up-to-date' | 'cancelled' | 'failed';
+  downloadedBytes: number;
+  totalBytes?: number | null;
+  percent?: number | null;
+  resumed: boolean;
+}
+
+export const dshIntegration = {
+  status: () => invoke<DshIntegrationStatus>('dsh_status'),
+  downloadStatus: () => invoke<DshDownloadProgress | null>('dsh_download_status'),
+  installRuntime: () => invoke<DshIntegrationStatus>('dsh_install_runtime'),
+  updateRuntime: () => invoke<DshIntegrationStatus>('dsh_update'),
+  ensureRuntime: () => invoke<DshIntegrationStatus>('dsh_ensure_runtime'),
+  cancelUpdate: () => invoke<boolean>('dsh_cancel_update'),
+  uninstallRuntime: () => invoke<DshIntegrationStatus>('dsh_uninstall'),
 };
 
 function snapshotFromHarnessUsage(
@@ -186,7 +199,7 @@ export interface DeepSeekHarnessPlugin {
   name: string;
   enabled: boolean;
   toggleable: boolean;
-  scope: 'host' | 'preset';
+  scope: 'host' | 'preset' | 'profile';
   preset?: string;
 }
 
@@ -194,6 +207,7 @@ export interface DeepSeekHarnessPluginCatalog {
   platform: string;
   host: DeepSeekHarnessPlugin[];
   presets: Record<string, DeepSeekHarnessPlugin[]>;
+  profile: DeepSeekHarnessPlugin[];
 }
 
 // Agent access roots (backend ~/.flowix/agent-access.json).

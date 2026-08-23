@@ -61,6 +61,12 @@ export interface Notebook {
   missing?: boolean;
 }
 
+/** 最近在资料文件树中打开的文档。只持久化路径，不缓存文档内容。 */
+export interface ActiveFileBrowserDocument {
+  path: string;
+  scopePath: string;
+}
+
 function compareMemoItems(sort: SortType) {
   return (a: MemoItem, b: MemoItem) => {
     // 置顶优先于任何 sort 维度: pinned memo 始终靠前.
@@ -142,6 +148,8 @@ export interface MemoStore {
   // MemoList / AgentConversationList), 值为资料文件夹根路径。置 null 恢复
   // 普通 memo 列表。与 activeFilter 互斥: 任一切换都清掉对方。
   activeFileBrowserPath: string | null;
+  /** 资料文件树中最近打开的文本/代码文档, 用于启动时恢复。 */
+  activeFileBrowserDocument: ActiveFileBrowserDocument | null;
   activeSort: SortType;
   // 'color' 二级弹窗用的具体颜色值。'any'/'none'/具体颜色 (MEMO_COLORS)。
   // 当 activeFilter !== 'color' 时此值仍然保留, 切回颜色筛选时恢复。
@@ -164,6 +172,8 @@ export interface MemoStore {
   setActivePluginId: (pluginId: string | null) => void;
   /** 打开 / 关闭资料文件夹文件树视图。打开时清 activeFilter 互斥态。 */
   setActiveFileBrowserPath: (path: string | null) => void;
+  /** 记录 / 清除资料文件树中最近打开的文档。 */
+  setActiveFileBrowserDocument: (document: ActiveFileBrowserDocument | null) => void;
   setActiveSort: (sort: SortType) => void;
   setColorFilter: (color: ColorFilterValue) => void;
   triggerRefresh: () => void;
@@ -203,8 +213,23 @@ function omitUndefined<T extends object>(value: T): Partial<T> {
   ) as Partial<T>;
 }
 
+function comparablePath(path: string): string {
+  return path.trim().replace(/[\\/]+$/, '').toLowerCase();
+}
+
 export function getVisibleCreateFilter(filter: ExtendedFilterType): ExtendedFilterType {
   return filter === 'agents' || filter === 'todos' || filter === 'color' ? 'all' : filter;
+}
+
+// 只恢复侧边栏能够表达的导航入口。颜色 / 时间等筛选属于中间列的
+// 临时筛选，持久化它们会导致重启后侧边栏没有任何对应的选中项。
+function isSidebarNavigationFilter(
+  filter: ExtendedFilterType,
+): filter is 'all' | 'agents' | 'todos' | 'tagged' {
+  return filter === 'all'
+    || filter === 'agents'
+    || filter === 'todos'
+    || filter === 'tagged';
 }
 
 let loadMemosRequestSeq = 0;
@@ -219,6 +244,7 @@ export const useMemoStore = create<MemoStore>()(
       activeFilter: 'all',
       activePluginId: null,
       activeFileBrowserPath: null,
+      activeFileBrowserDocument: null,
       activeSort: 'createdAt',
       colorFilter: 'any',
       refreshTrigger: 0,
@@ -236,7 +262,13 @@ export const useMemoStore = create<MemoStore>()(
         const nextNotebookId = notebook?.id ?? null;
         if (currentNotebookId !== nextNotebookId) {
           useTagStore.getState().setSelectedTagId(null);
-          set({ selectedNotebook: notebook, activeFilter: 'all', activePluginId: null, activeFileBrowserPath: null });
+          set({
+            selectedNotebook: notebook,
+            activeFilter: 'all',
+            activePluginId: null,
+            activeFileBrowserPath: null,
+            activeFileBrowserDocument: null,
+          });
           return;
         }
         set({ selectedNotebook: notebook });
@@ -252,6 +284,7 @@ export const useMemoStore = create<MemoStore>()(
           activeFilter: filter,
           activePluginId: null,
           activeFileBrowserPath: null,
+          activeFileBrowserDocument: null,
           // 离开 'tagged' 时清掉标签选中, 避免下次再切回 'tagged' 时拿
           // 到陈旧 tagId (此前由调用方手动清, 现在统一收敛)。
           ...(filter !== 'tagged' ? {} : {}),
@@ -263,6 +296,7 @@ export const useMemoStore = create<MemoStore>()(
       setActivePluginId: (pluginId) => set({
         activePluginId: pluginId,
         activeFileBrowserPath: null,
+        activeFileBrowserDocument: null,
       }),
       // 打开文件树时把 filter / plugin 归位 (中间列被文件树接管); 关闭
       // (传 null) 时回到 'all' 列表。同值重复 set 直接 no-op，保持单选
@@ -270,8 +304,12 @@ export const useMemoStore = create<MemoStore>()(
       setActiveFileBrowserPath: (path) => {
         const previous = get();
         if (previous.activeFileBrowserPath === path) return;
+        const keepDocument = path !== null
+          && previous.activeFileBrowserDocument !== null
+          && comparablePath(previous.activeFileBrowserDocument.scopePath) === comparablePath(path);
         set({
           activeFileBrowserPath: path,
+          activeFileBrowserDocument: keepDocument ? previous.activeFileBrowserDocument : null,
           ...(path
             ? { activeFilter: 'all' as const, activePluginId: null }
             : path === null && previous.activeFileBrowserPath !== null
@@ -281,6 +319,24 @@ export const useMemoStore = create<MemoStore>()(
         if (path !== null || previous.activeFileBrowserPath !== null) {
           useTagStore.getState().setSelectedTagId(null);
         }
+      },
+      setActiveFileBrowserDocument: (document) => {
+        if (!document) {
+          if (get().activeFileBrowserDocument === null) return;
+          set({ activeFileBrowserDocument: null });
+          return;
+        }
+        const next = {
+          path: document.path,
+          scopePath: document.scopePath,
+        };
+        const previous = get().activeFileBrowserDocument;
+        if (
+          previous
+          && comparablePath(previous.path) === comparablePath(next.path)
+          && comparablePath(previous.scopePath) === comparablePath(next.scopePath)
+        ) return;
+        set({ activeFileBrowserDocument: next });
       },
       setActiveSort: (sort) => set({ activeSort: sort }),
       setColorFilter: (color) => set({ colorFilter: color }),
@@ -329,18 +385,14 @@ export const useMemoStore = create<MemoStore>()(
           return;
         }
         const nextMemos = response.memos as MemoItem[];
-        const latestSelectedMemo = get().selectedMemo;
-        // Plugin navigation filters only the second column. Keep an ordinary
-        // memo selected when it is not part of the plugin result so the third
-        // column (including its titlebar metadata) remains unchanged.
-        const selectedMemo = latestSelectedMemo
-          ? nextMemos.find((memo) => memo.id === latestSelectedMemo.id)
-            ?? (pluginId ? latestSelectedMemo : null)
-          : null;
-
+        // Loading a list only updates the second column. The selected memo is
+        // the source of the third-column document and may legitimately be
+        // absent from a filtered result (for example when switching to
+        // todos/tags), so do not derive document selection from this query.
+        // Explicit actions such as opening, deleting, or changing notebook
+        // still update `selectedMemo` through their own store actions.
         set({
           memos: nextMemos,
-          selectedMemo,
         });
       },
 
@@ -486,6 +538,13 @@ export const useMemoStore = create<MemoStore>()(
       partialize: (state) => ({
         selectedNotebook: state.selectedNotebook,
         selectedMemo: state.selectedMemo,
+        // 侧边栏入口要和中间列一起恢复。中间列的颜色 / 时间筛选不属于
+        // 侧边栏导航，因此恢复时归位到“全部”。
+        activeFilter: isSidebarNavigationFilter(state.activeFilter)
+          ? state.activeFilter
+          : 'all',
+        activeFileBrowserPath: state.activeFileBrowserPath,
+        activeFileBrowserDocument: state.activeFileBrowserDocument,
       }),
     }
   )

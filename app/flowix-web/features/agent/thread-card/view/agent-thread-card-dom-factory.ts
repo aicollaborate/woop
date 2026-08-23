@@ -35,7 +35,6 @@ export interface AgentThreadCardDomParts {
   collapseButton: HTMLButtonElement;
   body: HTMLElement;
   loadingIndicator: HTMLDivElement;
-  errorEl: HTMLElement;
   composer: HTMLElement;
   composerImages: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
@@ -144,6 +143,10 @@ export function createAgentThreadCardDom(
 
   const body = document.createElement("div");
   body.className = "agent-thread-card__body";
+  // streaming 期间 MessageViewportController 每帧写 body.scrollTop, scroll 事件
+  // capture 冒泡到 window 会触发 ContextMenu 的 setOpen(false) ── 标记为豁免
+  // 容器, 让右键菜单不被自身内容增长牵连关闭。
+  body.dataset.noContextMenuScroll = "";
   body.addEventListener("click", options.onBodyClick);
   body.addEventListener("scroll", options.onBodyScroll, { passive: true });
 
@@ -174,10 +177,6 @@ export function createAgentThreadCardDom(
   loadingText.textContent = options.t("editor.threadCard.thinking");
   loadingText.hidden = true;
   loadingIndicator.append(loadingCells, loadingText);
-
-  const errorEl = document.createElement("div");
-  errorEl.className = "agent-thread-card__error";
-  errorEl.hidden = true;
 
   const composer = document.createElement("div");
   composer.className = "agent-thread-card__composer";
@@ -246,7 +245,7 @@ export function createAgentThreadCardDom(
    */
   body.append(loadingIndicator);
   dom.append(container);
-  container.append(header, body, errorEl, composer);
+  container.append(header, body, composer);
 
   return {
     dom,
@@ -265,7 +264,6 @@ export function createAgentThreadCardDom(
     collapseButton,
     body,
     loadingIndicator,
-    errorEl,
     composer,
     composerImages,
     composerRoleIcon,

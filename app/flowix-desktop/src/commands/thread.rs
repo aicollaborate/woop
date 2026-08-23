@@ -1,13 +1,12 @@
-//! Thread IPC —对话线程 CRUD�?//!
-//! `thread_delete` 顺带�?`AgentManager` �?in-memory 状�?(与�? thread 关联�?//! read 工具�?�� + 卡�?检测�?�?, 否则会无限泄露�?
+//! Thread IPC ── 对话线程 CRUD。
 use serde::Serialize;
 use tauri::State;
 
-use crate::agent_flowix::default_agent_id;
 use crate::agent_session::{
     AgentConversationInstance, ChatMessage, ThreadInfo, ThreadMessagesPage,
     UpsertAgentConversationInstance,
 };
+use crate::agent_types::default_agent_id;
 
 use crate::app::state::AppState;
 
@@ -543,21 +542,14 @@ pub async fn thread_delete(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<bool, String> {
-    let flowix_stopped = state.agent_manager.stop_chat(&thread_id, None).await;
-    let external_stopped = state
+    let stopped = state
         .external_runtimes
         .stop_chat_all(&thread_id, &app_handle)
         .await;
-    if flowix_stopped || external_stopped {
+    if stopped {
         tracing::info!("[Thread] stopped running agent before deleting thread {thread_id}");
     }
 
-    // 先清 AgentManager �?in-memory 状�?── 与�? thread 关联�?read 工具�?��
-    // (HashMap<thread_id, HashMap<path, full_file_content>>, 整本笔�?�?���?
-    // 与卡死�?测�?�? 否则会无限泄露。两张表�?�� HashMap.remove, 总是成功�?    //
-    // `agent_manager` �?`Arc<AgentManager>`, `cleanup_thread` �?`&self` 方法,
-    // `agent_manager` is an `Arc<AgentManager>` and cleanup takes `&self`.
-    state.agent_manager.cleanup_thread(&thread_id).await;
     let manager = &state.thread_manager;
     manager
         .delete_thread_with_agent_conversations(&thread_id)

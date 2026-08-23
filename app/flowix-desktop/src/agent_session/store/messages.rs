@@ -254,7 +254,7 @@ impl ThreadManager {
         Ok(updated > 0)
     }
 
-    /// Update an assistant checkpoint in place. The Flowix agent uses this
+    /// Update an assistant checkpoint in place. External runtimes use this
     /// when a stream is interrupted after some text has already reached the
     /// UI: the partial assistant row is first inserted, then later marked
     /// completed or promoted to an assistant+tool_calls row if the resumed
@@ -349,6 +349,7 @@ impl ThreadManager {
             tool_calls: tool_calls_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
             reasoning: row.get(12)?,
             is_completed: int_to_opt_bool(row.get(13)?),
+            error_details: None,
             is_collapsed: int_to_opt_bool(row.get(14)?),
         })
     }

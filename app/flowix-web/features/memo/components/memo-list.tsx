@@ -4,7 +4,7 @@ import { displayTitleFromFilename } from '@/lib/utils';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useShortcutScope, pushHandler } from '@features/shortcuts';
-import { SquarePen, Search, ChevronDown, Check, ChevronRight, Loader2 } from 'lucide-react';
+import { SquarePen, Search, Check, Loader2 } from 'lucide-react';
 import { useDocumentStore } from '@features/document';
 import {
   type AgentConversationInstance,
@@ -42,13 +42,7 @@ import { Button } from '@shared/ui/button';
 import { Tooltip } from '@shared/ui/tooltip';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { MemoCard } from '@features/memo/components/memo-card';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-} from '@shared/ui/dropdown-menu';
+import { DropdownMenuItem, DropdownMenuLabel } from '@shared/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -71,8 +65,9 @@ import { cloudSyncErrorMessage } from '@platform/tauri/errors';
 
 import {
   COLOR_LABEL_KEYS,
-  ColorFilterSubmenu,
+  ColorFilterSubmenuContent,
 } from './memo-list/color-filter-submenu';
+import { MemoNavigationDropdown, MemoNavigationSubmenu } from './memo-navigation-dropdown';
 import { useMemoListWindow } from './memo-list/use-memo-list-window';
 const logger = createLogger('memo-list');
 
@@ -236,8 +231,6 @@ export function MemoList() {
   const [notebookDropdownOpen, setNotebookDropdownOpen] = useState(false);
   const [searchCommandOpen, setSearchCommandOpen] = useState(false);
   const [colorSubmenuOpen, setColorSubmenuOpen] = useState(false);
-  const colorTriggerRef = useRef<HTMLButtonElement>(null);
-  const colorSubmenuCloseTimerRef = useRef<number | null>(null);
   const [newNotebookName, setNewNotebookName] = useState('');
   const [newNotebookPath, setNewNotebookPath] = useState('');
   const [newNotebookIcon, setNewNotebookIcon] = useState<string | null>(null);
@@ -521,7 +514,7 @@ export function MemoList() {
     // 不带 "@" 前缀。
     if (activeTagName) parts.push(`#${activeTagName}`);
     if (activeFilter === 'todos') parts.push(t('memo.list.filterTasks'));
-    if (activeFilter === 'agents') parts.push(t('memo.list.filterAgents'));
+    if (activeFilter === 'agents') parts.push(t('memo.navigation.conversations'));
     if (activeFilter === 'color') {
       const colorLabel =
         colorFilter === 'any'
@@ -535,7 +528,7 @@ export function MemoList() {
     if (activeFilter === 'thisMonth') parts.push(t('memo.list.filterThisMonth'));
     return parts.length > 0
       ? { headerLabel: parts.join(' '), hasActiveFilter: true }
-      : { headerLabel: t('memo.list.filterAll'), hasActiveFilter: false };
+      : { headerLabel: t('memo.navigation.allNotes'), hasActiveFilter: false };
   })();
 
   // 'color' 是前端专用 filter — 后端返回全量, 这里按 `colorFilter` 二次过滤:
@@ -620,14 +613,10 @@ export function MemoList() {
     [setActiveFilter, setColorFilter, setSelectedTagId, setNotebookDropdownOpen],
   );
 
-  // 当 dropdown 关闭时, 同步把 color submenu 也收掉, 避免残留 portal 节点
+  // 当 dropdown 关闭时, 同步把 color submenu 也收掉。
   useEffect(() => {
     if (!notebookDropdownOpen) {
       setColorSubmenuOpen(false);
-      if (colorSubmenuCloseTimerRef.current) {
-        window.clearTimeout(colorSubmenuCloseTimerRef.current);
-        colorSubmenuCloseTimerRef.current = null;
-      }
     }
   }, [notebookDropdownOpen]);
 
@@ -837,92 +826,45 @@ export function MemoList() {
       {/* Memo Tab */}
       <div className="flex items-center justify-between pl-2 pr-3 pb-2 gap-2">
         <div className="min-w-0 flex-1">
-          <DropdownMenu open={notebookDropdownOpen} onOpenChange={setNotebookDropdownOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="group flex max-w-full min-w-0 items-center gap-1 overflow-hidden rounded-md py-0.5 pl-1 pr-2 transition-colors"
-              >
-                <span
-                  className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--foreground)] transition-colors duration-150 group-hover:text-[color-mix(in_oklch,var(--foreground)_80%,white)]"
-                  title={hasActiveFilter ? headerLabel : undefined}
-                >
-                  {headerLabel}
-                </span>
-                <ChevronDown className="w-3 h-3 text-[var(--muted-foreground)] shrink-0" strokeWidth={2.5} />
-              </button>
-            </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="bottom" className="w-[200px] px-1 py-1 space-y-1">
+          <MemoNavigationDropdown
+            title={headerLabel}
+            titleTooltip={hasActiveFilter ? headerLabel : undefined}
+            ariaLabel={t('memo.navigation.menuTitle')}
+            open={notebookDropdownOpen}
+            onOpenChange={setNotebookDropdownOpen}
+          >
+          <div className="space-y-1">
             {/* Group 1: Filter Options */}
-            <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">{t('memo.list.filterLabel')}</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => handleFilterChange('all')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.filterAll')}</span>
-              {activeFilter === 'all' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => handleFilterChange('agents')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.filterAgentsOnly')}</span>
-              {activeFilter === 'agents' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => handleFilterChange('todos')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.filterTasksOnly')}</span>
-              {activeFilter === 'todos' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
-            <button
-              ref={colorTriggerRef}
-              type="button"
-              onMouseEnter={() => {
-                if (colorSubmenuCloseTimerRef.current) {
-                  window.clearTimeout(colorSubmenuCloseTimerRef.current);
-                  colorSubmenuCloseTimerRef.current = null;
-                }
-                setColorSubmenuOpen(true);
-              }}
-              onMouseLeave={() => {
-                if (colorSubmenuCloseTimerRef.current) {
-                  window.clearTimeout(colorSubmenuCloseTimerRef.current);
-                }
-                colorSubmenuCloseTimerRef.current = window.setTimeout(() => {
-                  setColorSubmenuOpen(false);
-                  colorSubmenuCloseTimerRef.current = null;
-                }, 120);
-              }}
-              onFocus={() => setColorSubmenuOpen(true)}
-              className={cn(
-                'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm text-[var(--foreground)] cursor-pointer outline-none',
-                colorSubmenuOpen ? 'bg-[var(--muted)]' : 'hover:bg-[var(--muted)]',
+            <DropdownMenuLabel className="flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">{t('memo.list.filterLabel')}</DropdownMenuLabel>
+            <MemoNavigationSubmenu
+              label={t('memo.list.filterColorOnly')}
+              active={activeFilter === 'color'}
+              open={colorSubmenuOpen}
+              labelAdornment={activeFilter === 'color' && (
+                <span
+                  aria-hidden
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor:
+                      colorFilter === 'none'
+                        ? 'transparent'
+                        : colorFilter === 'any'
+                          ? 'var(--muted-foreground)'
+                          : MEMO_COLOR_HEX[colorFilter],
+                    border: '1px solid var(--border)',
+                  }}
+                />
               )}
-            >
-              <span className="flex items-center gap-2">
-                <span>{t('memo.list.filterColorOnly')}</span>
-                {activeFilter === 'color' && (
-                  <span
-                    aria-hidden
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        colorFilter === 'none'
-                          ? 'transparent'
-                          : colorFilter === 'any'
-                            ? 'var(--muted-foreground)'
-                            : MEMO_COLOR_HEX[colorFilter],
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                )}
-              </span>
-              <span className="flex items-center gap-1.5">
-                {activeFilter === 'color' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-                <ChevronRight className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
-              </span>
-            </button>
+              emptyText=""
+              loadingText=""
+              submenuContent={(
+                <ColorFilterSubmenuContent
+                  value={colorFilter}
+                  onSelect={handleColorSubmenuSelect}
+                />
+              )}
+              onOpenChange={setColorSubmenuOpen}
+            />
             <DropdownMenuItem
               onClick={() => handleFilterChange('thisWeek')}
               className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
@@ -939,10 +881,10 @@ export function MemoList() {
             </DropdownMenuItem>
 
             {/* Separator between Filter and Sort, matching the titlebar dropdown dividers */}
-            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+            <hr className="mx-2 my-1 border-0 border-t border-[var(--border)] opacity-50" />
 
             {/* Group 2: Sort Options */}
-            <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">{t('memo.list.sortLabel')}</DropdownMenuLabel>
+            <DropdownMenuLabel className="flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">{t('memo.list.sortLabel')}</DropdownMenuLabel>
             <DropdownMenuItem
               onClick={() => handleSortChange('createdAt')}
               className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
@@ -957,29 +899,8 @@ export function MemoList() {
               <span>{t('memo.list.sortUpdated')}</span>
               {activeSort === 'updatedAt' && <Check className="w-4 h-4 text-[var(--primary)]" />}
             </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {/* 注意: 必须放在 <DropdownMenu> 外面 — 父 dropdown 的 mousedown 监听
-            触发 setOpen(false) 时会卸载 DropdownMenuContent, 进而卸载内部
-            子组件, ColorFilterSubmenu 的 portal 节点被从 body 移除; 此时
-            mousedown 后接的 click 落在已脱离 DOM 的按钮上, React 看不到
-            onClick 触发, 状态就没被 set, 筛选当然不生效。 提到外层后,
-            即使父 dropdown 关闭, 子菜单组件仍由 MemoList 持有, portal
-            节点稳定, click 落到 mounted 按钮上, 走 handleSelect 正常
-            setColorFilter + setActiveFilter('color')。 */}
-        <ColorFilterSubmenu
-          parentRef={colorTriggerRef}
-          active={colorSubmenuOpen}
-          onClose={() => setColorSubmenuOpen(false)}
-          onCancelClose={() => {
-            if (colorSubmenuCloseTimerRef.current) {
-              window.clearTimeout(colorSubmenuCloseTimerRef.current);
-              colorSubmenuCloseTimerRef.current = null;
-            }
-          }}
-          value={colorFilter}
-          onSelect={handleColorSubmenuSelect}
-        />
+          </div>
+          </MemoNavigationDropdown>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Tooltip content={t("memo.list.searchTooltip")} shortcut="palette.search">

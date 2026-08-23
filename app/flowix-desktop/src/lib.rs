@@ -2,16 +2,18 @@
 // 因此这几个模块对外可见。app crate 无外部消费者, 可见性放宽无成本。
 pub mod agent_external;
 mod agent_external_config;
-pub mod agent_flowix;
 pub mod agent_session;
 mod agent_types;
+pub mod agent_wire;
 mod app;
 mod apple_sign_in;
 mod cli_link;
 mod commands;
 pub mod config;
+mod connection_probe;
 mod device_registration;
 mod document_mutation;
+mod dsh;
 mod events;
 mod lock_utils;
 mod memo_events;

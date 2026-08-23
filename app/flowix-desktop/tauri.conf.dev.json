@@ -74,9 +74,6 @@
     ],
     "externalBin": [
       "binaries/flowix-cli"
-    ],
-    "resources": {
-      "resources/skills/.system/**/*": "skills/.system/"
-    }
+    ]
   }
 }

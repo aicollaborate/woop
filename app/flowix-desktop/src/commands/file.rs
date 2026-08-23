@@ -49,7 +49,9 @@ fn generate_stable_id(full_path: &str) -> String {
 }
 
 fn system_time_to_ms(t: SystemTime) -> Option<u64> {
-    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
+    t.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
 }
 
 fn modified_time_ms(meta: &fs::Metadata) -> Option<u64> {
@@ -105,7 +107,11 @@ fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
             // 一致、跟随符号链接): 文件取 len()、folder 置 None, 不做递归统计。
             let meta = fs::metadata(&path).ok();
             let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size_bytes = if is_dir { None } else { meta.as_ref().map(|m| m.len()) };
+            let size_bytes = if is_dir {
+                None
+            } else {
+                meta.as_ref().map(|m| m.len())
+            };
             let modified_ms = meta.as_ref().and_then(modified_time_ms);
             let created_ms = meta.as_ref().and_then(created_time_ms);
             let item = DocTreeItem {

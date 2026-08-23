@@ -2,9 +2,10 @@
 //!
 //! Four closely related concerns live here:
 //!
-//! - [`user`] 鈥?user-level settings: AI model config (toml), preferences
-//!   (json), theme, agent persona. Persisted at `~/.flowix/agent-config.toml`
-//!   and `~/.flowix/boot/preference.json`. Owns the `atomic_write_json`
+//! - [`user`] 鈥?user-level settings: legacy AI migration data, preferences
+//!   (json), theme, agent persona. Legacy data is persisted at
+//!   `~/.flowix/agent-config.toml`; active DSH settings use its own YAML file.
+//!   Owns the `atomic_write_json`
 //!   helper used by sibling stores.
 //! - [`access`] 鈥?agent-access registry: which folders + notebooks the AI
 //!   agent is allowed to see. Persisted at `~/.flowix/agent-access.json`.
@@ -33,6 +34,6 @@ pub use path_scope::path_is_inside;
 pub use security_bookmark::pick_directory_with_bookmark;
 pub use security_bookmark::SecurityBookmarkStore;
 pub use user::{
-    AiConfigFile, AiModelConfig, AiModelEntry, DeepSeekHarnessPluginSettings, PreferenceFile,
-    Theme, UserConfigError, UserConfigStore, DSH_PLUGIN_SETTINGS_FILE_NAME, DSH_SETTINGS_FILE_NAME,
+    dsh_credential_ref_for_route, AiConfigFile, AiModelConfig, AiModelEntry, PreferenceFile, Theme,
+    UserConfigError, UserConfigStore, DSH_SETTINGS_FILE_NAME,
 };

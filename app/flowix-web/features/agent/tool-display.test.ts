@@ -387,7 +387,7 @@ describe("parseAgentCommandInput", () => {
   it("normalizes Flowix shell command tools to command display", () => {
     expect(
       createAgentToolDisplay({
-        agentType: "flowix",
+        agentType: "deepseek-harness",
         toolName: "shell",
         input: { command: "npm run build" },
       }),

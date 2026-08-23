@@ -22,7 +22,6 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 
 type CollapsibleAgentKey =
-  | 'flowix'
   | 'codex'
   | 'claude'
   | 'gemini'
@@ -86,7 +85,6 @@ export function AgentsSection() {
 
   const renderHeaderAction = (typeKey: string) => {
     const isCollapsible =
-      typeKey === 'flowix' ||
       typeKey === 'codex' ||
       typeKey === 'claude' ||
       typeKey === 'gemini' ||
@@ -170,16 +168,6 @@ export function AgentsSection() {
               />
             );
           };
-          if (typeKey === 'flowix') {
-            // 模型配置整段塞到 Flowix 卡片里 ── 用户展开 Flowix 时直接看到
-            // 供应商/模型/key 的表单, 不用跳到独立 tab。
-            return renderCollapsible(
-              'flowix',
-              <div className="border-t border-[var(--divider)] py-3">
-                <AgentSection />
-              </div>,
-            );
-          }
           if (typeKey === 'deepseek-harness') {
             return renderCollapsible(
               'deepseek-harness',

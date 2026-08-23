@@ -11,11 +11,12 @@
  * 为 undefined, 提交侧 defaultFiles 为 undefined, 主空间回落当前笔记本路径。
  */
 import type { AgentTypeKey, RuntimeConfig } from "@/types/agent";
+import { DEFAULT_AGENT_TYPE_KEY } from "@/lib/agent-types";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
 
 export function buildInitialInstanceRuntimeConfig(
-  agentType: AgentTypeKey = "flowix",
+  agentType: AgentTypeKey = DEFAULT_AGENT_TYPE_KEY,
 ): RuntimeConfig {
   const accessState = useAgentAccessStore.getState();
   const notebookId = useMemoStore.getState().selectedNotebook?.id ?? undefined;

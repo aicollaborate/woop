@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::agent_external::AgentChunkMetadata;
-use crate::agent_flowix::{AgentChunk, StatusInfo, UsageInfo};
+use crate::agent_wire::{AgentChunk, StatusInfo, UsageInfo};
 
 use super::tool_events::{
     looks_like_unknown_tool_event, tool_event_definition, tool_event_id, tool_event_name,
@@ -161,10 +161,15 @@ pub fn codex_event_to_chunks(thread_id: &str, value: &Value) -> Vec<AgentChunk> 
                 result,
             },
         ],
-        CodexEvent::Error { message } => vec![AgentChunk::Error {
-            thread_id: thread_id.to_string(),
-            message: normalize_codex_error_message(message),
-        }],
+        CodexEvent::Error { message } => {
+            let normalized = normalize_codex_error_message(message);
+            let error_details = crate::agent_external::classify_agent_error(&normalized, "stdout");
+            vec![AgentChunk::Error {
+                thread_id: thread_id.to_string(),
+                message: normalized,
+                error_details: Some(error_details),
+            }]
+        }
     }
 }
 

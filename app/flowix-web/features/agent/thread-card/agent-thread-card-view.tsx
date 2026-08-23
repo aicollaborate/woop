@@ -15,6 +15,7 @@ import type { ThreadProjection } from "@features/agent/store/session-reducer";
 import { selectRenderableThreadMessages } from "@features/agent/store/thread-render-messages";
 import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
+import { errorMessage } from "@/lib/error-message";
 import type { AgentTypeKey } from "@/types/agent";
 import type { QuickPhrase } from "@/lib/constants";
 import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
@@ -134,7 +135,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private chrome: AgentThreadCardChromeController;
   private metaEl: HTMLElement;
   private runStatusEl: HTMLSpanElement;
-  private errorEl: HTMLElement;
   // 消息区底部 loading 指示器 ── 24px 固定高度, 始终挂在 body 末尾。
   // 容器永远在 DOM 里 (保证 24px 空间不被流式更新挤掉), 内部的文字
   // "思考中" 仅在 isLoading 为 true 时显示 ── 与面板 agent-thinking-indicator
@@ -329,7 +329,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.collapseButton = domParts.collapseButton;
     this.body = domParts.body;
     this.loadingIndicator = domParts.loadingIndicator;
-    this.errorEl = domParts.errorEl;
     this.composer = domParts.composer;
     this.composerRoleIcon = domParts.composerRoleIcon;
     this.input = domParts.input;
@@ -531,7 +530,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private get typeKey(): AgentTypeKey {
-    return this.instance?.agentType ?? normalizeAgentTypeKey(this.node.attrs.typeKey as string | null);
+    // `agent_conversation_instances` predates the current runtime registry and
+    // can still contain retired values such as `flowix`.  Never let a persisted
+    // value bypass the normalizer: runtime-spec consumers require a supported
+    // AgentTypeKey and otherwise dereference an absent spec.
+    return normalizeAgentTypeKey(
+      this.instance?.agentType ?? (this.node.attrs.typeKey as string | null),
+    );
   }
 
   private get instanceId(): string | null {
@@ -575,8 +580,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         if (this.node.attrs.threadId !== boundInstance.threadId) {
           attrs.threadId = boundInstance.threadId;
         }
-        if (this.node.attrs.typeKey !== boundInstance.agentType) {
-          attrs.typeKey = boundInstance.agentType;
+        const typeKey = normalizeAgentTypeKey(boundInstance.agentType);
+        if (this.node.attrs.typeKey !== typeKey) {
+          attrs.typeKey = typeKey;
         }
         if (Object.keys(attrs).length > 0) this.updateAttrs(attrs);
       } else if (this.hydratingInstanceId !== existingInstanceId) {
@@ -589,8 +595,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
               if (this.node.attrs.threadId !== instance.threadId) {
                 attrs.threadId = instance.threadId;
               }
-              if (this.node.attrs.typeKey !== instance.agentType) {
-                attrs.typeKey = instance.agentType;
+              const typeKey = normalizeAgentTypeKey(instance.agentType);
+              if (this.node.attrs.typeKey !== typeKey) {
+                attrs.typeKey = typeKey;
               }
               if (Object.keys(attrs).length > 0) this.updateAttrs(attrs);
               this.refreshAttrs();
@@ -1387,11 +1394,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     }
   }
 
-  private setError(message: string | null): void {
-    this.errorEl.hidden = !message;
-    this.errorEl.textContent = message ?? "";
-  }
-
   // 提取当前 thread 的 user 消息列表 (按时间顺序, 旧 → 新) ──
   // 仅做"前端有"的范围, 不主动去后台拉历史 (hasMoreHistory / loadMoreHistory),
   // 也不读 agent role memo ── 用户的措辞是"次级需求", 用前端可见数据
@@ -1453,7 +1455,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.composerImages.clearAfterSubmit();
     this.updateAttrs({ inputDraft: null, inputImages: [] });
     this.composerController.updateMultiLineState();
-    this.setError(null);
     this.renderThreadState();
 
     const source = getCurrentThreadCardSource();
@@ -1499,9 +1500,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         },
       });
     } catch (err) {
-      this.setError(
-        typeof err === "string" ? err : this.t("editor.threadCard.sendFailed"),
-      );
+      const message = errorMessage(err).trim();
+      toast.error(message || this.t("editor.threadCard.sendFailed"));
     } finally {
       this.isCreating = false;
       this.renderThreadState();

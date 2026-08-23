@@ -8,6 +8,8 @@ const testState = vi.hoisted(() => ({
   selectedNotebook: null as Notebook | null,
   activeMemoSession: null as { memoId: string; path: string } | null,
   currentDocumentSource: null as 'memo' | 'external' | null,
+  activeFileBrowserPath: null as string | null,
+  activeFileBrowserDocument: null as { path: string; scopePath: string } | null,
   setSelectedMemo: vi.fn((memo: MemoItem | null) => {
     testState.selectedMemo = memo;
   }),
@@ -18,6 +20,12 @@ const testState = vi.hoisted(() => ({
     };
     testState.currentDocumentSource = 'memo';
   }),
+  setActiveFileBrowserPath: vi.fn((path: string | null) => {
+    testState.activeFileBrowserPath = path;
+  }),
+  openExternalDocument: vi.fn(async () => {
+    testState.currentDocumentSource = 'external';
+  }),
 }));
 
 vi.mock('@features/memo', () => ({
@@ -25,7 +33,10 @@ vi.mock('@features/memo', () => ({
     getState: () => ({
       selectedMemo: testState.selectedMemo,
       selectedNotebook: testState.selectedNotebook,
+      activeFileBrowserPath: testState.activeFileBrowserPath,
+      activeFileBrowserDocument: testState.activeFileBrowserDocument,
       setSelectedMemo: testState.setSelectedMemo,
+      setActiveFileBrowserPath: testState.setActiveFileBrowserPath,
     }),
   },
 }));
@@ -36,11 +47,15 @@ vi.mock('@features/document', () => ({
       activeMemoSession: testState.activeMemoSession,
       currentDocumentSource: testState.currentDocumentSource,
       openMemoDocument: testState.openMemoDocument,
+      openExternalDocument: testState.openExternalDocument,
     }),
   },
 }));
 
-import { restorePersistedMemoSession } from '@features/memo/use-cases/open-memo-session';
+import {
+  restorePersistedExternalDocument,
+  restorePersistedMemoSession,
+} from '@features/memo/use-cases/open-memo-session';
 
 const memo: MemoItem = {
   id: 'memo-1',
@@ -72,8 +87,12 @@ describe('restorePersistedMemoSession', () => {
     testState.selectedNotebook = notebook;
     testState.activeMemoSession = null;
     testState.currentDocumentSource = null;
+    testState.activeFileBrowserPath = null;
+    testState.activeFileBrowserDocument = null;
     testState.setSelectedMemo.mockClear();
+    testState.setActiveFileBrowserPath.mockClear();
     testState.openMemoDocument.mockClear();
+    testState.openExternalDocument.mockClear();
     testState.openMemoDocument.mockImplementation(async (input) => {
       testState.activeMemoSession = {
         memoId: input.memoId,
@@ -118,5 +137,21 @@ describe('restorePersistedMemoSession', () => {
     expect(testState.openMemoDocument).toHaveBeenCalledOnce();
     finishOpen?.();
     await Promise.all([first, second]);
+  });
+
+  it('restores the persisted external document when no memo is selected', async () => {
+    testState.selectedMemo = null;
+    testState.activeFileBrowserDocument = {
+      path: '/workspace/src/main.ts',
+      scopePath: '/workspace',
+    };
+
+    await restorePersistedExternalDocument();
+
+    expect(testState.setActiveFileBrowserPath).toHaveBeenCalledWith('/workspace');
+    expect(testState.openExternalDocument).toHaveBeenCalledWith(
+      '/workspace/src/main.ts',
+      { history: 'skip', scopePath: '/workspace' },
+    );
   });
 });

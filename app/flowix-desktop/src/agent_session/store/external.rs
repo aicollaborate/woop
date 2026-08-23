@@ -346,13 +346,13 @@ impl ThreadManager {
             "DELETE FROM agent_external_events
              WHERE thread_id = ?1
                AND normalized_json <> ?3
-               AND id NOT IN (
+               AND id <= COALESCE((
                    SELECT id
                    FROM agent_external_events
                    WHERE thread_id = ?1 AND normalized_json <> ?3
                    ORDER BY id DESC
-                   LIMIT ?2
-               )",
+                   LIMIT 1 OFFSET ?2
+               ), -1)",
             params![
                 thread_id,
                 MAX_EXTERNAL_EVENTS_PER_THREAD,
@@ -861,16 +861,23 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                     message.is_completed = Some(true);
                 }
             }
-            Some("error") => messages.push(external_history_message(
-                message_id,
-                "assistant",
-                payload
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                timestamp,
-            )),
+            Some("error") => {
+                let mut message = external_history_message(
+                    message_id,
+                    "assistant",
+                    payload
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    timestamp,
+                );
+                message.error_details = payload
+                    .get("error_details")
+                    .cloned()
+                    .and_then(|details| serde_json::from_value(details).ok());
+                messages.push(message);
+            }
             _ => {}
         }
     }
@@ -986,6 +993,7 @@ fn external_history_message(
         tool_calls: None,
         reasoning: None,
         is_completed: Some(true),
+        error_details: None,
         is_collapsed: None,
     }
 }

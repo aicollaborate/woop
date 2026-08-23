@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
-use crate::agent_flowix::AgentChunk;
+use crate::agent_wire::AgentChunk;
 
 pub const PROTOCOL_VERSION: u64 = 1;
 pub const INITIALIZE_ID: u64 = 1;
@@ -163,12 +163,18 @@ pub fn response_result<'a>(message: &'a Value, id: u64) -> Option<Result<&'a Val
         return None;
     }
     if let Some(error) = message.get("error") {
-        let text = error
+        let human_message = error
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| error.to_string());
-        return Some(Err(text));
+        // Keep code/data beside the human message. Provider status, request id
+        // and retry metadata are frequently nested in `data`; reducing this to
+        // only `error.message` makes the shared classifier irreversibly lossy.
+        let envelope = json!({ "error": error });
+        return Some(Err(format!(
+            "{human_message}\nOpenCode JSON-RPC error: {envelope}"
+        )));
     }
     Some(Ok(message.get("result").unwrap_or(&Value::Null)))
 }
@@ -464,6 +470,26 @@ mod tests {
 
     fn chunks(message: &Value) -> Vec<AgentChunk> {
         chunks_from_message("thread", message, &mut HashMap::new())
+    }
+
+    #[test]
+    fn json_rpc_errors_preserve_code_and_provider_data() {
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": PROMPT_ID,
+            "error": {
+                "code": -32000,
+                "message": "provider request failed",
+                "data": { "status": 429, "request_id": "req-opencode" }
+            }
+        });
+        let error = response_result(&message, PROMPT_ID)
+            .expect("matching response")
+            .expect_err("response should fail");
+        assert!(error.contains("provider request failed"));
+        assert!(error.contains("-32000"));
+        assert!(error.contains("429"));
+        assert!(error.contains("req-opencode"));
     }
 
     #[test]

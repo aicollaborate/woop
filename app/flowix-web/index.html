@@ -11,6 +11,38 @@
         margin: 0;
         padding: 0;
       }
+      #app-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: grid;
+        place-items: center;
+        background: #f5f5f4;
+        pointer-events: none;
+      }
+      #app-loading::before {
+        width: 24px;
+        height: 24px;
+        box-sizing: border-box;
+        border: 2px solid rgba(120, 113, 108, 0.28);
+        border-top-color: #78716c;
+        border-radius: 50%;
+        content: "";
+        animation: app-loading-spin 0.72s linear infinite;
+      }
+      html[data-theme="dark"] #app-loading {
+        background: #171717;
+      }
+      html[data-theme="dark"] #app-loading::before {
+        border-color: rgba(214, 211, 209, 0.24);
+        border-top-color: #d6d3d1;
+      }
+      @keyframes app-loading-spin {
+        to { transform: rotate(360deg); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app-loading::before { animation-duration: 1.4s; }
+      }
     </style>
     <!--
       首屏 boot: 在 CSS paint 之前把 data-theme 写到 <html>。
@@ -23,6 +55,7 @@
 
   <body>
     <div id="root"></div>
+    <div id="app-loading" aria-hidden="true"></div>
     <!-- Vite resolves this bootstrap module to the desktop or mobile entry at
          build time. The target bundle therefore has a single application root. -->
     <script type="module" src="/entrypoints/main.ts"></script>

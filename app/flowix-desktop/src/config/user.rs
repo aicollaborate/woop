@@ -13,10 +13,10 @@ use flowix_core::secret::{entry_name, SecretStore};
 ///    `boot/system.json` / `index.db`) 鍖哄垎寰楁洿鏄剧溂
 ///    (TOML 格式 + 显式 `agent-` 前缀, 不会出现"�?��文件该用 JSON"的�?�?
 pub const AI_CONFIG_FILE_NAME: &str = "agent-config.toml";
-/// DeepSeek Harness runtime data lives under one root inside the Flowix config
-/// dir (`~/.flowix/dsh/`), mirroring the harness-home single-root convention.
-/// Sessions, settings, and plugin settings all nest beneath it.
-pub const DSH_DIR_NAME: &str = "dsh";
+/// DeepSeek Harness uses its official user-global home (`~/.dsh`). Flowix
+/// owns a profile below that home, but does not introduce a second harness
+/// root below `~/.flowix`.
+pub const DSH_DIR_NAME: &str = ".dsh";
 pub const DSH_SESSIONS_DIR_NAME: &str = "sessions";
 pub const DSH_SETTINGS_FILE_NAME: &str = "settings.yaml";
 pub const DSH_PLUGIN_SETTINGS_FILE_NAME: &str = "plugin-settings.json";
@@ -140,10 +140,10 @@ impl Default for ProductUpdatesConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    #[default]
     System,
     Light,
     Dark,
+    #[default]
     Rock,
     Mist,
     /// 暖米纸面 + 珊瑚橙焦�?(主色 #FB6A42), �?rock/mist 占据同一"克制�?
@@ -188,7 +188,9 @@ pub struct PreferenceFile {
     pub watcher: crate::watcher::WhitelistConfig,
 }
 
-/// AI 模型配置真源 `~/.flowix/agent-config.toml`�?///
+/// Legacy AI model configuration at `~/.flowix/agent-config.toml`.
+/// It is retained only as a one-time migration source for DeepSeek Harness;
+/// active Harness settings live in its dedicated YAML document.
 /// `PartialEq` / `Eq` 派生用于 `AgentManager` 的缓存命�?���?(`agent.rs`
 /// �?`ensure_instance` 会用 `cached.config == config` 比较)。结构体�?��
 /// `String` 字�?, 派生�?derive 足�?�?///
@@ -202,9 +204,8 @@ pub struct PreferenceFile {
 pub struct AiModelConfig {
     #[serde(default)]
     pub provider: String,
-    /// Route ID for a hand-configured DeepSeek Harness provider. Built-in
-    /// providers leave this empty and continue to use the stable `flowix`
-    /// bridge route for backwards compatibility.
+    /// Native llm-pi-ai route ID. Blank IDs are accepted only for legacy
+    /// migration input; newly persisted settings always write this field.
     #[serde(default)]
     pub provider_id: String,
     /// Human-readable name for a custom Harness provider.
@@ -214,6 +215,9 @@ pub struct AiModelConfig {
     /// `openai-responses`, or `anthropic-messages`).
     #[serde(default)]
     pub api_protocol: String,
+    /// DSH credentials-service reference for this provider route.
+    #[serde(default, rename = "apiKeyEnv")]
+    pub api_key_env: String,
     #[serde(default)]
     pub model: String,
     /// Hand-entered model directory for a custom Harness provider.
@@ -265,6 +269,7 @@ impl Default for AiModelConfig {
             provider_id: String::new(),
             display_name: String::new(),
             api_protocol: String::new(),
+            api_key_env: String::new(),
             model: String::new(),
             models: Vec::new(),
             api_url: String::new(),
@@ -293,8 +298,8 @@ pub struct AiConfigFile {
 }
 
 /// The durable settings document consumed by the vendored `llm-pi-ai`
-/// settings provider.  Flowix keeps the selected provider/model for the
-/// DeepSeek Harness here, separately from the Flowix Agent TOML config.
+/// settings provider. Flowix keeps the selected provider/model for the
+/// DeepSeek Harness here, separately from the legacy AI TOML config.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepSeekHarnessSettingsFile {
     #[serde(rename = "llm-pi-ai", default)]
@@ -315,7 +320,7 @@ pub struct DeepSeekHarnessProviderSettings {
     pub api_key_env: String,
     #[serde(default)]
     pub api: String,
-    #[serde(default, rename = "baseURL")]
+    #[serde(default, rename = "baseURL", skip_serializing_if = "String::is_empty")]
     pub base_url: String,
     #[serde(default)]
     pub models: Vec<DeepSeekHarnessModelSettings>,
@@ -332,15 +337,10 @@ impl DeepSeekHarnessSettingsFile {
     fn route_id_for_ai_config(config: &AiConfigFile) -> String {
         let provider_id = config.model.provider_id.trim();
         if provider_id.is_empty() {
-            // llm-pi-ai uses the provider map key as the route identity. Keep
-            // the old bridge only for an actually blank provider; a catalog
-            // provider such as `deepseek` or `zai` must get its own route.
-            let provider = config.model.provider.trim();
-            if provider.is_empty() {
-                "flowix".to_string()
-            } else {
-                provider.to_string()
-            }
+            // llm-pi-ai uses the provider map key as the route identity.
+            // Provider display names are not routes and must never be used as
+            // a substitute for a missing provider ID.
+            config.model.provider.trim().to_string()
         } else {
             provider_id.to_string()
         }
@@ -351,6 +351,9 @@ impl DeepSeekHarnessSettingsFile {
     ) -> Option<DeepSeekHarnessProviderSettings> {
         let model = &config.model;
         let provider = model.provider.trim().to_string();
+        if Self::route_id_for_ai_config(config).is_empty() {
+            return None;
+        }
         // A provider with no remaining models is removed rather than written
         // as an invalid llm-pi-ai route. The Harness schema rejects unknown
         // routes whose model directory is empty.
@@ -376,7 +379,11 @@ impl DeepSeekHarnessSettingsFile {
         };
         Some(DeepSeekHarnessProviderSettings {
             display_name,
-            api_key_env: "DSH_API_KEY".to_string(),
+            api_key_env: if model.api_key_env.trim().is_empty() {
+                dsh_credential_ref_for_route(&Self::route_id_for_ai_config(config))
+            } else {
+                model.api_key_env.trim().to_string()
+            },
             api: (!model.api_protocol.trim().is_empty())
                 .then(|| model.api_protocol.trim().to_string())
                 .unwrap_or_else(|| deepseek_harness_api_protocol(&provider)),
@@ -419,29 +426,19 @@ impl DeepSeekHarnessSettingsFile {
         } else {
             provider.display_name.trim().to_string()
         };
-        let is_custom = route_id != "flowix";
-        let key_bucket = if is_custom {
-            route_id.to_string()
-        } else {
-            provider_name.clone()
-        };
+        let key_bucket = route_id.to_string();
         let api_keys = (!key_bucket.is_empty())
             .then(|| HashMap::from([(key_bucket, String::new())]))
             .unwrap_or_default();
         AiConfigFile {
             model: AiModelConfig {
-                // For a real llm-pi-ai route the map key is the provider value
-                // sent to Harness. The display name is presentation only.
-                // The legacy `flowix` bridge keeps its historical provider
-                // name so old configurations continue to resolve.
-                provider: if is_custom {
-                    route_id.to_string()
-                } else {
-                    provider_name.clone()
-                },
-                provider_id: is_custom.then(|| route_id.to_string()).unwrap_or_default(),
+                // The route key is the value sent to Harness. The display
+                // name is presentation only and is kept separately.
+                provider: route_id.to_string(),
+                provider_id: route_id.to_string(),
                 display_name: provider_name,
                 api_protocol: provider.api.clone(),
+                api_key_env: provider.api_key_env.clone(),
                 model: provider
                     .models
                     .first()
@@ -463,13 +460,12 @@ impl DeepSeekHarnessSettingsFile {
     }
 
     fn to_ai_config(&self) -> AiConfigFile {
-        let (route_id, provider) = if let Some(provider) = self.llm_pi_ai.providers.get("flowix") {
-            ("flowix", provider)
-        } else if let Some((route_id, provider)) = self.llm_pi_ai.providers.iter().next() {
-            (route_id.as_str(), provider)
-        } else {
-            return AiConfigFile::default();
-        };
+        let (route_id, provider) =
+            if let Some((route_id, provider)) = self.llm_pi_ai.providers.iter().next() {
+                (route_id.as_str(), provider)
+            } else {
+                return AiConfigFile::default();
+            };
         Self::to_ai_config_for_route(route_id, provider)
     }
 
@@ -498,6 +494,23 @@ fn deepseek_harness_api_protocol(provider: &str) -> String {
     .to_string()
 }
 
+/// Convert a DSH route id into a stable credentials-service reference. The
+/// reference is deliberately separate from the display name and endpoint so
+/// two routes sharing a gateway cannot overwrite each other's secret.
+pub fn dsh_credential_ref_for_route(route: &str) -> String {
+    let mut suffix = String::new();
+    for character in route.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            suffix.push(character.to_ascii_uppercase());
+        } else if !suffix.ends_with('_') {
+            suffix.push('_');
+        }
+    }
+    let suffix = suffix.trim_matches('_');
+    let suffix = if suffix.is_empty() { "FLOWIX" } else { suffix };
+    format!("FLOWIX_DSH_{suffix}_API_KEY")
+}
+
 fn merge_harness_provider(
     existing: &mut DeepSeekHarnessProviderSettings,
     incoming: DeepSeekHarnessProviderSettings,
@@ -521,105 +534,10 @@ fn merge_harness_provider(
     }
 }
 
-fn normalized_harness_identity(value: &str) -> String {
-    value.trim().trim_end_matches('/').to_ascii_lowercase()
-}
-
 /// Resolve the route represented by an IPC config against the routes already
 /// present in `llm-pi-ai.providers`.
-///
-/// Older Flowix builds always stored the active custom provider under the
-/// stable `flowix` route and kept its real identity in `displayName`. Newer
-/// UI drafts carry that identity as `providerId`. Treating those two forms as
-/// different routes is what made adding model B create a second route while
-/// the reader continued to show model A from `flowix`. Match the existing
-/// route by identity/endpoint before falling back to the requested route id.
-fn existing_harness_route_id(
-    settings: &DeepSeekHarnessSettingsFile,
-    config: &AiConfigFile,
-) -> String {
-    let requested = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
-    if settings.llm_pi_ai.providers.contains_key(&requested) {
-        return requested;
-    }
-
-    let model = &config.model;
-    let identities = [model.provider.trim(), model.display_name.trim()];
-    let base_url = normalized_harness_identity(&model.api_url);
-    settings
-        .llm_pi_ai
-        .providers
-        .iter()
-        .find(|(route_id, provider)| {
-            identities.iter().any(|identity| {
-                !identity.is_empty()
-                    && normalized_harness_identity(&provider.display_name)
-                        == normalized_harness_identity(identity)
-            }) || (route_id.as_str() == "flowix"
-                && !base_url.is_empty()
-                && normalized_harness_identity(&provider.base_url) == base_url)
-        })
-        .map(|(route_id, _)| route_id.clone())
-        .unwrap_or(requested)
-}
-
-fn harness_provider_matches_config(
-    route_id: &str,
-    provider: &DeepSeekHarnessProviderSettings,
-    config: &AiConfigFile,
-) -> bool {
-    let identities = [
-        config.model.provider.trim(),
-        config.model.display_name.trim(),
-    ];
-    let base_url = normalized_harness_identity(&config.model.api_url);
-    identities.iter().any(|identity| {
-        !identity.is_empty()
-            && normalized_harness_identity(&provider.display_name)
-                == normalized_harness_identity(identity)
-    }) || (route_id == "flowix"
-        && !base_url.is_empty()
-        && normalized_harness_identity(&provider.base_url) == base_url)
-}
-
-fn split_models_from_legacy_flowix_route(
-    settings: &mut DeepSeekHarnessSettingsFile,
-    requested_route_id: &str,
-    config: &AiConfigFile,
-    incoming: &DeepSeekHarnessProviderSettings,
-) -> bool {
-    if requested_route_id == "flowix"
-        || settings
-            .llm_pi_ai
-            .providers
-            .contains_key(requested_route_id)
-        || settings
-            .llm_pi_ai
-            .providers
-            .get("flowix")
-            .is_none_or(|provider| harness_provider_matches_config("flowix", provider, config))
-    {
-        return false;
-    }
-    let incoming_ids = incoming
-        .models
-        .iter()
-        .map(|model| model.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    if let Some(legacy) = settings.llm_pi_ai.providers.get_mut("flowix") {
-        legacy
-            .models
-            .retain(|model| !incoming_ids.contains(model.id.as_str()));
-    }
-    if settings
-        .llm_pi_ai
-        .providers
-        .get("flowix")
-        .is_some_and(|provider| provider.models.is_empty())
-    {
-        settings.llm_pi_ai.providers.remove("flowix");
-    }
-    true
+fn existing_harness_route_id(config: &AiConfigFile) -> String {
+    DeepSeekHarnessSettingsFile::route_id_for_ai_config(config)
 }
 
 /// 全局用户配置存储。启动时一次性从磁盘读入内存, 写操作先落盘再更内存�?
@@ -697,7 +615,16 @@ impl UserConfigStore {
         migrate_dsh_layout(&config_dir);
 
         let preference = Self::read_preference_from_disk(&config_dir).unwrap_or_default();
-        let ai_config = Self::read_ai_config_from_disk(&config_dir).unwrap_or_default();
+        // Once the official DSH settings document exists, do not even load
+        // the legacy TOML into the process. This makes the source-of-truth
+        // boundary explicit: agent-config.toml is read only during the
+        // one-time migration performed by
+        // read_or_migrate_deepseek_harness_settings().
+        let ai_config = if dsh_settings_path(&config_dir).is_file() {
+            AiConfigFile::default()
+        } else {
+            Self::read_ai_config_from_disk(&config_dir).unwrap_or_default()
+        };
         Self {
             config_dir,
             preference: RwLock::new(preference),
@@ -711,29 +638,32 @@ impl UserConfigStore {
         &self.config_dir
     }
 
-    /// `~/.flowix/dsh/` — the single root for all DeepSeek Harness runtime
-    /// data. Paths derive from here so the layout never scatters again.
+    /// `~/.dsh/` — the official DeepSeek Harness home. Flowix uses the
+    /// `profiles/flowix` namespace inside it and leaves plugin/profile state
+    /// to the official DSH CLI.
     pub fn dsh_dir(&self) -> PathBuf {
-        self.config_dir.join(DSH_DIR_NAME)
+        self.config_dir
+            .parent()
+            .unwrap_or(self.config_dir.as_path())
+            .join(DSH_DIR_NAME)
     }
 
     pub fn dsh_settings_path(&self) -> PathBuf {
         self.dsh_dir().join(DSH_SETTINGS_FILE_NAME)
     }
 
-    pub fn dsh_plugin_settings_path(&self) -> PathBuf {
-        self.dsh_dir().join(DSH_PLUGIN_SETTINGS_FILE_NAME)
-    }
-
     pub fn dsh_sessions_dir(&self) -> PathBuf {
         self.dsh_dir().join(DSH_SESSIONS_DIR_NAME)
+    }
+
+    pub fn dsh_plugin_settings_path(&self) -> PathBuf {
+        self.dsh_dir().join(DSH_PLUGIN_SETTINGS_FILE_NAME)
     }
 
     pub fn get_deepseek_harness_plugin_settings(
         &self,
     ) -> Result<DeepSeekHarnessPluginSettings, UserConfigError> {
-        let path = self.dsh_plugin_settings_path();
-        match fs::read_to_string(path) {
+        match fs::read_to_string(self.dsh_plugin_settings_path()) {
             Ok(content) => Ok(serde_json::from_str(&content)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(DeepSeekHarnessPluginSettings::default())
@@ -749,14 +679,18 @@ impl UserConfigStore {
     ) -> Result<DeepSeekHarnessPluginSettings, UserConfigError> {
         let mut settings = self.get_deepseek_harness_plugin_settings()?;
         if enabled {
-            settings.disabled.retain(|key| key != plugin_key);
+            settings
+                .disabled
+                .retain(|key| !dsh_plugin_keys_equivalent(key, plugin_key));
         } else if !settings.disabled.iter().any(|key| key == plugin_key) {
+            settings
+                .disabled
+                .retain(|key| !dsh_plugin_keys_equivalent(key, plugin_key));
             settings.disabled.push(plugin_key.to_string());
         }
         settings.disabled.sort();
         let content = serde_json::to_string_pretty(&settings)?;
-        let path = self.dsh_plugin_settings_path();
-        atomic_write_json(&path, &content)?;
+        atomic_write_json(&self.dsh_plugin_settings_path(), &content)?;
         Ok(settings)
     }
 
@@ -773,6 +707,9 @@ impl UserConfigStore {
         Ok(())
     }
 
+    /// Legacy compatibility accessor. DSH runtime code must use
+    /// `get_deepseek_harness_config(s)` instead; this accessor exists only for
+    /// migration-era callers and tests.
     pub fn get_ai_config(&self) -> AiConfigFile {
         let mut config = self.read_ai_config().clone();
         self.hydrate_ai_config_secrets(&mut config);
@@ -781,20 +718,10 @@ impl UserConfigStore {
 
     /// Load the DeepSeek Harness model configuration from the llm-pi-ai
     /// settings document. Existing installations are migrated lazily from
-    /// agent-config.toml on first access, so changing Flowix Agent settings
-    /// later does not overwrite an already-created Harness configuration.
+    /// agent-config.toml on first access; after that, the legacy document is
+    /// not consulted again.
     pub fn get_deepseek_harness_config(&self) -> Result<AiConfigFile, UserConfigError> {
-        let path = self.dsh_settings_path();
-        let settings = match self.read_deepseek_harness_settings()? {
-            Some(settings) => settings,
-            None => {
-                let config = self.get_ai_config();
-                let settings = DeepSeekHarnessSettingsFile::from_ai_config(&config);
-                let content = serde_yaml::to_string(&settings)?;
-                atomic_write_yaml(&path, &content)?;
-                settings
-            }
-        };
+        let settings = self.read_or_migrate_deepseek_harness_settings()?;
         let mut config = settings.to_ai_config();
         self.hydrate_ai_config_secrets(&mut config);
         Ok(config)
@@ -805,17 +732,7 @@ impl UserConfigStore {
     /// independent routes and their model cards carry different endpoints
     /// and credentials.
     pub fn get_deepseek_harness_configs(&self) -> Result<Vec<AiConfigFile>, UserConfigError> {
-        let path = self.dsh_settings_path();
-        let settings = match self.read_deepseek_harness_settings()? {
-            Some(settings) => settings,
-            None => {
-                let config = self.get_ai_config();
-                let settings = DeepSeekHarnessSettingsFile::from_ai_config(&config);
-                let content = serde_yaml::to_string(&settings)?;
-                atomic_write_yaml(&path, &content)?;
-                settings
-            }
-        };
+        let settings = self.read_or_migrate_deepseek_harness_settings()?;
         let mut configs = settings.to_ai_configs();
         for config in &mut configs {
             self.hydrate_ai_config_secrets(config);
@@ -833,24 +750,13 @@ impl UserConfigStore {
         let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
         if let Some(provider) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
         {
-            let requested_route_id = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
-            let split_legacy = split_models_from_legacy_flowix_route(
-                &mut settings,
-                &requested_route_id,
-                config,
-                &provider,
-            );
-            let route_id = if split_legacy {
-                requested_route_id
-            } else {
-                existing_harness_route_id(&settings, config)
-            };
+            let route_id = existing_harness_route_id(config);
             // Replace only the provider being edited. Other llm-pi-ai routes
             // and their model directories belong to the settings document
             // and must survive an unrelated save/delete operation.
             settings.llm_pi_ai.providers.insert(route_id, provider);
         } else {
-            let route_id = existing_harness_route_id(&settings, config);
+            let route_id = existing_harness_route_id(config);
             settings.llm_pi_ai.providers.remove(&route_id);
         }
         let content = serde_yaml::to_string(&settings)?;
@@ -869,35 +775,17 @@ impl UserConfigStore {
     ) -> Result<(), UserConfigError> {
         self.persist_ai_config_secrets(config)?;
         let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
-        let requested_route_id = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
-        let route_id = existing_harness_route_id(&settings, config);
+        let route_id = existing_harness_route_id(config);
         let Some(incoming) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
         else {
             return Err(UserConfigError::InvalidConfig(
                 "cannot add a Harness model without a provider and model".to_string(),
             ));
         };
-        // Repair the only ambiguous legacy shape while writing: an old
-        // `flowix` route may already contain a model that the user is now
-        // explicitly assigning to a different catalog route.
-        let should_split_legacy_route = split_models_from_legacy_flowix_route(
-            &mut settings,
-            &requested_route_id,
-            config,
-            &incoming,
-        );
-        let target_route_id = if should_split_legacy_route {
-            requested_route_id
-        } else {
-            route_id
-        };
-        if let Some(existing) = settings.llm_pi_ai.providers.get_mut(&target_route_id) {
+        if let Some(existing) = settings.llm_pi_ai.providers.get_mut(&route_id) {
             merge_harness_provider(existing, incoming);
         } else {
-            settings
-                .llm_pi_ai
-                .providers
-                .insert(target_route_id, incoming);
+            settings.llm_pi_ai.providers.insert(route_id, incoming);
         }
         let content = serde_yaml::to_string(&settings)?;
         let path = self.dsh_settings_path();
@@ -914,6 +802,24 @@ impl UserConfigStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Read the official DSH settings document, or create it once from the
+    /// legacy Flowix TOML when upgrading an older installation. After this
+    /// write succeeds, subsequent reads never consult `agent-config.toml`.
+    fn read_or_migrate_deepseek_harness_settings(
+        &self,
+    ) -> Result<DeepSeekHarnessSettingsFile, UserConfigError> {
+        if let Some(settings) = self.read_deepseek_harness_settings()? {
+            return Ok(settings);
+        }
+
+        let mut legacy = self.read_ai_config().clone();
+        self.hydrate_ai_config_secrets(&mut legacy);
+        let settings = DeepSeekHarnessSettingsFile::from_ai_config(&legacy);
+        let content = serde_yaml::to_string(&settings)?;
+        atomic_write_yaml(&self.dsh_settings_path(), &content)?;
+        Ok(settings)
     }
 
     /// Render a standalone Harness settings document for a one-shot probe.
@@ -1042,6 +948,33 @@ impl UserConfigStore {
     }
 }
 
+fn dsh_plugin_keys_equivalent(existing: &str, requested: &str) -> bool {
+    if existing == requested {
+        return true;
+    }
+    let existing = existing.split(':').collect::<Vec<_>>();
+    let requested = requested.split(':').collect::<Vec<_>>();
+    match (existing.as_slice(), requested.as_slice()) {
+        (["host", index, old_id], ["host", new_id]) => {
+            index.chars().all(|character| character.is_ascii_digit()) && old_id == new_id
+        }
+        (["preset", old_preset, index, old_id], ["preset", new_preset, new_id]) => {
+            index.chars().all(|character| character.is_ascii_digit())
+                && old_preset == new_preset
+                && old_id == new_id
+        }
+        (["host", old_id], ["host", index, new_id]) => {
+            index.chars().all(|character| character.is_ascii_digit()) && old_id == new_id
+        }
+        (["preset", old_preset, old_id], ["preset", new_preset, index, new_id]) => {
+            index.chars().all(|character| character.is_ascii_digit())
+                && old_preset == new_preset
+                && old_id == new_id
+        }
+        _ => false,
+    }
+}
+
 fn clear_ai_config_plaintext_secrets(config: &mut AiConfigFile) {
     for value in config.model.api_keys.values_mut() {
         value.clear();
@@ -1050,6 +983,14 @@ fn clear_ai_config_plaintext_secrets(config: &mut AiConfigFile) {
 
 fn preference_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join(BOOT_DIR_NAME).join(PREFERENCE_FILE_NAME)
+}
+
+fn dsh_settings_path(config_dir: &Path) -> PathBuf {
+    config_dir
+        .parent()
+        .unwrap_or(config_dir)
+        .join(DSH_DIR_NAME)
+        .join(DSH_SETTINGS_FILE_NAME)
 }
 
 /// 原子�?JSON: �?.tmp �?fsync �?0o600 �?rename 到目标�?/// 失败�?.tmp 残留由下次启动�?�? 不影响主文件�?///
@@ -1118,17 +1059,22 @@ pub(crate) fn atomic_write_yaml(path: &Path, content: &str) -> std::io::Result<(
     Ok(())
 }
 
-/// Move the legacy flat DeepSeek Harness layout under `~/.flowix/`
-/// (`dsh-settings.yaml`, `dsh-plugin-settings.json`, `dsh-sessions/`) into the
-/// single `~/.flowix/dsh/` root, then flatten the former per-Flowix-session
-/// wrapper so session files match Harness' official layout. A source is moved
-/// only when its target does not already exist, so a fresh install or a
-/// repeated startup is a no-op.
+/// Migrate the pre-official Flowix Harness layout into the official
+/// `~/.dsh/` home without overwriting anything already created there. The
+/// old `~/.flowix/dsh/` directory is moved as one unit when possible; the
+/// older flat files are handled individually. Nothing is deleted.
 fn migrate_dsh_layout(config_dir: &Path) {
-    let dsh_dir = config_dir.join(DSH_DIR_NAME);
+    let old_dsh_dir = config_dir.join("dsh");
+    let dsh_dir = config_dir.parent().unwrap_or(config_dir).join(DSH_DIR_NAME);
     let legacy_settings = config_dir.join("dsh-settings.yaml");
     let legacy_plugin_settings = config_dir.join("dsh-plugin-settings.json");
     let legacy_sessions = config_dir.join("dsh-sessions");
+
+    if old_dsh_dir.is_dir() && !dsh_dir.exists() {
+        if fs::rename(&old_dsh_dir, &dsh_dir).is_ok() {
+            set_dir_owner_only_perms(&dsh_dir);
+        }
+    }
 
     if legacy_settings.exists() || legacy_plugin_settings.exists() || legacy_sessions.exists() {
         let _ = fs::create_dir_all(&dsh_dir);
@@ -1273,12 +1219,44 @@ mod tests {
     }
 
     fn test_user_config_store(home: PathBuf) -> UserConfigStore {
-        let dsh_dir = home.join(USER_CONFIG_DIR_NAME).join(DSH_DIR_NAME);
+        let dsh_dir = home.join(DSH_DIR_NAME);
         std::fs::create_dir_all(&dsh_dir).unwrap();
         UserConfigStore::new_with_secret_store(
             home,
             SecretStore::with_backend(Box::new(TestSecretBackend::new())),
         )
+    }
+
+    #[test]
+    fn stable_dsh_plugin_keys_match_their_legacy_index_keys() {
+        assert!(dsh_plugin_keys_equivalent(
+            "host:0:flowix-bridge",
+            "host:flowix-bridge"
+        ));
+        assert!(dsh_plugin_keys_equivalent(
+            "preset:default:12:memory",
+            "preset:default:memory"
+        ));
+        assert!(dsh_plugin_keys_equivalent(
+            "host:flowix-bridge",
+            "host:0:flowix-bridge"
+        ));
+    }
+
+    #[test]
+    fn dsh_plugin_key_migration_does_not_merge_unrelated_plugins() {
+        assert!(!dsh_plugin_keys_equivalent(
+            "host:0:flowix-bridge",
+            "host:memory"
+        ));
+        assert!(!dsh_plugin_keys_equivalent(
+            "preset:default:0:memory",
+            "preset:research:memory"
+        ));
+        assert!(!dsh_plugin_keys_equivalent(
+            "host:not-an-index:memory",
+            "host:memory"
+        ));
     }
 
     #[test]
@@ -1288,7 +1266,6 @@ mod tests {
         std::fs::create_dir_all(config_dir.join("dsh-sessions/flowix-old/--work--/session-old"))
             .unwrap();
         std::fs::write(config_dir.join("dsh-settings.yaml"), "legacy: true\n").unwrap();
-        std::fs::write(config_dir.join("dsh-plugin-settings.json"), "{}\n").unwrap();
 
         let store = UserConfigStore::new(home.path().to_path_buf());
         let dsh_dir = store.dsh_dir();
@@ -1297,7 +1274,6 @@ mod tests {
             std::fs::read_to_string(dsh_dir.join(DSH_SETTINGS_FILE_NAME)).unwrap(),
             "legacy: true\n"
         );
-        assert!(dsh_dir.join(DSH_PLUGIN_SETTINGS_FILE_NAME).is_file());
         assert!(dsh_dir
             .join(DSH_SESSIONS_DIR_NAME)
             .join("--work--/session-old")
@@ -1307,8 +1283,108 @@ mod tests {
             .join("flowix-old")
             .exists());
         assert!(!config_dir.join("dsh-settings.yaml").exists());
-        assert!(!config_dir.join("dsh-plugin-settings.json").exists());
         assert!(!config_dir.join("dsh-sessions").exists());
+    }
+
+    #[test]
+    fn existing_dsh_settings_are_not_overridden_by_legacy_toml() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(USER_CONFIG_DIR_NAME);
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let legacy = AiConfigFile {
+            model: AiModelConfig {
+                provider: "legacy-provider".into(),
+                model: "legacy-model".into(),
+                api_url: "https://legacy.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+        std::fs::write(
+            config_dir.join(AI_CONFIG_FILE_NAME),
+            toml::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let dsh_dir = home.path().join(DSH_DIR_NAME);
+        std::fs::create_dir_all(&dsh_dir).unwrap();
+        let mut settings = DeepSeekHarnessSettingsFile::default();
+        settings.llm_pi_ai.providers.insert(
+            "current-route".into(),
+            DeepSeekHarnessProviderSettings {
+                display_name: "Current Provider".into(),
+                api_key_env: "DSH_API_KEY".into(),
+                api: "openai-completions".into(),
+                base_url: "https://current.example/v1".into(),
+                models: vec![DeepSeekHarnessModelSettings {
+                    id: "current-model".into(),
+                    name: String::new(),
+                }],
+            },
+        );
+        std::fs::write(
+            dsh_dir.join(DSH_SETTINGS_FILE_NAME),
+            serde_yaml::to_string(&settings).unwrap(),
+        )
+        .unwrap();
+
+        let store = test_user_config_store(home.path().to_path_buf());
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(loaded.model.provider, "current-route");
+        assert_eq!(loaded.model.model, "current-model");
+        assert_eq!(loaded.model.api_url, "https://current.example/v1");
+        // The legacy document is not loaded into the store once DSH settings
+        // exist, so even the compatibility accessor cannot become a hidden
+        // second runtime source.
+        assert!(store.get_ai_config().model.provider.is_empty());
+    }
+
+    #[test]
+    fn first_dsh_read_migrates_legacy_toml_once() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(USER_CONFIG_DIR_NAME);
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let legacy = AiConfigFile {
+            model: AiModelConfig {
+                provider: "legacy-provider".into(),
+                model: "legacy-model".into(),
+                api_url: "https://legacy.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+        std::fs::write(
+            config_dir.join(AI_CONFIG_FILE_NAME),
+            toml::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let store = test_user_config_store(home.path().to_path_buf());
+        let loaded = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(loaded.model.provider, "legacy-provider");
+        assert_eq!(loaded.model.model, "legacy-model");
+
+        // A later change to the old file must not affect the already-created
+        // DSH settings document.
+        let replacement = AiConfigFile {
+            model: AiModelConfig {
+                provider: "replacement-provider".into(),
+                model: "replacement-model".into(),
+                api_url: "https://replacement.example/v1".into(),
+                ..AiModelConfig::default()
+            },
+        };
+        std::fs::write(
+            config_dir.join(AI_CONFIG_FILE_NAME),
+            toml::to_string_pretty(&replacement).unwrap(),
+        )
+        .unwrap();
+        let loaded_again = store.get_deepseek_harness_config().unwrap();
+        assert_eq!(loaded_again.model.provider, "legacy-provider");
+        assert!(home
+            .path()
+            .join(DSH_DIR_NAME)
+            .join(DSH_SETTINGS_FILE_NAME)
+            .is_file());
     }
 
     #[test]
@@ -1583,11 +1659,7 @@ apiKey = "k"
 
         store.set_deepseek_harness_config(&config).unwrap();
 
-        let settings_path = home
-            .path()
-            .join(USER_CONFIG_DIR_NAME)
-            .join(DSH_DIR_NAME)
-            .join(DSH_SETTINGS_FILE_NAME);
+        let settings_path = home.path().join(DSH_DIR_NAME).join(DSH_SETTINGS_FILE_NAME);
         let settings = std::fs::read_to_string(settings_path).unwrap();
         assert!(
             !settings.contains("test-key"),
@@ -1628,13 +1700,9 @@ apiKey = "k"
 
         store.set_deepseek_harness_config(&config).unwrap();
 
-        let settings = std::fs::read_to_string(
-            home.path()
-                .join(USER_CONFIG_DIR_NAME)
-                .join(DSH_DIR_NAME)
-                .join(DSH_SETTINGS_FILE_NAME),
-        )
-        .unwrap();
+        let settings =
+            std::fs::read_to_string(home.path().join(DSH_DIR_NAME).join(DSH_SETTINGS_FILE_NAME))
+                .unwrap();
         assert!(settings.contains("acme-gateway:"), "got: {settings}");
         assert!(
             settings.contains("api: openai-responses"),
@@ -1706,67 +1774,6 @@ apiKey = "k"
     }
 
     #[test]
-    fn adding_to_legacy_flowix_route_does_not_create_a_shadow_route() {
-        let home = tempfile::tempdir().unwrap();
-        let store = test_user_config_store(home.path().to_path_buf());
-        let path = home
-            .path()
-            .join(USER_CONFIG_DIR_NAME)
-            .join(DSH_DIR_NAME)
-            .join(DSH_SETTINGS_FILE_NAME);
-        let mut settings = DeepSeekHarnessSettingsFile::default();
-        settings.llm_pi_ai.providers.insert(
-            "flowix".into(),
-            DeepSeekHarnessProviderSettings {
-                display_name: "zai-coding-cn".into(),
-                api_key_env: "DSH_API_KEY".into(),
-                api: "openai-completions".into(),
-                base_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
-                models: vec![DeepSeekHarnessModelSettings {
-                    id: "model-a".into(),
-                    name: "Model A".into(),
-                }],
-            },
-        );
-        std::fs::write(&path, serde_yaml::to_string(&settings).unwrap()).unwrap();
-
-        // This is the shape emitted by the current UI when it submits model B
-        // after loading the old stable `flowix` route.
-        store
-            .add_deepseek_harness_config(&AiConfigFile {
-                model: AiModelConfig {
-                    provider: "zai-coding-cn".into(),
-                    provider_id: "zai-coding-cn".into(),
-                    display_name: "zai-coding-cn".into(),
-                    model: "model-b".into(),
-                    models: vec![AiModelEntry {
-                        id: "model-b".into(),
-                        name: "Model B".into(),
-                    }],
-                    api_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
-                    ..AiModelConfig::default()
-                },
-            })
-            .unwrap();
-
-        let saved: DeepSeekHarnessSettingsFile =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(saved.llm_pi_ai.providers.len(), 1);
-        assert_eq!(
-            saved
-                .llm_pi_ai
-                .providers
-                .get("flowix")
-                .unwrap()
-                .models
-                .iter()
-                .map(|model| model.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["model-a", "model-b"]
-        );
-    }
-
-    #[test]
     fn adding_a_second_catalog_provider_creates_a_separate_llm_pi_ai_route() {
         let home = tempfile::tempdir().unwrap();
         let store = test_user_config_store(home.path().to_path_buf());
@@ -1801,11 +1808,7 @@ apiKey = "k"
             })
             .unwrap();
 
-        let path = home
-            .path()
-            .join(USER_CONFIG_DIR_NAME)
-            .join(DSH_DIR_NAME)
-            .join(DSH_SETTINGS_FILE_NAME);
+        let path = home.path().join(DSH_DIR_NAME).join(DSH_SETTINGS_FILE_NAME);
         let saved: DeepSeekHarnessSettingsFile =
             serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(saved.llm_pi_ai.providers.len(), 2);
@@ -1890,89 +1893,10 @@ apiKey = "k"
     }
 
     #[test]
-    fn adding_a_catalog_provider_repairs_mixed_legacy_flowix_models() {
-        let home = tempfile::tempdir().unwrap();
-        let store = test_user_config_store(home.path().to_path_buf());
-        let path = home
-            .path()
-            .join(USER_CONFIG_DIR_NAME)
-            .join(DSH_DIR_NAME)
-            .join(DSH_SETTINGS_FILE_NAME);
-        let mut settings = DeepSeekHarnessSettingsFile::default();
-        settings.llm_pi_ai.providers.insert(
-            "flowix".into(),
-            DeepSeekHarnessProviderSettings {
-                display_name: "deepseek".into(),
-                api_key_env: "DSH_API_KEY".into(),
-                api: "openai-completions".into(),
-                base_url: "https://api.deepseek.com".into(),
-                models: vec![
-                    DeepSeekHarnessModelSettings {
-                        id: "deepseek-chat".into(),
-                        name: String::new(),
-                    },
-                    DeepSeekHarnessModelSettings {
-                        id: "glm-4.5-air".into(),
-                        name: String::new(),
-                    },
-                ],
-            },
-        );
-        std::fs::write(&path, serde_yaml::to_string(&settings).unwrap()).unwrap();
-
-        store
-            .add_deepseek_harness_config(&AiConfigFile {
-                model: AiModelConfig {
-                    provider: "zai".into(),
-                    display_name: "GLM".into(),
-                    model: "glm-4.5-air".into(),
-                    models: vec![AiModelEntry {
-                        id: "glm-4.5-air".into(),
-                        name: String::new(),
-                    }],
-                    api_url: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
-                    ..AiModelConfig::default()
-                },
-            })
-            .unwrap();
-
-        let saved: DeepSeekHarnessSettingsFile =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(
-            saved
-                .llm_pi_ai
-                .providers
-                .get("flowix")
-                .unwrap()
-                .models
-                .iter()
-                .map(|model| model.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["deepseek-chat"]
-        );
-        assert_eq!(
-            saved
-                .llm_pi_ai
-                .providers
-                .get("zai")
-                .unwrap()
-                .models
-                .iter()
-                .map(|model| model.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["glm-4.5-air"]
-        );
-    }
-
-    #[test]
     fn saving_one_harness_provider_preserves_other_llm_pi_ai_routes() {
         let home = tempfile::tempdir().unwrap();
         let store = test_user_config_store(home.path().to_path_buf());
-        let path = home
-            .path()
-            .join(USER_CONFIG_DIR_NAME)
-            .join(DSH_DIR_NAME)
-            .join(DSH_SETTINGS_FILE_NAME);
+        let path = home.path().join(DSH_DIR_NAME).join(DSH_SETTINGS_FILE_NAME);
         let mut settings = DeepSeekHarnessSettingsFile::default();
         settings.llm_pi_ai.providers.insert(
             "other-route".into(),

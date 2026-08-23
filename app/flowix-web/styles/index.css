@@ -149,11 +149,13 @@
 		--font-nav: 'SF Mono';
 
 		/* User-configurable typography (Preferences → Format).
-		 * 这些变量只在 Tiptap 编辑器 (.markdown-editor .ProseMirror)
-		 * 内被消费 — 不再写到 body / html, 避免影响 MemoList、Agent 面板
-		 * 等其它 UI 文本。默认值需与 constants/index.ts 的
-		 * DEFAULT_USER_SETTINGS 保持同步。由 useApplyFontSettings 运行时
-		 * 覆盖。 */
+		 * 主要消费方是 Tiptap 编辑器 (.markdown-editor .ProseMirror);
+		 * Thread Card 消息样式直接读 --app-font-size, 侧边栏对话详情
+		 * (.markdown-editor.agent-conversation-detail) 也显式消费
+		 * --app-font-family —— 均是为了与文档内嵌卡片字体对齐。
+		 * 不再写到 body / html, 避免影响 MemoList、Agent 面板等其它
+		 * UI 文本。默认值需与 constants.ts 的 DEFAULT_USER_SETTINGS
+		 * 保持同步。由 useApplyFontSettings 运行时覆盖。 */
 		--app-font-family: var(--font-sans);
 		--app-font-size: 15px;
 		--app-line-height: 1.6;
@@ -445,6 +447,9 @@
 	[data-tag-icon]:focus-visible .tag-expand-indicator {
 		border-bottom-color: color-mix(in oklch, var(--foreground) 55%, var(--muted-foreground));
 	}
+	.tag-tree-list .group[aria-pressed="true"] .tag-expand-indicator {
+		border-bottom-color: color-mix(in oklch, var(--primary-foreground) 72%, transparent);
+	}
 
 	/* 侧栏标签树: 折叠/展开子列表的高度 + 透明度过渡。
 	   行外层 .tag-collapse-track 用 max-height 2rem(=行高 h-8)<->0 实现双向高度
@@ -596,35 +601,8 @@
   animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
 }
 
-.agent-thread-navigator__icon--running {
-  animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
-}
-
 .agent-conversation-list__icon--running {
   animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
-}
-
-.agent-thread-navigator__trigger-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  box-sizing: border-box;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 9999px;
-  background: transparent;
-  flex: 0 0 auto;
-}
-
-.agent-thread-navigator__trigger-icon img {
-  display: block;
-  width: 0.875rem;
-  height: 0.875rem;
-  flex: 0 0 auto;
-  object-fit: contain;
-  object-position: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -633,15 +611,17 @@
     border-color: color-mix(in oklch, var(--brand) 50%, transparent);
   }
 
-  .agent-thread-navigator__icon--running {
-    animation: none;
-    border-color: color-mix(in oklch, var(--brand) 50%, transparent);
-  }
-
   .agent-conversation-list__icon--running {
     animation: none;
     border-color: color-mix(in oklch, var(--brand) 50%, transparent);
   }
+}
+
+/* The list grows in stable batches to preserve dynamic-height card state.
+ * Skip layout/paint work for retained cards that are far outside the viewport. */
+.memo-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 88px;
 }
 
 .memo-card__running-agent-icon {

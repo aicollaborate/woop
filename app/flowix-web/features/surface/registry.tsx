@@ -1,14 +1,14 @@
 'use client';
 
 import {
+  lazy,
+  Suspense,
   type ComponentType,
   type ReactNode,
 } from 'react';
-import { AgentConversationDetail } from '@features/agent/components/agent-conversation-detail';
 import { DocumentContainer } from '@features/document/components/document-container';
-import { PluginDocumentView } from '@features/plugin/plugin-document-view';
-import { PluginWorkbench } from '@features/plugin/plugin-workbench';
 import backgroundImage from '@/assets/bg.document.png';
+import { useI18n } from '@/lib/i18n';
 import type {
   AgentConversationSurface,
   EmptySurface,
@@ -23,6 +23,31 @@ import type {
 } from './types';
 
 type SurfaceOfKind<K extends ThirdColumnSurfaceKind> = Extract<ThirdColumnSurface, { kind: K }>;
+
+const AgentConversationDetail = lazy(() =>
+  import('@features/agent/components/agent-conversation-detail').then((module) => ({
+    default: module.AgentConversationDetail,
+  })),
+);
+const PluginDocumentView = lazy(() =>
+  import('@features/plugin/plugin-document-view').then((module) => ({
+    default: module.PluginDocumentView,
+  })),
+);
+const PluginWorkbench = lazy(() =>
+  import('@features/plugin/plugin-workbench').then((module) => ({
+    default: module.PluginWorkbench,
+  })),
+);
+
+function SurfaceLoadingFallback() {
+  const { t } = useI18n();
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
+      {t('memo.navigation.loading')}
+    </div>
+  );
+}
 
 export interface ThirdColumnSurfaceDefinition {
   chrome: ThirdColumnSurfaceChrome;
@@ -59,15 +84,27 @@ function MarkdownSurfaceView({ surface }: { surface: MarkdownSurface }) {
 }
 
 function PluginArtifactSurfaceView({ surface }: { surface: PluginArtifactSurfaceBase }) {
-  return <PluginDocumentView {...surface.props} />;
+  return (
+    <Suspense fallback={<SurfaceLoadingFallback />}>
+      <PluginDocumentView {...surface.props} />
+    </Suspense>
+  );
 }
 
 function AgentConversationSurfaceView({ surface }: { surface: AgentConversationSurface }) {
-  return <AgentConversationDetail instanceId={surface.instanceId} />;
+  return (
+    <Suspense fallback={<SurfaceLoadingFallback />}>
+      <AgentConversationDetail instanceId={surface.instanceId} />
+    </Suspense>
+  );
 }
 
 function PluginWorkbenchSurfaceView({ surface }: { surface: PluginWorkbenchSurface }) {
-  return <PluginWorkbench {...surface.props} />;
+  return (
+    <Suspense fallback={<SurfaceLoadingFallback />}>
+      <PluginWorkbench {...surface.props} />
+    </Suspense>
+  );
 }
 
 function WebSurfaceView({ surface }: { surface: WebSurface }) {

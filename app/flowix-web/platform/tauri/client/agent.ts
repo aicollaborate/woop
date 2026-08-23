@@ -20,6 +20,8 @@ export interface AgentConfig {
   displayName?: string;
   /** Wire protocol selected for a custom Harness provider. */
   apiProtocol?: string;
+  /** DSH credentials-service reference for this provider route. */
+  apiKeyEnv?: string;
   model: string;
   /** Custom Harness provider model directory. */
   models?: AgentModelConfig[];
@@ -33,8 +35,8 @@ export interface AgentModelConfig {
   name?: string;
 }
 
-// Result of a one-shot probe (`aiConfig.testConnection`).
-// Mirrors `agent::provider::TestConnectionResult` on the Rust side
+// Result of a one-shot DeepSeek Harness probe.
+// Mirrors `connection_probe::TestConnectionResult` on the Rust side
 // (`#[serde(rename_all = "camelCase")]`):
 //   latency_ms -> latencyMs, model_id -> modelId.
 export type TestConnectionErrorKind =
@@ -155,7 +157,6 @@ export interface AgentRuntimeAvailability {
 }
 
 export interface AgentRuntimeStatus {
-  flowix: AgentRuntimeAvailability;
   codex: AgentRuntimeAvailability;
   claude: AgentRuntimeAvailability;
   gemini: AgentRuntimeAvailability;
@@ -396,9 +397,9 @@ export function listenToAgentStream(
 
 // ============================================
 // 璺ㄧ獥鍙ｅ悓姝?// ============================================
-// 鍚庣 set_preference / set_ai_config 鎴愬姛鍚?emit 'user-config-changed',
+// 鍚庣 set_preference / set_deepseek_harness_config 鎴愬姛鍚?emit 'user-config-changed',
 // payload 鏄?"preference" | "ai_config" 鎸囨槑鍝釜鏂囦欢鍙樹簡銆?// 鍏跺畠绐楀彛鏀跺埌鍚庝粠纾佺洏閲嶆柊 load, 瑙ｅ喅: 涓や釜 Tauri 绐楀彛鍚勮窇鐙珛 React 鏍?// + 鐙珛 zustand store, 涓€杈规敼鍔ㄥ彟涓€杈圭湅涓嶅埌鐨勯棶棰樸€?
-export type UserConfigChangeKind = 'preference' | 'ai_config' | 'dsh_config';
+export type UserConfigChangeKind = 'preference' | 'dsh_config';
 type UserConfigChangeHandler = (kind: UserConfigChangeKind) => void;
 
 export function listenToUserConfigChanges(

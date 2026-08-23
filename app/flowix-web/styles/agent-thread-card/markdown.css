@@ -445,6 +445,29 @@
     color 120ms ease;
 }
 
+.markdown-editor .agent-thread-card__empty-workspace {
+  display: inline-flex;
+  align-items: center;
+  max-width: 190px;
+  min-width: 0;
+  height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1;
+  user-select: none;
+}
+
+.markdown-editor .agent-thread-card__empty-workspace-value {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
 .markdown-editor .agent-thread-card__empty-control:hover,
 .markdown-editor .agent-thread-card__empty-control--open,
 .markdown-editor .agent-thread-card__empty-control:focus-visible {

@@ -137,7 +137,7 @@ describe("buildInitialInstanceRuntimeConfig — 仅种子 model/access/reasoning
     const { buildInitialInstanceRuntimeConfig } =
       await import("@features/agent/store/initial-runtime-config");
 
-    const config = buildInitialInstanceRuntimeConfig("flowix");
+    const config = buildInitialInstanceRuntimeConfig("deepseek-harness");
 
     expect(config.model).toBeUndefined();
   });

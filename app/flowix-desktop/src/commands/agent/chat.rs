@@ -3,8 +3,8 @@ use std::{collections::HashMap, path::Path};
 use tauri::State;
 
 use crate::agent_external::runtime_registry::ExternalCliRuntime;
-use crate::agent_flowix::{AgentChatResponse, AgentUserMessage, RunInfo};
 use crate::agent_session::AgentExternalEvent;
+use crate::agent_wire::{AgentChatResponse, AgentUserMessage, RunInfo};
 use crate::app::state::AppState;
 
 use super::image_cache::{
@@ -20,7 +20,7 @@ pub async fn chat_with_agent_stream(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<AgentChatResponse, String> {
-    let runtime = AgentRuntime::from_message(&message);
+    let runtime = AgentRuntime::from_message(&message)?;
     if message.image_paths.len() > MAX_AGENT_IMAGE_COUNT {
         return Err(format!(
             "A message can attach at most {MAX_AGENT_IMAGE_COUNT} images"
@@ -43,16 +43,6 @@ pub async fn chat_with_agent_stream(
         validated_image_paths.push(path.to_string_lossy().into_owned());
     }
     message.image_paths = validated_image_paths;
-    if !message.image_paths.is_empty() && matches!(runtime, AgentRuntime::Flowix) {
-        let mut llm_content = message
-            .llm_content
-            .clone()
-            .unwrap_or_else(|| message.content.clone());
-        for (index, path) in message.image_paths.iter().enumerate() {
-            llm_content.push_str(&format!("\n\n![attached image {}]({})", index + 1, path));
-        }
-        message.llm_content = Some(llm_content);
-    }
     tracing::info!(
         "[Command] chat_with_agent_stream called for thread: {}, agent_type: {}",
         threadId,
@@ -107,12 +97,10 @@ pub async fn chat_with_agent_stream(
         }
     }
 
-    // `agent_manager` �?`Arc<AgentManager>`, `chat_stream` 内部已经
-    // `tokio::spawn` ── IPC 立即返回, 不再 await 整个 stream 跑完�?    // 真�?的助手回答通过 `agent-chunk` 事件 (`Text` / `Reasoning` 变体)
-    // 推到前�?, �?`thread_id` 派发�?`threadStates[tid]`�?    //
-    // Tauri IPC 边界仍�?�?`Result<T, String>` ── `AgentError` 在�?
-    // `.map_err(|e| e.to_string())` 透传。当�?spawn 后不会走�?Err 分支
-    // (错�?信号已全部走 `Error` chunk), 但保�?Result 形状不破 IPC 契约�?
+    // runtime 的 `chat_stream` 内部已经 `tokio::spawn` ── IPC 立即返回,
+    // 不再 await 整个 stream 跑完。真正的助手回答通过 `agent-chunk` 事件
+    // (`Text` / `Reasoning` 变体) 推到前端, 按 `thread_id` 派发到
+    // `threadStates[tid]`。
     let result = runtime_handle(&state, runtime)
         .chat_stream(&threadId, message, &app_handle)
         .await;
@@ -129,7 +117,7 @@ pub async fn chat_with_agent_stream(
 /// got a cancel signal; `false` if there was nothing to cancel (e.g. user
 /// clicked stop after the LLM had already finished, or never sent a
 /// message). The frontend uses the boolean to decide whether to also
-/// hide the stop button / show a toast 鈥?a `false` return is harmless.
+/// hide the stop button / show a toast ── a `false` return is harmless.
 ///
 /// `runId` (optional) scopes the kill to a single in-flight run on the
 /// thread. When `None` / unmatched, the manager falls back to a thread-wide
@@ -144,9 +132,10 @@ pub async fn stop_agent_stream(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<bool, String> {
-    let runtime = agentType
-        .as_deref()
-        .map(|agent_type| AgentRuntime::from_agent_type(Some(agent_type)));
+    let runtime = match agentType.as_deref() {
+        Some(agent_type) => Some(AgentRuntime::from_agent_type(Some(agent_type))?),
+        None => None,
+    };
     tracing::info!(
         "[Command] stop_agent_stream called for thread: {}, agent_type: {}, run_id: {}",
         threadId,
@@ -173,23 +162,19 @@ fn run_id_for_kill(provided: Option<&str>) -> Option<&str> {
     provided.map(str::trim).filter(|value| !value.is_empty())
 }
 
-/// 查�?当前所�?in-flight chat ── 前�?�?��时调一�? seed
-/// `threadStates[].isLoading`, �?进程内已有后台跑 chat"在重�?��
-/// 仍然�??。返�?`HashMap<thread_id, RunInfo>`; �?map 表示当前
-/// 没有 in-flight chat (稳�?�?///
-/// 进程退�?in-flight chat �?���? 这是"�?�?信息; A5 �?��清理
-/// 兜底 `is_loading=1` �?SQLite 残留�? 二者组合保�?UI 状态一致�?
+/// 查询当前所有 in-flight chat ── 前端启动时调一次, 用来 seed
+/// `threadStates[].isLoading`, "进程内已有后台跑 chat"在重开后仍正确。
+/// 返回 `HashMap<thread_id, RunInfo>`; 空 map 表示当前
+/// 没有 in-flight chat (稳定态)。
+///
+/// 进程退出后 in-flight chat 即消失; 这是"尽力而为"信息, A5 的启动清理
+/// 兜底 `is_loading=1` 的 SQLite 残留, 二者组合保证 UI 状态一致。
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn agent_running_threads(
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, RunInfo>, String> {
-    let (mut running, external) = tokio::join!(
-        state.agent_manager.running_threads(),
-        state.external_runtimes.running_threads(),
-    );
-    running.extend(external);
-    Ok(running)
+    Ok(state.external_runtimes.running_threads().await)
 }
 
 #[tauri::command]

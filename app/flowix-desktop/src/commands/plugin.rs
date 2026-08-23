@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tauri::{AppHandle, Listener, State};
 
-use crate::agent_flowix::{AgentRuntimeConfig, AgentUserMessage, RuntimePathConfig};
 use crate::agent_session::ThreadManager;
+use crate::agent_wire::{AgentRuntimeConfig, AgentUserMessage, RuntimePathConfig};
 use crate::app::state::AppState;
 use crate::commands::agent::runtime::start_plugin_chat;
 use crate::commands::agent::runtime::stop_any_runtime_chat;
@@ -95,7 +95,7 @@ pub async fn plugin_run(
     let thread = match state
         .thread_manager
         .create_thread(
-            crate::agent_flowix::default_agent_id(),
+            crate::agent_types::default_agent_id(),
             format!("plugin:{plugin_id}"),
         )
         .await
@@ -147,7 +147,7 @@ pub async fn plugin_run(
         system_reminder_directory: Some(notebook_path.clone()),
         agent_type: Some(agent_type.clone()),
         runtime_config: Some(AgentRuntimeConfig {
-            flowix: Some(RuntimePathConfig {
+            deepseek_harness: Some(RuntimePathConfig {
                 cwd: Some(notebook_path.clone()),
                 workspace_paths: vec![notebook_path.clone()],
                 permission_mode: None,
@@ -161,8 +161,6 @@ pub async fn plugin_run(
         permission_mode: None,
         codex_model: None,
         codex_reasoning_effort: None,
-        agent_role_memo_id: None,
-        agent_role_name: None,
         conversation_title: Some(format!("plugin:{plugin_id}")),
     };
     let plugin_id_for_task = plugin_id.clone();
@@ -293,45 +291,37 @@ async fn wait_for_plugin_output(
     thread_manager: &Arc<ThreadManager>,
     mut stream_end_rx: tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
 ) -> Result<(), String> {
-    use tokio::time::Duration;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
-    loop {
-        if runs.thread_id(run_id).await.is_none() {
-            // plugin_run_stop removes the coordinator entry and emits the
-            // plugin-level cancelled event itself. Do not turn the later
-            // Agent stream_end into a second failed event.
-            return Ok(());
-        }
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err("plugin generation timed out".to_string());
-        }
-        let reason = tokio::time::timeout(remaining, stream_end_rx.recv())
-            .await
-            .map_err(|_| "plugin generation timed out".to_string())?
-            .ok_or_else(|| "plugin agent event stream closed unexpectedly".to_string())?;
-        if runs.thread_id(run_id).await.is_none() {
-            return Ok(());
-        }
-        if let Some(reason) = reason.filter(|value| !value.trim().is_empty()) {
-            return Err(reason);
-        }
-        let content = read_plugin_agent_output(thread_manager, agent_type, thread_id).await?;
-        if runs.begin_finish(run_id).await.is_none() {
-            return Ok(());
-        }
-        plugin::write_output(
-            plugin_id,
-            notebook_path,
-            &content,
-            agent_type,
-            source_note,
-            Some(run_id),
-            Some(app),
-            memo_file,
-        )?;
+    if runs.thread_id(run_id).await.is_none() {
+        // plugin_run_stop removes the coordinator entry and emits the
+        // plugin-level cancelled event itself. Do not turn the later
+        // Agent stream_end into a second failed event.
         return Ok(());
     }
+    let reason = tokio::time::timeout(tokio::time::Duration::from_secs(600), stream_end_rx.recv())
+        .await
+        .map_err(|_| "plugin generation timed out".to_string())?
+        .ok_or_else(|| "plugin agent event stream closed unexpectedly".to_string())?;
+    if runs.thread_id(run_id).await.is_none() {
+        return Ok(());
+    }
+    if let Some(reason) = reason.filter(|value| !value.trim().is_empty()) {
+        return Err(reason);
+    }
+    let content = read_plugin_agent_output(thread_manager, agent_type, thread_id).await?;
+    if runs.begin_finish(run_id).await.is_none() {
+        return Ok(());
+    }
+    plugin::write_output(
+        plugin_id,
+        notebook_path,
+        &content,
+        agent_type,
+        source_note,
+        Some(run_id),
+        Some(app),
+        memo_file,
+    )?;
+    Ok(())
 }
 
 async fn read_plugin_agent_output(
@@ -339,32 +329,17 @@ async fn read_plugin_agent_output(
     agent_type: &str,
     thread_id: &str,
 ) -> Result<String, String> {
-    let content = if agent_type == "flowix" {
-        thread_manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .and_then(|thread| {
-                thread
-                    .messages
-                    .into_iter()
-                    .rev()
-                    .find(|message| message.role == "assistant")
-                    .map(|message| message.content)
-            })
-    } else {
-        thread_manager
-            .get_external_event_messages_page(agent_type, thread_id, None, 1)
-            .await
-            .map_err(|e| e.to_string())?
-            .and_then(|page| {
-                page.messages
-                    .into_iter()
-                    .rev()
-                    .find(|message| message.role == "assistant")
-                    .map(|message| message.content)
-            })
-    };
+    let content = thread_manager
+        .get_external_event_messages_page(agent_type, thread_id, None, 1)
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|page| {
+            page.messages
+                .into_iter()
+                .rev()
+                .find(|message| message.role == "assistant")
+                .map(|message| message.content)
+        });
     let content = content.unwrap_or_default();
     if content.trim().is_empty() {
         return Err("plugin agent returned empty output".to_string());

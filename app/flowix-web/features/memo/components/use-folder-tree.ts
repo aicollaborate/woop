@@ -134,18 +134,18 @@ export function useFolderTree(folderPath: string) {
   }, []);
 
   /** 展开到指定 path (打开文件后定位用, 逐级展开父链)。 */
-  const expandTo = useCallback((targetPath: string) => {
-    // 逐级展开 target 的所有祖先 (后端 parentId 恒 None, 用路径前缀推导)。
-    // target 自身是文件时不入集合, 只展开它的目录前缀。
+  const expandTo = useCallback(async (targetPath: string) => {
     const canonicalTarget = canonicalPath(targetPath);
+    const canonicalRoot = canonicalPath(folderPath).replace(/\/+$/, '');
+    const rootPrefix = canonicalRoot.endsWith('/') ? canonicalRoot : `${canonicalRoot}/`;
+    if (!canonicalTarget.startsWith(rootPrefix)) return;
     const sepIndex = canonicalTarget.lastIndexOf('/');
-    if (sepIndex <= 0) return;
+    if (sepIndex <= canonicalRoot.length) return;
     const ancestors: string[] = [];
     let cursor = canonicalTarget.slice(0, sepIndex);
-    while (cursor.length > 1) {
+    while (cursor.length > canonicalRoot.length && cursor.startsWith(rootPrefix)) {
       ancestors.push(cursor);
       const next = cursor.slice(0, cursor.lastIndexOf('/'));
-      if (next.length < 1) break;
       cursor = next;
     }
     setExpanded((prev) => {
@@ -153,7 +153,13 @@ export function useFolderTree(folderPath: string) {
       for (const p of ancestors) next.add(p);
       return next;
     });
-  }, []);
+    // Restore nested files as visible rows as well as selected rows. Loading
+    // parents from outermost to innermost keeps lazy tree data available after
+    // a full app refresh.
+    for (const ancestor of ancestors.reverse()) {
+      await loadChildren(ancestor);
+    }
+  }, [folderPath, loadChildren]);
 
   /** 局部刷新某个目录的子级 (新建/删除/重命名后调用)。 */
   const refresh = useCallback(async (dirPath?: string) => {

@@ -1,83 +1,38 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { openUrl } from '@platform/tauri/opener';
-import { ArrowUp } from 'lucide-react';
-import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
-import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { ArrowDownToLine, ArrowUp } from 'lucide-react';
+import type { AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
-import { product, type ProductUpdateNotice } from '@platform/tauri/client';
-import { createLogger } from '@/lib/logger';
 
-const STARTUP_DELAY_MS = 7_000;
-const logger = createLogger('product-update');
-
-/**
- * Status-bar update notice.
- *
- * Supabase owns targeting: enabled flag, published_at, platform and version
- * comparison. The client only renders a compact CTA when the backend returns
- * an actionable notice.
- */
-export function ProductUpdatePill() {
+/** Compact signed-app-update CTA for the desktop status bar. */
+export function ProductUpdatePill({ updater }: { updater: AppUpdaterState }) {
   const { t } = useI18n();
-  const enabled = useUserSettings((settings) => settings.productUpdates.enabled);
-  const language = useUserSettings((settings) => settings.language);
-  const region = useUserSettings((settings) => settings.region);
-  const isLoading = useUserSettingsStore((state) => state.isLoading);
-  const [notice, setNotice] = useState<ProductUpdateNotice | null>(null);
-  const [isOpening, setIsOpening] = useState(false);
-
-  useEffect(() => {
-    if (isLoading || !enabled) return;
-    if (window.location.hash.startsWith('#preferences') || window.location.hash.startsWith('#tab-window')) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          setNotice(await product.checkUpdateNotice(language, region));
-        } catch (error) {
-          logger.debug('update check failed', { error });
-        }
-      })();
-    }, STARTUP_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    isLoading,
-    enabled,
-    language,
-    region,
-  ]);
+  const { status, update, installNow } = updater;
 
   async function handleClick() {
-    if (!notice || isOpening) return;
-    if (!notice.ctaUrl) {
-      toast.info(notice.version ? t('productUpdates.version', { version: notice.version }) : notice.title);
-      return;
-    }
-    setIsOpening(true);
+    if (!update || status === 'installing') return;
     try {
-      await openUrl(notice.ctaUrl);
+      await installNow();
     } catch {
-      toast.error(t('productUpdates.openFailed'));
-    } finally {
-      setIsOpening(false);
+      toast.error(t('appUpdates.installFailed'));
     }
   }
 
-  if (!notice) return null;
+  if (!update || status === 'error' || status === 'none' || status === 'idle' || status === 'checking') {
+    return null;
+  }
 
-  const label = t('status.upgrade');
+  const installing = status === 'installing';
+  const label = installing ? t('appUpdates.installing') : t('appUpdates.install');
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      disabled={isOpening}
-      title={notice.version ? `${label} ${notice.version}` : label}
+      disabled={installing}
+      title={`${t('appUpdates.available')}: ${update.version}`}
       className={cn(
         'inline-flex h-[22px] items-center gap-0.5 rounded-md px-2',
         'bg-[var(--info)] text-[var(--info-foreground)]',
@@ -87,7 +42,11 @@ export function ProductUpdatePill() {
       )}
       aria-label={label}
     >
-      <ArrowUp className="h-3 w-3 shrink-0" />
+      {installing ? (
+        <ArrowDownToLine className="h-3 w-3 shrink-0 animate-bounce" />
+      ) : (
+        <ArrowUp className="h-3 w-3 shrink-0" />
+      )}
       <span>{label}</span>
     </button>
   );
