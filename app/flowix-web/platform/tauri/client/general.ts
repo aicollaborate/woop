@@ -114,6 +114,7 @@ export interface DshIntegrationStatus {
   source?: string | null;
   profile: string;
   message?: string | null;
+  archiveSize?: number | null;
 }
 
 export interface DshDownloadProgress {
@@ -126,6 +127,7 @@ export interface DshDownloadProgress {
 
 export const dshIntegration = {
   status: () => invoke<DshIntegrationStatus>('dsh_status'),
+  archiveSize: () => invoke<number | null>('dsh_archive_size'),
   downloadStatus: () => invoke<DshDownloadProgress | null>('dsh_download_status'),
   installRuntime: () => invoke<DshIntegrationStatus>('dsh_install_runtime'),
   updateRuntime: () => invoke<DshIntegrationStatus>('dsh_update'),

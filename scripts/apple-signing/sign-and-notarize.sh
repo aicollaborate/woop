@@ -25,9 +25,8 @@
 #   SKIP_NOTARIZE=1                 Build + sign only, don't submit to notary
 #   DMG_PATH                        (ignored in dual-target mode) override a single .dmg
 #
-# macOS 发版只发布 Apple Silicon。build-tauri-production.mjs 只生成
-# aarch64-apple-darwin，本脚本对该 DMG 走 verify exact DMG -> notarize ->
-# staple -> Gatekeeper verify。
+# macOS 发版生成 Apple Silicon 与 Intel 两个独立 DMG。每个 DMG 都会
+# 单独验证架构、签名、公证、staple，并通过 Gatekeeper 校验。
 
 set -euo pipefail
 
@@ -43,7 +42,7 @@ VERIFY_RELEASE="$REPO_ROOT/scripts/verify-macos-release.sh"
 # `tauri build --target <triple>` 把 bundle 落到 $CARGO_TARGET_DIR/<triple>/release/bundle/,
 # 跟 host 路径 ($CARGO_TARGET_DIR/release/bundle/) 分开, 两个 target 互不覆盖。
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/.build/cargo-target}"
-MACOS_TARGETS=(aarch64-apple-darwin)
+MACOS_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 
 # ---- 0. Validate inputs ----
 : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY not set - run \`security find-identity -v -p codesigning\` and copy the full string}"
@@ -105,7 +104,7 @@ cd "$REPO_ROOT"
 # ---- 1. Build ----
 if [ -z "${SKIP_BUILD:-}" ]; then
   echo "==> [build] Building Flowix.app + Flowix.dmg for ${MACOS_TARGETS[*]} (3-6 min)"
-  echo "         (build-tauri-production.mjs builds the ARM64 target and signs per tauri.conf.production.json)"
+  echo "         (build-tauri-production.mjs builds and signs both targets per tauri.conf.production.json)"
   if [ ! -d node_modules ]; then
     npm ci --no-audit --no-fund
   fi

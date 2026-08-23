@@ -10,13 +10,19 @@ import {
   patchLastRenderedAgentMessage,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
+import { createAgentThreadCardMessageElement } from "@features/agent/thread-card/messages/message-item-renderer";
 import { recordMessageRenderPlan } from "@features/agent/thread-card/messages/message-render-plan";
 import {
   MessageViewportController,
   type MessageRenderScrollOptions,
+  type MessageRenderScrollState,
 } from "@features/agent/thread-card/messages/message-viewport-controller";
 
 type AgentMessage = ThreadState["messages"][number];
+
+const PROGRESSIVE_RENDER_MESSAGE_THRESHOLD = 30;
+const PROGRESSIVE_RENDER_CONTENT_THRESHOLD = 60_000;
+const PROGRESSIVE_RENDER_CHUNK_SIZE = 8;
 
 export interface ThreadMessageRenderControllerOptions {
   body: HTMLElement;
@@ -33,6 +39,7 @@ export interface ThreadMessageRenderInput {
   messages: ThreadState["messages"];
   isLoading: boolean;
   shouldRenderMessages: boolean;
+  isInitialHistoryLoading?: boolean;
   isThreadCachePresentationHidden: boolean;
   isThreadCacheLoading: boolean;
 }
@@ -53,6 +60,8 @@ export class ThreadMessageRenderController {
   private displayExpandedOverrides = new Map<string, boolean>();
   private renderRafId: number | null = null;
   private pendingRenderInput: ThreadMessageRenderInput | null = null;
+  private progressiveRenderRafId: number | null = null;
+  private progressiveRenderMessages: ThreadState["messages"] | null = null;
   private wasLoading = false;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
@@ -104,6 +113,7 @@ export class ThreadMessageRenderController {
 
   dispose(): void {
     this.cancelPendingRender();
+    this.cancelProgressiveRender();
   }
 
   private renderNow(input: ThreadMessageRenderInput): void {
@@ -114,6 +124,12 @@ export class ThreadMessageRenderController {
     const loadingJustEnded = this.wasLoading && !input.isLoading;
     this.wasLoading = input.isLoading;
     this.renderLoadingIndicator(input.isLoading);
+
+    if (this.shouldRenderProgressively(input)) {
+      this.startProgressiveRender(input, scrollState);
+      return;
+    }
+    this.cancelProgressiveRender();
 
     if (!input.shouldRenderMessages) {
       recordMessageRenderPlan("hidden", input.messages.length);
@@ -217,12 +233,104 @@ export class ThreadMessageRenderController {
     });
   }
 
+  private shouldRenderProgressively(input: ThreadMessageRenderInput): boolean {
+    if (input.isLoading || !input.shouldRenderMessages) return false;
+    if (input.messages.length === 0) return false;
+    if (this.canReuseRenderedMessages(input.messages)) return false;
+    if (input.messages.length >= PROGRESSIVE_RENDER_MESSAGE_THRESHOLD) return true;
+
+    let contentChars = 0;
+    for (const message of input.messages) {
+      contentChars += message.content?.length ?? 0;
+      if (contentChars >= PROGRESSIVE_RENDER_CONTENT_THRESHOLD) return true;
+    }
+    return false;
+  }
+
+  private startProgressiveRender(
+    input: ThreadMessageRenderInput,
+    scrollState: MessageRenderScrollState,
+  ): void {
+    if (this.progressiveRenderMessages === input.messages) return;
+    this.cancelProgressiveRender();
+    this.progressiveRenderMessages = input.messages;
+
+    const previousList = this.renderedMessagesList;
+    if (previousList?.parentNode === this.body) previousList.remove();
+    this.renderedMessagesList = null;
+    this.renderedMessageRefs = [];
+    this.removeRenderedEmptyState();
+
+    const skeleton = this.createThreadCacheSkeleton();
+    this.renderedEmptyState = skeleton;
+    this.body.insertBefore(skeleton, this.loadingIndicator);
+    this.messageViewport.resetForEmptyMessages();
+
+    const renderedMessages = getRenderedAgentMessages(input.messages);
+    const list = document.createElement("div");
+    list.className = "agent-thread-card__messages";
+    const rememberedMessages: ThreadState["messages"] = [];
+    const context = this.createMessageRenderContext(input.messages, input.isLoading);
+    let index = 0;
+
+    const renderChunk = () => {
+      this.progressiveRenderRafId = null;
+      if (this.progressiveRenderMessages !== input.messages) return;
+
+      const end = Math.min(index + PROGRESSIVE_RENDER_CHUNK_SIZE, renderedMessages.length);
+      for (; index < end; index += 1) {
+        const message = renderedMessages[index];
+        const rendered = createAgentThreadCardMessageElement({
+          message,
+          language: context.language,
+          getReasoningCollapsed: context.getReasoningCollapsed,
+          setReasoningCollapsed: context.setReasoningCollapsed,
+          getDisplayExpanded: context.getDisplayExpanded,
+          setDisplayExpanded: context.setDisplayExpanded,
+          isStreaming: context.isStreaming(message),
+        });
+        if (!rendered) continue;
+        if (rendered.shouldRemember) rememberedMessages.push(message);
+        list.append(rendered.element);
+      }
+
+      if (index < renderedMessages.length) {
+        this.progressiveRenderRafId = requestAnimationFrame(renderChunk);
+        return;
+      }
+
+      this.progressiveRenderMessages = null;
+      this.removeRenderedEmptyState();
+      this.body.insertBefore(list, this.loadingIndicator);
+      this.rememberRenderedMessages(list, rememberedMessages);
+      this.applyBodyScrollAfterRender({
+        ...scrollState,
+        isLoading: input.isLoading,
+      });
+    };
+
+    // Always yield once so the selected item and skeleton can paint before
+    // Markdown parsing and tool-row construction begin.
+    this.progressiveRenderRafId = requestAnimationFrame(renderChunk);
+  }
+
+  private cancelProgressiveRender(): void {
+    if (this.progressiveRenderRafId !== null) {
+      cancelAnimationFrame(this.progressiveRenderRafId);
+      this.progressiveRenderRafId = null;
+    }
+    this.progressiveRenderMessages = null;
+  }
+
   private renderEmptyState(input: ThreadMessageRenderInput): void {
     recordMessageRenderPlan("replace-empty", input.messages.length);
     this.removeRenderedEmptyState();
     this.resetRenderedMessageCache();
 
-    if (input.isThreadCachePresentationHidden) {
+    if (
+      input.isInitialHistoryLoading ||
+      input.isThreadCachePresentationHidden
+    ) {
       const skeleton = this.createThreadCacheSkeleton();
       this.renderedEmptyState = skeleton;
       this.body.insertBefore(skeleton, this.loadingIndicator);

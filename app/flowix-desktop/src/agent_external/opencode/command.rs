@@ -4,8 +4,21 @@ use tokio::process::Command;
 use super::binary::resolve_opencode_binary;
 use crate::agent_external::shared::configure_unix_process_group;
 
-pub fn build_opencode_acp_command(cwd: &Path, permission_mode: Option<&str>) -> Command {
+pub fn build_opencode_acp_command(
+    cwd: &Path,
+    permission_mode: Option<&str>,
+    model: Option<&str>,
+) -> Command {
     let mut command = Command::new(resolve_opencode_binary());
+    // OpenCode exposes model selection as a global CLI option. It must appear
+    // before the `acp` subcommand; passing it to ACP after startup would leave
+    // the server on its configured default model.
+    if let Some(model) = model
+        .map(str::trim)
+        .filter(|model| !model.is_empty() && *model != "inherit")
+    {
+        command.args(["--model", model]);
+    }
     command.arg("acp").current_dir(cwd);
     configure_unix_process_group(&mut command);
     crate::process_window::hide_command_window(&mut command);

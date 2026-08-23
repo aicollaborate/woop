@@ -7,6 +7,7 @@ import { NotebookIconMenu } from './notebook-icon-menu';
 import type { Notebook } from '../store';
 
 interface MemoListTitlebarWinProps {
+  noteNavigationVisible: boolean;
   selectedNotebook: Notebook | null;
   onCollapseMemoList: () => void;
   onToggleNoteNavigation: () => void;
@@ -14,6 +15,7 @@ interface MemoListTitlebarWinProps {
 }
 
 export function MemoListTitlebarWin({
+  noteNavigationVisible,
   selectedNotebook,
   onCollapseMemoList,
   onToggleNoteNavigation,
@@ -29,6 +31,7 @@ export function MemoListTitlebarWin({
       <div className="ml-1 flex items-center">
         {selectedNotebook && (
           <NotebookIconMenu
+            noteNavigationVisible={noteNavigationVisible}
             onToggleNoteNavigation={onToggleNoteNavigation}
             onOpenPreferences={onOpenPreferences}
             buttonClassName="h-6 w-6"

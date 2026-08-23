@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { StickyNotePlus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChatCircleIcon } from '@phosphor-icons/react';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
 import { buildInitialInstanceRuntimeConfig } from '@features/agent/store/initial-runtime-config';
-import { useDocumentStore } from '@features/document';
+import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
+import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { useMemoStore } from '@features/memo';
 import { agentClient } from '@features/agent/store/agent-client';
 import {
@@ -29,6 +30,7 @@ import {
 } from '@shared/ui/dropdown-menu';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 
 /**
  * The "Conversations" navigation view. It deliberately lists conversation
@@ -52,10 +54,16 @@ export function AgentConversationList() {
   const { t } = useI18n();
   const instances = useAgentSessionStore((state) => state.conversationRegistry.instances);
   const currentNotebookId = useMemoStore((state) => state.selectedNotebook?.id ?? null);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const selectedInstanceId = useWorkspaceRestoreStore(
+    (state) => state.agentConversation.selectedInstanceId,
+  );
   const [persistedInstances, setPersistedInstances] = useState<Record<string, AgentConversationInstance>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [filterType, setFilterType] = useState<AgentTypeKey | null>(null);
+  // 对话刚结束但用户还没点进去看过的 instanceId 集合 ── 用本地 Set 记录,
+  // 是会话级瞬态状态, 刷新即丢失 (需求里"前端状态"对应)。
+  // 灰色小圆点显示条件: !running && justEndedIds.has(instanceId)。
+  const [justEndedIds, setJustEndedIds] = useState<ReadonlySet<string>>(() => new Set());
 
   // The list owns a durable snapshot from the backend. Zustand remains useful
   // for live rows created in this window, but a webview reload must never turn
@@ -91,7 +99,7 @@ export function AgentConversationList() {
         merged[instance.instanceId] = instance;
       }
     }
-    return Object.values(merged).sort((a, b) => b.updatedAt - a.updatedAt);
+    return Object.values(merged).sort((a, b) => b.createdAt - a.createdAt);
   }, [instances, persistedInstances]);
 
   // 运行态来自 canonical thread projections；使用合并后的列表作为索引输入，
@@ -101,6 +109,53 @@ export function AgentConversationList() {
     [conversations],
   );
   const conversationRunIndex = useConversationRunIndex(conversationInstances);
+
+  // 跟踪每个 instanceId 上一帧的 running 状态 ── 用 ref 而不是 state, 避免
+  // 把上一帧值注入到 React 渲染链路后引发额外渲染。effect 在 commit 之后跑,
+  // 读 ref 不会破坏当前帧。
+  const previousRunningRef = useRef<ReadonlyMap<string, boolean>>(new Map());
+
+  // 监听 running 跳变: true → false 时把 instanceId 加进 justEndedIds;
+  // 再次进入 running 时主动从 set 移除 (用户重启 agent, 不应该残留灰色 dot)。
+  useEffect(() => {
+    const previous = previousRunningRef.current;
+    const currentIds = new Set<string>();
+    const nextJustEnded = new Set(justEndedIds);
+    let changed = false;
+    for (const instance of conversations) {
+      currentIds.add(instance.instanceId);
+      const isRunning = isAgentConversationRunning(instance, conversationRunIndex);
+      const wasRunning = previous.get(instance.instanceId) ?? false;
+      if (wasRunning && !isRunning) {
+        // 刚结束: 加入集合 (如果尚未存在)。
+        if (!nextJustEnded.has(instance.instanceId)) {
+          nextJustEnded.add(instance.instanceId);
+          changed = true;
+        }
+      } else if (!wasRunning && isRunning) {
+        // 重新运行: 清掉可能残留的灰色标记。
+        if (nextJustEnded.has(instance.instanceId)) {
+          nextJustEnded.delete(instance.instanceId);
+          changed = true;
+        }
+      }
+    }
+    // 整个列表已经见不到的 instanceId 不再保留其 justEnded 标记 ── 避免 set 无限增长。
+    for (const id of nextJustEnded) {
+      if (!currentIds.has(id)) {
+        nextJustEnded.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) setJustEndedIds(nextJustEnded);
+    // 同步快照以备下一帧比较。
+    const snapshot = new Map<string, boolean>();
+    for (const instance of conversations) {
+      snapshot.set(instance.instanceId, isAgentConversationRunning(instance, conversationRunIndex));
+    }
+    previousRunningRef.current = snapshot;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations, conversationRunIndex]);
 
   // 按当前笔记本圈定对话列表 —— 与中间列 MemoList 同口径。归属当前笔记本的对话
   // 全部展示；没有笔记本归属 (source.notebookId 为空，例如从独立对话面板发起，或
@@ -140,7 +195,7 @@ export function AgentConversationList() {
     ? scopedConversations.filter((instance) => instance.agentType === effectiveFilter)
     : scopedConversations;
 
-  // 按日期分桶 (基于 updatedAt)。visibleConversations 已按 updatedAt DESC 排好,
+  // 按日期分桶 (基于 createdAt)。visibleConversations 已按 createdAt DESC 排好,
   // 逐条归入桶即保持桶内顺序; 只渲染非空桶, 桶间用 mt-3 分隔。
   const conversationGroups = useMemo(() => {
     const now = new Date();
@@ -155,7 +210,7 @@ export function AgentConversationList() {
       earlier: [],
     };
     for (const instance of visibleConversations) {
-      const ts = instance.updatedAt;
+      const ts = instance.createdAt;
       if (ts >= startOfToday) buckets.today.push(instance);
       else if (ts >= startOfYesterday) buckets.yesterday.push(instance);
       else if (ts >= startOf7Days) buckets.last7Days.push(instance);
@@ -170,7 +225,12 @@ export function AgentConversationList() {
     type.nameKey ? t(type.nameKey as Parameters<typeof t>[0]) : type.name;
 
   const revealConversation = useCallback(async (instance: AgentConversationInstance) => {
-    setSelectedInstanceId(instance.instanceId);
+    // 第一次访问: 立即清掉该对话的"刚结束"灰色 dot, 做到"看见一次就消失"。
+    if (justEndedIds.has(instance.instanceId)) {
+      const next = new Set(justEndedIds);
+      next.delete(instance.instanceId);
+      setJustEndedIds(next);
+    }
 
     // The durable list snapshot may arrive before the Zustand session store
     // hydrates. Install this exact persisted instance without rewriting it so
@@ -194,8 +254,8 @@ export function AgentConversationList() {
       }));
     }
 
-    await useDocumentStore.getState().openAgentConversation(instance.instanceId);
-  }, []);
+    await selectAndOpenAgentConversation(instance.instanceId);
+  }, [justEndedIds]);
 
   // 独立对话: 无文档 (memoId / documentPath 均为 null), 但归属当前选中的
   // notebook。notebook 未选中时不可新建 (cwd 无法解析到笔记本路径)。
@@ -215,8 +275,7 @@ export function AgentConversationList() {
         role: undefined,
         runtimeConfig: buildInitialInstanceRuntimeConfig(typeKey),
       });
-      setSelectedInstanceId(instance.instanceId);
-      void useDocumentStore.getState().openAgentConversation(instance.instanceId);
+      void selectAndOpenAgentConversation(instance.instanceId);
     },
     [currentNotebookId],
   );
@@ -230,24 +289,7 @@ export function AgentConversationList() {
             <MemoNavigationDropdown
               title={t('memo.navigation.conversations')}
               ariaLabel={t('memo.navigation.menuTitle')}
-            >
-              <div className="space-y-1">
-                <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
-                  {t('agent.chat.newThread')}
-                </DropdownMenuLabel>
-                {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
-                  <DropdownMenuItem
-                    key={type.key}
-                    disabled={!currentNotebookId}
-                    onClick={() => createConversation(type.key)}
-                    className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
-                  >
-                    <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
-                    <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            </MemoNavigationDropdown>
+            />
             {activeAgentTypes.length >= 2 && (
               <div
                 className="flex shrink-0 items-center gap-1"
@@ -292,7 +334,7 @@ export function AgentConversationList() {
                   title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <StickyNotePlus className="h-4 w-4" aria-hidden="true" />
+                  <ChatCircleIcon className="h-4 w-4" aria-hidden="true" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 px-1 py-1.5">
@@ -327,7 +369,7 @@ export function AgentConversationList() {
                   {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
                 </h3>
                 {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
-                <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+                <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
                 {group.items.map((instance) => {
                   const agent = getAgentType(instance.agentType);
                   const selected = instance.instanceId === selectedInstanceId;
@@ -354,9 +396,22 @@ export function AgentConversationList() {
                       <span className="min-w-0 flex-1 truncate text-sm font-normal">
                         {instance.title?.trim() || t('common.untitled')}
                       </span>
-                      <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.updatedAt).toISOString()}>
-                        {formatTimeAgo(instance.updatedAt, t)}
+                      <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.createdAt).toISOString()}>
+                        {formatTimeAgo(instance.createdAt, t)}
                       </time>
+                      {running ? (
+                        // 绿色: agent 正在运行
+                        <span
+                          aria-hidden="true"
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]"
+                        />
+                      ) : justEndedIds.has(instance.instanceId) ? (
+                        // 灰色: 刚跑完、本次会话内用户还没点进去过
+                        <span
+                          aria-hidden="true"
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]"
+                        />
+                      ) : null}
                     </button>
                   );
                 })}

@@ -13,11 +13,10 @@ import { useAgentSessionStore } from "@features/agent/store/agent-session-store"
 import { acquireThreadInterest } from "@features/agent/store/thread-interest";
 import type { ThreadProjection } from "@features/agent/store/session-reducer";
 import { selectRenderableThreadMessages } from "@features/agent/store/thread-render-messages";
-import { translate, type AppLanguage, type I18nKey } from "@/lib/i18n";
+import { translate, type AppLanguage, type I18nKey, type I18nParams } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 import { errorMessage } from "@/lib/error-message";
 import type { AgentTypeKey } from "@/types/agent";
-import type { QuickPhrase } from "@/lib/constants";
 import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
@@ -51,6 +50,7 @@ import {
   createThreadCacheSkeleton,
 } from "@features/agent/thread-card/messages";
 import { AgentConversationSurfaceController } from "@features/agent/thread-card/surface/agent-conversation-surface-controller";
+import { getAgentConversationRuntimeCwd } from "@features/agent/conversation-presentation";
 
 const logger = createLogger("agent-thread-card");
 import {
@@ -170,8 +170,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private fullscreenRestorePending = false;
   private fullscreenRestoreFrame: number | null = null;
   private badgePositionFrame: number | null = null;
-  /** 偏好设置中 quickPhrases 数组引用变化时的 unsubscribe ── 弹窗打开时实时刷新。 */
-  private unsubscribeQuickPhrases: (() => void) | null = null;
+  /** 文档引用注入回调 (旧 quick-phrases 弹窗入参已废弃, 这里留给将来扩展)。 */
   private boundHandleBodyScroll = (): void => {
     this.messages.handleScroll();
   };
@@ -239,9 +238,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   /** 翻译: NodeView 内部所有面向用户的字符串走这里, 切换语言时由
-   *  rerender 文案刷新, 不依赖 React 重渲染整张卡片。 */
-  private t(key: I18nKey): string {
-    return translate(this.language, key);
+   *  rerender 文案刷新, 不依赖 React 重渲染整张卡片。
+   *  支持 I18nParams 插值 (memo.time.* 等文案走 {d}/{h}/{m}/{s} 占位符)。 */
+  private t(key: I18nKey, params?: I18nParams): string {
+    return translate(this.language, key, params);
   }
 
   constructor(
@@ -279,12 +279,11 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       },
       onBodyClick: this.handleBodyClick,
       onBodyScroll: this.boundHandleBodyScroll,
-      onComposerMouseDown: (event) => {
-        const target = event.target as HTMLElement | null;
-        if (!target || target.closest("textarea, button")) return;
-        event.stopPropagation();
-        focusWithoutScroll(this.input);
-      },
+      // composer 空区域 → 输入框 focus 已由 createAgentComposerDom
+      // 工厂内部挂的 pointerdown 委托统一处理 (详见
+      // composer-dom-factory.ts COMPOSER_FOCUS_INTERACTIVE_SELECTOR),
+      // 这里不再单独接 onComposerMouseDown ── 否则会与工厂委托重复
+      // 触发, 同一次点击会跑两遍 focus + setSelectionRange, caret 闪烁。
     });
 
     this.dom = domParts.dom;
@@ -343,20 +342,32 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getLanguage: () => this.language,
       t: (key) => this.t(key),
       isDestroyed: () => this.isDestroyed,
+      isRunning: () => this.currentRuntimeView().isRunning,
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
     });
+    const composerModelButton = this.externalAgentSettings.createComposerModelButton();
+    if (composerModelButton) {
+      domParts.composerActions.append(composerModelButton);
+    }
+    const composerWorkspaceButton = this.externalAgentSettings.createComposerWorkspaceButton();
+    if (composerWorkspaceButton) {
+      domParts.composerActions.append(composerWorkspaceButton);
+    }
     this.agentRolePicker = new AgentRolePickerController({
       trigger: this.composerRoleIcon,
       popover: composerRolePopover,
-      t: (key) => this.t(key),
+      // 必须把 params 透传给 this.t ── formatTimeAgo 走的是
+      // t('memo.time.minutesAgo', { m }) 这种带参调用, 老 wrapper
+      // (key) => this.t(key) 会丢掉 params, 让 translate 拿到 undefined,
+      // 文案就只剩 "{m} 分钟前" 字面量, 数字永远不替换。
+      t: (key, params) => this.t(key, params),
       isDestroyed: () => this.isDestroyed,
       getCurrentMemoId: () => this.agentRoleMemoId,
       getCurrentName: () => this.agentRoleName,
       getMessageCount: () => this.currentMessages().length,
       updateRole: (role) => this.updateAgentRole(role),
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
-      injectPrompt: (text) => this.injectQuickPhrasePrompt(text),
-      openPreferences: () => this.openPreferencesForQuickPhrases(),
+      injectMemoReference: (ref) => this.injectMemoReference(ref),
     });
     this.fullscreenLayout = new FullscreenLayoutController({
       dom: this.dom,
@@ -485,7 +496,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.observeThreadCacheVisibility();
     this.requestThreadMessagesIfNeeded();
     this.runInitialPromptIfNeeded();
-    this.subscribeQuickPhrases();
     queueMicrotask(() => this.ensureInstanceBinding());
     this.schedulePersistedFullscreenRestore();
   }
@@ -557,17 +567,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
    * 解析时机: 每次 hover card 刷新时调用, 反映用户中途改 cwd 的最新值。
    */
   private get cwd(): string | null {
-    const runtimeConfig = this.instance?.runtimeConfig;
-    const snapshotCwd = runtimeConfig?.workspaceSnapshot?.cwd;
-    const legacyCwd = runtimeConfig?.cwd;
-    const value = (
-      typeof snapshotCwd === "string"
-        ? snapshotCwd
-        : typeof legacyCwd === "string"
-          ? legacyCwd
-          : ""
-    ).trim();
-    return value || null;
+    return getAgentConversationRuntimeCwd(this.instance) ?? null;
   }
 
   private ensureInstanceBinding(): void {
@@ -753,31 +753,19 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.agentRolePicker.refreshIcon();
   }
 
-  /** 订阅常用语列表变化 ── 弹窗打开时如果用户在偏好设置改了列表, 这里实时刷新。 */
-  private subscribeQuickPhrases(): void {
-    if (this.unsubscribeQuickPhrases) return;
-    const readPhrases = (): QuickPhrase[] =>
-      useUserSettingsStore.getState().settings.agents?.quickPhrases ?? [];
-    let lastPhrases = readPhrases();
-    this.unsubscribeQuickPhrases = useUserSettingsStore.subscribe((state) => {
-      const next = state.settings.agents?.quickPhrases ?? [];
-      if (next === lastPhrases) return;
-      lastPhrases = next;
-      this.agentRolePicker.refresh();
-    });
-  }
-
-  /** 常用语 → composer 注入 prompt: 覆盖输入框 + 持久化 draft + 重置历史游标。 */
-  private injectQuickPhrasePrompt(text: string): void {
-    this.composerController.setHistoryValue(text, { persistDraft: true });
+  /** 文档引用 → composer 注入: 把 `flowix://memo/<id>` 形式的深链追加到现有输入末尾,
+   *  保留光标位置不动 + 持久化 draft。 这样发送后, 后端 agent 运行时能反查 memo body
+   *  作为参考阅读材料。 */
+  private injectMemoReference(ref: { id: string; filename: string; title: string }): void {
+    const link = `[${ref.title}](flowix://memo/${ref.id})`;
+    const current = this.input.value;
+    const needsLeadingSpace = current.length > 0 && !/\s$/.test(current);
+    const separator = needsLeadingSpace ? "\n\n" : "";
+    const next = current + separator + link;
+    this.composerController.setHistoryValue(next, { persistDraft: true });
     this.composerController.resetHistoryNavigation();
     this.composerController.updateMultiLineState();
     this.input.focus();
-  }
-
-  /** 打开偏好设置, 跳到「工具」tab ── 弹窗内「添加常用语」按钮使用。 */
-  private openPreferencesForQuickPhrases(): void | Promise<void> {
-    return windows.openPreferences("tools");
   }
 
   private applyResolvedExternalSessionId(
@@ -1596,8 +1584,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       this.boundHandleRequestFullscreen,
     );
     this.setCodexSettingsPopoverOpen(false);
-    this.unsubscribeQuickPhrases?.();
-    this.unsubscribeQuickPhrases = null;
     this.dom.removeEventListener("mousedown", this.boundHandleCardMouseDown);
     this.input.removeEventListener("focus", this.boundHandleInputFocus);
     this.chrome.dispose();

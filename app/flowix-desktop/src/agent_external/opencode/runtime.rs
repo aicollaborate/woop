@@ -455,6 +455,7 @@ impl OpenCodeAcpManager {
         let permission_mode = message
             .permission_mode_for_runtime(AGENT_TYPE)
             .map(str::to_string);
+        let model = message.model_for_runtime(AGENT_TYPE).map(str::to_string);
         let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         let user_prompt = message
             .llm_content
@@ -462,12 +463,13 @@ impl OpenCodeAcpManager {
             .unwrap_or(message.content.clone());
         let prompt = append_workspace_context(&user_prompt, &cwd, &workspace_paths);
         let mut turn_events = OpenCodeTurnEvents::default();
-        let mut child = build_opencode_acp_command(&cwd, permission_mode.as_deref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to start OpenCode ACP: {error}"))?;
+        let mut child =
+            build_opencode_acp_command(&cwd, permission_mode.as_deref(), model.as_deref())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| format!("failed to start OpenCode ACP: {error}"))?;
         let child_pid = child.id();
         let stdin =
             Arc::new(Mutex::new(child.stdin.take().ok_or_else(|| {
@@ -517,7 +519,8 @@ impl OpenCodeAcpManager {
                 "session_mode": if mapped_session.is_some() { "load" } else { "new" },
                 "session_id": mapped_session,
                 "additional_directories": additional_directories,
-                "permission_mode": permission_mode
+                "permission_mode": permission_mode,
+                "model": model,
             })),
         );
 

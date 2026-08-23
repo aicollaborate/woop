@@ -3,7 +3,10 @@ import type { AgentConversationSource } from "@features/agent/store/agent-conver
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { createConversationInstanceId } from "@features/agent/store/conversation-slice";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
-import { ensureConversationWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
+import {
+  ensureConversationWorkspaceSnapshot,
+  markConversationWorkspaceStarted,
+} from "@features/agent/runtime/workspace-snapshot";
 import { ensureAgentThreadCardThread } from "@features/agent/thread-card/agent-thread-card-submit";
 import { upsertAgentThreadCardConversationInstance } from "@features/agent/thread-card/runtime/thread-card-conversation";
 
@@ -80,6 +83,7 @@ export async function submitAgentThreadCardConversation(
   // Freeze the effective cwd / add-dir / notebook paths immediately before
   // the first run. Existing and migrated conversations reuse this snapshot.
   const runtimeConfig = ensureConversationWorkspaceSnapshot(nextInstanceId);
+  markConversationWorkspaceStarted(nextInstanceId);
 
   const roleBody =
     input.isFirstMessage && input.role.memoId

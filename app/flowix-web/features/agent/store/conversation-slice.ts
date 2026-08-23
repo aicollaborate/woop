@@ -14,6 +14,8 @@ import {
   type AgentConversationRegistry,
 } from "@features/agent/store/session-state";
 import type { AgentConversationInstance as BackendAgentConversationInstance } from "@platform/tauri/client";
+import { normalizeConversationWorkspaceState } from "@features/agent/runtime/conversation-workspace";
+import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 
 type SessionSet = (
   updater: (state: ConversationContext) => Partial<ConversationContext> | ConversationContext,
@@ -151,6 +153,24 @@ export function normalizeBackendInstance(
     } else {
       runtimeConfig = instance.runtimeConfig;
     }
+  }
+  const workspaceState = normalizeConversationWorkspaceState(runtimeConfig);
+  const frozenCwd = "frozenCwd" in instance ? instance.frozenCwd : null;
+  if (
+    runtimeConfig &&
+    workspaceState &&
+    frozenCwd &&
+    normalizeWorkspacePath(frozenCwd) === workspaceState.desired.cwd
+  ) {
+    runtimeConfig = {
+      ...runtimeConfig,
+      workspaceState: {
+        ...workspaceState,
+        applied: workspaceState.desired,
+        appliedRevision: workspaceState.revision,
+        error: undefined,
+      },
+    };
   }
   return {
     ...instance,

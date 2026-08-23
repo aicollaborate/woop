@@ -7,6 +7,7 @@ import type {
   AgentHarnessPreset,
   AgentPermissionMode,
   AgentTypeKey,
+  WorkspaceSnapshot,
 } from "@/types/agent";
 import {
   CODEX_MODEL_OPTIONS,
@@ -15,6 +16,7 @@ import {
 } from "@features/agent/config/codex-options";
 import {
   getAgentAccessOptions,
+  getAgentRuntimeSpec,
   supportsAgentRuntimeSetting,
   type AgentAccessOption,
   type AgentRuntimeSettingKind,
@@ -23,6 +25,7 @@ import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
+import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 import { agent, deepseekHarness } from "@platform/tauri/client";
 import {
   applyPopoverPosition,
@@ -31,12 +34,19 @@ import {
 import {
   createCodexSettingsItem,
   createExternalAgentEmptyControl,
+  createExternalAgentWorkspaceControl,
   createExternalAgentWorkspaceDisplay,
   updateExternalAgentEmptyControl,
   type ExternalAgentEmptyControlKind,
 } from "@features/agent/thread-card/settings/external-agent-settings";
+import { createModelSwitchIcon } from "@features/agent/thread-card/agent-thread-card-icons";
+import {
+  createInitialWorkspaceState,
+  normalizeConversationWorkspaceState,
+  selectDesiredWorkspace,
+} from "@features/agent/runtime/conversation-workspace";
 
-const CODEX_SETTINGS_POPOVER_WIDTH_PX = 220;
+const CODEX_SETTINGS_POPOVER_WIDTH_PX = 212;
 const CODEX_SETTINGS_POPOVER_MAX_HEIGHT_PX = 280;
 const CODEX_SETTINGS_POPOVER_OFFSET_PX = 6;
 const CODEX_SETTINGS_POPOVER_VIEWPORT_PADDING_PX = 8;
@@ -95,6 +105,7 @@ export interface ExternalAgentSettingsControllerOptions {
   getLanguage: () => AppLanguage;
   t: (key: I18nKey) => string;
   isDestroyed: () => boolean;
+  isRunning?: () => boolean;
   consumeOutsidePointer?: (event: PointerEvent) => void;
 }
 
@@ -105,16 +116,20 @@ export class ExternalAgentSettingsController {
   private readonly getLanguage: () => AppLanguage;
   private readonly t: (key: I18nKey) => string;
   private readonly isDestroyed: () => boolean;
+  private readonly isRunning: () => boolean;
   private readonly consumeOutsidePointer?: (event: PointerEvent) => void;
 
   private modelButton: HTMLButtonElement | null = null;
+  private composerModelButton: HTMLButtonElement | null = null;
+  private composerWorkspaceButton: HTMLButtonElement | null = null;
   private reasoningButton: HTMLButtonElement | null = null;
   private modeButton: HTMLButtonElement | null = null;
   private permissionButton: HTMLButtonElement | null = null;
-  private workspaceDisplay: HTMLDivElement | null = null;
+  private workspaceDisplay: HTMLButtonElement | null = null;
   private anchor: HTMLButtonElement | null = null;
   private kind: AgentRuntimeSettingKind | null = null;
   private open = false;
+  private workspacePopoverOpen = false;
   private resizeObserver: ResizeObserver | null = null;
   private positionFrame: number | null = null;
   private codexDefaultModel = "";
@@ -134,6 +149,7 @@ export class ExternalAgentSettingsController {
     this.getLanguage = options.getLanguage;
     this.t = options.t;
     this.isDestroyed = options.isDestroyed;
+    this.isRunning = options.isRunning ?? (() => false);
     this.consumeOutsidePointer = options.consumeOutsidePointer;
   }
 
@@ -458,6 +474,7 @@ export class ExternalAgentSettingsController {
     this.workspaceDisplay = createExternalAgentWorkspaceDisplay(
       this.t("agent.workspace.title"),
       this.getCurrentWorkspaceLabel(),
+      (anchor) => this.toggleWorkspacePopover(anchor),
     );
     empty.append(this.workspaceDisplay);
 
@@ -483,6 +500,8 @@ export class ExternalAgentSettingsController {
           this.getCurrentPermissionLabel(),
         )
       : null;
+    // 空状态设置区固定采用「空间 → 模型 → 模式/权限」顺序。
+    // OpenCode 当前没有 mode，因此模型控件会自然落在空间与权限之间。
     for (const button of [
       this.modelButton,
       this.reasoningButton,
@@ -494,12 +513,83 @@ export class ExternalAgentSettingsController {
     return empty;
   }
 
+  /** Compact model switch trigger used by the expanded composer footer. */
+  createComposerModelButton(): HTMLButtonElement | null {
+    if (!this.supportsRuntimeSetting("model")) return null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "agent-thread-card__composer-model";
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.append(createModelSwitchIcon());
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.toggleSettingsPopover("model", button);
+    });
+    button.addEventListener("mousedown", (event) => event.stopPropagation());
+    this.composerModelButton = button;
+    this.refreshComposerModelButton();
+    return button;
+  }
+
+  createComposerWorkspaceButton(): HTMLButtonElement | null {
+    const button = createExternalAgentWorkspaceControl(
+      this.t("agent.workspace.title"),
+      this.getCurrentWorkspaceLabel(),
+      (anchor) => this.toggleWorkspacePopover(anchor),
+    );
+    this.composerWorkspaceButton = button;
+    this.refreshComposerWorkspaceButton();
+    return button;
+  }
+
+  refreshComposerModelButton(): void {
+    if (!this.composerModelButton) return;
+    const label = this.getCurrentExternalModelLabel();
+    this.composerModelButton.title = `${this.t("agent.model.title")}: ${label}`;
+    this.composerModelButton.setAttribute(
+      "aria-label",
+      `${this.t("agent.model.title")}: ${label}`,
+    );
+  }
+
+  private refreshComposerWorkspaceButton(): void {
+    if (!this.composerWorkspaceButton) return;
+    const value = this.getCurrentWorkspaceLabel();
+    const valueEl = this.composerWorkspaceButton.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-workspace-value",
+    );
+    if (valueEl) valueEl.textContent = value;
+    this.composerWorkspaceButton.title = `${this.t("agent.workspace.title")}: ${value}`;
+    this.composerWorkspaceButton.setAttribute(
+      "aria-label",
+      `${this.t("agent.workspace.title")}: ${value}`,
+    );
+    const instance = this.getInstanceId()
+      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
+      : null;
+    const workspaceState = normalizeConversationWorkspaceState(instance?.runtimeConfig);
+    const hasStarted = Boolean(instance?.threadId) || Boolean(workspaceState?.appliedRevision);
+    const capability = getAgentRuntimeSpec(this.getTypeKey()).workspace;
+    const disabled = this.isRunning() || (hasStarted && !capability.switchBetweenRuns);
+    this.composerWorkspaceButton.disabled = disabled;
+    this.composerWorkspaceButton.setAttribute("aria-disabled", disabled ? "true" : "false");
+  }
+
   refreshEmptySettings(): void {
+    this.refreshComposerModelButton();
+    this.refreshComposerWorkspaceButton();
     if (this.workspaceDisplay) {
       const value = this.workspaceDisplay.querySelector<HTMLElement>(
         ".agent-thread-card__empty-workspace-value",
       );
-      if (value) value.textContent = this.getCurrentWorkspaceLabel();
+      const nextValue = this.getCurrentWorkspaceLabel();
+      if (value) value.textContent = nextValue;
+      this.workspaceDisplay.title = `${this.t("agent.workspace.title")}: ${nextValue}`;
+      this.workspaceDisplay.setAttribute(
+        "aria-label",
+        `${this.t("agent.workspace.title")}: ${nextValue}`,
+      );
     }
     if (this.modelButton) {
       updateExternalAgentEmptyControl(
@@ -528,6 +618,32 @@ export class ExternalAgentSettingsController {
   }
 
   private getCurrentWorkspaceLabel(): string {
+    const path = this.getCurrentWorkspacePath();
+    if (!path) return this.t("agent.workspace.unset");
+
+    const normalize = (value: string): string =>
+      value.replace(/[\\/]+$/, "").toLowerCase();
+    const entry = useAgentAccessStore
+      .getState()
+      .config.entries.find(
+        (item) => item.kind === "folder" && normalize(item.path) === normalize(path),
+      );
+    const instance = this.getInstanceId()
+      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
+      : undefined;
+    const configuredNotebookId = instance?.runtimeConfig?.notebookId;
+    const notebook =
+      (configuredNotebookId
+        ? useMemoStore.getState().notebooks.find((item) => item.id === configuredNotebookId)
+        : null) ?? useMemoStore.getState().selectedNotebook;
+    if (entry?.name?.trim()) return entry.name.trim();
+    if (notebook && normalize(notebook.path) === normalize(path) && notebook.name?.trim()) {
+      return notebook.name.trim();
+    }
+    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  }
+
+  private getCurrentWorkspacePath(): string {
     const instance = this.getInstanceId()
       ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
       : undefined;
@@ -550,20 +666,7 @@ export class ExternalAgentSettingsController {
     );
     const primary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
     const path = snapshotPath || (primary.kind === "empty" ? "" : primary.path);
-    if (!path) return this.t("agent.workspace.unset");
-
-    const normalize = (value: string): string =>
-      value.replace(/[\\/]+$/, "").toLowerCase();
-    const entry = useAgentAccessStore
-      .getState()
-      .config.entries.find(
-        (item) => item.kind === "folder" && normalize(item.path) === normalize(path),
-      );
-    if (entry?.name?.trim()) return entry.name.trim();
-    if (notebook && normalize(notebook.path) === normalize(path) && notebook.name?.trim()) {
-      return notebook.name.trim();
-    }
-    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+    return path;
   }
 
   toggleSettingsPopover(
@@ -575,12 +678,32 @@ export class ExternalAgentSettingsController {
     this.setSettingsPopoverOpen(!sameMenuOpen, kind, anchor);
   }
 
+  private toggleWorkspacePopover(anchor: HTMLButtonElement): void {
+    const sameMenuOpen = this.workspacePopoverOpen && this.anchor === anchor;
+    if (sameMenuOpen) {
+      this.setSettingsPopoverOpen(false);
+      return;
+    }
+    this.workspacePopoverOpen = true;
+    this.open = true;
+    this.kind = null;
+    this.anchor = anchor;
+    this.popover.hidden = false;
+    this.popover.classList.remove("agent-thread-card__codex-settings-popover--mode");
+    this.syncControlOpenState(true, null);
+    this.renderWorkspacePopover();
+    this.schedulePosition();
+    this.startPositionTracking();
+    document.addEventListener("pointerdown", this.handleOutsidePointer, true);
+  }
+
   setSettingsPopoverOpen(
     open: boolean,
     kind: AgentRuntimeSettingKind | null = null,
     anchor: HTMLButtonElement | null = null,
   ): void {
-    if (this.open === open && (!open || this.kind === kind)) return;
+    if (this.open === open && (!open || this.kind === kind) && !this.workspacePopoverOpen) return;
+    this.workspacePopoverOpen = false;
     this.open = open;
     this.kind = open ? kind : null;
     this.anchor = open ? anchor : null;
@@ -624,6 +747,10 @@ export class ExternalAgentSettingsController {
   };
 
   renderPopover(): void {
+    if (this.workspacePopoverOpen) {
+      this.renderWorkspacePopover();
+      return;
+    }
     const kind = this.kind;
     this.popover.replaceChildren();
     if (!kind || !this.supportsRuntimeSetting(kind)) return;
@@ -654,6 +781,127 @@ export class ExternalAgentSettingsController {
       return;
     }
     this.renderPermissionSettings();
+  }
+
+  private getWorkspaceChoices(): Array<{ path: string; label: string }> {
+    const instance = this.getInstanceId()
+      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
+      : undefined;
+    const configuredNotebookId = instance?.runtimeConfig?.notebookId;
+    const memoState = useMemoStore.getState();
+    const notebook =
+      (configuredNotebookId
+        ? memoState.notebooks.find((item) => item.id === configuredNotebookId)
+        : null) ?? memoState.selectedNotebook;
+    const defaultFiles = resolveAuthorizedDefaultFiles(
+      useAgentAccessStore.getState().config,
+      configuredNotebookId ?? notebook?.id,
+    );
+    const paths = [
+      ...(defaultFiles?.folders ?? []),
+      notebook?.path,
+      ...(instance?.runtimeConfig?.workspaceSnapshot?.workspacePaths ?? []),
+    ]
+      .map((path) => normalizeWorkspacePath(path))
+      .filter(Boolean);
+    const seen = new Set<string>();
+    return paths.flatMap((path) => {
+      const key = path.toLowerCase();
+      if (seen.has(key)) return [];
+      seen.add(key);
+      const entry = useAgentAccessStore.getState().config.entries.find(
+        (item) =>
+          item.kind === "folder" &&
+          normalizeWorkspacePath(item.path).toLowerCase() === key,
+      );
+      const label =
+        entry?.name?.trim() ||
+        (notebook && normalizeWorkspacePath(notebook.path).toLowerCase() === key
+          ? notebook.name?.trim()
+          : "") ||
+        path.split(/[\\/]/).filter(Boolean).pop() ||
+        path;
+      return [{ path, label }];
+    });
+  }
+
+  private renderWorkspacePopover(): void {
+    this.popover.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "agent-thread-card__codex-settings-title";
+    title.textContent = this.t("agent.workspace.title");
+    this.popover.append(title);
+    const choices = this.getWorkspaceChoices();
+    const current = normalizeWorkspacePath(this.getCurrentWorkspacePath()).toLowerCase();
+    for (const choice of choices) {
+      this.popover.append(
+        createCodexSettingsItem(
+          choice.label,
+          choice.path.toLowerCase() === current,
+          () => {
+            this.selectWorkspace(choice.path);
+            this.setSettingsPopoverOpen(false);
+          },
+        ),
+      );
+    }
+    if (choices.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "agent-thread-card__codex-settings-empty";
+      empty.textContent = this.t("agent.workspace.unset");
+      this.popover.append(empty);
+    }
+  }
+
+  private selectWorkspace(path: string): void {
+    const instanceId = this.getInstanceId();
+    if (!instanceId) return;
+    const instance = useAgentSessionStore.getState().getInstance(instanceId);
+    const normalized = normalizeWorkspacePath(path);
+    if (!instance || !normalized) return;
+    const state = normalizeConversationWorkspaceState(instance.runtimeConfig);
+    const snapshot = state?.desired ?? instance.runtimeConfig?.workspaceSnapshot;
+    const workspacePaths = Array.from(
+      new Set([
+        normalized,
+        ...(snapshot?.workspacePaths ?? []),
+        ...this.getWorkspaceChoices().map((item) => item.path),
+      ]),
+    );
+    const notebook = useMemoStore.getState().notebooks.find(
+      (item) =>
+        normalizeWorkspacePath(item.path).toLowerCase() === normalized.toLowerCase(),
+    );
+    const configuredNotebook = instance.runtimeConfig?.notebookId
+      ? useMemoStore.getState().notebooks.find(
+          (item) => item.id === instance.runtimeConfig?.notebookId,
+        )
+      : useMemoStore.getState().selectedNotebook;
+    const nextSnapshot: WorkspaceSnapshot = {
+      version: 1,
+      cwd: normalized,
+      workspacePaths,
+      ...(instance.runtimeConfig?.notebookId
+        ? { notebookId: instance.runtimeConfig.notebookId }
+        : {}),
+      ...(snapshot?.notebookPath || configuredNotebook?.path || notebook?.path
+        ? {
+            notebookPath: normalizeWorkspacePath(
+              snapshot?.notebookPath || configuredNotebook?.path || notebook?.path,
+            ),
+          }
+        : {}),
+      capturedAt: Date.now(),
+    };
+    const nextState = state
+      ? selectDesiredWorkspace(state, nextSnapshot)
+      : createInitialWorkspaceState(nextSnapshot);
+    useAgentSessionStore.getState().setRuntimeConfig(instanceId, {
+      workspaceState: nextState,
+      // Compatibility mirror while old callers are being migrated.
+      workspaceSnapshot: nextSnapshot,
+    });
+    this.refreshEmptySettings();
   }
 
   schedulePosition(): void {
@@ -706,6 +954,30 @@ export class ExternalAgentSettingsController {
     this.modelButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
       modelExpanded,
+    );
+    this.composerModelButton?.setAttribute(
+      "aria-expanded",
+      modelExpanded ? "true" : "false",
+    );
+    this.composerModelButton?.classList.toggle(
+      "agent-thread-card__composer-model--open",
+      modelExpanded,
+    );
+    this.composerWorkspaceButton?.setAttribute(
+      "aria-expanded",
+      this.workspacePopoverOpen && open ? "true" : "false",
+    );
+    this.composerWorkspaceButton?.classList.toggle(
+      "agent-thread-card__composer-workspace--open",
+      this.workspacePopoverOpen && open,
+    );
+    this.workspaceDisplay?.setAttribute(
+      "aria-expanded",
+      this.workspacePopoverOpen && open ? "true" : "false",
+    );
+    this.workspaceDisplay?.classList.toggle(
+      "agent-thread-card__empty-workspace--open",
+      this.workspacePopoverOpen && open,
     );
     this.permissionButton?.classList.toggle(
       "agent-thread-card__empty-control--open",
@@ -780,7 +1052,9 @@ export class ExternalAgentSettingsController {
   // Returns the legacy/Codex inherit option label when a real default model
   // is available. DeepSeek Harness deliberately does not call this an option.
   private getExternalModelDefaultLabel(): string {
-    if (this.getTypeKey() === "claude") return this.t("agent.permission.default");
+    if (this.getTypeKey() === "claude" || this.getTypeKey() === "opencode") {
+      return this.t("agent.permission.default");
+    }
     return this.codexDefaultModel
       ? translate(this.getLanguage(), "agent.codexModel.defaultWith", {
           model: formatModelDisplayLabel(this.codexDefaultModel),
@@ -799,7 +1073,9 @@ export class ExternalAgentSettingsController {
       }));
     // DSH 无硬编码 fallback —— 列表完全来自后端 (用户目录 / llm-pi-ai
     // catalog); 拉取失败时仅显示当前值, 不显示 Codex 的模型。
-    if (this.getTypeKey() === "deepseek-harness") return [];
+    if (this.getTypeKey() === "deepseek-harness" || this.getTypeKey() === "opencode") {
+      return [];
+    }
     return this.getTypeKey() === "claude"
       ? mapLabel(CLAUDE_MODEL_OPTIONS)
       : mapLabel(CODEX_MODEL_OPTIONS);

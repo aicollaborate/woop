@@ -36,6 +36,7 @@ import { useTagStore } from '@features/memo/store/tag-store';
 import { NotebookIcon } from '@features/memo/components/notebook-icon';
 import type { MemoItem } from '@/types/memo-item';
 import { useDocumentStore } from '@features/document/store/document-store';
+import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 import {
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-types';
@@ -368,7 +369,7 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
       }));
     }
 
-    await useDocumentStore.getState().openAgentConversation(instance.instanceId);
+    await selectAndOpenAgentConversation(instance.instanceId);
     onClose();
   };
 

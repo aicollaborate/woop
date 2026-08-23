@@ -135,6 +135,73 @@
   color: currentColor;
 }
 
+/* 查看笔记按钮 ── 在右侧列对话 (AgentConversationDetail) header 的
+ * actions 区出现, 视觉同 __icon-btn 基类。 仅在 source.memoId /
+ * source.documentPath 存在时启用; dedicated 对话没有来源笔记, 整段
+ * "[icon] | …" 操作组被隐藏, 只剩 "…" 入口供删除。
+ *
+ * 图标借用 Phosphor 的 FileTextIcon, 颜色继承按钮文字色, 与全屏 /
+ * 折叠 / 删除等图标保持口径一致。 */
+.markdown-editor .agent-thread-card__view-note {
+  /* 视觉由 __icon-btn 提供 ── 这里仅放独有扩展点 (当前无) */
+}
+
+.markdown-editor .agent-thread-card__view-note-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+/* 无来源文档占位 ── dedicated 对话 (kind === 'dedicated') 没有关联笔记,
+ * 在 view-note 按钮原本的位置展示一行 muted 文案。视觉重量弱于 28×28
+ * 图标按钮, 跟 header 右侧主标题区形成层级 ── 让用户一眼看到"这条对话
+ * 是独立的", 而不会误以为按钮坏了。
+ *
+ * ── 几何 ──
+ *   - height: 28px ── 与 28×28 图标按钮同高, 在 flex 容器 (gap: 4px)
+ *     里两者上下边缘对齐, 不出现 header 高度跳变。
+ *   - padding-inline: 4px ── 文字与左邻 header 边缘留 4px, 跟相邻
+ *     divider/button 4px gap 保持一致, 视觉节奏连续。
+ *   - font-size: 0.8125rem ── 跟 view-note 文字口径一致, 13px 在
+ *     header 区是次要文字的常规尺寸。
+ *
+ * ── 颜色 ──
+ *   - var(--muted-foreground) ── 跟其它 header 弱交互元素同 token,
+ *     暗示"这是辅助信息, 不是可点击的操作"。hover 不变色 ── 让用户
+ *     明确知道这不是按钮。 */
+.markdown-editor .agent-thread-card__no-source {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding-inline: 0.25rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+
+/* "…" 下拉触发按钮 ── 视觉同 __icon-btn 基类, glyph 由基类居中布局消化,
+ * 这里只放独有扩展点。当前没有自定义样式, 保留空规则以维持 selector
+ * 的语义锚点, 未来若需要微调 (例如触发态颜色) 直接在这里补。 */
+.markdown-editor .agent-thread-card__more {
+  /* 视觉由 __icon-btn 提供 ── 这里仅放独有扩展点 (当前无) */
+}
+
+/* "…" 图标 ── 14×14, color 继承按钮文字色, 与全屏 / 折叠 / 删除
+ * 等图标的尺寸口径一致 (14×14)。lucide 的 MoreHorizontal 默认 stroke
+ * 略细, 在 28px 方格里视觉重量跟其他基类图标持平, 不需要再调粗细。 */
+.markdown-editor .agent-thread-card__more-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
 /* Dedicated conversation navigation owns the fullscreen state. The selected
  * card remains the right-hand conversation surface until the user changes
  * navigation, so there is intentionally no inline "exit fullscreen" control. */
@@ -219,7 +286,11 @@
  * than the card's fixed-position fullscreen mode. */
 .agent-conversation-detail .agent-conversation-detail__card {
   margin: 0;
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
+  overflow: hidden;
   background: var(--editor-block-bg, var(--document-bg));
 }
 
@@ -237,11 +308,25 @@
   font-family: var(--app-font-family, var(--font-sans));
 }
 
+/* 右侧列对话详情 (AgentConversationDetail) header ── 与内嵌 Thread Card
+ * 共享同一套基类 .agent-thread-card__header (40px 高 + 0.8rem 左右内边距 +
+ * flex space-between + 28×28 icon-btn)。 这里只覆盖两件内嵌卡片做不到 /
+ * 不该做的事:
+ *
+ *   - `flex: 0 0 auto` 让 header 不参与父级 flex 收缩 ── 内嵌卡片的 header
+ *     在 grid 容器里 (grid-template-rows: var(--atc-header-h) 1fr auto)
+ *     已经固定 40px, 不需要这条; 但右侧列是普通 flex column, header 要
+ *     显式锁住高度, 否则被兄弟 (body / composer) 挤成 0.
+ *   - `cursor: default` ── 内嵌卡片 header 是 `cursor: grab` (fullscreen
+ *     时整张卡片可被窗口拖动); 右侧列对话是布局内固定 surface, 不参与
+ *     拖拽, 这里覆盖 grab → default, 视觉上跟其它静态 header (如主窗口
+ *     标题栏) 一致。
+ *
+ * 不再覆盖 width / padding / margin ── 0.8rem 内边距由基类提供, header
+ * 撑满父级宽度, 与内嵌卡片全屏态同源; 内容区 (body / messages) 的 780px
+ * 居中由各自 selector 单独约束, 互不干扰。 */
 .markdown-editor.agent-conversation-detail .agent-conversation-detail__header {
   flex: 0 0 auto;
-  width: min(calc(100% - 3rem), 780px);
-  margin-inline: auto;
-  padding-inline: 0;
   cursor: default;
 }
 
@@ -253,8 +338,8 @@
   padding-inline: 0;
 }
 
-.agent-conversation-detail .agent-thread-card__messages,
-.agent-conversation-detail .agent-thread-card__skeleton {
+.markdown-editor.agent-conversation-detail .agent-thread-card__messages,
+.markdown-editor.agent-conversation-detail .agent-thread-card__skeleton {
   width: calc(100% - 3rem);
   max-width: 780px;
   margin-inline: auto;

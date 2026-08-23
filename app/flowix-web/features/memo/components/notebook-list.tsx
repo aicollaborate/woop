@@ -52,6 +52,7 @@ export function NotebookList({
   const { t } = useI18n();
   const experimental = useExperimentalMode();
   const setNotebooks = useMemoStore((s) => s.setNotebooks);
+  const notebooksInitialized = useMemoStore((s) => s.notebooksInitialized);
   const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
   const cloudStateRequestRef = useRef(0);
 
@@ -141,7 +142,12 @@ export function NotebookList({
         scrollerClassName="h-full overflow-y-auto px-2"
       >
         <div className="space-y-0.5 pb-1">
-          {notebooks.length === 0 ? (
+          {!notebooksInitialized ? (
+            <div
+              className="h-12 w-full animate-pulse rounded-lg bg-[color-mix(in_oklch,var(--foreground)_5%,transparent)]"
+              aria-label={t('memo.navigation.loading')}
+            />
+          ) : notebooks.length === 0 ? (
             <button
               type="button"
               onClick={handleCreateNotebook}

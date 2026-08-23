@@ -24,11 +24,13 @@ import type {
 
 type SurfaceOfKind<K extends ThirdColumnSurfaceKind> = Extract<ThirdColumnSurface, { kind: K }>;
 
-const AgentConversationDetail = lazy(() =>
-  import('@features/agent/components/agent-conversation-detail').then((module) => ({
-    default: module.AgentConversationDetail,
-  })),
-);
+// Agent conversation detail: 走 eager import —— 左栏对话列表是 daily-driver,
+// 用户点击进入对话的概率接近 100%。lazy chunk (`agent-conversation-detail`)
+// 加上其依赖 (`agent-conversation-surface-controller` 30KB gz + `marked.esm`
+// 12KB gz) 共 ~46KB gz 的 fetch + parse 是切换对话闪白屏的主因。eager 进
+// 主 bundle 后, +46KB gz / 主 entry +25% 的代价摊销在用户首次进入对话就
+// 完成, 后续切换零延迟。
+import { AgentConversationDetail } from '@features/agent/components/agent-conversation-detail';
 const PluginDocumentView = lazy(() =>
   import('@features/plugin/plugin-document-view').then((module) => ({
     default: module.PluginDocumentView,
@@ -92,11 +94,9 @@ function PluginArtifactSurfaceView({ surface }: { surface: PluginArtifactSurface
 }
 
 function AgentConversationSurfaceView({ surface }: { surface: AgentConversationSurface }) {
-  return (
-    <Suspense fallback={<SurfaceLoadingFallback />}>
-      <AgentConversationDetail instanceId={surface.instanceId} />
-    </Suspense>
-  );
+  // 取消 Suspense —— AgentConversationDetail 走 eager import, 无 lazy
+  // 边界就无 fallback 阶段, 切换对话瞬时挂载, 不再有"加载中…"白屏。
+  return <AgentConversationDetail instanceId={surface.instanceId} />;
 }
 
 function PluginWorkbenchSurfaceView({ surface }: { surface: PluginWorkbenchSurface }) {

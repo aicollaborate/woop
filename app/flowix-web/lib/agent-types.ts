@@ -20,6 +20,25 @@ import iconDeepSeek from '@/assets/icon-deepseek.svg';
 // DSH-backed cards implicitly; persisted/card-level choices still win.
 export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'codex';
 
+/**
+ * Agent order used when a navigation entry needs one representative local
+ * runtime. Keep this separate from AGENT_TYPES: that list is the product's
+ * catalog order, while the sidebar follows the requested local-agent
+ * preference order.
+ */
+export const LOCAL_AGENT_DISPLAY_PRIORITY = [
+  'codex',
+  'claude',
+  'opencode',
+  'deepseek-harness',
+] as const satisfies readonly AgentTypeKey[];
+
+export function pickFirstAvailableAgent(
+  statusByType: Partial<Record<AgentTypeKey, { available: boolean }>>,
+): AgentTypeKey | null {
+  return LOCAL_AGENT_DISPLAY_PRIORITY.find((key) => statusByType[key]?.available === true) ?? null;
+}
+
 const EXTERNAL_CLI_CAPABILITIES: AgentRuntimeCapabilities = {
   supportsTextStreaming: false,
   supportsToolEvents: true,

@@ -254,7 +254,7 @@ export function NotebookAccessFilesList({
                     : undefined
                 }
                 className={cn(
-                  'relative flex h-7 w-full select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
+                  'relative flex h-7 w-full select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
                   canBrowse && 'cursor-pointer',
                   isBrowsing
                     ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'

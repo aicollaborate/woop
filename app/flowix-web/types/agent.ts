@@ -164,6 +164,15 @@ export interface WorkspaceSnapshot {
   capturedAt: number;
 }
 
+export interface ConversationWorkspaceState {
+  version: 1;
+  desired: WorkspaceSnapshot;
+  applied: WorkspaceSnapshot | null;
+  revision: number;
+  appliedRevision: number;
+  error?: string;
+}
+
 export interface RuntimeConfig {
   model?: ModelConfig;
   access?: AccessConfig;
@@ -181,6 +190,8 @@ export interface RuntimeConfig {
   cwd?: string;
   /** 首次运行时冻结的 add-dir / notebook 路径；cwd 仅用于旧数据迁移。 */
   workspaceSnapshot?: WorkspaceSnapshot;
+  /** Canonical conversation workspace state. Legacy snapshots are read-only migration input. */
+  workspaceState?: ConversationWorkspaceState;
   /**
    * 创建该 instance 时所属 notebook 的 id 快照 (如 `nb_<ts>` / `nb_default`)。
    *

@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@shared/ui/button';
 import { Tooltip } from '@shared/ui/tooltip';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import { MemoCard } from '@features/memo/components/memo-card';
 import { DropdownMenuItem, DropdownMenuLabel } from '@shared/ui/dropdown-menu';
 import {
@@ -58,6 +59,7 @@ import {
   shouldShowMemoListLoading,
 } from '@features/memo/components/memo-list-loading-state';
 import { memoRepository, notebookRepository } from '@features/memo/services/memo-repository';
+import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
 import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
@@ -367,7 +369,16 @@ export function MemoList() {
     const state = useMemoStore.getState();
     let currentNotebook = state.selectedNotebook;
 
-    const notebooksResult = await notebookRepository.list();
+    // Main-window startup owns the first notebook load. MemoList may mount in
+    // the same frame, so join that shared bootstrap instead of issuing a
+    // duplicate IPC. Later list refreshes still re-query backend state.
+    let notebooksResult: Notebook[];
+    if (state.notebooksInitialized) {
+      notebooksResult = await notebookRepository.list();
+    } else {
+      await bootstrapMemoLibrary();
+      notebooksResult = useMemoStore.getState().notebooks;
+    }
     if (!notebooksResult || notebooksResult.length === 0) {
       setNotebooks([]);
       setSelectedNotebook(null);
@@ -923,7 +934,7 @@ export function MemoList() {
             </DropdownMenuItem>
 
             {/* Separator between Filter and Sort, matching the titlebar dropdown dividers */}
-            <hr className="mx-2 my-1 border-0 border-t border-[var(--border)] opacity-50" />
+            <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
 
             {/* Group 2: Sort Options */}
             <DropdownMenuLabel className="flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">{t('memo.list.sortLabel')}</DropdownMenuLabel>
@@ -1008,7 +1019,7 @@ export function MemoList() {
                         onDelete={setDeleteMemo}
                         onColorsChange={handleColorsChange}
                       />
-                      <hr className="mx-3 border-t border-[var(--border)] opacity-50" />
+                      <hr className={cn('mx-3', DROPDOWN_DIVIDER_SKIN)} />
                     </div>
                   </div>
                 );

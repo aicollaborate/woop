@@ -5,6 +5,10 @@ import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
+import {
+  createInitialWorkspaceState,
+  normalizeConversationWorkspaceState,
+} from "@features/agent/runtime/conversation-workspace";
 
 function uniquePaths(paths: Array<string | null | undefined>): string[] {
   return Array.from(
@@ -104,6 +108,17 @@ export function ensureConversationWorkspaceSnapshot(
   if (!instance) throw new Error("Agent conversation instance was not found");
 
   const runtimeConfig = instance.runtimeConfig ?? {};
+  const workspaceState = normalizeConversationWorkspaceState(runtimeConfig);
+  if (workspaceState) {
+    if (!runtimeConfig.workspaceState) {
+      session.setRuntimeConfig(instanceId, { workspaceState });
+    }
+    return {
+      ...runtimeConfig,
+      workspaceState,
+      workspaceSnapshot: workspaceState.desired,
+    };
+  }
   const existing = normalizeWorkspaceSnapshot(runtimeConfig.workspaceSnapshot);
   if (existing) {
     const resolvedNotebookId = runtimeConfig.notebookId ?? existing.notebookId;
@@ -160,11 +175,34 @@ export function ensureConversationWorkspaceSnapshot(
   const resolvedNotebookId = runtimeConfig.notebookId ?? snapshot.notebookId;
   session.setRuntimeConfig(instanceId, {
     workspaceSnapshot: snapshot,
+    workspaceState: createInitialWorkspaceState(snapshot),
     ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
   });
   return {
     ...runtimeConfig,
     ...(resolvedNotebookId ? { notebookId: resolvedNotebookId } : {}),
     workspaceSnapshot: snapshot,
+    workspaceState: createInitialWorkspaceState(snapshot),
   };
+}
+
+/** Mark the first send boundary. This is intentionally local optimistic state:
+ * the backend still validates and commits the actual cwd before running. It
+ * lets unsupported runtimes disable their workspace control immediately after
+ * the conversation has started instead of allowing one misleading selection.
+ */
+export function markConversationWorkspaceStarted(instanceId: string): void {
+  const session = useAgentSessionStore.getState();
+  const instance = session.getInstance(instanceId);
+  if (!instance) return;
+  const state = normalizeConversationWorkspaceState(instance.runtimeConfig);
+  if (!state || state.appliedRevision >= state.revision) return;
+  session.setRuntimeConfig(instanceId, {
+    workspaceState: {
+      ...state,
+      applied: state.desired,
+      appliedRevision: state.revision,
+      error: undefined,
+    },
+  });
 }

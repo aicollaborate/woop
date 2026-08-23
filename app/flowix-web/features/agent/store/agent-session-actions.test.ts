@@ -1,6 +1,7 @@
 ﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentChunk } from "@/types/agent";
 import { CONTEXT_PROMPT_MARKER } from "@features/agent/message";
+import { DEFAULT_AGENT_TYPE_KEY } from "@/lib/agent-types";
 
 const memoStateMock = vi.hoisted(() => ({
   selectedNotebook: null as null | {
@@ -2207,7 +2208,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     await store.stopThreadRun("thread-stop-empty");
     expect(agent.stopChatStream).toHaveBeenCalledWith(
       "thread-stop-empty",
-      "deepseek-harness",
+      DEFAULT_AGENT_TYPE_KEY,
       undefined,
     );
 

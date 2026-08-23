@@ -9,4 +9,10 @@ import "@/styles/mobile/index.css";
 document.documentElement.dataset.platform = "non-mac";
 document.documentElement.dataset.theme = "rock";
 
+const startupWindow = window as Window & {
+  __flowixReactMounted?: boolean;
+  __flowixStartupReport?: (kind: string, detail?: unknown) => void;
+};
+startupWindow.__flowixReactMounted = true;
+startupWindow.__flowixStartupReport?.("mobile-entry", { target: "mobile" });
 createRoot(document.getElementById("root")!).render(<MobileApp />);

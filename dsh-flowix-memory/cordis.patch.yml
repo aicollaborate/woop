@@ -11,6 +11,5 @@
       config:
         serverName: dsh-flowix-memory
         transport: stdio
-        command: !!js process.execPath
-        args:
-          - !!js "process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-flowix-memory/launcher.mjs')"
+        command: !!js "process.env.FLOWIX_DSH_MCP_CLI ?? 'flowix-cli'"
+        args: ['mcp']

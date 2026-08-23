@@ -138,6 +138,8 @@ export interface MemoStore {
   // List data
   memos: MemoItem[];
   notebooks: Notebook[];
+  /** Whether the backend notebook collection has completed its first load. */
+  notebooksInitialized: boolean;
   // Selection state
   selectedMemo: MemoItem | null;
   selectedNotebook: Notebook | null;
@@ -239,6 +241,7 @@ export const useMemoStore = create<MemoStore>()(
     (set, get) => ({
       memos: [],
       notebooks: [],
+      notebooksInitialized: false,
       selectedMemo: null,
       selectedNotebook: null,
       activeFilter: 'all',
@@ -254,7 +257,7 @@ export const useMemoStore = create<MemoStore>()(
         const selectedNotebook = state.selectedNotebook
           ? notebooks.find((notebook) => notebook.id === state.selectedNotebook?.id) ?? state.selectedNotebook
           : state.selectedNotebook;
-        return { notebooks, selectedNotebook };
+        return { notebooks, selectedNotebook, notebooksInitialized: true };
       }),
       setSelectedMemo: (memo) => set({ selectedMemo: memo }),
       setSelectedNotebook: (notebook) => {
@@ -398,7 +401,7 @@ export const useMemoStore = create<MemoStore>()(
 
       loadNotebooks: async () => {
         const nbList = await notebookRepository.list();
-        set({ notebooks: nbList as Notebook[] });
+        get().setNotebooks(nbList as Notebook[]);
       },
       /**
        * Reorder notebooks by submitting the new id order to the backend.

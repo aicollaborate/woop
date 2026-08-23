@@ -16,6 +16,14 @@ pub fn dsh_status() -> crate::dsh::DshStatus {
 }
 
 #[tauri::command]
+pub async fn dsh_archive_size() -> Option<u64> {
+    tauri::async_runtime::spawn_blocking(crate::dsh::latest_archive_size)
+        .await
+        .ok()
+        .flatten()
+}
+
+#[tauri::command]
 pub fn dsh_download_status() -> Option<crate::dsh::DshDownloadProgress> {
     crate::dsh::download_progress()
 }

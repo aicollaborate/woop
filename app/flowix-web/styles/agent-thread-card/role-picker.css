@@ -1,15 +1,14 @@
-/* ── 角色设置弹窗 (composer role popover) ────────────────────────────
+/* ── 角色/文档搜索下拉弹窗 (composer role popover) ────────────────────────────
  * 旧实现 (accessPopover → 「角色」按钮 → typeSettingsPopover 二级展开)
  * 的 CSS 已删除 ── 现在走单级方案, 点击 composerRoleIcon 直接出这个
- * 弹窗。 视觉与 accessPopover 同源 (border / radius / box-shadow /
- * padding), 但内容只承载"选择角色"单层 list + header, 不需要 actions/
- * scroll 双层结构。
+ * 弹窗。 视觉与文档标题栏 "…more" 下拉菜单 (DropdownMenuContent) 同源
+ * (border / radius / box-shadow / padding / animation), 内容承载两个
+ * 分组: 「文档」+ 「选择角色」。
  *
- * 角色项 ── 与旧 type-settings-item 完全同源视觉: min-height 36px /
- * radius 6px / padding 6px 8px / gap 10px / hover bg var(--muted) /
- * selected 走 muted 持续高亮 / disabled opacity 0.55 + not-allowed。
- * icon 是 24×24 (与旧 notebook-icon 同尺寸, 因为现在 popover 更宽 ──
- * 260px, 旧 submenu 也是 260px, 视觉对齐)。 */
+ * 角色项 ── 与 DropdownMenuItem 视觉同源: 36px min-height / radius 6px /
+ * padding 6px 8px / gap 10px / hover bg var(--muted) / selected 走 muted
+ * 持续高亮 / disabled opacity 0.55 + not-allowed。
+ * icon 是 24×24, 与旧 notebook-icon 同尺寸, 现在 popover 280px 视觉对齐。 */
 
 .agent-thread-card__composer-role-item {
   display: flex;
@@ -131,7 +130,11 @@
 }
 
 .agent-thread-card__composer-role-item-name {
-  font-weight: 500;
+  /* 走 normal (400) ── 不再加粗, 与 dropdown-menu 的 DropdownMenuItem
+   * (`flex items-center w-full px-3 py-1.5 text-sm text-[var(--foreground)]`)
+   * 视觉重量对齐, 让弹窗内所有 item 标题在 light/dark 主题下都跟其它下拉窗
+   * 一致 (排序/筛选/…"more" 的菜单项均无字重)。 */
+  font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -146,7 +149,42 @@
   white-space: nowrap;
 }
 
-/* ── 常用语 (quick phrases) ────────────────────────────────────────────
+/* 笔记命中项 ── 不画左侧 icon, 也不保留图标的水平占位, 让文本直接从
+ *  item padding 后开始, 视觉上更紧凑, 跟「笔记」这一组"按名称排版"的
+ *  列表语义匹配 (参考 DropdownMenuItem 的无 icon 变体 ── 直接 text-left)。
+ *  hover / selected / disabled 与基类同步, 不另写。
+ *
+ *  仅展示笔记标题单行 ── body 内部不再 column flex 排双行, 让单条笔记
+ *  占据一行高度, 与角色项 (单行) 视觉重量对齐。 */
+
+/* 笔记标题颜色 ── 显式走 var(--foreground), 比基类的 var(--agent-foreground)
+ *  更"中性", 让笔记组在弹窗里的视觉重量跟角色组区分开 (角色 icon 自带视觉锚
+ *  点, 笔记靠文字主导 ── 文字需要更明确的"前景色"识别。 */
+.agent-thread-card__composer-note-item
+  > .agent-thread-card__composer-role-item-body
+  > .agent-thread-card__composer-role-item-name {
+  color: var(--foreground);
+}
+
+/* 笔记项右侧时间标签 ── 与对话列表 (agent-conversation-list.tsx) 右上
+ * 时间标签同源视觉: `shrink-0 text-xs text-[var(--muted-foreground)]`。
+ *   - text-xs: 12px 字号, 比笔记标题 (≈13.5px) 小一档, 视觉权重从属
+ *   - var(--muted-foreground): muted 色, 跟标题对比度合适但不过强
+ *   - shrink-0: 窄空间下不被 body 挤压 (避免 "刚刚" 这类短文本被 ellipsis)
+ *
+ *  DOM 同源: <time dateTime={ISO}>{formatTimeAgo(...)}</time> ── 与
+ *  conversation-list 完全一致的语义结构 (语义标签 + ISO dateTime 属性 + 同
+ *  formatTimeAgo 阈值文案), 让屏幕阅读器与跨 UI 时间呈现一致。 */
+.agent-thread-card__composer-role-item-time {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── 笔记搜索 (search notes) ────────────────────────────────────────────
  * 视觉与角色项完全同源: 直接复用 .agent-thread-card__composer-role-item*,
  * 不另写一份菜单项样式 ── 空状态、filter 无命中、条目都共用同一套类。
  *
@@ -156,14 +194,14 @@
 
 /* 搜索框 ── 无边框 / 无背景 / 无搜索 icon, 字号跟角色项一致。
  *  与搜索框与列表之间的分隔线 ── 改用真 <hr> 元素 (见下方
- *  __quick-phrase-divider), 跟 "…more" 下拉菜单里 <hr> 同源,
+ *  __note-search-divider), 跟 "…more" 下拉菜单里 <hr> 同源,
  *  不再在 input 自身上画 border-bottom, 避免给输入框增加一
  *  条不可控的额外边界。 */
-.agent-thread-card__composer-quick-phrase-search {
+.agent-thread-card__composer-note-search {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 8px;
+  padding: 6px 8px 8px;
   margin: 0 0 4px 0;
   border: 0;
   border-radius: 0;
@@ -175,21 +213,22 @@
   outline: none;
 }
 
-.agent-thread-card__composer-quick-phrase-search::placeholder {
+.agent-thread-card__composer-note-search::placeholder {
   color: var(--muted-foreground);
   opacity: 0.85;
 }
-.agent-thread-card__composer-quick-phrase-search:focus::placeholder {
+.agent-thread-card__composer-note-search:focus::placeholder {
   opacity: 0.6;
 }
 
 /* 分隔线 ── 跟文档标题栏 "…more" 下拉菜单里的 <hr> 同源:
  *  `mx-2 border-t border-[var(--border)] opacity-50`
- *  (document-titlebar-shared.tsx)。 这里写死成 CSS class 方便
- *  popover 内部多处复用 (搜索框与第一组之间、第一组与第二组之间)。
- *  hr 元素自带 1px 高度 + tailwind preflight 把默认 border 清零,
- *  实际可见的就只剩我们显式画的 border-top。 */
-.agent-thread-card__composer-quick-phrase-divider {
+ *  (document-titlebar-shared.tsx → DROPDOWN_DIVIDER_SKIN)。
+ *  这里写死成 CSS class 方便 popover 内部多处复用 (搜索框与第一组
+ *  之间、第一组与第二组之间)。 hr 元素自带 1px 高度 + tailwind
+ *  preflight 把默认 border 清零, 实际可见的就只剩我们显式画的
+ *  border-top。 */
+.agent-thread-card__composer-note-search-divider {
   margin: 0 8px;
   border: 0;
   border-top: 1px solid var(--border);
@@ -197,18 +236,27 @@
 }
 
 /* 列表容器 — 仅承担垂直 padding, 不画外框; 水平方向不加 padding,
- * 让 item 自身的 6px 8px padding 与角色项完全对齐 (角色项无外层容器)。 */
-.agent-thread-card__composer-quick-phrase-list {
+ * 让 item 自身的 6px 8px padding 与角色项完全对齐。 容器自身
+ * 设置 max-height + overflow-y, 当 hits 数量过多时弹窗内部可滚动,
+ * 而外层容器 pop-in 动画 (fade + zoom-in) 不被裁切。
+ *
+ * 不再保留底部 4px padding ── 跟弹窗自身的 padding-bottom (4px) 重复,
+ * 视觉上等于"列表底部"出现了 8px 空档, 与 DropdownMenuContent
+ * (`py-1` = 4px 上下) 的紧凑节奏不一致。 改为 padding-top: 2px 即可,
+ * 顶部留 2px 让第一项与上方分隔线之间有呼吸感。 */
+.agent-thread-card__composer-note-search-list {
   display: block;
-  padding: 2px 0 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 2px 0 0;
 }
 /* 容器内第一组 header 紧贴其上方分隔线, 不再加额外 padding-top。 */
-.agent-thread-card__composer-quick-phrase-list
+.agent-thread-card__composer-note-search-list
   > .agent-thread-card__composer-role-popover-header {
   padding-top: 8px;
   margin-top: 4px;
 }
-.agent-thread-card__composer-quick-phrase-list
+.agent-thread-card__composer-note-search-list
   > .agent-thread-card__composer-role-popover-header:first-child {
   padding-top: 0.15rem;
   margin-top: 0;

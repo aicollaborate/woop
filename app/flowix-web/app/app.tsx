@@ -19,7 +19,15 @@ import { createLogger } from "@/lib/logger";
 const logger = createLogger("app");
 
 const MainLayout = lazy(() =>
-  import("@features/shell").then((module) => ({ default: module.MainLayout }))
+  import("@features/shell")
+    .then((module) => ({ default: module.MainLayout }))
+    .catch((error) => {
+      // A packaged Tauri WebView can fail to resolve a lazy chunk while the
+      // root document itself has already loaded. Do not leave the static
+      // startup spinner covering the error boundary forever in that case.
+      removeAppLoading();
+      throw error;
+    })
 );
 
 const PreferencesView = lazy(() =>
@@ -81,6 +89,20 @@ function App() {
   const flushPending = useUserSettingsStore((s) => s.flushPending);
   const refreshAgentRuntime = useAgentRuntimeStore((s) => s.refresh);
   useApplyFontSettings(format);
+
+  useEffect(() => {
+    // The static loading screen is only a first-paint fallback. It must not
+    // depend on a lazy route resolving: if a packaged chunk is unavailable,
+    // ErrorBoundary should be visible instead of an endless spinner.
+    removeAppLoading();
+
+    const isAuxiliaryWindow = hash.startsWith("#tab-window") || hash.startsWith("#preferences");
+    if (!isAuxiliaryWindow) {
+      void windows.showMain().catch((error) => {
+        logger.error("show main window failed during app bootstrap", { error });
+      });
+    }
+  }, [hash]);
 
   useEffect(() => {
     loadInitial();

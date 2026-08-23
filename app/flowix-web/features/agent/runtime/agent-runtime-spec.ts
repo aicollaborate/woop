@@ -45,6 +45,12 @@ export interface AgentRuntimeSpec {
   typeKey: AgentTypeKey;
   emptySettings: readonly AgentRuntimeSettingKind[];
   accessOptions: readonly AgentAccessOption[];
+  workspace: {
+    selectBeforeFirstRun: boolean;
+    switchBetweenRuns: boolean;
+    switchRequiresRuntimeRestart: boolean;
+    preservesConversationSession: boolean;
+  };
   buildRuntimeConfig: (
     input: Omit<BuildAgentRuntimeConfigInput, "typeKey"> & {
       cwd?: string;
@@ -120,6 +126,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "codex",
     emptySettings: ["model", "reasoning", "permission"],
     accessOptions: CODEX_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
     buildRuntimeConfig: ({
       cwd,
       workspacePaths,
@@ -140,6 +147,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "claude",
     emptySettings: ["model", "permission"],
     accessOptions: CLAUDE_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
     buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode, codexModel }) => ({
       claude: { cwd, workspacePaths, permissionMode, model: codexModel },
     }),
@@ -148,6 +156,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "gemini",
     emptySettings: [],
     accessOptions: NO_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
     buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
       gemini: { cwd, workspacePaths },
     }),
@@ -156,6 +165,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "hermes",
     emptySettings: ["permission"],
     accessOptions: HERMES_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
     buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
       hermes: { cwd, workspacePaths, permissionMode },
     }),
@@ -164,16 +174,18 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "openclaw",
     emptySettings: [],
     accessOptions: NO_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
     buildRuntimeConfig: ({ cwd, workspacePaths }) => ({
       openclaw: { cwd, workspacePaths },
     }),
   },
   opencode: {
     typeKey: "opencode",
-    emptySettings: ["permission"],
+    emptySettings: ["model", "permission"],
     accessOptions: CODEX_ACCESS_OPTIONS,
-    buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode }) => ({
-      opencode: { cwd, workspacePaths, permissionMode },
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
+    buildRuntimeConfig: ({ cwd, workspacePaths, permissionMode, codexModel }) => ({
+      opencode: { cwd, workspacePaths, permissionMode, model: codexModel },
     }),
   },
   "deepseek-harness": {
@@ -184,6 +196,7 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     // per-card permission mode are configurable here as well.
     emptySettings: ["model", "mode", "permission"],
     accessOptions: DSH_ACCESS_OPTIONS,
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: true, switchRequiresRuntimeRestart: true, preservesConversationSession: true },
     buildRuntimeConfig: ({
       cwd,
       workspacePaths,

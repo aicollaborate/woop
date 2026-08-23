@@ -57,11 +57,16 @@
   display: none;
 }
 
-/* ── 角色选择下拉弹窗 (composer role popover) ────────────────────────
+/* ── 角色/文档搜索下拉弹窗 (composer role popover) ────────────────────────
  * 独立挂在 document.body, 通过 JS 算 position: fixed 坐标 (top/left)
- * 锚定到 composerRoleIcon button 上方/下方。 视觉与 accessPopover 同源
- * (border / radius / box-shadow / padding), 但去掉 actions/scroll 双
- * 层结构 ── 单层 list + header, 因为它只承担"选择角色"一件事。
+ * 锚定到 composerRoleIcon button 上方/下方。 视觉与文档标题栏 "…more"
+ * 下拉菜单 (DropdownMenuContent) 同源 ── border / radius / box-shadow /
+ * padding / animation 全部对齐, 让"产品图标点击的下拉"在不同入口呈现
+ * 同一套容器视觉。
+ *
+ * 容器自身不写 max-height / overflow ── 由内层
+ * `.agent-thread-card__composer-doc-search-list` 承担滚动, 让外层
+ * 跟随内容自然高, 弹窗 pop-in 动画 (fade + zoom-in) 不被裁切。
  *
  * 旧实现 (accessPopover → 「角色」按钮 → typeSettingsPopover 二级展开)
  * 的 CSS 已删除 ── 现在走单级方案, 点击 composerRoleIcon 直接出这个
@@ -71,18 +76,21 @@
   top: 0;
   left: 0;
   z-index: 1050;
-  width: 260px;
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 0.375rem 0.25rem 0.25rem;
+  width: 280px;
+  padding: 0.25rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
   color: var(--agent-foreground);
-  box-shadow: 0 10px 30px
-    color-mix(in oklch, var(--foreground) 16%, transparent);
-  /* 弹窗入场动画 ── 与旧 type-settings-popover 一致: opacity 0→1 +
-   * scale 0.95→1, transform-origin top left (从 trigger 右上角弹出)。 */
+  /* 与 DropdownMenuContent 同源: tailwind shadow-lg ≈
+   * 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)
+   * 这里混色由 foreground 主题 token 推导, light/dark 都自然适配。 */
+  box-shadow:
+    0 10px 15px -3px color-mix(in oklch, var(--foreground) 10%, transparent),
+    0 4px 6px -4px color-mix(in oklch, var(--foreground) 10%, transparent);
+  /* 弹窗入场动画 ── 与 DropdownMenuContent 的 animate-in fade-in-0
+   * zoom-in-95 同源: opacity 0→1 + scale 0.95→1, transform-origin
+   * top left (从 trigger 右上角弹出)。 */
   opacity: 0;
   transform: scale(0.95);
   transform-origin: top left;
@@ -104,13 +112,29 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 对齐笔记列表下拉窗里 DropdownMenuLabel 的 padding
+   * (`memo-list.tsx` 里 sortLabel / filterLabel 的
+   * `px-[0.375rem] pb-[0.35rem] pt-[0.15rem]`) ── 让两个下拉窗
+   * 的 group label 视觉间距一致。 */
   padding: 0.15rem 0.375rem 0.35rem;
 }
 
 .agent-thread-card__composer-role-popover-title {
   color: var(--muted-foreground);
+  /* 对齐 memo-list 的 sort label: text-xs font-normal leading-[1.2]
+   * ── 让弹窗内「笔记」/「选择角色」两个 group label 跟其它下拉窗
+   * 的 label 视觉密度一致。 */
   font-size: 0.75rem;
+  font-weight: 400;
   line-height: 1.2;
+}
+
+.agent-thread-card__composer-role-popover-meta {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 .agent-thread-card__composer-role-popover-spinner {

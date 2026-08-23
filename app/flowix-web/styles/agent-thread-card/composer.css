@@ -30,6 +30,28 @@
   box-sizing: border-box;
   max-height: 15rem;
   user-select: none;
+  /* ── 空区域点击聚焦的视觉暗示 ──
+   * composer 容器大部分位置都是 textarea 之外的"占位", 用户不知道点
+   * 这里能把键盘焦点抢回输入框; 默认 cursor: auto / default 看起来
+   * 像死区。 给容器本体的"非交互元素"位置统一标 text 光标, 配合
+   * composer-dom-factory.ts 里的 pointerdown 委托, 形成"整片都是
+   * 输入区"的体感。
+   *
+   * 用 :where() 选非交互后代让优先级保持在 0, 不压过下面的 button /
+   * image-remove 等子选择器 ── 按钮仍是 pointer 光标。 */
+  cursor: text;
+}
+
+.markdown-editor .agent-thread-card__composer :where(
+  button,
+  a,
+  [role='button'],
+  .agent-thread-card__composer-image-remove,
+  .agent-thread-card__composer-role-icon,
+  .agent-thread-card__composer-model,
+  .agent-thread-card__composer-workspace
+) {
+  cursor: pointer;
 }
 
 .markdown-editor .agent-thread-card--fullscreen .agent-thread-card__composer {
@@ -47,6 +69,198 @@
 .markdown-editor .agent-thread-card__composer--has-images {
   flex-wrap: wrap;
   border-radius: 0.85rem;
+}
+
+.markdown-editor .agent-thread-card__composer-model {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__composer-workspace {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__composer-workspace:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.markdown-editor .agent-thread-card__composer-workspace:disabled:hover {
+  background: transparent;
+}
+
+/* Expanded conversation composer: the editor occupies two lines and the
+ * role/add + send controls share a dedicated bottom row. The fullscreen
+ * Thread Card uses the same layout through its fullscreen modifier; the
+ * standalone conversation detail opts in via .agent-composer--expanded. */
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer,
+.markdown-editor .agent-composer--expanded {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(1.6rem, auto) auto;
+  align-items: end;
+  row-gap: 0.35rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.8rem;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-images,
+.markdown-editor
+  .agent-composer--expanded
+  .agent-thread-card__composer-images {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  textarea,
+.markdown-editor .agent-composer--expanded textarea {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: stretch;
+  width: auto;
+  /* expanded 输入区约 1.5 行；底部控制行仍保持独立高度。 */
+  min-height: 1.6rem;
+  flex: none;
+  line-height: 1.35;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-actions,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-actions {
+  grid-column: 1;
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  align-self: end;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-model,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-model {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  background: var(--muted);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-model:hover,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-model--open,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-model:hover,
+.markdown-editor
+  .agent-composer--expanded
+  .agent-thread-card__composer-model--open {
+  background: color-mix(in oklch, var(--muted) 80%, var(--foreground) 12%);
+  color: var(--foreground);
+  outline: none;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-model-icon,
+.markdown-editor
+  .agent-composer--expanded
+  .agent-thread-card__composer-model-icon {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-workspace,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 12rem;
+  height: 24px;
+  flex: 0 1 auto;
+  padding: 0 0.45rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  /* 与空状态的空间信息保持同一套文字规格（text-xs / muted）。 */
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-workspace:hover,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-workspace--open,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-workspace:hover,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-workspace--open {
+  background: color-mix(in oklch, var(--muted) 80%, var(--foreground) 12%);
+  color: var(--foreground);
+  outline: none;
+}
+
+.markdown-editor .agent-thread-card__composer-workspace-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.markdown-editor .agent-thread-card__composer-workspace .agent-thread-card__empty-control-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__send-tooltip,
+.markdown-editor .agent-composer--expanded .agent-thread-card__send-tooltip {
+  grid-column: 2;
+  grid-row: 3;
+  align-self: end;
+  justify-self: end;
 }
 
 .markdown-editor .agent-thread-card__composer-images {
@@ -241,4 +455,29 @@
 .agent-thread-card__access-trigger:hover,
 .agent-thread-card__access-trigger--open {
   color: var(--foreground);
+}
+
+/* Keep expanded overrides after the base textarea rules above. The base
+ * field-sizing: content is ideal for compact cards, but in the expanded
+ * three-row layout it can create a circular grid measurement and stretch an
+ * empty textarea unexpectedly. */
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer,
+.markdown-editor .agent-composer--expanded {
+  grid-template-rows: auto 1.6rem auto;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  textarea,
+.markdown-editor .agent-composer--expanded textarea {
+  width: auto;
+  height: 1.6rem;
+  min-height: 1.6rem;
+  max-height: 1.6rem;
+  flex: none;
+  field-sizing: fixed;
+  align-self: center;
 }

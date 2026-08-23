@@ -1,16 +1,17 @@
 'use client';
 
 import { Layers, ListTodo } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import { StarFourIcon } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 import { useMemoStore } from '@features/memo';
-import { AgentIcon } from '@features/agent/components/agent-icon';
 import { useI18n } from '@/lib/i18n';
+import { getAgentType, pickFirstAvailableAgent } from '@/lib/agent-types';
+import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 
 interface NavFilterButtonsProps {
   totalMemoCount: number;
-  agentMemoCount: number;
   todoMemoCount: number;
   onSelectFilter?: () => void;
 }
@@ -22,7 +23,6 @@ interface NavFilterButtonsProps {
 // 不再经 props 透传。
 export function NavFilterButtons({
   totalMemoCount,
-  agentMemoCount,
   todoMemoCount,
   onSelectFilter,
 }: NavFilterButtonsProps) {
@@ -30,6 +30,14 @@ export function NavFilterButtons({
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const setActiveFilter = useMemoStore((s) => s.setActiveFilter);
+  const statusByType = useAgentRuntimeStore((s) => s.statusByType);
+  const detectedAgentKey = pickFirstAvailableAgent(statusByType);
+  const detectedAgent = detectedAgentKey ? getAgentType(detectedAgentKey) : null;
+  const detectedAgentName = detectedAgent
+    ? detectedAgent.nameKey
+      ? t(detectedAgent.nameKey as Parameters<typeof t>[0])
+      : detectedAgent.name
+    : t('memo.navigation.conversations');
   // 文件夹浏览是和全部 / 对话 / 待办 / 标签并列的一个入口。浏览资料时
   // activeFilter 为 all 只是中间列的数据兜底，不能让“全部”也显示选中。
   const isFilterActive = (filter: typeof activeFilter) =>
@@ -67,7 +75,7 @@ export function NavFilterButtons({
           }
         }}
         className={cn(
-          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
           isFilterActive('all')
             ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
             : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
@@ -86,42 +94,6 @@ export function NavFilterButtons({
       <div
         role="button"
         tabIndex={0}
-        onClick={handleShowAgentMemos}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            handleShowAgentMemos();
-          }
-        }}
-        className={cn(
-          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
-          isFilterActive('agents')
-            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
-        )}
-        style={{ paddingLeft: 6 }}
-        aria-pressed={isFilterActive('agents')}
-      >
-        <span className="mr-2 shrink-0 opacity-90">
-          <AgentIcon
-            typeKey="deepseek-harness"
-            alt=""
-            className="h-3.5 w-3.5"
-            style={
-              isFilterActive('agents')
-                ? ({ '--agent-icon-color': 'var(--primary-foreground)' } as CSSProperties)
-                : undefined
-            }
-          />
-        </span>
-        <span className="min-w-0 flex-1 truncate">{t("memo.navigation.conversations")}</span>
-        <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('agents') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
-          {agentMemoCount}
-        </span>
-      </div>
-      <div
-        role="button"
-        tabIndex={0}
         onClick={handleShowTaskMemos}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -130,7 +102,7 @@ export function NavFilterButtons({
           }
         }}
         className={cn(
-          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
           isFilterActive('todos')
             ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
             : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
@@ -145,6 +117,43 @@ export function NavFilterButtons({
         <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('todos') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
           {todoMemoCount}
         </span>
+      </div>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={handleShowAgentMemos}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleShowAgentMemos();
+          }
+        }}
+        className={cn(
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
+          isFilterActive('agents')
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+        )}
+        style={{ paddingLeft: 6 }}
+        aria-pressed={isFilterActive('agents')}
+      >
+        <span className="mr-2 shrink-0 opacity-90">
+          {detectedAgent ? (
+            <AgentIcon
+              typeKey={detectedAgent.key}
+              alt=""
+              className="h-3.5 w-3.5 object-contain"
+              color={isFilterActive('agents') ? 'var(--primary-foreground)' : undefined}
+            />
+          ) : (
+            <StarFourIcon
+              className="h-3.5 w-3.5"
+              weight="regular"
+              color={isFilterActive('agents') ? 'var(--primary-foreground)' : 'currentColor'}
+            />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{detectedAgentName}</span>
       </div>
     </div>
   );

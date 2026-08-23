@@ -15,7 +15,7 @@ use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
     append_workspace_context, emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
-    persist_external_chunk_for_thread_with_metadata, resolve_and_freeze_runtime_cwd,
+    persist_external_chunk_for_thread_with_metadata,
     AgentChunkMetadata, StreamingEmitBuffer, STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
 use crate::agent_session::ThreadManager;
@@ -870,15 +870,29 @@ impl DeepSeekHarnessManager {
         message: &AgentUserMessage,
         app_handle: &tauri::AppHandle,
     ) -> Result<Option<String>, String> {
-        let cwd = resolve_and_freeze_runtime_cwd(
-            &self.thread_manager,
-            thread_id,
-            |message, _| message.cwd_for_runtime(AGENT_TYPE).map(PathBuf::from),
-            message,
-            session_id.as_deref(),
-            None,
-        )
-        .await?;
+        // Harness owns a restartable runtime generation, so a conversation may
+        // adopt a new cwd between runs while preserving its session id. Prefer
+        // the requested cwd; the persisted value is only a recovery fallback.
+        // Commit it after runtime.ensure succeeds so failed transitions keep
+        // the last known-good workspace.
+        let requested_cwd = message
+            .cwd_for_runtime(AGENT_TYPE)
+            .map(PathBuf::from)
+            .filter(|cwd| cwd.is_dir());
+        let cwd = if let Some(cwd) = requested_cwd {
+            cwd
+        } else {
+            self.thread_manager
+                .read_frozen_cwd(thread_id)
+                .await
+                .ok()
+                .flatten()
+                .filter(|cwd| cwd.is_dir())
+                .ok_or_else(|| {
+                    "Agent working directory unavailable; open a notebook or pick a folder"
+                        .to_string()
+                })?
+        };
         let configured = select_harness_config(
             self.user_config
                 .get_deepseek_harness_configs()
@@ -909,6 +923,9 @@ impl DeepSeekHarnessManager {
             permission,
         );
         let session_id = resolved_session_id(host.request_value(ensure).await?)?;
+        if let Err(error) = self.thread_manager.upsert_frozen_cwd(thread_id, &cwd).await {
+            tracing::warn!(thread_id, cwd = %cwd.display(), %error, "failed to commit harness workspace");
+        }
         self.set_active_session_id(thread_id, run_id, &session_id)
             .await;
         self.thread_manager

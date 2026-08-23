@@ -52,10 +52,8 @@ impl ThreadManager {
 
     /// Count conversation instances scoped to a notebook for the sidebar badge.
     ///
-    /// Semantics mirror the frontend list scoping: a `NULL` `source_notebook_id`
-    /// (conversations started outside any note, plus all pre-`source_notebook_id`
-    /// history) counts in every notebook so nothing disappears; `None` notebook
-    /// counts the whole table.
+    /// A selected notebook only counts conversations explicitly assigned to it.
+    /// `None` counts the whole table.
     pub async fn count_agent_conversation_instances_by_notebook(
         self: &Arc<Self>,
         notebook_id: Option<String>,
@@ -73,7 +71,7 @@ impl ThreadManager {
         let conn = self.lock_conn();
         let count = conn.query_row(
             "SELECT COUNT(*) FROM agent_conversation_instances
-             WHERE ?1 IS NULL OR source_notebook_id = ?1 OR source_notebook_id IS NULL",
+             WHERE ?1 IS NULL OR source_notebook_id = ?1",
             params![notebook_id],
             |row| row.get::<_, i64>(0),
         )?;

@@ -8,6 +8,7 @@ import { useDocumentStore } from '@features/document/store/document-store';
 import { useMemoStore, type Notebook } from '@features/memo/store/memo-store';
 import { notebooks as notebooksClient } from '@platform/tauri/client';
 import type { MemoItem } from '@/types/memo-item';
+import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 
 export type DocumentHistoryDirection = 'back' | 'forward';
 
@@ -127,7 +128,7 @@ async function openHistoryEntry(entry: DocumentHistoryEntry): Promise<void> {
     return;
   }
   if (entry.kind === 'agent-conversation') {
-    await useDocumentStore.getState().openAgentConversation(entry.instanceId, { history: 'skip' });
+    await selectAndOpenAgentConversation(entry.instanceId, { history: 'skip' });
     return;
   }
   await useDocumentStore.getState().openExternalDocument(entry.path, {

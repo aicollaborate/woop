@@ -39,6 +39,22 @@ function modernFontWoff2Only(): Plugin {
   };
 }
 
+// Vite adds `crossorigin` to module scripts, modulepreload links and styles in
+// production HTML. These resources are same-origin in a normal HTTP build,
+// but a packaged Tauri app serves them through its asset protocol. WKWebView
+// can complete the asset request while refusing to execute the module under
+// the CORS fetch mode. Relative URLs already preserve same-origin behavior,
+// so the attribute is unnecessary and breaks the packaged entrypoint.
+function removePackagedCrossorigin(): Plugin {
+  return {
+    name: "flowix-remove-packaged-crossorigin",
+    enforce: "post",
+    transformIndexHtml(html) {
+      return html.replace(/\s+crossorigin(?:="")?/g, "");
+    },
+  };
+}
+
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
@@ -75,9 +91,12 @@ export default defineConfig(({ command, mode }) => {
             // Language grammars use literal dynamic imports and intentionally
             // remain separate chunks. Grouping @shikijs/langs here would turn
             // one requested grammar back into the entire curated language set.
-            if (id.includes("node_modules/@shikijs/themes/")) {
-              return "shiki-theme";
-            }
+            //
+            // Do not split @shikijs/themes into a manual chunk: the editor's
+            // static startup graph imports the theme definitions, and Rollup
+            // then emits a modulepreload for that supposedly optional chunk.
+            // On packaged WKWebView/asset:// loads, a failed preload can block
+            // the root entry before React removes the static app spinner.
             if (id.includes("node_modules/shiki/") || id.includes("node_modules/@shiki/")) {
               return "shiki-core";
             }
@@ -95,17 +114,12 @@ export default defineConfig(({ command, mode }) => {
             if (id.includes("node_modules/katex")) {
               return "vendor-katex";
             }
-            // 图标库: lucide-react + @phosphor-icons 单次下载量大,
-            // 集中后 browser cache 友好。
-            if (id.includes("node_modules/lucide-react") || id.includes("node_modules/@phosphor-icons")) {
-              return "vendor-icons";
-            }
           },
         },
       },
     },
 
-    plugins: [react(), modernFontWoff2Only()],
+    plugins: [react(), modernFontWoff2Only(), removePackagedCrossorigin()],
     resolve: {
       alias: {
         "@": frontendRoot,

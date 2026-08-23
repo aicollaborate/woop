@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, FileText, Hash, Layers, ListTodo } from 'lucide-react';
-import { Folder } from '@phosphor-icons/react';
+import { Folder, StarFourIcon } from '@phosphor-icons/react';
 
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,8 @@ import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
 import { useMemoStore, useTagStore } from '@features/memo';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { AgentIcon } from '@features/agent/components/agent-icon';
+import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
+import { getAgentType, pickFirstAvailableAgent } from '@/lib/agent-types';
 import { TagMentionName } from '@features/editor/extensions/tag-mention/tag-mention-label';
 import {
   DropdownMenu,
@@ -19,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 
 export type MemoNavigationTarget = 'all' | 'agents' | 'todos' | 'tags';
 
@@ -110,7 +113,7 @@ export function MemoNavigationSubmenu({
         </span>
       </button>
       {open && (
-        <div className="absolute left-full top-0 z-[1501] flex max-h-[280px] w-[200px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-1 pb-1 pt-1.5 shadow-lg">
+        <div className="absolute left-full top-0 z-[1501] flex max-h-[280px] w-[220px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-1 pb-1 pt-1.5 shadow-lg">
           <div
             className="mention-note-header"
             aria-label={typeof label === 'string' ? label : undefined}
@@ -207,8 +210,16 @@ export function MemoNavigationDropdown({
   const tags = useTagStore((state) => state.tags);
   const loadTags = useTagStore((state) => state.loadTags);
   const accessConfig = useAgentAccessStore((state) => state.config);
+  const statusByType = useAgentRuntimeStore((state) => state.statusByType);
   const [openSubmenu, setOpenSubmenu] = useState<'tags' | 'references' | null>(null);
   const selectedNotebookId = selectedNotebook?.id ?? null;
+  const detectedAgentKey = pickFirstAvailableAgent(statusByType);
+  const detectedAgent = detectedAgentKey ? getAgentType(detectedAgentKey) : null;
+  const detectedAgentName = detectedAgent
+    ? detectedAgent.nameKey
+      ? t(detectedAgent.nameKey as Parameters<typeof t>[0])
+      : detectedAgent.name
+    : t('memo.navigation.conversations');
 
   useEffect(() => {
     if (!selectedNotebookId) return;
@@ -273,7 +284,7 @@ export function MemoNavigationDropdown({
           />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom" className="w-[200px] space-y-0.5 px-1 py-1.5">
+      <DropdownMenuContent align="start" side="bottom" className="w-[220px] space-y-0.5 px-1 py-1.5">
         <DropdownMenuItem
           onClick={() => handleNavigate('all')}
           className={cn(
@@ -294,8 +305,12 @@ export function MemoNavigationDropdown({
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
-            <AgentIcon typeKey="deepseek-harness" alt="" className="h-4 w-4 shrink-0 object-contain" />
-            <span>{t('memo.navigation.conversations')}</span>
+            {detectedAgent ? (
+              <AgentIcon typeKey={detectedAgent.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
+            ) : (
+              <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" aria-hidden="true" />
+            )}
+            <span>{detectedAgentName}</span>
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -345,7 +360,7 @@ export function MemoNavigationDropdown({
         />
         {children && (
           <>
-            <hr className="mx-2 my-1 border-0 border-t border-[var(--border)] opacity-50" />
+            <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
             <div>{children}</div>
           </>
         )}

@@ -88,7 +88,6 @@ export function NoteNavigationPanel({
         >
           <NavFilterButtons
             totalMemoCount={counts.total}
-            agentMemoCount={counts.agent}
             todoMemoCount={counts.todo}
             onSelectFilter={onClosePlugin}
           />

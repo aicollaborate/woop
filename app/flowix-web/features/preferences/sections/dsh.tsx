@@ -124,10 +124,6 @@ export function DshSettingsSection() {
   if (!status.installed) {
     return (
       <div className="flex min-h-[min(560px,calc(100vh-220px))] flex-col">
-        <SectionHeader
-          title={t('preferences.dsh.title')}
-          description={t('preferences.dsh.description')}
-        />
         <DshInstallPage initialStatus={status} onInstalled={setStatus} />
       </div>
     );
@@ -194,7 +190,13 @@ function DshInstallPage({
 }) {
   const { t } = useI18n();
   const { busy, error, progress, install, cancel } = useDshRuntimeInstaller(initialStatus);
+  const [archiveSize, setArchiveSize] = useState<number | null>(initialStatus.archiveSize ?? null);
   const canCancel = busy && progress?.phase !== 'downloaded';
+
+  useEffect(() => {
+    if (initialStatus.installed) return;
+    void dshIntegration.archiveSize().then((size) => setArchiveSize(size));
+  }, [initialStatus.installed]);
 
   const startInstall = async () => {
     try {
@@ -224,6 +226,11 @@ function DshInstallPage({
         <p className="mt-2 text-sm text-[var(--muted-foreground)]">
           {t('preferences.dsh.setup.description')}
         </p>
+        {archiveSize != null && (
+          <p className="mt-3 text-xs text-[var(--muted-foreground)]">
+            {t('preferences.dsh.runtime.packageSize')}: {formatDshArchiveSize(archiveSize)}
+          </p>
+        )}
 
         <div className="mt-[60px] flex justify-center gap-2">
           <Button type="button" onClick={() => void startInstall()} disabled={busy}>
@@ -414,6 +421,12 @@ function GeneralTab({
       </div>
     </div>
   );
+}
+
+function formatDshArchiveSize(bytes: number | null | undefined): string {
+  if (!Number.isFinite(bytes) || bytes == null || bytes <= 0) return '—';
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`;
 }
 
 function PluginsTab() {

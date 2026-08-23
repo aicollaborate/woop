@@ -52,7 +52,17 @@ await run(vendorBin('tsx'), [
   '--skip-build',
   `--keep-packages=${FLOWIX_RUNTIME_ROOTS.join(',')}`,
   `--launcher=${resolve(outdir, 'dsh-host.cjs')}`,
-], vendor, { ...process.env, PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}` })
+], vendor, {
+  ...process.env,
+  PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}`,
+  // The memory bundle is owned by Flowix and installed from the profile at
+  // runtime, so it is not part of the upstream workspace closure. Copy it
+  // into the SEA staging closure explicitly for bare launcher resolution.
+  DSH_RUNTIME_EXTRA_PACKAGES: JSON.stringify({
+    '@flowix/dsh-flowix-bridge': resolve(root, 'profile/flowix/node_modules/@flowix/dsh-flowix-bridge'),
+    'dsh-flowix-memory': resolve(repo, 'dsh-flowix-memory'),
+  }),
+})
 
 
 // Single product per target. Stage it to both the .build mirror and the

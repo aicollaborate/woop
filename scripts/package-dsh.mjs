@@ -67,6 +67,7 @@ for (const target of targets) {
     // so clients fetch the newly published bytes immediately.
     url: `${publicBase}/${prefix}/${filename}?sha256=${sha256}`,
     sha256,
+    sizeBytes: bytes.length,
     buildId,
   }
   let signaturePath = process.env.FLOWIX_DSH_SIGNATURE_DIR

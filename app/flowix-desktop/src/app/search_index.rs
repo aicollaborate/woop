@@ -95,8 +95,8 @@ fn schedule_rebuild(state: &AppState, app: &AppHandle, force: bool) {
                     .into_iter()
                     .filter(|entry| !entry.id.is_empty())
                     .map(|entry| {
-                        let body = std::fs::read_to_string(base.join(&entry.filename))
-                            .unwrap_or_default();
+                        let body =
+                            std::fs::read_to_string(base.join(&entry.filename)).unwrap_or_default();
                         (entry, body)
                     })
                     .collect()

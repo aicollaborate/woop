@@ -719,7 +719,7 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                   }
                 }}
                 className={cn(
-                  'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-colors',
+                  'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
                   isSelected
                     ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                     : 'text-[var(--foreground)]',

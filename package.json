@@ -1,12 +1,12 @@
 {
   "name": "flowix",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:mobile": "vite --mode mobile",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/check-web-bundle.mjs",
     "build:mobile": "tsc && vite build --mode mobile",
     "clean": "rm -rf .build dist app/target app/flowix-desktop/binaries",
     "test": "vitest run",

@@ -11,6 +11,7 @@ import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { resolveAuthorizedDefaultFiles } from "@/lib/agent-access-defaults";
 import type { OutgoingUserPayload } from "@features/agent/store/user-message";
 import { normalizeWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
+import { normalizeConversationWorkspaceState } from "@features/agent/runtime/conversation-workspace";
 
 export interface DispatchChatStreamArgs {
   threadId: string;
@@ -57,9 +58,9 @@ export async function dispatchChatStream({
 }: DispatchChatStreamArgs): Promise<void> {
   // Thread Card 首次运行前会冻结 workspaceSnapshot，后续 turn 只使用快照。
   // 没有快照的非卡片调用 / 历史调用仍走旧的 notebookId 实时回退。
-  const workspaceSnapshot = normalizeWorkspaceSnapshot(
-    instanceRuntimeConfig?.workspaceSnapshot,
-  );
+  const workspaceSnapshot =
+    normalizeConversationWorkspaceState(instanceRuntimeConfig)?.desired ??
+    normalizeWorkspaceSnapshot(instanceRuntimeConfig?.workspaceSnapshot);
   const notebookId = instanceRuntimeConfig?.notebookId;
   const defaultFiles = !workspaceSnapshot && notebookId
     ? resolveAuthorizedDefaultFiles(useAgentAccessStore.getState().config, notebookId)

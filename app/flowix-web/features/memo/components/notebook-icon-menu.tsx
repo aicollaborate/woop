@@ -9,14 +9,16 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { useI18n, type I18nKey } from '@/lib/i18n';
-import { ArrowLeftToLine, Palette, Plug, Type } from 'lucide-react';
+import { ArrowLeftToLine, ArrowRightToLine, Palette, Plug, Type } from 'lucide-react';
 import { StarFourIcon } from '@phosphor-icons/react';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { ShortcutKbd } from '@shared/ui/shortcut-kbd';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import productLogo from '@/assets/productlogo.png';
 import { cn } from '@/lib/utils';
 
 interface NotebookIconMenuProps {
+  noteNavigationVisible: boolean;
   onToggleNoteNavigation: () => void;
   /** 打开偏好设置窗口; 可传入偏好 tab id (如 'theme' / 'dsh' / 'mcp' / 'aiAgent')。 */
   onOpenPreferences: (tab?: string) => void;
@@ -67,6 +69,7 @@ const PREFERENCE_SHORTCUTS: {
  * - 点击整个产品图标按钮 → 展示下拉菜单
  */
 export function NotebookIconMenu({
+  noteNavigationVisible,
   onToggleNoteNavigation,
   onOpenPreferences,
   buttonClassName,
@@ -156,15 +159,25 @@ export function NotebookIconMenu({
           onClick={onToggleNoteNavigation}
           className="gap-1.5 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]"
         >
-          <ArrowLeftToLine className="h-4 w-4 shrink-0" />
-          <span>{t('memo.list.notebookMenu.expandNavigation')}</span>
+          {noteNavigationVisible ? (
+            <ArrowLeftToLine className="h-4 w-4 shrink-0" />
+          ) : (
+            <ArrowRightToLine className="h-4 w-4 shrink-0" />
+          )}
+          <span>
+            {t(
+              noteNavigationVisible
+                ? 'memo.list.notebookMenu.collapseNavigation'
+                : 'memo.list.notebookMenu.expandNavigation',
+            )}
+          </span>
           <ShortcutKbd
             actionId="panel.noteNavigation.toggle"
             className="ml-auto text-[var(--muted-foreground)]"
           />
         </DropdownMenuItem>
         {/* 与筛选/排序等其它下拉窗一致的分割线样式 */}
-        <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+        <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
         <DropdownMenuLabel className="py-1.5 shrink-0 px-2 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
           {t('memo.list.notebookMenu.preferences')}
         </DropdownMenuLabel>

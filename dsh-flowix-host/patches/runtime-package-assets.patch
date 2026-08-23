@@ -14,3 +14,42 @@ diff --git a/scripts/build-exe-for-python-sdk.ts b/scripts/build-exe-for-python-
    'node_modules/**/*.node',
    'node_modules/**/*.wasm',
  ]
+diff --git a/scripts/build-exe-for-python-sdk.ts b/scripts/build-exe-for-python-sdk.ts
+--- a/scripts/build-exe-for-python-sdk.ts
++++ b/scripts/build-exe-for-python-sdk.ts
+@@ -441,6 +441,28 @@ class SingleExeBuild {
+     )
+   }
++
++  /** Copy product-owned packages that are loaded from an external profile. */
++  async restoreExternalPackages(): Promise<void> {
++    const raw = process.env.DSH_RUNTIME_EXTRA_PACKAGES
++    if (raw === undefined || raw.trim() === '') return
++    const entries = JSON.parse(raw) as Record<string, string>
++    for (const [packageName, source] of Object.entries(entries)) {
++      if (!/^(?:@[a-z0-9._-]+\\/[a-z0-9._-]+)?[a-z0-9._-]+$/i.test(packageName)) {
++        throw new Error(`build-exe-for-python-sdk: invalid external package name: ${packageName}`)
++      }
++      const destination = join(this.staging, 'node_modules', packageName)
++      const nestedNodeModules = join(resolve(source), 'node_modules')
++      await rm(destination, { recursive: true, force: true })
++      await mkdir(dirname(destination), { recursive: true })
++      await cp(resolve(source), destination, {
++        recursive: true,
++        dereference: true,
++        filter: path => path !== nestedNodeModules && !path.startsWith(nestedNodeModules + sep),
++      })
++    }
++    const manifestPath = join(this.staging, 'package.json')
++    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as PackageManifest
++    manifest.dependencies = { ...(manifest.dependencies ?? {}) }
++    for (const packageName of Object.keys(entries)) manifest.dependencies[packageName] = '*'
++    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
++  }
+
+   /**
+@@ -692,6 +714,7 @@ async function main(): Promise<void> {
+   await pipeline.deployStaging()
+   await pipeline.pruneStaging()
++  await pipeline.restoreExternalPackages()
+   await pipeline.stripDevOnlyArtifacts()

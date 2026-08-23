@@ -6,9 +6,14 @@ export type ExternalAgentEmptyControlKind = AgentRuntimeSettingKind;
 export function createExternalAgentWorkspaceDisplay(
   label: string,
   value: string,
-): HTMLDivElement {
-  const display = document.createElement("div");
+  onClick: (button: HTMLButtonElement) => void,
+): HTMLButtonElement {
+  const display = document.createElement("button");
+  display.type = "button";
   display.className = "agent-thread-card__empty-workspace";
+  display.setAttribute("aria-haspopup", "menu");
+  display.setAttribute("aria-expanded", "false");
+  display.setAttribute("aria-label", `${label}: ${value}`);
 
   const labelEl = document.createElement("span");
   labelEl.className = "agent-thread-card__empty-workspace-label";
@@ -16,8 +21,39 @@ export function createExternalAgentWorkspaceDisplay(
   const valueEl = document.createElement("span");
   valueEl.className = "agent-thread-card__empty-workspace-value";
   valueEl.textContent = value;
-  display.append(labelEl, valueEl);
+  display.append(labelEl, valueEl, createDropdownChevron());
+  display.title = `${label}: ${value}`;
+  display.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick(display);
+  });
+  display.addEventListener("mousedown", (event) => event.stopPropagation());
   return display;
+}
+
+/** Compact workspace switcher trigger used by the expanded composer footer. */
+export function createExternalAgentWorkspaceControl(
+  label: string,
+  value: string,
+  onClick: (button: HTMLButtonElement) => void,
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "agent-thread-card__composer-workspace";
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-label", `${label}: ${value}`);
+  const valueEl = document.createElement("span");
+  valueEl.className = "agent-thread-card__composer-workspace-value";
+  valueEl.textContent = value;
+  button.append(valueEl, createDropdownChevron());
+  button.title = `${label}: ${value}`;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick(button);
+  });
+  button.addEventListener("mousedown", (event) => event.stopPropagation());
+  return button;
 }
 
 export function createDropdownChevron(): SVGSVGElement {

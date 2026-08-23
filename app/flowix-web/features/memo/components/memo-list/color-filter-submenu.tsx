@@ -2,6 +2,7 @@ import { MEMO_COLORS, MEMO_COLOR_HEX, type ColorFilterValue, type MemoColor } fr
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 
 export const COLOR_LABEL_KEYS: Record<MemoColor, import('@/lib/i18n').I18nKey> = {
   red: 'document.color.red',
@@ -73,7 +74,7 @@ export function ColorFilterSubmenuContent({
         <span className="inline-flex h-3.5 w-3.5 rounded-full border border-[var(--border)] bg-transparent" />,
         'none',
       )}
-      <hr className="mx-2 my-1 border-0 border-t border-[var(--border)] opacity-50" />
+      <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
       {MEMO_COLORS.map((color) =>
         renderRow(
           color,

@@ -17,6 +17,15 @@ vi.mock("@features/memo/components/notebook-icon", () => ({
   getNotebookIconMarkup: () => null,
 }));
 
+describe("workspace capabilities", () => {
+  it("only DeepSeek Harness supports switching between runs", () => {
+    expect(getAgentRuntimeSpec("deepseek-harness").workspace.switchBetweenRuns).toBe(true);
+    for (const type of ["codex", "claude", "opencode"] as const) {
+      expect(getAgentRuntimeSpec(type).workspace.switchBetweenRuns).toBe(false);
+    }
+  });
+});
+
 describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生", () => {
   beforeEach(() => {
     vi.clearAllMocks();

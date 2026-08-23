@@ -54,7 +54,11 @@ function createController(typeKey: AgentTypeKey) {
     getLanguage: () => "zh-CN",
     getTypeKey: () => typeKey,
     t: (key) => key,
-    createThreadCacheSkeleton: () => document.createElement("div"),
+    createThreadCacheSkeleton: () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "agent-thread-card__skeleton";
+      return skeleton;
+    },
     createExternalAgentEmptySettings,
   });
 
@@ -62,6 +66,116 @@ function createController(typeKey: AgentTypeKey) {
 }
 
 describe("ThreadMessageRenderController empty settings", () => {
+  it("builds a large history across animation frames while keeping the skeleton visible", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("claude");
+      const messages = Array.from({ length: 31 }, (_, index) => ({
+        id: `end-${index}`,
+        role: "end" as const,
+        content: `message ${index}`,
+        timestamp: new Date().toISOString(),
+      }));
+
+      controller.render({
+        messages,
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      expect(body.querySelector(".agent-thread-card__skeleton")).not.toBeNull();
+      expect(body.querySelector(".agent-thread-card__messages")).toBeNull();
+
+      while (frames.length > 0) frames.shift()?.(0);
+
+      expect(body.querySelector(".agent-thread-card__skeleton")).toBeNull();
+      expect(body.querySelectorAll(".agent-thread-card__message")).toHaveLength(31);
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("defers completed reasoning Markdown until the collapsed row is expanded", () => {
+    const { body, controller } = createController("claude");
+
+    controller.render({
+      messages: [{
+        id: "large-reasoning",
+        role: "reasoning",
+        content: "# Expensive reasoning\n\nBody",
+        isCompleted: true,
+        timestamp: new Date().toISOString(),
+      }],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+
+    const item = body.querySelector<HTMLElement>(
+      ".agent-thread-card__message--reasoning",
+    );
+    const content = item?.querySelector<HTMLElement>(
+      ".agent-thread-card__message-content",
+    );
+    expect(item?.classList.contains(
+      "agent-thread-card__message--reasoning-collapsed",
+    )).toBe(true);
+    expect(content?.childNodes).toHaveLength(0);
+
+    item?.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__message-reasoning-header",
+    )?.click();
+
+    expect(content?.textContent).toContain("Expensive reasoning");
+  });
+
+  it("shows the shared skeleton while dedicated history loads without cached messages", () => {
+    const { body, controller, createExternalAgentEmptySettings } =
+      createController("codex");
+
+    controller.render({
+      messages: [],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isInitialHistoryLoading: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+
+    expect(body.querySelector(".agent-thread-card__skeleton")).not.toBeNull();
+    expect(createExternalAgentEmptySettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps cached messages visible during an initial history refresh", () => {
+    const { body, controller } = createController("codex");
+
+    controller.render({
+      messages: [{
+        id: "cached-user",
+        role: "user",
+        content: "cached message",
+        timestamp: new Date().toISOString(),
+      }],
+      isLoading: false,
+      shouldRenderMessages: true,
+      isInitialHistoryLoading: true,
+      isThreadCachePresentationHidden: false,
+      isThreadCacheLoading: false,
+    });
+
+    expect(body.querySelector(".agent-thread-card__skeleton")).toBeNull();
+    expect(body.textContent).toContain("cached message");
+  });
+
   it("DeepSeek Harness empty card renders runtime settings", () => {
     const { body, controller, createExternalAgentEmptySettings } =
       createController("deepseek-harness");

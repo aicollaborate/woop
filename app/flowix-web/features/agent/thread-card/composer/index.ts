@@ -14,6 +14,12 @@ export {
   type ComposerImageControllerOptions,
 } from "./composer-image-controller";
 export {
+  createAgentComposerDom,
+  disposeAgentComposerDom,
+  type AgentComposerDomFactoryOptions,
+  type AgentComposerDomParts,
+} from "./composer-dom-factory";
+export {
   getAgentThreadCardUserHistoryMessages,
   getAgentThreadCardUserHistoryMessagesFromMessages,
 } from "./composer-history";

@@ -16,6 +16,7 @@ import { useI18n, translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
 import {
   ContextMenuContext,
 } from '@shared/ui/context-menu';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import {
   DropdownMenuContext,
 } from '@shared/ui/dropdown-menu';
@@ -252,7 +253,7 @@ export function MemoCardActions({
       <Item onClick={handleOpenProperties} className={ITEM_BASE}>
         <StackSimpleIcon className="w-4 h-4 mr-2" /> {t('document.action.properties')}
       </Item>
-      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
       {onColorsChange && (
         <MemoCardColorRow
           colors={memo.colors}
@@ -270,7 +271,7 @@ export function MemoCardActions({
           </>
         )}
       </Item>
-      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
       <Item
         onClick={() => onDelete(memo)}
         className={cn(ITEM_BASE, 'hover:text-[var(--destructive)]')}

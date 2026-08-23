@@ -108,23 +108,26 @@ export function patchLastRenderedAgentMessage(
     );
     if (!label || !content) return null;
     label.textContent = messageView.reasoningLabel;
+    const collapsed = context.getReasoningCollapsed(nextLast);
     item.classList.toggle(
       "agent-thread-card__message--reasoning-collapsed",
-      context.getReasoningCollapsed(nextLast),
+      collapsed,
     );
     const body = item.querySelector<HTMLElement>(
       ".agent-thread-card__message-reasoning-body",
     );
     if (!body) return null;
-    renderAgentThreadCardBudgetedMarkdown({
-      message: nextLast,
-      role: "reasoning",
-      visibleContent: messageView.visibleContent,
-      content,
-      toggleParent: body,
-      context,
-      isStreaming: context.isStreaming(nextLast),
-    });
+    if (!collapsed) {
+      renderAgentThreadCardBudgetedMarkdown({
+        message: nextLast,
+        role: "reasoning",
+        visibleContent: messageView.visibleContent,
+        content,
+        toggleParent: body,
+        context,
+        isStreaming: context.isStreaming(nextLast),
+      });
+    }
   } else if (nextLast.role === "end") {
     const content = item.querySelector<HTMLElement>(
       ".agent-thread-card__message-content",

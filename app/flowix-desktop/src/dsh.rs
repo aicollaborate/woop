@@ -66,6 +66,7 @@ pub struct DshStatus {
     pub source: Option<String>,
     pub profile: String,
     pub message: Option<String>,
+    pub archive_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,6 +127,8 @@ struct DshArtifact {
     url: String,
     sha256: String,
     #[serde(default)]
+    size_bytes: Option<u64>,
+    #[serde(default)]
     signature: Option<String>,
     #[serde(default)]
     build_id: Option<String>,
@@ -151,6 +154,8 @@ struct CurrentDsh {
     build_id: Option<String>,
     #[serde(default)]
     sha256: Option<String>,
+    #[serde(default)]
+    archive_size: Option<u64>,
     installed_at: String,
 }
 
@@ -160,6 +165,7 @@ struct DshInstallation {
     host_path: PathBuf,
     build_id: Option<String>,
     sha256: Option<String>,
+    archive_size: Option<u64>,
 }
 
 pub fn status() -> DshStatus {
@@ -171,6 +177,7 @@ pub fn status() -> DshStatus {
             source: Some("flowix-managed".to_string()),
             profile: DEFAULT_PROFILE.to_string(),
             message: None,
+            archive_size: installation.archive_size,
         },
         None => DshStatus {
             installed: false,
@@ -179,8 +186,34 @@ pub fn status() -> DshStatus {
             source: None,
             profile: DEFAULT_PROFILE.to_string(),
             message: Some("DeepSeek Harness is not installed".to_string()),
+            archive_size: None,
         },
     }
+}
+
+/// Best-effort size lookup for the install card. A manifest outage must not
+/// make the DSH preferences page unusable or block installation.
+pub fn latest_archive_size() -> Option<u64> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let manifest: DshManifest = client
+        .get(manifest_url())
+        .send()
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .ok()?;
+    manifest
+        .platforms
+        .get(target_key())
+        .and_then(|artifact| artifact.size_bytes)
+}
+
+fn manifest_url() -> String {
+    std::env::var(MANIFEST_ENV).unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string())
 }
 
 /// Download and atomically install the current platform's DSH archive.
@@ -437,7 +470,7 @@ pub fn managed_host_path() -> Option<PathBuf> {
 }
 
 fn fetch_manifest() -> Result<DshManifest, String> {
-    let url = std::env::var(MANIFEST_ENV).unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string());
+    let url = manifest_url();
     let response = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -725,6 +758,7 @@ fn publish_install(
         target: target.to_string(),
         build_id: artifact.build_id.clone(),
         sha256: Some(artifact.sha256.trim().to_ascii_lowercase()),
+        archive_size: artifact.size_bytes,
         installed_at: chrono::Utc::now().to_rfc3339(),
     };
     let current_path = root.join("current.json");
@@ -1047,6 +1081,7 @@ fn current_installation() -> Option<DshInstallation> {
         host_path: host,
         build_id: current.build_id,
         sha256: current.sha256,
+        archive_size: current.archive_size,
     })
 }
 
@@ -1189,10 +1224,12 @@ mod tests {
             host_path: std::path::PathBuf::from("dsh-host"),
             build_id: Some("same-build".to_string()),
             sha256: None,
+            archive_size: None,
         };
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            size_bytes: None,
             signature: None,
             build_id: Some("same-build".to_string()),
         };
@@ -1263,6 +1300,7 @@ mod tests {
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            size_bytes: None,
             signature: None,
             build_id: Some("test-build".to_string()),
         };
@@ -1304,6 +1342,7 @@ mod tests {
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            size_bytes: None,
             signature: None,
             build_id: Some("test-build".to_string()),
         };

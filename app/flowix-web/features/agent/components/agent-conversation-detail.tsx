@@ -1,13 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { MoreHorizontal } from 'lucide-react';
+import { FileTextIcon, TrashSimpleIcon } from '@phosphor-icons/react';
 
 import { DEFAULT_AGENT_TYPE_KEY, getAgentType } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
-import { deepseekHarness, windows } from '@platform/tauri/client';
+import { deepseekHarness } from '@platform/tauri/client';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { acquireThreadInterest } from '@features/agent/store/thread-interest';
 import type { ThreadState } from '@features/agent/store/thread-runtime-state';
@@ -19,6 +21,8 @@ import {
   ComposerController,
   ComposerDraftController,
   ComposerImageController,
+  createAgentComposerDom,
+  disposeAgentComposerDom,
   getAgentThreadCardUserHistoryMessagesFromMessages,
 } from '@features/agent/thread-card/composer';
 import { AgentRolePickerController } from '@features/agent/thread-card/role/agent-role-picker-controller';
@@ -29,6 +33,16 @@ import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/run
 import { createExternalAgentRuntimeHandle } from '@features/agent/services/external-agent-runtime-service';
 import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
 import { AgentIcon } from '@features/agent/components/agent-icon';
+import { getAgentConversationPresentation } from '@features/agent/conversation-presentation';
+import { useDocumentStore } from '@features/document';
+import { clearRestoredAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@shared/ui/dropdown-menu';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -37,6 +51,17 @@ const INPUT_DRAFT_MAX_CHARS = 500;
 const EMPTY_MESSAGES: ThreadState['messages'] = [];
 const DETAIL_DRAFT_KEY_PREFIX = 'flowix:agent-conversation-draft:';
 const logger = createLogger('agent-conversation-detail');
+
+function shouldShowInitialHistorySkeleton(
+  threadId: string | null,
+  messageCount: number,
+  status: 'idle' | 'loading' | 'ready' | 'error' | undefined,
+): boolean {
+  return Boolean(threadId)
+    && messageCount === 0
+    && status !== 'ready'
+    && status !== 'error';
+}
 
 function detailDraftKey(instanceId: string): string {
   return `${DETAIL_DRAFT_KEY_PREFIX}${instanceId}`;
@@ -84,16 +109,18 @@ export function AgentConversationDetail({
   const codexModel = useAgentSessionStore((state) => state.sessionMeta.settings.agentCodexModel);
   const messages = projection?.messages ?? EMPTY_MESSAGES;
   const isLoading = !!projection?.runs.isLoading;
+  const initialHistoryStatus = projection?.pagination.initialStatus ?? 'idle';
+  const isInitialHistoryLoading = shouldShowInitialHistorySkeleton(
+    threadId,
+    messages.length,
+    initialHistoryStatus,
+  );
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const domRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const loadingIndicatorRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
-  const composerImagesRef = useRef<HTMLDivElement>(null);
-  const composerRoleButtonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const sendButtonMountRef = useRef<HTMLSpanElement>(null);
   const messagesControllerRef = useRef<AgentThreadCardMessagesController | null>(null);
   const composerControllerRef = useRef<ComposerController | null>(null);
   const composerImagesControllerRef = useRef<ComposerImageController | null>(null);
@@ -196,24 +223,26 @@ export function AgentConversationDetail({
     const dom = domRef.current;
     const body = bodyRef.current;
     const loadingIndicator = loadingIndicatorRef.current;
-    const composer = composerRef.current;
-    const composerImages = composerImagesRef.current;
-    const composerRoleButton = composerRoleButtonRef.current;
-    const input = inputRef.current;
-    const sendButtonMount = sendButtonMountRef.current;
-    if (!dom || !body || !loadingIndicator || !composer || !composerImages || !composerRoleButton || !input || !sendButtonMount) return;
+    if (!dom || !body || !loadingIndicator) return;
+
+    const composerParts = createAgentComposerDom({
+      variant: 'expanded',
+      t: (key) => tRef.current(key),
+    });
+    dom.append(composerParts.composer);
+    const {
+      composer,
+      composerImages,
+      composerActions,
+      composerRoleIcon: composerRoleButton,
+      input,
+      codexSettingsPopover: settingsPopover,
+      composerRolePopover: rolePopover,
+      sendButtonMount,
+    } = composerParts;
+    inputRef.current = input;
 
     destroyedRef.current = false;
-    const settingsPopover = document.createElement('div');
-    settingsPopover.className = 'agent-thread-card__codex-settings-popover';
-    settingsPopover.setAttribute('role', 'menu');
-    settingsPopover.hidden = true;
-    document.body.append(settingsPopover);
-    const rolePopover = document.createElement('div');
-    rolePopover.className = 'agent-thread-card__composer-role-popover';
-    rolePopover.setAttribute('role', 'menu');
-    rolePopover.hidden = true;
-    document.body.append(rolePopover);
     const externalSettings = new ExternalAgentSettingsController({
       popover: settingsPopover,
       getTypeKey: () => typeKeyRef.current,
@@ -221,7 +250,12 @@ export function AgentConversationDetail({
       getLanguage: () => languageRef.current,
       t: (key) => tRef.current(key),
       isDestroyed: () => destroyedRef.current,
+      isRunning: () => isLoadingRef.current || submittingRef.current,
     });
+    const composerModelButton = externalSettings.createComposerModelButton();
+    if (composerModelButton) composerActions.append(composerModelButton);
+    const composerWorkspaceButton = externalSettings.createComposerWorkspaceButton();
+    if (composerWorkspaceButton) composerActions.append(composerWorkspaceButton);
     externalSettings.loadDefaultModel();
     const composerDraft = new ComposerDraftController({
       persistDelayMs: 0,
@@ -279,6 +313,14 @@ export function AgentConversationDetail({
             messages: messagesRef.current,
             isLoading: isLoadingRef.current,
             shouldRenderMessages: true,
+            isInitialHistoryLoading: shouldShowInitialHistorySkeleton(
+              renderThreadIdRef.current,
+              messagesRef.current.length,
+              renderThreadIdRef.current
+                ? useAgentSessionStore.getState()
+                    .threadProjections[renderThreadIdRef.current]?.pagination.initialStatus
+                : undefined,
+            ),
           });
         },
         renderResolvedSessionMessages: (resolvedMessages) => {
@@ -316,7 +358,11 @@ export function AgentConversationDetail({
     const rolePicker = new AgentRolePickerController({
       trigger: composerRoleButton,
       popover: rolePopover,
-      t: (key) => tRef.current(key),
+      // 必须把 params 透传给 tRef.current ── formatTimeAgo 走的是
+      // t('memo.time.minutesAgo', { m }) 这种带参调用, 老 wrapper
+      // (key) => tRef.current(key) 会丢掉 params, 让 translate 拿到
+      // undefined, 文案就只剩 "{m} 分钟前" 字面量, 数字永远不替换。
+      t: (key, params) => tRef.current(key, params),
       isDestroyed: () => destroyedRef.current,
       getCurrentMemoId: () => instanceRef.current?.role?.memoId?.trim() || null,
       getCurrentName: () => instanceRef.current?.role?.name?.trim() || null,
@@ -326,12 +372,17 @@ export function AgentConversationDetail({
         if (target) useAgentSessionStore.getState().upsertInstance(target.instanceId, { role });
       },
       consumeOutsidePointer: () => undefined,
-      injectPrompt: (text) => {
-        composerController.setHistoryValue(text, { persistDraft: true });
+      injectMemoReference: (ref) => {
+        // 文档引用注入到当前 composer, 以 markdown 深链形式追加,
+        // 与 thread-card-view 里的 injectMemoReference 走相同 pattern。
+        const link = `[${ref.title}](flowix://memo/${ref.id})`;
+        const current = input.value;
+        const needsLeadingSpace = current.length > 0 && !/\s$/.test(current);
+        const separator = needsLeadingSpace ? '\n\n' : '';
+        composerController.setHistoryValue(current + separator + link, { persistDraft: true });
         composerController.resetHistoryNavigation();
         input.focus();
       },
-      openPreferences: () => windows.openPreferences('tools'),
     });
     rolePicker.refreshIcon();
     messagesControllerRef.current = messageController;
@@ -340,6 +391,23 @@ export function AgentConversationDetail({
     composerImagesControllerRef.current = composerImagesController;
     rolePickerRef.current = rolePicker;
     composerController.updateMultiLineState();
+    // Paint the selected thread's initial state in the same layout pass. The
+    // history request starts in a passive effect, so waiting for the normal
+    // subscription effect would leave one blank frame between item selection
+    // and the skeleton.
+    messageController.render({
+      messages: messagesRef.current,
+      isLoading: isLoadingRef.current,
+      shouldRenderMessages: true,
+      isInitialHistoryLoading: shouldShowInitialHistorySkeleton(
+        renderThreadIdRef.current,
+        messagesRef.current.length,
+        renderThreadIdRef.current
+          ? useAgentSessionStore.getState()
+              .threadProjections[renderThreadIdRef.current]?.pagination.initialStatus
+          : undefined,
+      ),
+    });
 
     return () => {
       destroyedRef.current = true;
@@ -348,6 +416,8 @@ export function AgentConversationDetail({
       composerImagesController.dispose();
       rolePicker.dispose();
       externalSettings.dispose();
+      disposeAgentComposerDom(composerParts);
+      inputRef.current = null;
       messagesControllerRef.current = null;
       composerControllerRef.current = null;
       surfaceRef.current = null;
@@ -361,15 +431,16 @@ export function AgentConversationDetail({
       messages,
       isLoading,
       shouldRenderMessages: true,
+      isInitialHistoryLoading,
     });
     composerControllerRef.current?.setSendButtonState();
     rolePickerRef.current?.refreshIcon();
-  }, [isLoading, messages]);
+  }, [isInitialHistoryLoading, isLoading, messages]);
 
   if (!instance) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
-        {t('status.agent.originUnavailable')}
+        {t('status.agent.conversationNotFound')}
       </div>
     );
   }
@@ -389,11 +460,36 @@ export function AgentConversationDetail({
     }),
     [codexModel, instance.agentType, projection],
   );
-  const runtimeCwd = (
-    instance.runtimeConfig?.workspaceSnapshot?.cwd
-    ?? instance.runtimeConfig?.cwd
-    ?? ''
-  ).trim() || undefined;
+  const presentation = getAgentConversationPresentation(instance, t('common.untitled'));
+  const { runtimeCwd, hasSourceDocument, source } = presentation;
+  // 来源文档: thread-card 来源有 memoId / documentPath, dedicated 来源两者皆空 ──
+  // 后者没有可跳转的"对应笔记", 隐藏查看按钮。
+  const openSourceDocument = async () => {
+    if (source?.memoId) {
+      await openNoteByMemoId(source.memoId);
+      return;
+    }
+    if (source?.documentPath) {
+      await useDocumentStore.getState().openExternalDocument(source.documentPath);
+    }
+  };
+  const handleOpenSourceDocument = () => {
+    if (!hasSourceDocument) return;
+    void openSourceDocument().catch(() => {
+      toast.error(t('status.agent.originUnavailable'));
+    });
+  };
+  // 删除当前对话实例: store 端 removeInstance 会同步刷新本地 registry 并
+  // 通过 enqueueInstancePersistence 走 agentClient.deleteConversationInstance
+  // 异步落盘。这里额外清空 document store 上的 activeAgentConversationId
+  // —— 否则右栏会持续挂在一个已经不存在的 instanceId 上 (没有自动同步路径)。
+  const handleDeleteConversation = useCallback(() => {
+    if (!instance) return;
+    const wasActive = useDocumentStore.getState().activeAgentConversationId === instance.instanceId;
+    useAgentSessionStore.getState().removeInstance(instance.instanceId);
+    clearRestoredAgentConversation(instance.instanceId);
+    if (wasActive) useDocumentStore.getState().closeAgentConversation();
+  }, [instance]);
   const commitTitle = () => {
     const title = titleDraft.trim();
     if (title) {
@@ -455,9 +551,61 @@ export function AgentConversationDetail({
                 setIsEditingTitle(true);
               }}
             >
-              {instance.title?.trim() || t('common.untitled')}
+              {presentation.title}
             </div>
           )}
+        </div>
+        <div className="agent-thread-card__actions">
+          {hasSourceDocument ? (
+            <>
+              <button
+                type="button"
+                onClick={handleOpenSourceDocument}
+                aria-label={t('document.agent.viewInNote')}
+                title={t('document.agent.viewInNote')}
+                className="agent-thread-card__icon-btn agent-thread-card__view-note"
+              >
+                <FileTextIcon className="agent-thread-card__view-note-icon" />
+              </button>
+              {/* view-note 与 "…" 之间的细分隔线 ── 1px×16px, 让两个
+               * 28×28 按钮在视觉上明确断开, 避免连成一团。 */}
+              <span
+                aria-hidden="true"
+                className="agent-thread-card__actions-divider"
+              />
+            </>
+          ) : (
+            /* dedicated 对话没有来源文档 ── 在 view-note 按钮原本的位置
+             * 用 muted 文案占位, 视觉上让 actions 区仍有内容, 避免 header
+             * 右侧突然空荡。仅展示, 不可点击。 */
+            <span className="agent-thread-card__no-source" aria-label={t('document.agent.noSourceNote')}>
+              {t('document.agent.noSourceNote')}
+            </span>
+          )}
+          {/* "…" 下拉菜单 ── 收起删除等次要操作, 减少 header 视觉噪音。
+           * 即使没有来源笔记 (dedicated 对话), 也保留这个入口,
+           * 让任何独立对话都能被显式删除。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('document.agent.moreActions')}
+                title={t('document.agent.moreActions')}
+                className="agent-thread-card__icon-btn agent-thread-card__more"
+              >
+                <MoreHorizontal className="agent-thread-card__more-icon" aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[180px] space-y-0.5 px-1 py-1.5">
+              <DropdownMenuItem
+                onClick={handleDeleteConversation}
+                className="justify-start gap-2 rounded-md px-2 py-1.5 text-left text-[var(--destructive)] hover:bg-[var(--muted)] hover:text-[var(--destructive)]"
+              >
+                <TrashSimpleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{t('document.agent.deleteConversation')}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <div ref={domRef} className="agent-thread-card agent-conversation-detail__card flex min-h-0 flex-1 flex-col">
@@ -475,19 +623,6 @@ export function AgentConversationDetail({
             </span>
             <span className="agent-thread-card__loading-text" />
           </div>
-        </div>
-        <div ref={composerRef} className="agent-thread-card__composer">
-          <div ref={composerImagesRef} className="agent-thread-card__composer-images" hidden />
-          <button
-            ref={composerRoleButtonRef}
-            type="button"
-            className="agent-thread-card__composer-role-icon"
-            aria-haspopup="menu"
-            aria-expanded="false"
-            aria-label={t('editor.threadCard.selectRole')}
-          />
-          <textarea ref={inputRef} rows={1} placeholder={t('editor.threadCard.inputPlaceholder')} />
-          <span ref={sendButtonMountRef} className="agent-thread-card__send-tooltip" />
         </div>
       </div>
     </section>

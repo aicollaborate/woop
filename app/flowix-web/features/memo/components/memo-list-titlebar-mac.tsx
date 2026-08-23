@@ -30,6 +30,7 @@ export function MemoListTitlebarMac({
       <div className={`${noteNavigationVisible ? 'ml-0' : 'ml-[82px]'} flex items-center`}>
         {selectedNotebook && (
           <NotebookIconMenu
+            noteNavigationVisible={noteNavigationVisible}
             onToggleNoteNavigation={onToggleNoteNavigation}
             onOpenPreferences={onOpenPreferences}
             buttonClassName="ml-1 h-6 w-6"

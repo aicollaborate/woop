@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { files, type DocTreeItem } from '@platform/tauri/client';
 import { openPath } from '@platform/tauri/opener';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
 import {
   DropdownMenu,
@@ -382,7 +383,7 @@ export function FolderFileTree({
                           <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
                         </div>
                       </div>
-                      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+                      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
                         className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
@@ -413,7 +414,7 @@ export function FolderFileTree({
                       >
                         {t('memo.fileTree.reveal')}
                       </DropdownMenuItem>
-                      <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+                      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
                       <DropdownMenuItem
                         onClick={() => void handleDelete(item)}
                         className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
@@ -437,7 +438,7 @@ export function FolderFileTree({
                 <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
               </div>
             </div>
-            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
             <ContextMenuItem
               onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
               className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
@@ -468,7 +469,7 @@ export function FolderFileTree({
             >
               {t('memo.fileTree.reveal')}
             </ContextMenuItem>
-            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
             <ContextMenuItem
               onClick={() => void handleDelete(item)}
               className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
@@ -572,6 +573,8 @@ export function FolderFileTree({
           )}
         </div>
       </div>
+      {/* 与 AgentConversationList 同款分割线, 落在 root 文件夹标题与子级列表之间 */}
+      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
       <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="h-full overflow-y-auto">
         {visibleNodes.length === 0 && !tree.loading && (
           <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">

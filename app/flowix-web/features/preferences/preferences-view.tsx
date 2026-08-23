@@ -20,7 +20,6 @@ import {
 	ConnectionsSection,
 	CloudSyncSection,
 	HistorySection,
-	QuickPhrasesSection,
 	PluginsSection,
 	SectionHeader,
 	type SettingsTab,
@@ -228,7 +227,6 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 										title={t('preferences.videoGeneration.title')}
 										emptyText={t('preferences.emptySettings')}
 									/>
-									<QuickPhrasesSection />
 								</div>
 							)}
 			{activeTab === 'history' && <HistorySection />}

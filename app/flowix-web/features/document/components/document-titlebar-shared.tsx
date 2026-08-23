@@ -28,6 +28,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@shared/ui/dialog';
+import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import {
   MEMO_COLORS,
   MEMO_COLOR_HEX,
@@ -41,6 +42,7 @@ import {
   type DocumentIdentity,
 } from '@features/document';
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
+import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
@@ -641,7 +643,7 @@ export function MemoActions({
             )}
           </DropdownMenuItem>
           {(canSaveAsTemplate || canExportContent) && (
-            <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
           )}
           {canSaveAsTemplate && (
             <DropdownMenuItem
@@ -667,7 +669,7 @@ export function MemoActions({
               </DropdownMenuItem>
             </>
           )}
-          <hr className="mx-2 border-t border-[var(--border)] opacity-50" />
+          <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
           {canViewVersionHistory && (
             <VersionHistorySubmenu
               memoId={memo.id}

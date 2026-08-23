@@ -28,6 +28,9 @@ export interface ThreadProjection {
   };
   /** 历史分页 cursor 与并发锁. */
   pagination: {
+    /** Initial history request lifecycle. Optional keeps older in-memory/test
+     * projections compatible; production projections are created with `idle`. */
+    initialStatus?: "idle" | "loading" | "ready" | "error";
     oldestSequence: number | null;
     hasMoreHistory: boolean;
     loadingInitial: boolean;
@@ -52,6 +55,7 @@ export function emptyProjection(): ThreadProjection {
     messages: [],
     pending: { assistantId: null, reasoningId: null },
     pagination: {
+      initialStatus: "idle",
       oldestSequence: null,
       hasMoreHistory: false,
       loadingInitial: false,
@@ -193,6 +197,10 @@ export function mergeThreadProjections(
         to?.pending.reasoningId ?? from?.pending.reasoningId ?? null,
     },
     pagination: {
+      initialStatus: mergeInitialHistoryStatus(
+        to?.pagination.initialStatus,
+        from?.pagination.initialStatus,
+      ),
       oldestSequence:
         to?.pagination.oldestSequence ?? from?.pagination.oldestSequence ?? null,
       hasMoreHistory:
@@ -213,4 +221,17 @@ export function mergeThreadProjections(
       lastRun: to?.runs.lastRun ?? from?.runs.lastRun,
     },
   };
+}
+
+function mergeInitialHistoryStatus(
+  to: ThreadProjection["pagination"]["initialStatus"],
+  from: ThreadProjection["pagination"]["initialStatus"],
+): NonNullable<ThreadProjection["pagination"]["initialStatus"]> {
+  // Session resolution can merge a newly-created product projection with an
+  // already-loaded provider projection. Preserve the most useful lifecycle
+  // state instead of allowing the product's default `idle` to hide `ready`.
+  if (to === "ready" || from === "ready") return "ready";
+  if (to === "loading" || from === "loading") return "loading";
+  if (to === "error" || from === "error") return "error";
+  return "idle";
 }

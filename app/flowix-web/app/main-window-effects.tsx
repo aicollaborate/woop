@@ -25,7 +25,10 @@ import {
   restorePersistedExternalDocument,
   restorePersistedMemoSession,
 } from '@features/memo/use-cases/open-memo-session';
+import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
 import { createLogger } from '@/lib/logger';
+import { restoreAgentConversationWorkspace } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
 
 const logger = createLogger('main-window-effects');
 
@@ -43,9 +46,36 @@ export function MainWindowEffects() {
   }, []);
 
   useEffect(() => {
-    // Memo restore keeps its existing precedence. If no memo was persisted,
-    // restore the last text/code document selected from the file tree.
-    void restorePersistedMemoSession().then(() => restorePersistedExternalDocument());
+    let previousId = useDocumentStore.getState().activeAgentConversationId;
+    return useDocumentStore.subscribe((state) => {
+      const nextId = state.activeAgentConversationId;
+      if (nextId === previousId) return;
+      previousId = nextId;
+      if (nextId) {
+        useWorkspaceRestoreStore.getState().selectAgentConversation(nextId);
+      } else {
+        // A document transition, history navigation, or an explicit close all
+        // close the detail without discarding the list's last selection.
+        useWorkspaceRestoreStore.getState().closeAgentConversationDetail();
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    // Notebook bootstrap is independent from MemoList because startup may
+    // restore the files or agent-conversation surface instead. Reconcile the
+    // persisted notebook against backend state before resolving document
+    // paths, then keep memo restore's precedence over an external document.
+    void bootstrapMemoLibrary()
+      .catch((error) => {
+        logger.warn('bootstrap memo library failed', { error });
+      })
+      .then(() => restorePersistedMemoSession())
+      .then(() => restorePersistedExternalDocument())
+      .then(() => restoreAgentConversationWorkspace())
+      .catch((error) => {
+        logger.warn('restore workspace failed', { error });
+      });
 
     let previousSelectedMemoId = useMemoStore.getState().selectedMemo?.id ?? null;
     return useMemoStore.subscribe((state) => {

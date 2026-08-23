@@ -43,6 +43,8 @@ export interface AgentThreadCardMessagesRenderInput {
   messages: ThreadState["messages"];
   isLoading: boolean;
   shouldRenderMessages: boolean;
+  /** Dedicated conversation history is loading before any cached message is available. */
+  isInitialHistoryLoading?: boolean;
 }
 
 export class AgentThreadCardMessagesController {
@@ -104,6 +106,7 @@ export class AgentThreadCardMessagesController {
   render(input: AgentThreadCardMessagesRenderInput): void {
     this.renderer.render({
       ...input,
+      isInitialHistoryLoading: input.isInitialHistoryLoading ?? false,
       isThreadCachePresentationHidden: this.cache.isPresentationHidden(),
       isThreadCacheLoading: this.cache.isLoading,
     });

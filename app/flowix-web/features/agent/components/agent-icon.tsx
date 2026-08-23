@@ -22,6 +22,8 @@ export interface AgentIconProps {
   alt?: string;
   className?: string;
   style?: CSSProperties;
+  /** Force a monochrome mask, useful when an icon sits on a selected row. */
+  color?: string;
   draggable?: boolean;
 }
 
@@ -37,11 +39,12 @@ export function AgentIcon({
   alt = '',
   className,
   style,
+  color,
   draggable = false,
 }: AgentIconProps) {
   const type = getAgentType(typeKey);
 
-  if (!isThemeAdaptiveAgentIcon(typeKey)) {
+  if (!isThemeAdaptiveAgentIcon(typeKey) && !color) {
     return (
       <img
         src={type.icon}
@@ -55,6 +58,7 @@ export function AgentIcon({
 
   const maskStyle = {
     ...style,
+    ...(color ? { '--agent-icon-color': color } : {}),
     '--agent-icon-src': `url("${type.icon}")`,
   } as CSSProperties & { '--agent-icon-src': string };
 

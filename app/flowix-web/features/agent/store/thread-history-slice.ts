@@ -158,7 +158,11 @@ export function createThreadHistorySlice(
       const requestEpoch = get().threadEpochs[threadId] ?? 0;
       get().setThreadProjection(threadId, (projection) => ({
         ...projection,
-        pagination: { ...projection.pagination, loadingInitial: true },
+        pagination: {
+          ...projection.pagination,
+          initialStatus: "loading",
+          loadingInitial: true,
+        },
       }));
       try {
         const page = await getInitialThreadHistory(
@@ -176,6 +180,7 @@ export function createThreadHistorySlice(
             agentType,
           ),
           pagination: {
+            initialStatus: "ready",
             oldestSequence: page.oldestSequence,
             hasMoreHistory: page.hasMore,
             loadingInitial: false,
@@ -187,7 +192,11 @@ export function createThreadHistorySlice(
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         get().setThreadProjection(threadId, (projection) => ({
           ...projection,
-          pagination: { ...projection.pagination, loadingInitial: false },
+          pagination: {
+            ...projection.pagination,
+            initialStatus: "error",
+            loadingInitial: false,
+          },
         }));
       }
     },
@@ -211,6 +220,7 @@ export function createThreadHistorySlice(
             agentType,
           ),
           pagination: {
+            initialStatus: "ready",
             oldestSequence: page.oldestSequence,
             hasMoreHistory: page.hasMore,
             loadingInitial: false,

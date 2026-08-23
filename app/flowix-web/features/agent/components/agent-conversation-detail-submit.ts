@@ -1,7 +1,10 @@
 import type { AgentTypeKey, RuntimeConfig } from "@/types/agent";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
-import { ensureConversationWorkspaceSnapshot } from "@features/agent/runtime/workspace-snapshot";
+import {
+  ensureConversationWorkspaceSnapshot,
+  markConversationWorkspaceStarted,
+} from "@features/agent/runtime/workspace-snapshot";
 import { ensureAgentThreadCardThread } from "@features/agent/thread-card/agent-thread-card-submit";
 import {
   defaultThreadTitle,
@@ -54,5 +57,6 @@ export async function ensureAgentConversationDetailThread(input: {
       instance.runtimeConfig ?? buildInitialInstanceRuntimeConfig(ensured.typeKey),
   });
   const runtimeConfig = ensureConversationWorkspaceSnapshot(input.instanceId);
+  markConversationWorkspaceStarted(input.instanceId);
   return { threadId: ensured.threadId, title: ensured.title, runtimeConfig };
 }

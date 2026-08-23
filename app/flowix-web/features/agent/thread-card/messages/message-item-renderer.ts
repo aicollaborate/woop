@@ -390,15 +390,17 @@ export function createAgentThreadCardMessageElement(options: {
       const content = document.createElement("div");
       content.className = "agent-thread-card__message-content";
       body.append(content);
-      renderAgentThreadCardBudgetedMarkdown({
-        message,
-        role: "reasoning",
-        visibleContent: messageView.visibleContent,
-        content,
-        toggleParent: body,
-        context: displayContext,
-        isStreaming: options.isStreaming,
-      });
+      const renderReasoningContent = () => {
+        renderAgentThreadCardBudgetedMarkdown({
+          message,
+          role: "reasoning",
+          visibleContent: messageView.visibleContent,
+          content,
+          toggleParent: body,
+          context: displayContext,
+          isStreaming: options.isStreaming,
+        });
+      };
 
       const apply = (collapsed: boolean): void => {
         item.classList.toggle(
@@ -406,7 +408,12 @@ export function createAgentThreadCardMessageElement(options: {
           collapsed,
         );
       };
-      apply(getReasoningCollapsed(message));
+      const initiallyCollapsed = getReasoningCollapsed(message);
+      apply(initiallyCollapsed);
+      // Completed historical reasoning is collapsed by default. Avoid parsing
+      // potentially hundreds of thousands of Markdown characters that are not
+      // visible; hydrate the body only when the user expands it.
+      if (!initiallyCollapsed) renderReasoningContent();
       header.addEventListener("click", (event) => {
         event.stopPropagation();
         const next = !item.classList.contains(
@@ -414,6 +421,9 @@ export function createAgentThreadCardMessageElement(options: {
         );
         setReasoningCollapsed(message.id, next);
         apply(next);
+        if (!next && content.childNodes.length === 0) {
+          renderReasoningContent();
+        }
       });
       header.addEventListener("mousedown", (event) => {
         event.stopPropagation();

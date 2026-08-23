@@ -4,6 +4,7 @@ import {
   createFullscreenIcon,
   createTrashIcon,
 } from "@features/agent/thread-card/agent-thread-card-icons";
+import { createAgentComposerDom } from "@features/agent/thread-card/composer";
 
 export interface AgentThreadCardDomFactoryOptions {
   inputDraft: string;
@@ -15,7 +16,10 @@ export interface AgentThreadCardDomFactoryOptions {
   onCollapseClick: (event: MouseEvent) => void;
   onBodyClick: (event: MouseEvent) => void;
   onBodyScroll: (event: Event) => void;
-  onComposerMouseDown: (event: MouseEvent) => void;
+  // onComposerMouseDown 已废弃 ── composer 内部委托现由
+  // createAgentComposerDom 自带 pointerdown 监听统一负责 (详见
+  // composer-dom-factory.ts COMPOSER_FOCUS_INTERACTIVE_SELECTOR 注释),
+  // 不必再从外层透传。保留位置仅占位, 实际未消费。
 }
 
 export interface AgentThreadCardDomParts {
@@ -37,6 +41,7 @@ export interface AgentThreadCardDomParts {
   loadingIndicator: HTMLDivElement;
   composer: HTMLElement;
   composerImages: HTMLDivElement;
+  composerActions: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
   input: HTMLTextAreaElement;
   codexSettingsPopover: HTMLDivElement;
@@ -178,66 +183,39 @@ export function createAgentThreadCardDom(
   loadingText.hidden = true;
   loadingIndicator.append(loadingCells, loadingText);
 
-  const composer = document.createElement("div");
-  composer.className = "agent-thread-card__composer";
-
-  const composerRoleIcon = document.createElement("button");
-  composerRoleIcon.type = "button";
-  composerRoleIcon.className = "agent-thread-card__composer-role-icon";
-  composerRoleIcon.setAttribute("aria-haspopup", "menu");
-  composerRoleIcon.setAttribute("aria-expanded", "false");
-  composerRoleIcon.setAttribute(
-    "aria-label",
-    options.t("editor.threadCard.selectRole"),
-  );
-  composerRoleIcon.title = options.t("editor.threadCard.roleIconTooltip");
-
-  const input = document.createElement("textarea");
-  input.rows = 1;
-  input.placeholder = options.t("editor.threadCard.inputPlaceholder");
-  input.value = options.inputDraft;
-
-  const composerImages = document.createElement("div");
-  composerImages.className = "agent-thread-card__composer-images";
-  composerImages.hidden = true;
-
-  const codexSettingsPopover = document.createElement("div");
-  codexSettingsPopover.className =
-    "agent-thread-card__codex-settings-popover";
-  codexSettingsPopover.setAttribute("role", "menu");
-  codexSettingsPopover.hidden = true;
+  const composerParts = createAgentComposerDom({
+    inputDraft: options.inputDraft,
+    t: options.t,
+  });
+  const {
+    composer,
+    composerImages,
+    composerActions,
+    composerRoleIcon,
+    input,
+    codexSettingsPopover,
+    composerRolePopover,
+    sendButtonMount,
+  } = composerParts;
   codexSettingsPopover.addEventListener("mousedown", (event) =>
     event.stopPropagation(),
   );
   codexSettingsPopover.addEventListener("click", (event) =>
     event.stopPropagation(),
   );
-  document.body.appendChild(codexSettingsPopover);
-
-  const composerRolePopover = document.createElement("div");
-  composerRolePopover.className =
-    "agent-thread-card__composer-role-popover";
-  composerRolePopover.setAttribute("role", "menu");
-  composerRolePopover.hidden = true;
   composerRolePopover.addEventListener("mousedown", (event) =>
     event.stopPropagation(),
   );
   composerRolePopover.addEventListener("click", (event) =>
     event.stopPropagation(),
   );
-  document.body.appendChild(composerRolePopover);
-
-  const sendButtonMount = document.createElement("span");
-  sendButtonMount.className = "agent-thread-card__send-tooltip";
-
-  composer.append(
-    composerImages,
-    composerRoleIcon,
-    input,
-    sendButtonMount,
-  );
-  composer.addEventListener("mousedown", options.onComposerMouseDown);
   /*
+   * composer 自身的 pointerdown 委托 (点击空区域 → focus 输入框) 已由
+   * createAgentComposerDom 在工厂内部挂上, 这里不重复添加。 详见
+   * composer-dom-factory.ts 的 COMPOSER_FOCUS_INTERACTIVE_SELECTOR
+   * 注释 ── textarea/button/role=button/[data-no-composer-focus]
+   * 命中即放行, 其他位置抢焦。
+   *
    * loadingIndicator 作为 body 的最后一个持久子节点 (body.append 在此之前完成) —
    * 后续 render 路径必须用 insertBefore / removeChild 操作消息列表, 而不能把
    * indicator 作为 body.replaceChildren / body.append 的参数, 否则 WebKit 会
@@ -266,6 +244,7 @@ export function createAgentThreadCardDom(
     loadingIndicator,
     composer,
     composerImages,
+    composerActions,
     composerRoleIcon,
     input,
     codexSettingsPopover,

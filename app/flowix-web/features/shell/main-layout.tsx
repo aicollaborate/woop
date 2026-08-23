@@ -61,6 +61,7 @@ import {
   surfaceSupports,
 } from '@features/surface';
 import type { PluginDescriptor } from '@platform/tauri/client';
+import { closeAgentConversationDetail } from '@features/workspace/use-cases/agent-conversation-navigation';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 238;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
@@ -200,7 +201,6 @@ export function MainLayout() {
     activeExternalSession,
     isDocumentTransitioning,
     clearDocument,
-    closeAgentConversation,
   } = useDocumentStore(
     useShallow((s) => ({
       currentDocumentPath: s.currentDocumentPath,
@@ -210,7 +210,6 @@ export function MainLayout() {
       activeExternalSession: s.activeExternalSession,
       isDocumentTransitioning: s.isDocumentTransitioning,
       clearDocument: s.clearDocument,
-      closeAgentConversation: s.closeAgentConversation,
     })),
   );
 
@@ -330,10 +329,10 @@ export function MainLayout() {
       }));
     }
     if (!isAgentConversationView && wasAgentConversationViewRef.current) {
-      closeAgentConversation();
+      closeAgentConversationDetail();
     }
     wasAgentConversationViewRef.current = isAgentConversationView;
-  }, [closeAgentConversation, isAgentConversationView]);
+  }, [isAgentConversationView]);
 
   useEffect(() => {
     const notebookId = selectedNotebook?.id ?? null;
@@ -844,6 +843,7 @@ export function MainLayout() {
               {memoListMounted && (
                 isWindowsPlatform() ? (
                   <MemoListTitlebarWin
+                    noteNavigationVisible={noteNavigationVisible}
                     selectedNotebook={selectedNotebook}
                     onCollapseMemoList={collapseMemoList}
                     onToggleNoteNavigation={handleToggleNoteNavigation}
@@ -911,7 +911,6 @@ export function MainLayout() {
             {/* Fixed top navigation bar */}
             {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar
-                instanceId={thirdColumnSurface.instanceId}
                 isSidebarCollapsed={isMemoListHidden}
                 onExpandSidebar={handleToggleMemoList}
                 onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
