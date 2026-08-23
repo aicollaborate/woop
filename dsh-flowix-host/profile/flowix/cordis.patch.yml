@@ -1,0 +1,35 @@
+# Flowix owns the client surface and talks to the Harness through the narrow
+# JSON-RPC bridge. Host/browser API discovery and Harness-generated titles are
+# intentionally outside that boundary.
+- id: typert
+  disabled: true
+
+- id: typert-loader
+  disabled: true
+
+- id: typert-gateway
+  disabled: true
+
+- id: session-title-llm
+  disabled: true
+
+# Flowix currently has no approval-response RPC. Every Flowix permission mode
+# therefore has to be non-interactive; the sandbox remains the enforcement
+# boundary selected by DSH_PERMISSION_MODE.
+- id: approval
+  config:
+    policy: never
+
+- id: permission
+  config:
+    defaultPreset: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: never
+      workspace-write:
+        sandbox: workspace-write
+        approval: never
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
@@ -13,7 +13,6 @@ import {
 } from '@platform/tauri/client';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
 import { cloudSyncErrorMessage } from '@platform/tauri/errors';
-import { CloudStatusIcon } from '@shared/icons/cloud-status-icon';
 import { NotebookSelectorPopup } from '@features/shell/components/status-bar/notebook-selector-popup';
 
 interface NotebookListProps {
@@ -54,26 +53,34 @@ export function NotebookList({
   const experimental = useExperimentalMode();
   const setNotebooks = useMemoStore((s) => s.setNotebooks);
   const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
+  const cloudStateRequestRef = useRef(0);
 
   const [cloudSyncedNotebookIds, setCloudSyncedNotebookIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [cloudSyncAvailable, setCloudSyncAvailable] = useState(false);
   const [cloudSyncStatuses, setCloudSyncStatuses] = useState<Map<string, CloudSyncStatus>>(
     () => new Map(),
   );
 
   const refreshCloudSyncedNotebookIds = useCallback(() => {
     if (!experimental) {
+      setCloudSyncAvailable(false);
       setCloudSyncedNotebookIds(new Set());
       return;
     }
-    void cloud.listNotebookStates()
-      .then((links) => {
+    const requestId = ++cloudStateRequestRef.current;
+    void Promise.all([cloud.getState(), cloud.listNotebookStates()])
+      .then(([cloudState, links]) => {
+        if (requestId !== cloudStateRequestRef.current) return;
+        setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
         setCloudSyncedNotebookIds(
           new Set(links.filter((link) => link.enabled).map((link) => link.notebookId)),
         );
       })
       .catch(() => {
+        if (requestId !== cloudStateRequestRef.current) return;
+        setCloudSyncAvailable(false);
         setCloudSyncedNotebookIds(new Set());
       });
   }, [experimental]);
@@ -84,7 +91,10 @@ export function NotebookList({
 
   useEffect(() => {
     if (!experimental) return;
-    return listenToCloudStateChanges(refreshCloudSyncedNotebookIds);
+    return listenToCloudStateChanges((cloudState) => {
+      setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+      refreshCloudSyncedNotebookIds();
+    });
   }, [experimental, refreshCloudSyncedNotebookIds]);
 
   useEffect(() => {
@@ -162,6 +172,8 @@ export function NotebookList({
                   onEdit={onEditNotebook}
                   onDelete={onDeleteNotebook}
                   onRefresh={setNotebooks}
+                  cloudSyncedNotebookIds={cloudSyncedNotebookIds}
+                  cloudSyncAvailable={cloudSyncAvailable}
                   side="bottom"
                   trigger={
                     <div
@@ -214,10 +226,10 @@ export function NotebookList({
                       )}
                     </span>
                     {isActive && (
-                      <div className="flex min-w-0 max-w-full items-center gap-1">
+                      <div className="flex min-w-0 max-w-full items-center gap-0">
                         {isCloudSynced && (
                           <span
-                            className="flex h-4 w-4 shrink-0 items-center justify-center"
+                            className="flex h-4 w-3 shrink-0 items-center justify-center"
                             title={
                               cloudSyncStatus?.lastError
                                 ? cloudSyncErrorMessage(cloudSyncStatus.lastError, t)
@@ -228,25 +240,15 @@ export function NotebookList({
                                     : t('notebook.cloudSync.title')
                             }
                           >
-                            {cloudSyncInProgress ? (
-                              <CloudStatusIcon
-                                status="connecting"
-                                size={12}
-                                className="text-[var(--secondary-foreground)]"
-                              />
-                            ) : cloudSyncStatus?.state === 'error' ? (
-                              <CloudStatusIcon
-                                status="unlinked"
-                                size={12}
-                                className="text-[var(--destructive)]"
-                              />
-                            ) : (
-                              <CloudStatusIcon
-                                status="connected"
-                                size={12}
-                                className="text-[var(--secondary-foreground)]"
-                              />
-                            )}
+                            <span
+                              className={cn(
+                                'h-2 w-2 rounded-full',
+                                cloudSyncAvailable
+                                  ? 'bg-[var(--success)]'
+                                  : 'bg-[var(--muted-foreground)]',
+                              )}
+                              aria-hidden="true"
+                            />
                           </span>
                         )}
                         <NotebookPathLine path={notebook.path} />

@@ -259,7 +259,7 @@ function CompactMemoCardBody({
   runningAgentType,
 }: MemoCardBodyProps) {
   return (
-    <div className="flex h-5 min-w-0 items-center gap-1.5">
+    <div className="flex h-5 w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
       {runningAgentType && (
         <AgentTodoIcons
           hasTodos={false}
@@ -270,7 +270,7 @@ function CompactMemoCardBody({
         <PushPin weight="fill" className="h-3.5 w-3.5 shrink-0 text-[var(--foreground)]" />
       )}
       <FileTextIcon weight="duotone" className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
-      <h3 className="min-w-0 flex-1 truncate text-sm font-normal text-[var(--foreground)]">
+      <h3 className="w-0 min-w-0 flex-1 truncate text-sm font-normal text-[var(--foreground)]">
         {title}
       </h3>
       <ColorDots colors={memo.colors} limit={1} className="mr-1" />

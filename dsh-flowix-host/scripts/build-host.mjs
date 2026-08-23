@@ -132,7 +132,7 @@ process.stdout.write('built ' + resolve(outdir, 'dsh-host.cjs') + '\n')
 //
 // Skip the build when the artifact is already present so incremental
 // `tauri dev` rebuilds stay fast. Rebuild manually after editing vendored
-// harness sources: `npm --prefix flowix-dsh-host run build:runtime`.
+// harness sources: `npm --prefix dsh-flowix-host run build:runtime`.
 const runtimeBinary = resolve(outdir, process.platform === 'win32' ? 'dsh-runtime.exe' : 'dsh-runtime')
 if (!existsSync(runtimeBinary)) {
   process.stdout.write('packaged runtime missing; building via corepack pnpm exec tsx ...' + '\n')

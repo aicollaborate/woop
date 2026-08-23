@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createInterface } from 'node:readline'
 
 const archive = process.argv[2]
 if (!archive || !existsSync(archive)) {
@@ -67,60 +68,64 @@ if (hostEntry === undefined) {
 }
 
 const runtimeEntry = entries.find((entry) => /(?:^|[/])dsh-runtime\.json$/iu.test(entry))
-let runtimeTarget = null
-if (runtimeEntry) {
-  const runtimeMetadata = spawnSync('tar', ['-xOzf', archive, runtimeEntry], { encoding: 'utf8' })
-  if (runtimeMetadata.status === 0) {
-    try {
-      runtimeTarget = JSON.parse(runtimeMetadata.stdout).target ?? null
-    } catch {
-      runtimeTarget = null
-    }
-  }
+if (runtimeEntry === undefined) throw new Error('DSH archive does not contain dsh-runtime.json')
+const runtimeMetadataResult = spawnSync('tar', ['-xOzf', archive, runtimeEntry], { encoding: 'utf8' })
+if (runtimeMetadataResult.status !== 0) {
+  throw new Error(`cannot read dsh-runtime.json: ${runtimeMetadataResult.stderr || runtimeMetadataResult.status}`)
+}
+const runtimeMetadata = JSON.parse(runtimeMetadataResult.stdout)
+if (runtimeMetadata.schemaVersion !== 1
+  || runtimeMetadata.product !== 'flowix-dsh'
+  || runtimeMetadata.protocolVersion !== 1
+  || runtimeMetadata.includesUi !== false
+  || typeof runtimeMetadata.version !== 'string'
+  || typeof runtimeMetadata.target !== 'string'
+  || typeof runtimeMetadata.buildId !== 'string'
+  || runtimeMetadata.buildId.trim() === '') {
+  throw new Error('dsh-runtime.json is incomplete or incompatible')
 }
 
-// `dsh:package` consumes a prebuilt target binary. A stale binary can still
-// have the right filename, architecture, and protocol version while missing
-// capabilities added to the host source. Run the same initialize handshake
-// used by Flowix before allowing the archive to be published.
+// `dsh:package` consumes a prebuilt target binary. Extract the complete
+// archive and exercise the runtime/profile boundary, not just host.initialize;
+// otherwise a stale or pruned profile can pass release verification and fail
+// only when the user sends the first message.
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'flowix-dsh-package-'))
 let healthCheckFailed = false
+let probe = null
 try {
-  const extracted = spawnSync('tar', ['-xOzf', archive, hostEntry], {
-    encoding: 'buffer',
-    maxBuffer: 512 * 1024 * 1024,
+  const extracted = spawnSync('tar', ['-xzf', archive, '-C', temporaryRoot], {
+    encoding: 'utf8',
+    maxBuffer: 2 * 1024 * 1024,
   })
-  if (extracted.status !== 0 || !extracted.stdout?.length) {
-    throw new Error(`cannot extract ${hostName} from DSH archive: ${extracted.stderr || extracted.status}`)
+  if (extracted.status !== 0) {
+    throw new Error(`cannot extract DSH archive: ${extracted.stderr || extracted.status}`)
   }
   const hostPath = join(temporaryRoot, hostName)
-  await writeFile(hostPath, extracted.stdout, { mode: 0o755 })
+  await chmod(hostPath, 0o755)
+  const dshHome = join(temporaryRoot, '.health-dsh-home')
+  const sessionRoot = join(temporaryRoot, '.health-sessions')
+  await mkdir(dshHome, { recursive: true })
+  await writeFile(join(dshHome, 'settings.yaml'), 'llm-pi-ai:\n  providers: {}\n')
+  await writeFile(join(dshHome, '.credentials.yaml'), 'DSH_API_KEY: health-check\n', { mode: 0o600 })
   // On Apple Silicon, launching an x64 Mach-O directly from Node can hang
   // before the JSON-RPC process starts. Explicitly select Rosetta for the
   // cross-architecture package health check.
-  const launchCommand = process.platform === 'darwin' && process.arch === 'arm64' && runtimeTarget === 'node24-macos-x64'
+  const launchCommand = process.platform === 'darwin' && process.arch === 'arm64' && runtimeMetadata.target === 'node24-macos-x64'
     ? 'arch'
     : hostPath
   const launchArgs = launchCommand === 'arch' ? ['-x86_64', hostPath] : []
-  const healthTimeout = launchCommand === 'arch' ? 60_000 : 15_000
-  const initialize = spawnSync(launchCommand, launchArgs, {
-    input: '{"jsonrpc":"2.0","id":1,"method":"host.initialize","params":{"protocolVersion":1}}\n',
-    encoding: 'utf8',
-    timeout: healthTimeout,
-    maxBuffer: 2 * 1024 * 1024,
+  probe = startJsonRpcProbe(launchCommand, launchArgs, {
     env: {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      TMPDIR: process.env.TMPDIR,
-      FLOWIX_DSH_SESSION_ROOT: temporaryRoot,
-      DSH_HOME: join(temporaryRoot, 'dsh-home'),
+      ...process.env,
+      FLOWIX_DSH_ROOT: temporaryRoot,
+      FLOWIX_DSH_SESSION_ROOT: sessionRoot,
+      DSH_HOME: dshHome,
+      DSH_SETTINGS_PATH: join(dshHome, 'settings.yaml'),
+      DSH_CREDENTIALS_PATH: join(dshHome, '.credentials.yaml'),
     },
   })
-  if (initialize.error || initialize.status !== 0) {
-    throw new Error(`DSH host health check failed: ${initialize.error || initialize.stderr || initialize.status}`)
-  }
-  const frame = JSON.parse(initialize.stdout.trim().split(/\r?\n/u)[0])
-  const result = frame?.result
+  const result = await probe.request('host.initialize', { protocolVersion: 1 })
+  if (result?.protocolVersion !== 1) throw new Error('DSH host protocol version mismatch')
   const capabilities = Array.isArray(result?.capabilities) ? result.capabilities : []
   for (const capability of ['model-catalog', 'model-discovery', 'plugin-catalog', 'runtime-profile']) {
     if (!capabilities.includes(capability)) {
@@ -130,12 +135,98 @@ try {
   if (typeof result?.buildId !== 'string' || result.buildId.trim() === '') {
     throw new Error('DSH host health check did not return a buildId')
   }
+  if (result.buildId !== runtimeMetadata.buildId) {
+    throw new Error(`DSH buildId mismatch: metadata=${runtimeMetadata.buildId}, host=${result.buildId}`)
+  }
+  const threadId = 'flowix-package-health-check'
+  await probe.request('runtime.ensure', {
+    threadId,
+    sessionId: 'flowix-package-health-session',
+    cwd: temporaryRoot,
+    workspacePaths: [],
+    provider: 'openai',
+    providerName: 'package-health-check',
+    apiProtocol: 'openai-completions',
+    apiKeyEnv: 'DSH_API_KEY',
+    baseUrl: 'http://127.0.0.1:9/v1',
+    model: 'health-check-model',
+    agentPreset: 'minimal',
+    permissionMode: 'read-only',
+  }, 30_000)
+  const bridge = await probe.request('runtime.bridge.capabilities', { threadId }, 30_000)
+  if (!Array.isArray(bridge?.capabilities)
+    || !bridge.capabilities.includes('runtime-events')
+    || !bridge.capabilities.includes('session-control')) {
+    throw new Error('DSH runtime bridge is missing baseline capabilities')
+  }
+  await probe.request('runtime.dispose', { threadId }, 15_000)
+  await probe.request('host.shutdown', {}, 15_000)
+  await probe.close()
 } catch (error) {
   console.error(`ERROR: DSH host health check could not run: ${error}`)
   healthCheckFailed = true
 } finally {
+  await probe?.close()
   await rm(temporaryRoot, { recursive: true, force: true })
 }
 if (healthCheckFailed) process.exit(1)
 
 console.log(`==> Verified headless DSH archive: ${archive}`)
+
+function startJsonRpcProbe(command, args, options) {
+  const child = spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
+  const pending = new Map()
+  let nextId = 0
+  let stderr = ''
+  child.stderr.on('data', chunk => {
+    stderr = `${stderr}${chunk.toString()}`.slice(-32_768)
+  })
+  createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', line => {
+    let frame
+    try { frame = JSON.parse(line) } catch { return }
+    const waiter = pending.get(frame.id)
+    if (waiter === undefined) return
+    pending.delete(frame.id)
+    clearTimeout(waiter.timer)
+    if (frame.error !== undefined) waiter.reject(new Error(frame.error.message ?? JSON.stringify(frame.error)))
+    else waiter.resolve(frame.result)
+  })
+  const failPending = message => {
+    for (const waiter of pending.values()) {
+      clearTimeout(waiter.timer)
+      waiter.reject(new Error(`${message}${stderr ? `; stderr=${stderr}` : ''}`))
+    }
+    pending.clear()
+  }
+  child.once('error', error => failPending(`DSH health-check process error: ${error}`))
+  child.once('exit', code => failPending(`DSH health-check process exited with ${code}`))
+  return {
+    request(method, params = {}, timeout = 15_000) {
+      nextId += 1
+      const id = nextId
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          reject(new Error(`DSH ${method} health check timed out${stderr ? `; stderr=${stderr}` : ''}`))
+        }, timeout)
+        pending.set(id, { resolve, reject, timer })
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`, error => {
+          if (error === null || error === undefined) return
+          clearTimeout(timer)
+          pending.delete(id)
+          reject(error)
+        })
+      })
+    },
+    async close() {
+      if (child.exitCode !== null) return
+      await new Promise(resolve => {
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL')
+          resolve()
+        }, 2_000)
+        child.once('exit', () => { clearTimeout(timer); resolve() })
+      })
+    },
+  }
+}

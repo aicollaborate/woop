@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Hash, ListTodo, SlidersHorizontal } from 'lucide-react';
 import { Tooltip } from '@shared/ui/tooltip';
 import type { Notebook } from '@features/memo';
@@ -10,7 +10,14 @@ import { ProductUpdatePill } from '@features/shell/components/status-bar/product
 import { useI18n } from '@/lib/i18n';
 import { useDocumentMetricsStore } from '@features/document';
 import { useMemoStore } from '@features/memo';
-import type { DshDownloadProgress } from '@platform/tauri/client';
+import { CloudStatusIcon } from '@shared/icons/cloud-status-icon';
+import {
+  cloud,
+  listenToCloudStateChanges,
+  listenToCloudSyncStatusChanges,
+  type CloudSyncStatus,
+  type DshDownloadProgress,
+} from '@platform/tauri/client';
 import type { AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 
 interface StatusBarProps {
@@ -92,16 +99,68 @@ export function StatusBar({
 }: StatusBarProps) {
   const { t } = useI18n();
   const [notebookPopupOpen, setNotebookPopupOpen] = useState(false);
+  const [cloudSyncStatuses, setCloudSyncStatuses] = useState<Map<string, CloudSyncStatus>>(
+    () => new Map(),
+  );
+  const cloudStateRequestRef = useRef(0);
+  const [cloudSyncedNotebookIds, setCloudSyncedNotebookIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [cloudSyncAvailable, setCloudSyncAvailable] = useState(false);
   const notebooks = useMemoStore((state) => state.notebooks);
   const selectedNotebook = useMemoStore((state) => state.selectedNotebook);
   const setNotebooks = useMemoStore((state) => state.setNotebooks);
   const charCount = useDocumentMetricsStore((state) => state.charCount);
 
   useEffect(() => {
+    const refreshCloudSyncedNotebookIds = () => {
+      const requestId = ++cloudStateRequestRef.current;
+      void Promise.all([cloud.getState(), cloud.listNotebookStates()])
+        .then(([cloudState, links]) => {
+          if (requestId !== cloudStateRequestRef.current) return;
+          setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+          setCloudSyncedNotebookIds(
+            new Set(links.filter((link) => link.enabled).map((link) => link.notebookId)),
+          );
+        })
+        .catch(() => {
+          if (requestId !== cloudStateRequestRef.current) return;
+          setCloudSyncAvailable(false);
+          setCloudSyncedNotebookIds(new Set());
+        });
+    };
+    refreshCloudSyncedNotebookIds();
+    return listenToCloudStateChanges((cloudState) => {
+      setCloudSyncAvailable(cloudState.authenticated && cloudState.enabled);
+      refreshCloudSyncedNotebookIds();
+    });
+  }, []);
+
+  useEffect(() => {
     const handleToggle = () => setNotebookPopupOpen((open) => !open);
     window.addEventListener('flowix:toggle-notebook-switcher', handleToggle);
     return () => window.removeEventListener('flowix:toggle-notebook-switcher', handleToggle);
   }, []);
+
+  useEffect(() => {
+    return listenToCloudSyncStatusChanges((status) => {
+      setCloudSyncStatuses((previous) => {
+        const current = previous.get(status.notebookId);
+        if (current && status.startedAt < current.startedAt) return previous;
+        const next = new Map(previous);
+        next.set(status.notebookId, status);
+        return next;
+      });
+    });
+  }, []);
+
+  const cloudSyncInProgress = Array.from(cloudSyncStatuses.values()).some((status) =>
+    status.state === 'queued'
+    || status.state === 'checking'
+    || status.state === 'syncing'
+    || status.state === 'finalizing',
+  );
+
   return (
     <div className="flex h-[26px] shrink-0 select-none items-stretch bg-[var(--statusbar-bg)] text-xs text-[var(--muted-foreground)]">
       {/* Left column: notebook switcher (fixed width by its own button content). */}
@@ -115,6 +174,8 @@ export function StatusBar({
           onEdit={onEditNotebook}
           onDelete={onDeleteNotebook}
           onRefresh={setNotebooks}
+          cloudSyncedNotebookIds={cloudSyncedNotebookIds}
+          cloudSyncAvailable={cloudSyncAvailable}
         />
       </div>
       {/* Right column: full-width content area; carries the top border. */}
@@ -143,6 +204,20 @@ export function StatusBar({
           </button>
         )}
         <ProductUpdatePill updater={updater} />
+        {cloudSyncInProgress && (
+          <div
+            className="inline-flex h-[22px] items-center gap-1 px-1.5 text-xs leading-none text-[var(--muted-foreground)]"
+            role="status"
+            aria-live="polite"
+            aria-label={t('shell.statusBar.syncing')}
+          >
+            <CloudStatusIcon
+              status="connecting"
+              size={14}
+              className="!opacity-100"
+            />
+          </div>
+        )}
         <Tooltip content={t('shell.statusBar.noteNavTooltip')} shortcut="panel.noteNavigation.toggle">
           <button
             type="button"

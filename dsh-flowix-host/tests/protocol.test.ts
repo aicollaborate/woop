@@ -108,3 +108,14 @@ test('runtime spec preserves the native llm-pi-ai provider route', () => {
     model: 'deepseek-chat', permissionMode: 'read-only',
   }).provider, 'deepseek')
 })
+
+test('protocol 1 accepts additive request fields from newer Flowix clients', () => {
+  const spec = requireRuntimeSpec({
+    threadId: 't', cwd: '/tmp', provider: 'deepseek', providerName: 'DeepSeek',
+    apiProtocol: 'openai-completions', baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat', permissionMode: 'read-only',
+    futureOptionalField: { enabled: true },
+  })
+  assert.equal(spec.threadId, 't')
+  assert.equal('futureOptionalField' in spec, false)
+})

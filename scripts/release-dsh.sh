@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${FLOWIX_DSH_VERSION:-$(node -p "require('./flowix-dsh-host/package.json').version")}" 
+VERSION="${FLOWIX_DSH_VERSION:-$(node -p "require('./dsh-flowix-host/package.json').version")}"
 OUT_DIR="${FLOWIX_DSH_RELEASE_OUT:-$REPO_ROOT/.build/releases/dsh}"
 BUCKET="${FLOWIX_DSH_R2_BUCKET:-flowix-downloads}"
 PREFIX="${FLOWIX_DSH_R2_PREFIX:-dsh/v${VERSION}}"

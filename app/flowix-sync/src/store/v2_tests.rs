@@ -76,8 +76,8 @@ fn scoped_notebook_cursors_do_not_advance_each_other() {
 fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
     let temp = tempfile::tempdir().unwrap();
     let store = SyncStore::new(temp.path().join("sync.db")).unwrap();
-    let first = store
-        .mark_v2_dirty(
+    let (first, first_changed) = store
+        .mark_v2_dirty_with_change(
             V2EntityType::Note,
             "abc12345",
             Some("nb_1"),
@@ -86,8 +86,9 @@ fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
             10,
         )
         .unwrap();
-    let repeated_scan = store
-        .mark_v2_dirty(
+    assert!(first_changed);
+    let (repeated_scan, repeated_changed) = store
+        .mark_v2_dirty_with_change(
             V2EntityType::Note,
             "abc12345",
             Some("nb_1"),
@@ -96,6 +97,7 @@ fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
             11,
         )
         .unwrap();
+    assert!(!repeated_changed);
     assert_eq!(repeated_scan.generation, first.generation);
     let frozen = store
         .freeze_v2_operation(V2FreezeOperation {
@@ -111,8 +113,8 @@ fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
     assert_eq!(frozen.generation, 1);
     assert_eq!(store.v2_inflight_due(0).unwrap().len(), 1);
 
-    let second = store
-        .mark_v2_dirty(
+    let (second, second_changed) = store
+        .mark_v2_dirty_with_change(
             V2EntityType::Note,
             "abc12345",
             Some("nb_1"),
@@ -121,6 +123,7 @@ fn v2_dirty_generation_does_not_lose_an_edit_that_arrives_during_upload() {
             20,
         )
         .unwrap();
+    assert!(second_changed);
     assert_eq!(second.generation, 2);
 
     let operation = V2PushOperation::NotePut {

@@ -294,6 +294,30 @@ impl SyncStore {
         fingerprint: &str,
         detected_at: i64,
     ) -> Result<V2DirtyEntity, SyncError> {
+        self.mark_v2_dirty_with_change(
+            entity_type,
+            entity_id,
+            notebook_id,
+            operation_kind,
+            fingerprint,
+            detected_at,
+        )
+        .map(|(dirty, _changed)| dirty)
+    }
+
+    /// Persist a dirty entity and report whether this observation represents
+    /// a new logical generation. Repeated editor/watcher observations of the
+    /// same operation and fingerprint keep the existing generation and must
+    /// not schedule another cloud pass.
+    pub fn mark_v2_dirty_with_change(
+        &self,
+        entity_type: V2EntityType,
+        entity_id: &str,
+        notebook_id: Option<&str>,
+        operation_kind: V2OperationKind,
+        fingerprint: &str,
+        detected_at: i64,
+    ) -> Result<(V2DirtyEntity, bool), SyncError> {
         let mut connection = self.open()?;
         let transaction = connection.transaction()?;
         let current = transaction.query_row(
@@ -301,6 +325,12 @@ impl SyncStore {
             params![entity_type.as_str(), entity_id],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
         ).optional()?;
+        let changed = !matches!(
+            &current,
+            Some((_generation, current_kind, current_fingerprint))
+                if current_kind == operation_kind.as_str()
+                    && current_fingerprint == fingerprint
+        );
         let next_generation = match &current {
             Some((generation, current_kind, current_fingerprint))
                 if current_kind == operation_kind.as_str()
@@ -334,15 +364,18 @@ impl SyncStore {
             ],
         )?;
         transaction.commit()?;
-        Ok(V2DirtyEntity {
-            entity_type,
-            entity_id: entity_id.into(),
-            notebook_id: notebook_id.map(str::to_owned),
-            generation: next_generation,
-            operation_kind,
-            fingerprint: fingerprint.to_owned(),
-            detected_at,
-        })
+        Ok((
+            V2DirtyEntity {
+                entity_type,
+                entity_id: entity_id.into(),
+                notebook_id: notebook_id.map(str::to_owned),
+                generation: next_generation,
+                operation_kind,
+                fingerprint: fingerprint.to_owned(),
+                detected_at,
+            },
+            changed,
+        ))
     }
 
     pub fn v2_dirty_entities(&self) -> Result<Vec<V2DirtyEntity>, SyncError> {

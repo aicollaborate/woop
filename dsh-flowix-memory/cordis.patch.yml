@@ -1,0 +1,16 @@
+# dsh-flowix-memory: connect any DeepSeek Harness instance to the local
+# flowix-cli MCP server. The launcher keeps the tool available when Flowix is
+# not installed and returns an actionable installation message to the agent.
+# The launcher honors FLOWIX_DSH_MCP_CLI and FLOWIX_CLI_PATH before PATH.
+#
+# Keep this row in sync with config/flowix.cordis.yml (id and serverName);
+# tests/bundle-sync.test.ts guards the drift.
+- insert:
+    - id: dsh-flowix-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: dsh-flowix-memory
+        transport: stdio
+        command: !!js process.execPath
+        args:
+          - !!js "process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-flowix-memory/launcher.mjs')"

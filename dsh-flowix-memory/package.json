@@ -6,6 +6,7 @@
   "type": "module",
   "files": [
     "cordis.patch.yml",
+    "launcher.mjs",
     "README.md"
   ],
   "keywords": [

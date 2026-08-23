@@ -132,16 +132,16 @@ impl SyncManager {
         note_id: &str,
         operation: LocalChangeKind,
         fingerprint: &str,
-    ) -> Result<(), SyncError> {
+    ) -> Result<bool, SyncError> {
         if !self
             .store
             .v2_notebooks(true)?
             .iter()
             .any(|notebook| notebook.notebook_id == notebook_id)
         {
-            return Ok(());
+            return Ok(false);
         }
-        self.store.mark_v2_dirty(
+        let (_dirty, changed) = self.store.mark_v2_dirty_with_change(
             V2EntityType::Note,
             note_id,
             Some(notebook_id),
@@ -152,7 +152,7 @@ impl SyncManager {
             fingerprint,
             Utc::now().timestamp_millis(),
         )?;
-        Ok(())
+        Ok(changed)
     }
 
     pub fn has_pending_v2_note_change(&self, note_id: &str) -> Result<bool, SyncError> {
@@ -939,6 +939,30 @@ impl SyncManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_local_observation_only_requests_sync_for_a_new_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager =
+            SyncManager::new("https://cloud.example.test", temp.path().join("sync.db")).unwrap();
+        let notebook = V2LocalNotebook {
+            id: "nb_1".into(),
+            name: "Notes".into(),
+            icon: None,
+            sort_order: 0,
+        };
+        manager.set_v2_notebook_enabled(&notebook, true).unwrap();
+
+        assert!(manager
+            .record_v2_local_change(&notebook.id, "memo_1", LocalChangeKind::Put, "hash-a",)
+            .unwrap());
+        assert!(!manager
+            .record_v2_local_change(&notebook.id, "memo_1", LocalChangeKind::Put, "hash-a",)
+            .unwrap());
+        assert!(manager
+            .record_v2_local_change(&notebook.id, "memo_1", LocalChangeKind::Put, "hash-b",)
+            .unwrap());
+    }
 
     #[test]
     fn snapshot_reconciliation_only_advances_generation_for_real_changes() {

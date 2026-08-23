@@ -31,7 +31,7 @@ once:
 
 ```bash
 npm install
-npm --prefix flowix-dsh-host run vendor:install
+npm --prefix dsh-flowix-host run vendor:install
 ```
 
 `vendor:install` fetches the locked upstream commit when it is absent, applies
@@ -44,7 +44,7 @@ resolution and build graph are independent.
 To refresh the checkout explicitly, update `upstream.lock.json` and run:
 
 ```bash
-npm --prefix flowix-dsh-host run vendor:sync
+npm --prefix dsh-flowix-host run vendor:sync
 ```
 
 Build and stage native sidecars for the current host:
@@ -75,7 +75,7 @@ the upstream generic runtime, prunes it to the transitive graph rooted at the
 official base plus Flowix profile bundles, packages the host and runtime roles into one SEA,
 strips local symbols, and signs the final Mach-O.
 
-For host-only development, run `npm --prefix flowix-dsh-host run build`.
+For host-only development, run `npm --prefix dsh-flowix-host run build`.
 The generated host is written to `.build/flowix-dsh-host/dsh-host.cjs`; Rust
 uses it when no packaged sidecar is available.
 The dev Tauri config intentionally does not require DSH externalBin files;
@@ -83,6 +83,9 @@ build `dsh-host` plus the generated Harness runtime when testing DSH locally. Pr
 Flowix packages download DSH separately.
 
 ## Protocol
+
+The long-term baseline and additive evolution rules are documented in
+[`PROTOCOL.md`](./PROTOCOL.md).
 
 Standard input and output carry newline-delimited JSON-RPC 2.0 only. Protocol
 v1 exposes:
@@ -189,9 +192,9 @@ The Host and runtime environment deliberately do not forward `SSH_AUTH_SOCK`.
 ## Verification
 
 ```bash
-npm --prefix flowix-dsh-host run check
-npm --prefix flowix-dsh-host run test:e2e
-npm --prefix flowix-dsh-host run test:sidecar:e2e
+npm --prefix dsh-flowix-host run check
+npm --prefix dsh-flowix-host run test:e2e
+npm --prefix dsh-flowix-host run test:sidecar:e2e
 cargo test -p flowix-desktop deepseek_harness --lib
 ```
 

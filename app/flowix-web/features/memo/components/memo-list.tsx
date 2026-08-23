@@ -61,7 +61,7 @@ import { memoRepository, notebookRepository } from '@features/memo/services/memo
 import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
-import { cloudSyncErrorMessage } from '@platform/tauri/errors';
+import { cloudSyncErrorMessage, isInvalidRefreshTokenError } from '@platform/tauri/errors';
 
 import {
   COLOR_LABEL_KEYS,
@@ -85,10 +85,23 @@ const HEADER_ICON_BTN_CLASS =
   'h-8 w-8 justify-center rounded-full p-0 border border-[var(--border)] ' +
   'hover:bg-[var(--muted)] hover:text-[var(--primary)] text-[var(--foreground)]';
 
-function BlockingLoadingOverlay({ text }: { text: string }) {
+function BlockingLoadingOverlay({
+  text,
+  stacked = false,
+}: {
+  text: string;
+  stacked?: boolean;
+}) {
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_82%,transparent)] backdrop-blur-[1px]">
-      <div className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)]">
+      <div
+        className={cn(
+          'flex items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)]',
+          stacked && 'flex-col',
+        )}
+        role="status"
+        aria-live="polite"
+      >
         <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
         <span>{text}</span>
       </div>
@@ -238,6 +251,7 @@ export function MemoList() {
   const [remoteNotebooks, setRemoteNotebooks] = useState<CloudNotebook[]>([]);
   const [remoteNotebooksLoading, setRemoteNotebooksLoading] = useState(false);
   const [remoteNotebookSyncingId, setRemoteNotebookSyncingId] = useState<string | null>(null);
+  const [cloudNotebookImporting, setCloudNotebookImporting] = useState(false);
   const [editNotebookOpen, setEditNotebookOpen] = useState(false);
   const [editingNotebook, setEditingNotebook] = useState<Notebook | null>(null);
   const [editNotebookName, setEditNotebookName] = useState('');
@@ -490,7 +504,9 @@ export function MemoList() {
     currentMemoListQueryKey,
     loadedMemoListQueryKey,
   });
-  const visibleLoadingText = blockingLoadingText;
+  const visibleLoadingText = cloudNotebookImporting
+    ? t('notebook.cloudImport.syncing')
+    : blockingLoadingText;
   // 选中标签的展示名: tagMap 只收录真实 tag (id = 完整路径, 如
   // "Flowix/云存储"), 不含路径前缀 segment。选中父节点 (e.g. "Flowix")
   // 时 selectedTagId = fullPath "Flowix" 是前缀而非任何 memo 的真实 tag,
@@ -691,6 +707,28 @@ export function MemoList() {
     onListRendered();
   }, [memos, onListRendered]);
 
+  const handleInvalidCloudSession = async (error: unknown): Promise<boolean> => {
+    if (!isInvalidRefreshTokenError(error)) return false;
+
+    try {
+      await cloud.logout();
+    } catch (logoutError) {
+      logger.warn('failed to clear invalid cloud session', { error: logoutError });
+    }
+    setCreateNotebookOpen(false);
+    setCreateNotebookMode('create');
+    setRemoteNotebooks([]);
+    toast.error(t('preferences.cloud.sessionExpired'));
+    try {
+      await tauriWindows.openPreferences('cloudSync');
+    } catch (openPreferencesError) {
+      logger.warn('failed to open cloud preferences for re-authentication', {
+        error: openPreferencesError,
+      });
+    }
+    return true;
+  };
+
   const handleOpenRemoteNotebooks = async () => {
     try {
       const cloudState = await cloud.getState();
@@ -705,6 +743,7 @@ export function MemoList() {
       const notebooks = await cloud.listNotebooks();
       setRemoteNotebooks(notebooks);
     } catch (error) {
+      if (await handleInvalidCloudSession(error)) return;
       toast.error(cloudSyncErrorMessage(error, t));
     } finally {
       setRemoteNotebooksLoading(false);
@@ -731,13 +770,16 @@ export function MemoList() {
         setCreateNotebookOpen(false);
       }
       if (!localNotebook) return;
+      setCloudNotebookImporting(true);
       await cloud.linkNotebook(localNotebook.id, remoteNotebook.id);
       await cloud.syncNow(localNotebook.id);
       triggerRefresh();
       toast.success(t('notebook.cloudImport.complete'));
     } catch (error) {
+      if (await handleInvalidCloudSession(error)) return;
       toast.error(cloudSyncErrorMessage(error, t));
     } finally {
+      setCloudNotebookImporting(false);
       setRemoteNotebookSyncingId(null);
       setCreateNotebookMode('create');
       setRemoteNotebooks([]);
@@ -927,56 +969,63 @@ export function MemoList() {
       </div>
       </>
 
-      <OverlayScrollbar
-        className="flex min-h-0 flex-1"
-        scrollerClassName="flex-1 overflow-y-auto px-1 py-2"
-        scrollerRef={listContainerRef}
-        onScroll={handleMemoListScroll}
-      >
-        {memos.length > 0 ? (
-          // 普通列渲染: 父容器是 flex-col, 每张卡在文档流里自然堆叠, 高度
-          // 由内容撑开, 不再用 transform 定位。 GSAP 入场动画只作用在
-          // 命中的 [data-insert-anim] 节点, 不影响周围 row 的流式布局 ──
-          // 物理上消除了"上下 row 重叠"的可能性。
-          <div className="flex flex-col">
-            {renderedMemos.map((memo) => {
-              // 用 closure 缓存让同一 memo 跨 render 拿到稳定 ref, 避免
-              // React 在重渲时反复卸载/挂载 ref (虽然现在没了 virtualizer
-              // 测量问题, 但保持稳定仍是好习惯, 也便于 useMemoInsertAnimation
-              // 通过 cardRefs 拿到正确的 row 节点)。
-              const cardRef = getMemoRowRef(memo.id);
-              return (
-                <div
-                  key={memo.id}
-                  ref={cardRef}
-                >
-                  <div data-insert-anim>
-                    <MemoCard
-                      memo={memo}
-                      variant={memoCardVariant}
-                      tagMap={tagMap}
-                      isSelected={selectedMemo?.id === memo.id}
-                      isDropdownOpen={openDropdown === memo.id}
-                      runningAgentType={getRunningAgentForMemo(memo)?.agentType}
-                      onOpenDropdown={setOpenDropdown}
-                      onSelect={handleSelectMemo}
-                      onOpenInWindow={handleOpenMemoWindow}
-                      onFavoriteToggle={handleFavoriteToggle}
-                      onDelete={setDeleteMemo}
-                      onColorsChange={handleColorsChange}
-                    />
-                    <hr className="mx-3 border-t border-[var(--border)] opacity-50" />
+      <div className="relative flex min-h-0 flex-1">
+        <OverlayScrollbar
+          className="flex min-h-0 flex-1"
+          scrollerClassName="flex-1 overflow-y-auto px-1 py-2"
+          scrollerRef={listContainerRef}
+          onScroll={handleMemoListScroll}
+        >
+          {memos.length > 0 ? (
+            // 普通列渲染: 父容器是 flex-col, 每张卡在文档流里自然堆叠, 高度
+            // 由内容撑开, 不再用 transform 定位。 GSAP 入场动画只作用在
+            // 命中的 [data-insert-anim] 节点, 不影响周围 row 的流式布局 ──
+            // 物理上消除了"上下 row 重叠"的可能性。
+            <div className="flex flex-col">
+              {renderedMemos.map((memo) => {
+                // 用 closure 缓存让同一 memo 跨 render 拿到稳定 ref, 避免
+                // React 在重渲时反复卸载/挂载 ref (虽然现在没了 virtualizer
+                // 测量问题, 但保持稳定仍是好习惯, 也便于 useMemoInsertAnimation
+                // 通过 cardRefs 拿到正确的 row 节点)。
+                const cardRef = getMemoRowRef(memo.id);
+                return (
+                  <div
+                    key={memo.id}
+                    ref={cardRef}
+                  >
+                    <div data-insert-anim>
+                      <MemoCard
+                        memo={memo}
+                        variant={memoCardVariant}
+                        tagMap={tagMap}
+                        isSelected={selectedMemo?.id === memo.id}
+                        isDropdownOpen={openDropdown === memo.id}
+                        runningAgentType={getRunningAgentForMemo(memo)?.agentType}
+                        onOpenDropdown={setOpenDropdown}
+                        onSelect={handleSelectMemo}
+                        onOpenInWindow={handleOpenMemoWindow}
+                        onFavoriteToggle={handleFavoriteToggle}
+                        onDelete={setDeleteMemo}
+                        onColorsChange={handleColorsChange}
+                      />
+                      <hr className="mx-3 border-t border-[var(--border)] opacity-50" />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <EmptyState />
-        )}
-      </OverlayScrollbar>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState />
+          )}
+        </OverlayScrollbar>
 
-      {visibleLoadingText && <BlockingLoadingOverlay text={visibleLoadingText} />}
+        {visibleLoadingText && (
+          <BlockingLoadingOverlay
+            text={visibleLoadingText}
+            stacked={cloudNotebookImporting}
+          />
+        )}
+      </div>
 
       {deleteMemo && (
         <DeleteDialogShortcuts

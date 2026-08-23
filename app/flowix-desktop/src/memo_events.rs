@@ -252,18 +252,24 @@ pub fn emit_with_commit_from_window(
                     flowix_sync::LocalChangeKind::Delete => "deleted",
                     flowix_sync::LocalChangeKind::Put => "unobserved",
                 });
-            if let Err(error) = state.cloud_sync.record_v2_local_change(
+            match state.cloud_sync.record_v2_local_change(
                 &notebook_id,
                 &note_id,
                 operation,
                 fingerprint,
             ) {
-                tracing::warn!(
+                Ok(generation_changed) => {
+                    crate::commands::cloud::schedule_notebook_sync_observation(
+                        app.clone(),
+                        notebook_id.clone(),
+                        generation_changed,
+                    );
+                }
+                Err(error) => tracing::warn!(
                     "failed to persist cloud v2 dirty entity for {notebook_id}/{note_id}: {error}"
-                );
+                ),
             }
         }
-        crate::commands::cloud::schedule_notebook_sync(app.clone(), notebook_id);
     }
     commit
 }

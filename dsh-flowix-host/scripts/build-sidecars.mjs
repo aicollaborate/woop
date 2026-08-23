@@ -14,6 +14,10 @@ const tauriBins = resolve(repo, 'app/flowix-desktop/binaries')
 // core and preset dependency graph; repeating every transitive package here
 // would make each upstream roster change a Flowix maintenance task.
 const FLOWIX_RUNTIME_ROOTS = [
+  // dsh-base is a shipped profile bundle rather than a dependency of the
+  // JSON-RPC entry point. Keep it explicitly so its cordis.patch.yml survives
+  // the closed-graph prune and is available during runtime profile boot.
+  '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-sdk-jsonrpc-demo',
   '@deepseek-ai/dsh-sdk-jsonrpc-server',
   '@deepseek-ai/dsh-agent-presets',

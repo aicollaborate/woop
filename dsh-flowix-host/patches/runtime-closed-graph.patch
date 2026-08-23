@@ -1,0 +1,104 @@
+diff --git a/scripts/build-exe-for-python-sdk.ts b/scripts/build-exe-for-python-sdk.ts
+--- a/scripts/build-exe-for-python-sdk.ts
++++ b/scripts/build-exe-for-python-sdk.ts
+@@ -54,8 +54,11 @@ const ASSET_GLOBS = [
+   'node_modules/**/*.yaml',
+   'node_modules/**/*.node',
+   'node_modules/**/*.wasm',
++  'node_modules/**/*.dylib',
++  'node_modules/**/*.so',
++  'node_modules/**/*.so.*',
+ ]
+ 
+ const PLATFORMS = ['linux', 'macos'] as const
+ const ARCHES = ['x64', 'arm64'] as const
+ type Platform = (typeof PLATFORMS)[number]
+@@ -295,7 +298,7 @@ class SingleExeBuild {
+       '--legacy',
+       '--prod',
+       '--config.node-linker=hoisted',
+-      '--config.auto-install-peers=false',
++      '--config.auto-install-peers=true',
+       '--config.link-workspace-packages=true',
+       this.staging,
+     ])
+diff --git a/python/sdk-runtime/package.json b/python/sdk-runtime/package.json
+--- a/python/sdk-runtime/package.json
++++ b/python/sdk-runtime/package.json
+@@ -5,6 +5,21 @@
+   "private": true,
+   "type": "module",
+   "dependencies": {
++    "@deepseek-ai/dsh-base": "workspace:^",
++    "@deepseek-ai/dsh-api-remotes": "workspace:^",
++    "@deepseek-ai/dsh-api-gateway": "workspace:^",
++    "@deepseek-ai/dsh-client-connection": "workspace:^",
++    "@deepseek-ai/dsh-command-feedback": "workspace:^",
++    "@deepseek-ai/dsh-host-plugin-inventory": "workspace:^",
++    "@deepseek-ai/dsh-host-webserver": "workspace:^",
++    "@deepseek-ai/dsh-message-feedback": "workspace:^",
++    "@deepseek-ai/dsh-pwsh-local": "workspace:^",
++    "@deepseek-ai/dsh-session-telemetry": "workspace:^",
++    "@deepseek-ai/dsh-session-title-llm": "workspace:^",
++    "@deepseek-ai/dsh-spill": "workspace:^",
++    "@deepseek-ai/dsh-storage": "workspace:^",
++    "@deepseek-ai/dsh-storage-domain": "workspace:^",
++    "@deepseek-ai/dsh-typert-registry": "workspace:^",
+     "@deepseek-ai/cordis-plugin-group": "workspace:^",
+     "@deepseek-ai/cordis-plugin-include": "workspace:^",
+     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -8628,6 +8628,51 @@ importers:
+       '@deepseek-ai/dsh-workflow-worker-thread':
+         specifier: workspace:^
+         version: link:../../packages/workflow/workflow-worker-thread
++      '@deepseek-ai/dsh-base':
++        specifier: workspace:^
++        version: link:../../packages/bundle/base
++      '@deepseek-ai/dsh-api-remotes':
++        specifier: workspace:^
++        version: link:../../packages/api/remotes
++      '@deepseek-ai/dsh-api-gateway':
++        specifier: workspace:^
++        version: link:../../packages/api/gateway
++      '@deepseek-ai/dsh-client-connection':
++        specifier: workspace:^
++        version: link:../../packages/client/connection
++      '@deepseek-ai/dsh-command-feedback':
++        specifier: workspace:^
++        version: link:../../packages/feedback/command-feedback
++      '@deepseek-ai/dsh-host-plugin-inventory':
++        specifier: workspace:^
++        version: link:../../packages/host/plugin-inventory
++      '@deepseek-ai/dsh-host-webserver':
++        specifier: workspace:^
++        version: link:../../packages/host/webserver
++      '@deepseek-ai/dsh-message-feedback':
++        specifier: workspace:^
++        version: link:../../packages/feedback/message-feedback
++      '@deepseek-ai/dsh-pwsh-local':
++        specifier: workspace:^
++        version: link:../../packages/shell/pwsh-local
++      '@deepseek-ai/dsh-session-telemetry':
++        specifier: workspace:^
++        version: link:../../packages/session/session-telemetry
++      '@deepseek-ai/dsh-session-title-llm':
++        specifier: workspace:^
++        version: link:../../packages/session/session-title-llm
++      '@deepseek-ai/dsh-spill':
++        specifier: workspace:^
++        version: link:../../packages/spill/spill
++      '@deepseek-ai/dsh-storage':
++        specifier: workspace:^
++        version: link:../../packages/storage/storage
++      '@deepseek-ai/dsh-storage-domain':
++        specifier: workspace:^
++        version: link:../../packages/storage/storage-domain
++      '@deepseek-ai/dsh-typert-registry':
++        specifier: workspace:^
++        version: link:../../packages/typert/registry
+       '@deepseek-ai/schemastery':
+         specifier: link:../../vendor/schemastery
+         version: link:../../vendor/schemastery

@@ -16,6 +16,10 @@ export function hasTauriErrorCode(error: unknown, code: string): boolean {
   return tauriErrorMessage(error).includes(code);
 }
 
+export function isInvalidRefreshTokenError(error: unknown): boolean {
+  return hasTauriErrorCode(error, 'INVALID_REFRESH_TOKEN');
+}
+
 type Translate = (key: I18nKey, params?: I18nParams) => string;
 
 function formatBytes(value: unknown): string {

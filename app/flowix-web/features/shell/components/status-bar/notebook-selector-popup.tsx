@@ -19,6 +19,8 @@ export interface NotebookSelectorPopupProps {
   onEdit: (notebook: Notebook) => void;
   onDelete: (notebook: Notebook) => void;
   onRefresh: (notebooks: Notebook[]) => void;
+  cloudSyncedNotebookIds?: ReadonlySet<string>;
+  cloudSyncAvailable?: boolean;
   /** Optional alternate anchor, e.g. the current notebook card in the sidebar. */
   trigger?: React.ReactElement;
   side?: 'top' | 'right' | 'bottom' | 'left';
@@ -85,6 +87,8 @@ export function NotebookSelectorPopup({
   onEdit,
   onDelete,
   onRefresh,
+  cloudSyncedNotebookIds,
+  cloudSyncAvailable = false,
   trigger,
   side = 'top',
   sideOffset = 6,
@@ -443,7 +447,20 @@ export function NotebookSelectorPopup({
                         {notebook.name}
                         {isMissing && ` ${t('status.invalid')}`}
                       </span>
-                      <span className="block text-left text-xs text-[var(--muted-foreground)]">
+                      <span className="flex items-center gap-0 text-left text-xs text-[var(--muted-foreground)]">
+                        {cloudSyncedNotebookIds?.has(notebook.id) && (
+                          <span className="flex h-4 w-3 shrink-0 items-center justify-center" aria-hidden="true">
+                            <span
+                              className={cn(
+                                'h-2 w-2 rounded-full',
+                                cloudSyncAvailable
+                                  ? 'bg-[var(--success)]'
+                                  : 'bg-[var(--muted-foreground)]',
+                              )}
+                              aria-hidden="true"
+                            />
+                          </span>
+                        )}
                         {t('status.notebookMemoCount', { count: notebook.memoCount ?? 0 })}
                       </span>
                     </div>
@@ -483,7 +500,7 @@ export function NotebookSelectorPopup({
                   window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'));
                 });
               }}
-              className="group relative flex min-h-[124px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_72%,var(--popover))] text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/50 hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              className="group relative flex min-h-[124px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-transparent text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/50 hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
               aria-label={t('status.newNotebook')}
               title={t('status.newNotebook')}
             >

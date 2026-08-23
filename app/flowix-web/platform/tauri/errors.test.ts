@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cloudSyncErrorMessage } from '@platform/tauri/errors';
+import { cloudSyncErrorMessage, isInvalidRefreshTokenError } from '@platform/tauri/errors';
 
 describe('cloudSyncErrorMessage', () => {
   const t = (key: string, params?: Record<string, string | number>) =>
@@ -21,5 +21,17 @@ describe('cloudSyncErrorMessage', () => {
     expect(message).toContain('"used":"50.0 MB"');
     expect(message).toContain('"quota":"50.0 MB"');
     expect(message).toContain('"requested":"1.0 KB"');
+  });
+});
+
+describe('isInvalidRefreshTokenError', () => {
+  it('recognizes an invalid refresh token response', () => {
+    expect(
+      isInvalidRefreshTokenError('cloud API error 401 INVALID_REFRESH_TOKEN: expired'),
+    ).toBe(true);
+  });
+
+  it('does not classify unrelated cloud errors as an expired session', () => {
+    expect(isInvalidRefreshTokenError('cloud API error 500 HTTP_ERROR: unavailable')).toBe(false);
   });
 });

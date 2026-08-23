@@ -24,24 +24,32 @@
 .flowix-cloud-status-icon__sync-arrow {
   opacity: 0;
   transform-origin: 50% 50%;
+  will-change: opacity, transform;
 }
 
 .flowix-cloud-status-icon__sync-arrow--down {
-  animation: flowix-cloud-sync-arrow-down 2.1s ease-in-out infinite;
+  animation: flowix-cloud-sync-arrow-down 2.4s cubic-bezier(.45, 0, .25, 1) infinite;
 }
 
 .flowix-cloud-status-icon__sync-arrow--up {
-  animation: flowix-cloud-sync-arrow-up 2.1s ease-in-out infinite;
+  animation: flowix-cloud-sync-arrow-up 2.4s cubic-bezier(.45, 0, .25, 1) infinite;
 }
 
 @keyframes flowix-cloud-sync-arrow-down {
-  0%, 45% { opacity: 1; transform: translateY(1px); }
-  55%, 100% { opacity: 0; transform: translateY(2px); }
+  0% { opacity: .18; transform: translateY(-1px) scale(.94); }
+  12% { opacity: 1; transform: translateY(0) scale(1); }
+  32% { opacity: 1; transform: translateY(1px) scale(1); }
+  46% { opacity: 0; transform: translateY(2px) scale(.96); }
+  100% { opacity: 0; transform: translateY(2px) scale(.96); }
 }
 
 @keyframes flowix-cloud-sync-arrow-up {
-  0%, 45% { opacity: 0; transform: translateY(1px); }
-  55%, 100% { opacity: 1; transform: translateY(-1px); }
+  0% { opacity: 0; transform: translateY(2px) scale(.96); }
+  42% { opacity: 0; transform: translateY(1px) scale(.96); }
+  54% { opacity: .9; transform: translateY(0) scale(1); }
+  72% { opacity: 1; transform: translateY(-1px) scale(1); }
+  88% { opacity: .28; transform: translateY(-2px) scale(.96); }
+  100% { opacity: 0; transform: translateY(-2px) scale(.96); }
 }
 
 @media (prefers-reduced-motion: reduce) {

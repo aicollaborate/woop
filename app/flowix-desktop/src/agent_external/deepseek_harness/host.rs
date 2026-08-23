@@ -354,7 +354,7 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
     }
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source_root = root.join("flowix-dsh-host");
+    let source_root = root.join("dsh-flowix-host");
     if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
         return command_for_host_path_with_root(configured, Some(source_root.clone()));
     }
@@ -586,7 +586,7 @@ fn sidecar_build_id() -> Option<String> {
     while let Some(dir) = directory {
         let candidate = dir
             .join(".build")
-            .join("flowix-dsh-host")
+            .join("dsh-flowix-host")
             .join("dsh-build-id.txt");
         if candidate.is_file() {
             let raw = std::fs::read_to_string(&candidate).ok()?;

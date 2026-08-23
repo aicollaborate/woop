@@ -2,9 +2,12 @@
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "commit": "47f943859bef60e4160492346772ded9b24f765a",
   "patches": [
+    "patches/runtime-package-assets.patch",
+    "patches/runtime-aggregate-diagnostics.patch",
     "patches/runtime-bash-sandbox.patch",
     "patches/production-deploy-postinstall.patch",
     "patches/downstream-single-exe-options.patch",
+    "patches/runtime-closed-graph.patch",
     "patches/agent-presets-sdk-server.patch",
     "patches/strip-dev-only-artifacts.patch",
     "patches/sdk-runtime-mcp-client.patch",

@@ -53,6 +53,7 @@ const zhCN = {
     "preferences.cloud.linkApple": "绑定 Apple",
     "preferences.cloud.working": "处理中…",
     "preferences.cloud.logout": "退出登录",
+    "preferences.cloud.sessionExpired": "云端登录已失效，请重新登录。",
     "preferences.cloud.masterSwitch": "启用云同步",
     "preferences.cloud.masterSwitchDescription": "这是全局开关；仍需在每个笔记本中单独开启同步。",
     "preferences.cloud.membership": "会员与存储",
@@ -80,6 +81,7 @@ const zhCN = {
     "notebook.cloudImport.empty": "无笔记本",
     "notebook.cloudImport.synced": "已同步",
     "notebook.cloudImport.sync": "同步",
+    "notebook.cloudImport.syncing": "正在从云端同步…",
     "notebook.cloudImport.complete": "云端笔记本同步完成",
     "notebook.cloudImport.failed": "云端笔记本同步失败",
 
@@ -1287,6 +1289,7 @@ const zhCN = {
     "shell.commandPalette.templatePrefix": "从模板创建：",
     "shell.statusBar.noteNav": "笔记导航",
     "shell.statusBar.noteNavTooltip": "笔记导航",
+    "shell.statusBar.syncing": "同步中",
     "shell.notebook.deleted": "已删除",
     "shell.notebook.deleteFailed": "删除失败",
     "shell.emptyDocument": "请选择一个文档",

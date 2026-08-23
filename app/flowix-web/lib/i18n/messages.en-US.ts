@@ -58,6 +58,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.cloud.linkApple": "Link Apple",
     "preferences.cloud.working": "Working…",
     "preferences.cloud.logout": "Log out",
+    "preferences.cloud.sessionExpired": "Your cloud session has expired. Please log in again.",
     "preferences.cloud.masterSwitch": "Enable cloud sync",
     "preferences.cloud.masterSwitchDescription": "This is the master switch. Sync must also be enabled for each notebook.",
     "preferences.cloud.membership": "Membership and storage",
@@ -85,6 +86,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "notebook.cloudImport.empty": "No notebooks",
     "notebook.cloudImport.synced": "Synced",
     "notebook.cloudImport.sync": "Sync",
+    "notebook.cloudImport.syncing": "Syncing from cloud…",
     "notebook.cloudImport.complete": "Cloud notebook synced",
     "notebook.cloudImport.failed": "Cloud notebook sync failed",
 
@@ -1319,6 +1321,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "shell.commandPalette.templatePrefix": "From template: ",
     "shell.statusBar.noteNav": "Note navigation",
     "shell.statusBar.noteNavTooltip": "Note navigation",
+    "shell.statusBar.syncing": "Syncing",
     "shell.notebook.deleted": "Deleted",
     "shell.notebook.deleteFailed": "Failed to delete",
     "shell.emptyDocument": "Select a note",

@@ -41,7 +41,7 @@ pub const DSH_DOWNLOAD_PROGRESS_EVENT: &str = "dsh-download-progress";
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: u64 = 100_000;
-const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUIRED_HOST_CAPABILITIES: &[&str] = &[
     "model-catalog",
     "model-discovery",
@@ -129,6 +129,18 @@ struct DshArtifact {
     signature: Option<String>,
     #[serde(default)]
     build_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DshRuntimeMetadata {
+    schema_version: u64,
+    product: String,
+    version: String,
+    protocol_version: u64,
+    build_id: String,
+    target: String,
+    includes_ui: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -657,6 +669,7 @@ fn publish_install(
     target: &str,
     artifact: &DshArtifact,
 ) -> Result<(), String> {
+    validate_runtime_metadata(staging, manifest, target, artifact)?;
     let host = staging.join(if cfg!(windows) {
         "dsh-host.exe"
     } else {
@@ -676,6 +689,12 @@ fn publish_install(
             .map_err(|e| format!("make dsh-host executable: {e}"))?;
     }
     let version_root = root.join("versions").join(&manifest.version);
+    // Keep the version that was active when this upgrade started. The new
+    // archive is fully health-checked before current.json changes, so a failed
+    // activation continues to use it; after a successful activation it remains
+    // available as the single rollback candidate for a later explicit policy.
+    let previous_version_root =
+        active_version_root(root).filter(|previous| previous != &version_root);
     let backup = if version_root.exists() {
         let backup = version_root.with_file_name(format!(".replaced-{}", uuid::Uuid::new_v4()));
         fs::rename(&version_root, &backup)
@@ -735,11 +754,78 @@ fn publish_install(
             tracing::warn!(path = %previous.display(), %error, "failed to remove replaced DSH version");
         }
     }
-    cleanup_old_versions(root, &version_root);
+    cleanup_old_versions(root, &version_root, previous_version_root.as_deref());
     Ok(())
 }
 
-fn cleanup_old_versions(root: &Path, current_version_root: &Path) {
+fn validate_runtime_metadata(
+    staging: &Path,
+    manifest: &DshManifest,
+    target: &str,
+    artifact: &DshArtifact,
+) -> Result<(), String> {
+    let path = staging.join("dsh-runtime.json");
+    let metadata: DshRuntimeMetadata = serde_json::from_str(
+        &fs::read_to_string(&path)
+            .map_err(|e| format!("read DSH archive metadata {}: {e}", path.display()))?,
+    )
+    .map_err(|e| format!("parse DSH archive metadata: {e}"))?;
+    if metadata.schema_version != 1 || metadata.product != "flowix-dsh" {
+        return Err("DSH archive metadata schema or product mismatch".to_string());
+    }
+    if metadata.version != manifest.version {
+        return Err(format!(
+            "DSH archive version mismatch: manifest={}, archive={}",
+            manifest.version, metadata.version
+        ));
+    }
+    if metadata.protocol_version != manifest.protocol_version
+        || metadata.protocol_version != DSH_PROTOCOL_VERSION
+    {
+        return Err(format!(
+            "DSH archive protocol mismatch: manifest={}, archive={}, client={}",
+            manifest.protocol_version, metadata.protocol_version, DSH_PROTOCOL_VERSION
+        ));
+    }
+    if target != target_key() || metadata.target != runtime_target_key() {
+        return Err(format!(
+            "DSH archive target mismatch: manifest={}, archive={}, client={}/{}",
+            target,
+            metadata.target,
+            target_key(),
+            runtime_target_key()
+        ));
+    }
+    if metadata.includes_ui {
+        return Err("DSH archive unexpectedly includes UI assets".to_string());
+    }
+    let manifest_build_id = artifact
+        .build_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("DSH manifest artifact is missing buildId")?;
+    if metadata.build_id.trim().is_empty() || metadata.build_id != manifest_build_id {
+        return Err(format!(
+            "DSH archive buildId mismatch: manifest={}, archive={}",
+            manifest_build_id, metadata.build_id
+        ));
+    }
+    Ok(())
+}
+
+fn active_version_root(root: &Path) -> Option<PathBuf> {
+    let current: CurrentDsh =
+        serde_json::from_str(&fs::read_to_string(root.join("current.json")).ok()?).ok()?;
+    validate_manifest_version(&current.version).ok()?;
+    Some(root.join("versions").join(current.version))
+}
+
+fn cleanup_old_versions(
+    root: &Path,
+    current_version_root: &Path,
+    previous_version_root: Option<&Path>,
+) {
     let versions = root.join("versions");
     let entries = match fs::read_dir(&versions) {
         Ok(entries) => entries,
@@ -750,7 +836,7 @@ fn cleanup_old_versions(root: &Path, current_version_root: &Path) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path == current_version_root {
+        if path == current_version_root || previous_version_root == Some(path.as_path()) {
             continue;
         }
         let result = if path.is_dir() {
@@ -771,9 +857,19 @@ fn health_check(host: &Path) -> Result<(), String> {
     let session_root = root.join(format!(".health-check-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&session_root)
         .map_err(|e| format!("create DSH health-check directory: {e}"))?;
+    let dsh_home = session_root.join("dsh-home");
+    fs::create_dir_all(&dsh_home).map_err(|e| format!("create DSH health-check home: {e}"))?;
+    let settings_path = dsh_home.join("settings.yaml");
+    let credentials_path = dsh_home.join(".credentials.yaml");
+    fs::write(&settings_path, b"llm-pi-ai:\n  providers: {}\n")
+        .map_err(|e| format!("write DSH health-check settings: {e}"))?;
+    fs::write(&credentials_path, b"DSH_API_KEY: health-check\n")
+        .map_err(|e| format!("write DSH health-check credentials: {e}"))?;
     let mut child = Command::new(host)
         .env("FLOWIX_DSH_SESSION_ROOT", &session_root)
-        .env("DSH_HOME", root.join(".dsh"))
+        .env("DSH_HOME", &dsh_home)
+        .env("DSH_SETTINGS_PATH", &settings_path)
+        .env("DSH_CREDENTIALS_PATH", &credentials_path)
         .env("FLOWIX_DSH_ROOT", root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -789,24 +885,25 @@ fn health_check(host: &Path) -> Result<(), String> {
             .stdout
             .take()
             .ok_or("DSH health-check stdout unavailable")?;
-        stdin
-            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"host.initialize\",\"params\":{\"protocolVersion\":1}}\n")
-            .map_err(|e| format!("write DSH health check: {e}"))?;
         let (line_tx, line_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut line = String::new();
-            let result = BufReader::new(stdout)
-                .read_line(&mut line)
-                .map(|_| line)
-                .map_err(|e| format!("read DSH health check: {e}"));
-            let _ = line_tx.send(result);
+            for line in BufReader::new(stdout).lines() {
+                if line_tx
+                    .send(line.map_err(|e| format!("read DSH health check: {e}")))
+                    .is_err()
+                {
+                    break;
+                }
+            }
         });
-        let line = line_rx
-            .recv_timeout(HEALTH_CHECK_TIMEOUT)
-            .map_err(|_| "DSH health check timed out".to_string())??;
-        let frame: serde_json::Value = serde_json::from_str(line.trim())
-            .map_err(|e| format!("parse DSH health check: {e}"))?;
-        let result = frame.get("result");
+        let initialize = rpc_health_request(
+            &mut stdin,
+            &line_rx,
+            1,
+            "host.initialize",
+            serde_json::json!({ "protocolVersion": DSH_PROTOCOL_VERSION }),
+        )?;
+        let result = initialize.get("result");
         let protocol_ok = result
             .and_then(|value| value.get("protocolVersion"))
             .and_then(serde_json::Value::as_u64)
@@ -821,18 +918,112 @@ fn health_check(host: &Path) -> Result<(), String> {
                         .any(|capability| capability.as_str() == Some(required))
                 })
             });
-        if frame.get("error").is_some() || !protocol_ok || !capabilities_ok {
+        if initialize.get("error").is_some() || !protocol_ok || !capabilities_ok {
             return Err("DSH host.initialize health check failed".to_string());
         }
-        stdin
-            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"host.shutdown\"}\n")
-            .map_err(|e| format!("shutdown DSH health check: {e}"))?;
+        let thread_id = "flowix-install-health-check";
+        rpc_health_request(
+            &mut stdin,
+            &line_rx,
+            2,
+            "runtime.ensure",
+            serde_json::json!({
+                "threadId": thread_id,
+                "sessionId": "flowix-install-health-session",
+                "cwd": root,
+                "workspacePaths": [],
+                "provider": "openai",
+                "providerName": "install-health-check",
+                "apiProtocol": "openai-completions",
+                "apiKeyEnv": "DSH_API_KEY",
+                "baseUrl": "http://127.0.0.1:9/v1",
+                "model": "health-check-model",
+                "agentPreset": "minimal",
+                "permissionMode": "read-only"
+            }),
+        )?;
+        let bridge = rpc_health_request(
+            &mut stdin,
+            &line_rx,
+            3,
+            "runtime.bridge.capabilities",
+            serde_json::json!({ "threadId": thread_id }),
+        )?;
+        let bridge_capabilities_ok = bridge
+            .get("result")
+            .and_then(|value| value.get("capabilities"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|capabilities| {
+                ["runtime-events", "session-control"]
+                    .iter()
+                    .all(|required| {
+                        capabilities
+                            .iter()
+                            .any(|capability| capability.as_str() == Some(required))
+                    })
+            });
+        if !bridge_capabilities_ok {
+            return Err("DSH runtime bridge health check failed".to_string());
+        }
+        rpc_health_request(
+            &mut stdin,
+            &line_rx,
+            4,
+            "runtime.dispose",
+            serde_json::json!({ "threadId": thread_id }),
+        )?;
+        rpc_health_request(
+            &mut stdin,
+            &line_rx,
+            5,
+            "host.shutdown",
+            serde_json::json!({}),
+        )?;
         Ok(())
     })();
     let _ = child.kill();
     let _ = child.wait();
     let _ = fs::remove_dir_all(&session_root);
     result
+}
+
+fn rpc_health_request(
+    stdin: &mut impl Write,
+    lines: &mpsc::Receiver<Result<String, String>>,
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    writeln!(stdin, "{request}").map_err(|e| format!("write DSH {method} health check: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("flush DSH {method} health check: {e}"))?;
+    let deadline = Instant::now() + HEALTH_CHECK_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let line = lines
+            .recv_timeout(remaining)
+            .map_err(|_| format!("DSH {method} health check timed out"))??;
+        let frame: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|e| format!("parse DSH {method} health check: {e}"))?;
+        if frame.get("id").and_then(serde_json::Value::as_u64) != Some(id) {
+            continue;
+        }
+        if let Some(error) = frame.get("error") {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown JSON-RPC error");
+            return Err(format!("DSH {method} health check failed: {message}"));
+        }
+        return Ok(frame);
+    }
 }
 
 fn current_installation() -> Option<DshInstallation> {
@@ -877,6 +1068,26 @@ fn target_key() -> &'static str {
             "linux-aarch64"
         } else {
             "linux-x86_64"
+        }
+    } else {
+        "unknown"
+    }
+}
+
+fn runtime_target_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "node24-macos-arm64"
+        } else {
+            "node24-macos-x64"
+        }
+    } else if cfg!(target_os = "windows") {
+        "node24-windows-x64"
+    } else if cfg!(target_os = "linux") {
+        if cfg!(target_arch = "aarch64") {
+            "node24-linux-arm64"
+        } else {
+            "node24-linux-x64"
         }
     } else {
         "unknown"
@@ -990,19 +1201,22 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_old_versions_keeps_only_the_active_version() {
+    fn cleanup_old_versions_keeps_the_active_and_previous_versions() {
         let root = tempdir_runtime_root("cleanup-old-versions");
         let versions = root.join("versions");
         let active = versions.join("2.0.0");
+        let previous = versions.join("1.0.0");
         std::fs::create_dir_all(&active).unwrap();
-        std::fs::create_dir_all(versions.join("1.0.0")).unwrap();
+        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::create_dir_all(versions.join("0.9.0")).unwrap();
         std::fs::create_dir_all(versions.join(".replaced-old")).unwrap();
         std::fs::write(versions.join(".installing-stale"), b"stale").unwrap();
 
-        super::cleanup_old_versions(&root, &active);
+        super::cleanup_old_versions(&root, &active, Some(&previous));
 
         assert!(active.exists());
-        assert!(!versions.join("1.0.0").exists());
+        assert!(previous.exists());
+        assert!(!versions.join("0.9.0").exists());
         assert!(!versions.join(".replaced-old").exists());
         assert!(!versions.join(".installing-stale").exists());
     }
@@ -1033,9 +1247,10 @@ mod tests {
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::write(
             staging.join("dsh-host"),
-            b"#!/bin/sh\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"capabilities\":[\"model-catalog\",\"model-discovery\",\"plugin-catalog\",\"runtime-profile\"]}}'\nread request\n",
+            b"#!/bin/sh\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"buildId\":\"test-build\",\"capabilities\":[\"model-catalog\",\"model-discovery\",\"plugin-catalog\",\"runtime-profile\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"sessionId\":\"health\",\"generation\":1}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"capabilities\":[\"runtime-events\",\"session-control\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"disposed\":true}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{\"ok\":true}}'\n",
         )
         .unwrap();
+        write_test_runtime_metadata(&staging, version, "test-build");
 
         let manifest = DshManifest {
             schema_version: 1,
@@ -1052,7 +1267,7 @@ mod tests {
             build_id: Some("test-build".to_string()),
         };
 
-        super::publish_install(&root, &staging, &manifest, "test", &artifact).unwrap();
+        super::publish_install(&root, &staging, &manifest, super::target_key(), &artifact).unwrap();
         assert!(std::fs::read(version_root.join("dsh-host"))
             .unwrap()
             .starts_with(b"#!/bin/sh"));
@@ -1076,6 +1291,7 @@ mod tests {
             b"#!/bin/sh\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":999}}'\nread request\n",
         )
         .unwrap();
+        write_test_runtime_metadata(&staging, version, "test-build");
 
         let manifest = DshManifest {
             schema_version: 1,
@@ -1092,7 +1308,10 @@ mod tests {
             build_id: Some("test-build".to_string()),
         };
 
-        assert!(super::publish_install(&root, &staging, &manifest, "test", &artifact).is_err());
+        assert!(
+            super::publish_install(&root, &staging, &manifest, super::target_key(), &artifact,)
+                .is_err()
+        );
         assert_eq!(
             std::fs::read(version_root.join("dsh-host")).unwrap(),
             b"old-host"
@@ -1104,5 +1323,22 @@ mod tests {
             std::env::temp_dir().join(format!("flowix-dsh-test-{prefix}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn write_test_runtime_metadata(root: &Path, version: &str, build_id: &str) {
+        std::fs::write(
+            root.join("dsh-runtime.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": 1,
+                "product": "flowix-dsh",
+                "version": version,
+                "protocolVersion": super::DSH_PROTOCOL_VERSION,
+                "buildId": build_id,
+                "target": super::runtime_target_key(),
+                "includesUi": false,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 }

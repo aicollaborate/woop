@@ -10,6 +10,7 @@ import { NotebookList } from '@features/memo/components/notebook-list';
 import { NavFilterButtons } from '@features/memo/components/nav-filter-buttons';
 import { TagTree } from '@features/memo/components/tag-tree';
 import { type Notebook } from '@features/memo';
+import { cn } from '@/lib/utils';
 import { isWindowsPlatform } from '@/lib/shortcuts/platform';
 import { PluginNavItems } from '@features/plugin';
 import type { PluginDescriptor } from '@platform/tauri/client';
@@ -51,6 +52,7 @@ export function NoteNavigationPanel({
   onClosePlugin,
 }: NoteNavigationPanelProps) {
   const [counts, setCounts] = useState<NavCounts>({ total: 0, agent: 0, todo: 0 });
+  const [showScrollTopHint, setShowScrollTopHint] = useState(false);
 
   const handleCountsChange = useCallback((next: NavCounts) => {
     setCounts(next);
@@ -76,10 +78,13 @@ export function NoteNavigationPanel({
         onEditNotebook={onEditNotebook}
         onDeleteNotebook={onDeleteNotebook}
       />
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <OverlayScrollbar
           className="min-h-0 flex-1"
           scrollerClassName="h-full overflow-y-auto px-2"
+          onScroll={(event) => {
+            setShowScrollTopHint(event.currentTarget.scrollTop > 0);
+          }}
         >
           <NavFilterButtons
             totalMemoCount={counts.total}
@@ -107,6 +112,13 @@ export function NoteNavigationPanel({
               fallback 到 notebook.path。 */}
           <NotebookAccessFilesList notebook={selectedNotebook ?? undefined} />
         </OverlayScrollbar>
+        <div
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-4 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_4%,transparent)] to-transparent transition-opacity duration-200',
+            showScrollTopHint ? 'opacity-100' : 'opacity-0',
+          )}
+        />
       </div>
     </div>
   );

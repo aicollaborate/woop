@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
-const hostRoot = resolve(repo, 'flowix-dsh-host')
+const hostRoot = resolve(repo, 'dsh-flowix-host')
 const stageRoot = resolve(repo, '.build/dsh-package')
 const releaseRoot = resolve(repo, '.build/releases/dsh')
 const dshBuildRoot = resolve(repo, '.build/flowix-dsh-host')
@@ -37,7 +37,7 @@ for (const target of targets) {
   if (existsSync(sourceHelper)) {
     await copyFile(sourceHelper, join(packageDir, platform === 'windows' ? 'dsh-host-spawn-helper.exe' : 'dsh-host-spawn-helper'))
   }
-  await copyTree(resolve(hostRoot, 'bundles/dsh-flowix-memory'), join(packageDir, 'dsh-flowix-memory'))
+  await copyTree(resolve(repo, 'dsh-flowix-memory'), join(packageDir, 'dsh-flowix-memory'))
   // The host/desktop bridge is a normal DSH profile bundle. Keep it visible
   // in the standalone archive so DSH's profile loader resolves it from the
   // profile directory instead of relying on host-generated plugin source.

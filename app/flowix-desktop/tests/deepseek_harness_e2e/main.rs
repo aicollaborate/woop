@@ -16,7 +16,7 @@
 //! 在 macOS 也不暴露, 因此本测试在 `main()` 里持有主线程并手工驱动断言。
 //!
 //! 运行前置:
-//!   * `npm --prefix flowix-dsh-host run build` 已产出
+//!   * `npm --prefix dsh-flowix-host run build` 已产出
 //!     `.build/flowix-dsh-host/dsh-host.cjs`
 //!     (缺失时本测试直接 fail 并提示, 不静默跳过 —— 见 `require_host`).
 //!   * dsh-host 的 vendored 开发 runtime 已安装
@@ -179,7 +179,7 @@ fn require_host(host_script: &Path) {
         return;
     }
     panic!(
-        "dsh-host is not built: {} is missing; run `npm --prefix flowix-dsh-host run build` first",
+        "dsh-host is not built: {} is missing; run `npm --prefix dsh-flowix-host run build` first",
         host_script.display()
     );
 }

@@ -8,7 +8,7 @@ import test from 'node:test'
 const root = resolve(import.meta.dirname, '..')
 const cli = resolve(root, 'vendor/deepseek-harness/apps/cli/lib/bin.js')
 const fixture = resolve(root, 'tests/fixtures/community-bundle')
-const memoryBundle = resolve(root, 'bundles/dsh-flowix-memory')
+const memoryBundle = resolve(root, '..', 'dsh-flowix-memory')
 const tooling = resolve(root, 'scripts/tooling')
 const required = [
   '@deepseek-ai/dsh-base',

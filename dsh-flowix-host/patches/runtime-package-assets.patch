@@ -1,0 +1,16 @@
+diff --git a/scripts/build-exe-for-python-sdk.ts b/scripts/build-exe-for-python-sdk.ts
+--- a/scripts/build-exe-for-python-sdk.ts
++++ b/scripts/build-exe-for-python-sdk.ts
+@@ -43,6 +43,12 @@ const ASSET_GLOBS = [
+   'node_modules/**/*.mjs',
+   'node_modules/**/package.json',
+   'node_modules/**/*.json',
++  // Cordis bundle manifests declare their overlay in YAML. The runtime
++  // resolves these files from the package root at boot; omitting them from
++  // pkg's asset list makes the SEA start successfully and then exit with an
++  // opaque "JSON-RPC input closed" when the first run initializes.
++  'node_modules/**/*.yml',
++  'node_modules/**/*.yaml',
+   'node_modules/**/*.node',
+   'node_modules/**/*.wasm',
+ ]

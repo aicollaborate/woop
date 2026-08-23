@@ -289,7 +289,12 @@ export function NotebookAccessFilesList({
                 {isWorkspace && (
                   <Star
                     aria-label={t('agent.access.workspaceBadge')}
-                    className="agent-thread-card__access-workspace-star h-3 w-3 shrink-0 text-[var(--primary)]"
+                    className={cn(
+                      'agent-thread-card__access-workspace-star h-3 w-3 shrink-0',
+                      isBrowsing
+                        ? 'text-[var(--primary-foreground)]'
+                        : 'text-[var(--primary)]',
+                    )}
                     fill="currentColor"
                   />
                 )}

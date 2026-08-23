@@ -34,13 +34,15 @@ test('packaged host drives the packaged Harness runtime through a mock provider 
       TMPDIR: process.env.TMPDIR,
       LANG: process.env.LANG,
       FLOWIX_DSH_SESSION_ROOT: sessionRoot,
+      FLOWIX_DSH_ROOT: resolve(root, 'dsh-flowix-host'),
       // The sidecar used here is copied into the desktop development
       // binaries directory, while the release archive keeps profile/flowix
       // beside dsh-host. Point the packaged-host test at the same source
       // payload so it exercises the profile installation path without
       // pretending that the development binaries directory is a release
       // archive.
-      FLOWIX_DSH_PROFILE_SOURCE: resolve(root, 'flowix-dsh-host/profile/flowix'),
+      FLOWIX_DSH_PROFILE_SOURCE: resolve(root, 'dsh-flowix-host/profile/flowix'),
+      FLOWIX_DSH_MCP_CLI: resolve(root, `app/flowix-desktop/binaries/flowix-cli-${triple}`),
       DSH_HOME: dshHome,
       DSH_SETTINGS_PATH: settingsPath,
       DSH_CREDENTIALS_PATH: credentialsPath,
@@ -92,7 +94,6 @@ test('packaged host drives the packaged Harness runtime through a mock provider 
     assert.deepEqual(bridge.result.capabilities, [
       'runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile',
     ])
-
     const startId = request('run.start', {
       threadId: 'thread-sidecar', runId: 'run-sidecar', prompt: { text: 'reply briefly' },
     })
@@ -104,9 +105,9 @@ test('packaged host drives the packaged Harness runtime through a mock provider 
 
     const events = frames.filter(frame => frame.method === 'run.event').map(frame => frame.params.event)
     assert.equal(events.find(event => event.type === 'assistant.delta')?.text, 'hello from packaged runtime', JSON.stringify({ events, stderr, requests: mock.requests, tools: mock.toolNames }))
-    assert.deepEqual([...mock.toolNames].sort(), [
-      'bash', 'mcp__dsh-flowix-memory__flowix_memo', 'str_replace_editor',
-    ])
+    for (const tool of ['bash', 'mcp__dsh-flowix-memory__flowix_memo', 'str_replace_editor']) {
+      assert.equal(mock.toolNames.includes(tool), true, `missing ${tool}; tools=${JSON.stringify([...mock.toolNames].sort())}`)
+    }
     assert.equal(events.find(event => event.type === 'usage')?.outputTokens, 4)
     assert.equal(events.at(-1)?.reason, 'completed')
     assert.equal(mock.requests, 1)

@@ -290,7 +290,7 @@ export function FolderFileTree({
                 }
               }}
               className={cn(
-                'folder-file-tree__item group relative flex h-8 items-center rounded-[10px] px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
+                'folder-file-tree__item group relative flex h-7 items-center rounded-lg px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
                 isFolder || openable ? 'cursor-pointer' : 'cursor-default',
                 isActive
                   ? 'bg-[var(--muted)]'
@@ -584,7 +584,7 @@ export function FolderFileTree({
               首版可接受 (VSCode 是原地插入)。 */}
           {draftRow && (
             <div
-              className="folder-file-tree__item flex h-8 items-center pr-2"
+              className="folder-file-tree__item flex h-7 items-center pr-2"
               style={{
                 marginLeft: TREE_EDGE_GUTTER + (findDepth(visibleNodes, draftRow.parentPath) + 1) * INDENT_PER_LEVEL,
               }}

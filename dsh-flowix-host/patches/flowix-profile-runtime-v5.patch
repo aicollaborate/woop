@@ -157,10 +157,7 @@
        '@deepseek-ai/dsh-output-retention':
          specifier: workspace:^
          version: link:../../packages/util/output-retention
-@@ -8502,9 +8517,12 @@
-       '@deepseek-ai/dsh-session-title':
-         specifier: workspace:^
-         version: link:../../packages/session/session-title
+@@ -8505,6 +8520,9 @@
        '@deepseek-ai/dsh-settings':
          specifier: workspace:^
          version: link:../../packages/settings/settings

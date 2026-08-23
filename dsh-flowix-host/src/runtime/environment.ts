@@ -209,7 +209,7 @@ function flowixProfileSourceDir(): string | undefined {
     join(hostRoot(), "profile", "flowix"),
     // Packaged sidecar E2E keeps the host in app/flowix-desktop/binaries while
     // the source checkout owns the profile at the repository root.
-    join(hostRoot(), "..", "..", "flowix-dsh-host", "profile", "flowix"),
+    join(hostRoot(), "..", "..", "dsh-flowix-host", "profile", "flowix"),
   ].filter((value): value is string => value !== undefined);
   return candidates.find((candidate) => existsSync(join(candidate, "package.json")));
 }
@@ -217,8 +217,8 @@ function flowixProfileSourceDir(): string | undefined {
 function flowixMemorySourceDir(): string | undefined {
   return [
     join(hostRoot(), "dsh-flowix-memory"),
-    join(hostRoot(), "bundles", "dsh-flowix-memory"),
-    join(hostRoot(), "..", "..", "flowix-dsh-host", "bundles", "dsh-flowix-memory"),
+    join(hostRoot(), "..", "dsh-flowix-memory"),
+    join(hostRoot(), "..", "..", "dsh-flowix-memory"),
   ].find((candidate) => existsSync(join(candidate, "package.json")));
 }
 
@@ -293,7 +293,7 @@ export function runtimeLaunch(spec: RuntimeSpec): {
   );
   if (!existsSync(bin) || !existsSync(tsxLoader)) {
     throw new Error(
-      "dsh-runtime is not bundled and the vendored development runtime is not installed; run npm --prefix flowix-dsh-host run build:dev (which auto-builds the packaged runtime)",
+      "dsh-runtime is not bundled and the vendored development runtime is not installed; run npm --prefix dsh-flowix-host run build:dev (which auto-builds the packaged runtime)",
     );
   }
   return {

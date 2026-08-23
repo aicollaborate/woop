@@ -54,12 +54,12 @@ jobs:
       - name: Prepare locked Harness checkout
         run: |
           corepack enable
-          npm --prefix flowix-dsh-host run vendor:install
+          npm --prefix dsh-flowix-host run vendor:install
 
       - name: Run DSH host gate before packaging
         run: |
-          npm --prefix flowix-dsh-host run check
-          npm --prefix flowix-dsh-host run test:e2e
+          npm --prefix dsh-flowix-host run check
+          npm --prefix dsh-flowix-host run test:e2e
 
   release:
     name: build (${{ matrix.platform }})
@@ -197,10 +197,10 @@ jobs:
           fi
 
       - name: Check DSH host
-        run: npm --prefix flowix-dsh-host run check
+        run: npm --prefix dsh-flowix-host run check
 
       - name: Run DSH sidecar E2E
-        run: npm --prefix flowix-dsh-host run test:sidecar:e2e
+        run: npm --prefix dsh-flowix-host run test:sidecar:e2e
 
       - name: Package signed DSH archive
         shell: bash
