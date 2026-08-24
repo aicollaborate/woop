@@ -3,30 +3,34 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
 
 const archive = process.argv[2]
+const verifiedStage = process.argv[3]
 if (!archive || !existsSync(archive)) {
   console.error('usage: node scripts/verify-dsh-package.mjs <archive.tar.gz>')
   process.exit(2)
 }
 
-const result = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' })
+const result = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 if (result.status !== 0) {
   console.error(`ERROR: cannot inspect DSH archive: ${result.stderr || result.status}`)
   process.exit(1)
 }
 const entries = result.stdout.split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean)
 const required = [
-  /dsh-host(?:\.exe)?$/iu,
+  /(?:dsh-host(?:\.exe)?|host\/dsh-host\.cjs)$/iu,
+  /(?:dsh-host(?:\.exe)?-rg|node\/node(?:\.exe)?)$/iu,
   /dsh-runtime\.json$/iu,
   /dsh-flowix-memory\//iu,
   /profile\/flowix\/package\.json$/iu,
-  /profile\/flowix\/node_modules\/@flowix\/dsh-flowix-bridge\/package\.json$/iu,
   /profile\/flowix\/node_modules\/@flowix\/dsh-flowix-bridge\/index\.js$/iu,
-  /profile\/flowix\/node_modules\/@flowix\/dsh-flowix-bridge\/cordis\.patch\.yml$/iu,
+  /tools\/pnpm\/node_modules\/pnpm\/bin\/pnpm\.mjs$/iu,
+  /bin\/pnpm(?:\.cmd)?$/iu,
+  /bin\/dsh(?:\.cmd)?$/iu,
+  /runtime-build\.json$/iu,
 ]
 const forbidden = [/dsh-web-ui/iu, /dsh-client-ui-/iu, /(?:^|[/])apps?[/].*web/iu]
 const missing = required.filter((pattern) => !entries.some((entry) => pattern.test(entry)))
@@ -60,13 +64,6 @@ try {
   process.exit(1)
 }
 
-const hostName = process.platform === 'win32' ? 'dsh-host.exe' : 'dsh-host'
-const hostEntry = entries.find((entry) => entry === `./${hostName}` || entry === hostName)
-if (hostEntry === undefined) {
-  console.error(`ERROR: DSH archive does not contain ${hostName}`)
-  process.exit(1)
-}
-
 const runtimeEntry = entries.find((entry) => /(?:^|[/])dsh-runtime\.json$/iu.test(entry))
 if (runtimeEntry === undefined) throw new Error('DSH archive does not contain dsh-runtime.json')
 const runtimeMetadataResult = spawnSync('tar', ['-xOzf', archive, runtimeEntry], { encoding: 'utf8' })
@@ -74,7 +71,7 @@ if (runtimeMetadataResult.status !== 0) {
   throw new Error(`cannot read dsh-runtime.json: ${runtimeMetadataResult.stderr || runtimeMetadataResult.status}`)
 }
 const runtimeMetadata = JSON.parse(runtimeMetadataResult.stdout)
-if (runtimeMetadata.schemaVersion !== 1
+if (![1, 2].includes(runtimeMetadata.schemaVersion)
   || runtimeMetadata.product !== 'flowix-dsh'
   || runtimeMetadata.protocolVersion !== 1
   || runtimeMetadata.includesUi !== false
@@ -84,24 +81,89 @@ if (runtimeMetadata.schemaVersion !== 1
   || runtimeMetadata.buildId.trim() === '') {
   throw new Error('dsh-runtime.json is incomplete or incompatible')
 }
+if (runtimeMetadata.runtimeType === 'node-bundle'
+  && (typeof runtimeMetadata.nodeExecutable !== 'string'
+    || typeof runtimeMetadata.entrypoint !== 'string'
+    || typeof runtimeMetadata.pnpmEntrypoint !== 'string'
+    || typeof runtimeMetadata.nodeVersion !== 'string'
+    || typeof runtimeMetadata.nodeAbi !== 'string'
+    || runtimeMetadata.pnpmVersion !== '11.7.0')) {
+  throw new Error('dsh-runtime.json is missing Node bundle launch metadata')
+}
+const isNodeBundle = runtimeMetadata.runtimeType === 'node-bundle'
+const hostName = isNodeBundle ? 'host/dsh-host.cjs' : process.platform === 'win32' ? 'dsh-host.exe' : 'dsh-host'
+const hostEntry = entries.find((entry) => entry === `./${hostName}` || entry === hostName)
+if (hostEntry === undefined) throw new Error(`DSH archive does not contain ${hostName}`)
 
 // `dsh:package` consumes a prebuilt target binary. Extract the complete
 // archive and exercise the runtime/profile boundary, not just host.initialize;
 // otherwise a stale or pruned profile can pass release verification and fail
 // only when the user sends the first message.
-const temporaryRoot = await mkdtemp(join(tmpdir(), 'flowix-dsh-package-'))
+const temporaryRoot = verifiedStage ? resolve(verifiedStage) : await mkdtemp(join(tmpdir(), 'flowix-dsh-package-'))
+const ownsTemporaryRoot = !verifiedStage
 let healthCheckFailed = false
 let probe = null
+let fakeSystemTools = null
 try {
-  const extracted = spawnSync('tar', ['-xzf', archive, '-C', temporaryRoot], {
-    encoding: 'utf8',
-    maxBuffer: 2 * 1024 * 1024,
-  })
-  if (extracted.status !== 0) {
-    throw new Error(`cannot extract DSH archive: ${extracted.stderr || extracted.status}`)
+  if (ownsTemporaryRoot) {
+    const extracted = spawnSync('tar', ['-xzf', archive, '-C', temporaryRoot], {
+      encoding: 'utf8',
+      maxBuffer: 2 * 1024 * 1024,
+    })
+    if (extracted.status !== 0) {
+      throw new Error(`cannot extract DSH archive: ${extracted.stderr || extracted.status}`)
+    }
   }
   const hostPath = join(temporaryRoot, hostName)
-  await chmod(hostPath, 0o755)
+  const nodePath = isNodeBundle ? join(temporaryRoot, runtimeMetadata.nodeExecutable) : hostPath
+  await chmod(nodePath, 0o755)
+  if (isNodeBundle) {
+    const nodeIdentity = spawnSync(nodePath, ['-p', 'JSON.stringify({version:process.version,abi:process.versions.modules})'], { encoding: 'utf8' })
+    if (nodeIdentity.status !== 0) throw new Error(`private Node identity check failed: ${nodeIdentity.stderr || nodeIdentity.status}`)
+    const identity = JSON.parse(nodeIdentity.stdout)
+    if (identity.version !== runtimeMetadata.nodeVersion || identity.abi !== runtimeMetadata.nodeAbi) {
+      throw new Error(`private Node metadata mismatch: expected ${runtimeMetadata.nodeVersion}/${runtimeMetadata.nodeAbi}, got ${identity.version}/${identity.abi}`)
+    }
+    const pnpm = spawnSync(nodePath, [join(temporaryRoot, runtimeMetadata.pnpmEntrypoint), '--version'], {
+      encoding: 'utf8',
+      env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' },
+    })
+    if (pnpm.status !== 0 || pnpm.stdout.trim() !== runtimeMetadata.pnpmVersion) {
+      throw new Error(`private pnpm check failed: ${pnpm.stderr || pnpm.stdout || pnpm.status}`)
+    }
+    const nativeCheck = spawnSync(nodePath, ['-e', `
+      const { createRequire } = require('node:module');
+      const { join } = require('node:path');
+      const runtime = process.argv[1];
+      const requireFromRuntime = createRequire(join(runtime, 'package.json'));
+      const entry = requireFromRuntime.resolve('node-pty');
+      requireFromRuntime(entry);
+      process.stdout.write(JSON.stringify({ platform: process.platform, arch: process.arch, abi: process.versions.modules, entry }));
+    `, join(temporaryRoot, 'runtime')], { encoding: 'utf8' })
+    if (nativeCheck.status !== 0) {
+      throw new Error(`private native addon/ABI check failed: ${nativeCheck.stderr || nativeCheck.status}`)
+    }
+    const nativeIdentity = JSON.parse(nativeCheck.stdout)
+    const expected = targetRuntimeIdentity(runtimeMetadata.target)
+    if (nativeIdentity.platform !== expected.platform || nativeIdentity.arch !== expected.arch || nativeIdentity.abi !== runtimeMetadata.nodeAbi) {
+      throw new Error(`native runtime identity mismatch: ${JSON.stringify(nativeIdentity)}`)
+    }
+
+    fakeSystemTools = await mkdtemp(join(tmpdir(), 'flowix-fake-system-tools-'))
+    const fakePnpm = join(fakeSystemTools, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+    await writeFile(fakePnpm, process.platform === 'win32' ? '@echo SYSTEM-PNPM-MUST-NOT-RUN\r\n' : '#!/bin/sh\necho SYSTEM-PNPM-MUST-NOT-RUN\n')
+    if (process.platform !== 'win32') await chmod(fakePnpm, 0o755)
+    const privateBin = join(temporaryRoot, 'bin')
+    const pathKey = process.platform === 'win32' ? 'Path' : 'PATH'
+    const priority = spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['--version'], {
+      encoding: 'utf8',
+      shell: process.platform === 'win32',
+      env: { ...process.env, [pathKey]: [privateBin, fakeSystemTools, process.env[pathKey] ?? process.env.PATH ?? ''].join(process.platform === 'win32' ? ';' : ':') },
+    })
+    if (priority.status !== 0 || priority.stdout.trim() !== runtimeMetadata.pnpmVersion) {
+      throw new Error(`private tool PATH priority check failed: ${priority.stderr || priority.stdout || priority.status}`)
+    }
+  }
   const dshHome = join(temporaryRoot, '.health-dsh-home')
   const sessionRoot = join(temporaryRoot, '.health-sessions')
   await mkdir(dshHome, { recursive: true })
@@ -112,8 +174,8 @@ try {
   // cross-architecture package health check.
   const launchCommand = process.platform === 'darwin' && process.arch === 'arm64' && runtimeMetadata.target === 'node24-macos-x64'
     ? 'arch'
-    : hostPath
-  const launchArgs = launchCommand === 'arch' ? ['-x86_64', hostPath] : []
+    : nodePath
+  const launchArgs = launchCommand === 'arch' ? ['-x86_64', nodePath, hostPath] : isNodeBundle ? [hostPath] : []
   probe = startJsonRpcProbe(launchCommand, launchArgs, {
     env: {
       ...process.env,
@@ -167,7 +229,17 @@ try {
   healthCheckFailed = true
 } finally {
   await probe?.close()
-  await rm(temporaryRoot, { recursive: true, force: true })
+  if (fakeSystemTools) await rm(fakeSystemTools, { recursive: true, force: true })
+  if (ownsTemporaryRoot) await rm(temporaryRoot, { recursive: true, force: true })
+}
+
+function targetRuntimeIdentity(target) {
+  const match = /^node24-(windows|macos|linux)-(x64|arm64)$/u.exec(target)
+  if (!match) throw new Error(`invalid runtime target ${target}`)
+  return {
+    platform: match[1] === 'windows' ? 'win32' : match[1] === 'macos' ? 'darwin' : 'linux',
+    arch: match[2],
+  }
 }
 if (healthCheckFailed) process.exit(1)
 

@@ -202,6 +202,7 @@ fn paginate_turns(
         messages: turns[start..end].iter().flatten().cloned().collect(),
         oldest_sequence: (start < end).then_some((start + 1) as i64),
         has_more: start > 0,
+        snapshot_sequence: None,
     }
 }
 

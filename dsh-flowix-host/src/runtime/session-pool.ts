@@ -1,12 +1,12 @@
 import { DeepSeekHarness, type SessionUsageResult } from '@deepseek-ai/dsh-sdk-client'
 import { FlowixDshBridgeClient } from '../bridge/client.ts'
 import {
-  adaptHarnessNotification,
   adaptFlowixBridgeEvent,
   endReasonFromNotifications,
   failureFromNotifications,
+  materializeSessionHistory,
 } from '../adapter/session-events.ts'
-import type { HostEvent, RunEventNotification, RunStartParams, RuntimeSpec } from '../protocol/v1.ts'
+import type { HostEvent, RunEventNotification, RunStartParams, RuntimeSpec, SessionHistoryPage } from '../protocol/v1.ts'
 import { isRecord } from '../protocol/validation.ts'
 import { HOST_PROTOCOL_VERSION } from '../protocol/v1.ts'
 import { runtimeLaunch } from './environment.ts'
@@ -98,7 +98,7 @@ export class SessionPool {
     slot.currentRun = marker
     this.push(slot, params.runId, { type: 'session.resolved', sessionId: slot.spec.sessionId })
     this.push(slot, params.runId, { type: 'run.started' })
-    void this.execute(slot, marker, params.prompt.text)
+    void this.execute(slot, marker, params.prompt)
   }
 
   async cancel(threadId: string, runId: string): Promise<boolean> {
@@ -153,6 +153,42 @@ export class SessionPool {
     return await readSessionUsage(slot)
   }
 
+  async history(
+    sessionId: string,
+    beforeSequence: number | undefined,
+    limit: number,
+    requestedSnapshot: number | undefined,
+  ): Promise<SessionHistoryPage> {
+    const spec = historyRuntimeSpec(sessionId)
+    const launch = runtimeLaunch(spec)
+    const harness = new DeepSeekHarness({
+      launch: {
+        command: launch.command,
+        args: launch.args,
+        cwd: spec.cwd,
+        env: launch.env,
+        requestTimeoutMs: 120_000,
+        shutdownTimeoutMs: 1_500,
+      },
+      cwd: spec.cwd,
+      workspacePaths: [],
+      provider: spec.provider,
+      model: spec.model,
+    })
+    const bridge = new FlowixDshBridgeClient(harness)
+    const client = harness.client as unknown as { start(): void }
+    client.start()
+    try {
+      const snapshot = await bridge.history(sessionId)
+      const snapshotSeq = requestedSnapshot === undefined
+        ? snapshot.snapshotSeq
+        : Math.min(requestedSnapshot, snapshot.snapshotSeq)
+      return materializeSessionHistory(snapshot.events, beforeSequence, limit, snapshotSeq)
+    } finally {
+      await harness.close()
+    }
+  }
+
   async bridgeCapabilities(threadId: string): Promise<unknown> {
     const slot = this.slots.get(threadId)
     if (slot === undefined) throw new Error(`runtime is not initialized for thread ${threadId}`)
@@ -166,15 +202,16 @@ export class SessionPool {
   }
 
 
-  private async execute(slot: RuntimeSlot, marker: { runId: string; cancelled: boolean }, prompt: string): Promise<void> {
+  private async execute(
+    slot: RuntimeSlot,
+    marker: { runId: string; cancelled: boolean },
+    prompt: { modelText: string; displayText: string; clientMessageId: string },
+  ): Promise<void> {
     try {
       await initializeRuntime(slot)
       slot.bridgeAvailable = await bridgeIsAvailable(slot.bridge)
-      if (slot.bridgeAvailable) {
-        await this.executeThroughBridge(slot, marker, prompt)
-      } else {
-        await this.executeThroughSdk(slot, marker, prompt)
-      }
+      if (!slot.bridgeAvailable) throw new Error('flowix-dsh-bridge is required by the DSH runtime profile')
+      await this.executeThroughBridge(slot, marker, prompt)
     } catch (error) {
       // Initialization and capability negotiation happen before either run
       // path owns its cleanup. Surface those failures using the same host
@@ -191,7 +228,11 @@ export class SessionPool {
     }
   }
 
-  private async executeThroughBridge(slot: RuntimeSlot, marker: { runId: string; cancelled: boolean }, prompt: string): Promise<void> {
+  private async executeThroughBridge(
+    slot: RuntimeSlot,
+    marker: { runId: string; cancelled: boolean },
+    prompt: { modelText: string; displayText: string; clientMessageId: string },
+  ): Promise<void> {
     let streamedUsage: Extract<HostEvent, { type: 'usage' }> | undefined
     const seenSessionEvents = new Set<string>()
     const notifications: unknown[] = []
@@ -260,57 +301,6 @@ export class SessionPool {
       }
     } finally {
       bridgeSubscription.close()
-      if (slot.currentRun === marker) {
-        slot.currentRun = undefined
-        if (slot.reusable) await this.retainIdle(slot)
-        else await this.closeSlot(slot)
-      }
-    }
-  }
-
-  /** Compatibility path for runtimes predating flowix-dsh-bridge. */
-  private async executeThroughSdk(slot: RuntimeSlot, marker: { runId: string; cancelled: boolean }, prompt: string): Promise<void> {
-    let streamedUsage: Extract<HostEvent, { type: 'usage' }> | undefined
-    const seenSessionEvents = new Set<string>()
-
-    const eventKey = (event: Record<string, unknown>): string | undefined => {
-      const sequence = event.seq
-      if (typeof sequence === 'number' || typeof sequence === 'string') return `seq:${String(sequence)}`
-      try { return `json:${JSON.stringify(event)}` } catch { return undefined }
-    }
-    const emitAdapted = (events: HostEvent[], key?: string): void => {
-      if (key !== undefined) {
-        if (seenSessionEvents.has(key)) return
-        seenSessionEvents.add(key)
-      }
-      for (const event of events) {
-        if (event.type === 'usage') streamedUsage = event
-        else this.push(slot, marker.runId, event)
-      }
-    }
-
-    try {
-      const result = await slot.harness.run(prompt, {
-        sessionId: slot.spec.sessionId,
-        onNotification: notification => {
-          if (!isRecord(notification) || notification.method !== 'session.event') return
-          const raw = isRecord(notification.params) && isRecord(notification.params.event)
-            ? notification.params.event
-            : undefined
-          const key = raw === undefined ? undefined : eventKey(raw)
-          emitAdapted(adaptHarnessNotification(notification, { includeUsage: true }), key)
-        },
-      })
-      if (!marker.cancelled) {
-        await this.finishRun(slot, marker, result.notifications, streamedUsage)
-      }
-    } catch (error) {
-      if (!marker.cancelled) {
-        slot.reusable = false
-        this.push(slot, marker.runId, { type: 'run.error', message: errorMessage(error), code: 'HARNESS_RUN_FAILED' })
-        this.push(slot, marker.runId, { type: 'run.completed', reason: 'runtime_crashed' })
-      }
-    } finally {
       if (slot.currentRun === marker) {
         slot.currentRun = undefined
         if (slot.reusable) await this.retainIdle(slot)
@@ -403,6 +393,23 @@ export class SessionPool {
       generation: slot.generation,
       event,
     })
+  }
+}
+
+function historyRuntimeSpec(sessionId: string): RuntimeSpec {
+  return {
+    threadId: `history:${sessionId}`,
+    sessionId,
+    cwd: process.cwd(),
+    workspacePaths: [],
+    provider: 'history-only',
+    providerName: 'History Only',
+    apiProtocol: 'openai-completions',
+    apiKeyEnv: 'DSH_API_KEY',
+    baseUrl: 'http://127.0.0.1',
+    model: 'history-only',
+    agentPreset: 'minimal',
+    permissionMode: 'read-only',
   }
 }
 

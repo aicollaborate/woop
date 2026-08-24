@@ -95,7 +95,7 @@ test('packaged host drives the packaged Harness runtime through a mock provider 
       'runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile',
     ])
     const startId = request('run.start', {
-      threadId: 'thread-sidecar', runId: 'run-sidecar', prompt: { text: 'reply briefly' },
+      threadId: 'thread-sidecar', runId: 'run-sidecar', prompt: { modelText: 'reply briefly', displayText: 'reply briefly', clientMessageId: 'run-sidecar' },
     })
     const started = await waitFor(frame => frame.id === startId)
     assert.equal(started.error, undefined, stderr)

@@ -626,6 +626,7 @@ impl ThreadManager {
                 messages: Vec::new(),
                 oldest_sequence: None,
                 has_more: false,
+                snapshot_sequence: None,
             });
         };
 
@@ -684,6 +685,7 @@ impl ThreadManager {
             },
             oldest_sequence: Some(cutoff_id),
             has_more,
+            snapshot_sequence: None,
         })
     }
 }

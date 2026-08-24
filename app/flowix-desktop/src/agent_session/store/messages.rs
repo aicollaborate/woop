@@ -83,6 +83,7 @@ impl ThreadManager {
             messages: messages_asc,
             oldest_sequence,
             has_more,
+            snapshot_sequence: None,
         })
     }
 

@@ -1,7 +1,7 @@
 # DeepSeek Harness upstream
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Pinned commit: `47f943859bef60e4160492346772ded9b24f765a`
+- Pinned commit: `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` (`dsh-v0.1.1-rc.2`)
 - Imported version: `0.1.0-rc.5`
 - License: MIT (see `.build/upstream/deepseek-harness/LICENSE`)
 
@@ -14,7 +14,7 @@ The Flowix host imports the upstream TypeScript SDK client and protocol
 directly. The runtime build reuses the upstream SDK runtime closure and
 executable build script.
 
-Flowix applies nine pinned downstream patches after checkout. Product-specific
+Flowix applies one consolidated rc.2 downstream patch after checkout. Product-specific
 runtime behavior belongs in profile bundles; patches are limited to packaging,
 generic SDK extension seams, and upstream capabilities not yet exposed by a
 public API:

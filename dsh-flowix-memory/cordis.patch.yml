@@ -11,5 +11,6 @@
       config:
         serverName: dsh-flowix-memory
         transport: stdio
-        command: !!js "process.env.FLOWIX_DSH_MCP_CLI ?? 'flowix-cli'"
-        args: ['mcp']
+        command: !!js process.execPath
+        args:
+          - !!js "process.env.DSH_PROFILE_DIR + '/node_modules/dsh-flowix-memory/launcher.mjs'"

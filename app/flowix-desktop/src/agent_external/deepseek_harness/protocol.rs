@@ -55,7 +55,14 @@ pub fn runtime_ensure_request(
     })
 }
 
-pub fn run_start_request(id: u64, thread_id: &str, run_id: &str, prompt: &str) -> Value {
+pub fn run_start_request(
+    id: u64,
+    thread_id: &str,
+    run_id: &str,
+    model_text: &str,
+    display_text: &str,
+    client_message_id: &str,
+) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -63,7 +70,11 @@ pub fn run_start_request(id: u64, thread_id: &str, run_id: &str, prompt: &str) -
         "params": {
             "threadId": thread_id,
             "runId": run_id,
-            "prompt": { "text": prompt }
+            "prompt": {
+                "modelText": model_text,
+                "displayText": display_text,
+                "clientMessageId": client_message_id
+            }
         }
     })
 }
@@ -83,6 +94,31 @@ pub fn session_usage_request(id: u64, session_id: &str) -> Value {
         "id": id,
         "method": "session.usage",
         "params": { "sessionId": session_id }
+    })
+}
+
+pub fn session_history_request(
+    id: u64,
+    session_id: &str,
+    before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
+    limit: i64,
+) -> Value {
+    let mut params = json!({
+        "sessionId": session_id,
+        "limit": limit.clamp(1, 50)
+    });
+    if let Some(before_sequence) = before_sequence.filter(|value| *value >= 0) {
+        params["beforeSequence"] = json!(before_sequence);
+    }
+    if let Some(snapshot_sequence) = snapshot_sequence.filter(|value| *value >= 0) {
+        params["snapshotSequence"] = json!(snapshot_sequence);
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session.history",
+        "params": params
     })
 }
 
@@ -485,5 +521,34 @@ mod tests {
             AdaptedEvent::Chunk(AgentChunk::Error { message, .. })
                 if message == "[TIMEOUT] Request timed out."
         ));
+    }
+
+    #[test]
+    fn builds_a_bounded_session_history_request() {
+        let request = session_history_request(9, "session-1", Some(42), Some(100), 500);
+        assert_eq!(
+            request.get("method").and_then(Value::as_str),
+            Some("session.history")
+        );
+        assert_eq!(
+            request.pointer("/params/sessionId").and_then(Value::as_str),
+            Some("session-1")
+        );
+        assert_eq!(
+            request
+                .pointer("/params/beforeSequence")
+                .and_then(Value::as_i64),
+            Some(42)
+        );
+        assert_eq!(
+            request
+                .pointer("/params/snapshotSequence")
+                .and_then(Value::as_i64),
+            Some(100)
+        );
+        assert_eq!(
+            request.pointer("/params/limit").and_then(Value::as_i64),
+            Some(50)
+        );
     }
 }

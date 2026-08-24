@@ -44,6 +44,7 @@ impl DshHostClient {
         command
             .env_clear()
             .envs(allowed_parent_environment())
+            .envs(crate::dsh::managed_child_environment(&host_root))
             .env("FLOWIX_DSH_SESSION_ROOT", session_root)
             .env("DSH_HOME", dsh_home)
             .env("FLOWIX_DSH_ROOT", &host_root)
@@ -138,6 +139,7 @@ impl DshHostClient {
             "model-discovery",
             "plugin-catalog",
             "runtime-profile",
+            "session-history",
         ] {
             if !capabilities
                 .iter()
@@ -375,8 +377,10 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
     // Production clients use only the independently downloaded, versioned DSH
     // runtime. The Flowix application intentionally does not ship a DSH host;
     // selecting DSH in the UI must be what causes this installation to exist.
-    if let Some(managed) = crate::dsh::managed_host_path() {
-        return command_for_host_path(managed);
+    if let Some(managed) = crate::dsh::managed_launch_spec() {
+        let mut command = Command::new(&managed.executable);
+        command.args(&managed.args);
+        return Ok((command, managed.root));
     }
     Err("DeepSeek Harness runtime is not installed".to_string())
 }

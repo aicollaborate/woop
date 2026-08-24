@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec, SessionUsageParams } from './v1.ts'
+import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec, SessionHistoryParams, SessionUsageParams } from './v1.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -78,7 +78,11 @@ export function requireRunStart(value: unknown): RunStartParams {
   return {
     threadId: requireString(params.threadId, 'threadId'),
     runId: requireString(params.runId, 'runId'),
-    prompt: { text: requireString(prompt.text, 'prompt.text', true) },
+    prompt: {
+      modelText: requireString(prompt.modelText, 'prompt.modelText', true),
+      displayText: requireString(prompt.displayText, 'prompt.displayText', true),
+      clientMessageId: requireString(prompt.clientMessageId, 'prompt.clientMessageId'),
+    },
   }
 }
 
@@ -135,6 +139,31 @@ export function requireThread(value: unknown): { threadId: string } {
 export function requireSessionUsage(value: unknown): SessionUsageParams {
   const params = requireRecord(value, 'session.usage params')
   return { sessionId: requireString(params.sessionId, 'sessionId') }
+}
+
+export function requireSessionHistory(value: unknown): SessionHistoryParams {
+  const params = requireRecord(value, 'session.history params')
+  const beforeSequence = params.beforeSequence
+  if (beforeSequence !== undefined && (!Number.isSafeInteger(beforeSequence) || Number(beforeSequence) < 0)) {
+    throw new ProtocolInputError(-32602, 'beforeSequence must be a non-negative integer')
+  }
+  const rawLimit = params.limit === undefined ? 50 : params.limit
+  if (!Number.isSafeInteger(rawLimit) || Number(rawLimit) <= 0) {
+    throw new ProtocolInputError(-32602, 'limit must be a positive integer')
+  }
+  return {
+    sessionId: requireString(params.sessionId, 'sessionId'),
+    ...(beforeSequence === undefined ? {} : { beforeSequence: Number(beforeSequence) }),
+    ...(params.snapshotSequence === undefined ? {} : { snapshotSequence: requireNonNegativeInteger(params.snapshotSequence, 'snapshotSequence') }),
+    limit: Math.min(Number(rawLimit), 50),
+  }
+}
+
+function requireNonNegativeInteger(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new ProtocolInputError(-32602, `${name} must be a non-negative integer`)
+  }
+  return Number(value)
 }
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {

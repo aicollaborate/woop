@@ -389,6 +389,7 @@ fn paginate_codex_messages(
                 messages: Vec::new(),
                 oldest_sequence: None,
                 has_more: false,
+                snapshot_sequence: None,
             };
         }
         let first_anchor_position = eligible_count.saturating_sub(limit);
@@ -402,6 +403,7 @@ fn paginate_codex_messages(
             messages: messages[start..upper_bound].to_vec(),
             oldest_sequence: Some((first_anchor + 1) as i64),
             has_more: first_anchor_position > 0,
+            snapshot_sequence: None,
         };
     }
 
@@ -418,6 +420,7 @@ fn paginate_codex_messages(
         messages: page_messages,
         oldest_sequence: (start < end).then_some((start + 1) as i64),
         has_more: start > 0,
+        snapshot_sequence: None,
     }
 }
 

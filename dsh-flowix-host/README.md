@@ -153,9 +153,21 @@ dsh plugin --profile flowix remove <package>
 
 Flowix Preferences delegates these operations to the same official CLI and
 shows the resulting profile inventory. The current upstream CLI forwards
-dependency operations to `pnpm`, so plugin management requires `pnpm` on PATH;
-running the already-installed runtime does not. UI-only DSH bundles may be
-installed in other profiles but are unsupported by Flowix's headless profile.
+dependency operations to `pnpm`. Managed Flowix releases prepend bundle-private
+`dsh` and `pnpm` shims to the environment of DSH child processes, and both
+shims execute through the bundled Node runtime. This does not modify the Flowix
+process environment, the user's PATH, Corepack, or another DSH profile. Source
+development launches may still use the developer toolchain on PATH. UI-only
+DSH bundles may be installed in other profiles but are unsupported by Flowix's
+headless profile.
+
+The private package manager is pinned by `private-pnpm/package.json` and a
+frozen lockfile containing the registry SHA-512 integrity. Bundle construction
+uses `--ignore-workspace`, so the private tool install cannot join or modify the
+Flowix repository workspace. Package verification places a fake system `pnpm`
+later on PATH and fails unless the bundle-private shim wins; it also loads the
+runtime's native `node-pty` binding with the bundled Node and checks platform,
+architecture, and Node ABI metadata.
 
 Development overrides:
 

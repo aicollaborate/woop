@@ -2,6 +2,7 @@ import type { DeepSeekHarness } from "@deepseek-ai/dsh-sdk-client";
 import type {
   FlowixDshBridgeCapabilities,
   FlowixDshBridgeEvent,
+  FlowixDshBridgeHistoryPage,
   FlowixDshBridgeStatus,
 } from "./protocol.ts";
 
@@ -65,11 +66,11 @@ export class FlowixDshBridgeClient {
 
   async prompt(
     sessionId: string,
-    text: string,
+    prompt: { modelText: string; displayText: string; clientMessageId: string },
   ): Promise<{ messageId: string }> {
     const value = await this.harness.client.request(
       "flowix.bridge.session.prompt",
-      { sessionId, text },
+      { sessionId, ...prompt },
     );
     if (!isRecord(value) || typeof value.messageId !== "string") {
       throw new Error(
@@ -85,6 +86,23 @@ export class FlowixDshBridgeClient {
       { sessionId },
     );
     return isRecord(value) && value.cancelled === true;
+  }
+
+  async history(
+    sessionId: string,
+  ): Promise<FlowixDshBridgeHistoryPage> {
+    const value = await this.harness.client.request(
+      "flowix.bridge.session.history",
+      { sessionId },
+    );
+    if (
+      !isRecord(value) || value.sessionId !== sessionId ||
+      !Array.isArray(value.events) || !value.events.every(isRecord) ||
+      !Number.isSafeInteger(value.snapshotSeq)
+    ) {
+      throw new Error("flowix bridge returned an invalid session.history result");
+    }
+    return value as unknown as FlowixDshBridgeHistoryPage;
   }
 
   async disposeSession(sessionId: string): Promise<boolean> {

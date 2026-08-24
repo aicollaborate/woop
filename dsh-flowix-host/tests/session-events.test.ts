@@ -4,6 +4,7 @@ import {
   adaptSessionEvent,
   endReasonFromNotifications,
   failureFromNotifications,
+  materializeSessionHistory,
 } from '../src/adapter/session-events.ts'
 
 test('maps text, reasoning and usage chunks', () => {
@@ -113,4 +114,28 @@ test('falls back to the assistant finish failure when turn end is unavailable', 
       },
     },
   }]), { message: 'bad gateway', code: 'SERVER' })
+})
+
+test('materializes persisted DSH events into stable display messages', () => {
+  const page = materializeSessionHistory([
+    { type: 'turn/start', seq: 1, time: 1000, data: { turn: 1 } },
+    { type: 'user/message', seq: 2, time: 2000, surfaceOp: 'append', data: { id: 'user-1', source: { kind: 'user', flowixDisplayText: 'hello', flowixClientMessageId: 'client-1' }, content: [{ type: 'text', text: 'hidden workspace context' }] } },
+    { type: 'assistant/chunk', seq: 3, time: 3000, data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: 'think' } } },
+    { type: 'tool/call', seq: 4, time: 4000, data: { turn: 1, step: 1, callId: 'call-1', name: 'read', arguments: '{"path":"README.md"}' } },
+    { type: 'assistant/message', seq: 5, time: 5000, surfaceOp: 'append', sourceEventSeqs: [3, 4], data: { turn: 1, step: 1, message: { id: 'assistant-1', source: { kind: 'model' }, content: [{ type: 'text', text: 'first' }] } } },
+    { type: 'tool/result', seq: 6, time: 6000, surfaceOp: 'append', data: { turn: 1, step: 1, message: { source: { kind: 'tool', toolName: 'read' }, content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] }] } } },
+    { type: 'assistant/message', seq: 7, time: 7000, surfaceOp: 'append', data: { turn: 1, step: 2, message: { id: 'assistant-2', source: { kind: 'model' }, content: [{ type: 'text', text: 'done' }] } } },
+    { type: 'turn/end', seq: 8, time: 8000, data: { turn: 1, reason: { kind: 'completed' } } },
+  ], undefined, 50, 8)
+  const messages = page.messages
+  assert.deepEqual(messages.map(message => ({ role: message.role, content: message.content, loading: message.isLoading })), [
+    { role: 'user', content: 'hello', loading: undefined },
+    { role: 'reasoning', content: 'think', loading: undefined },
+    { role: 'assistant', content: 'first', loading: undefined },
+    { role: 'tool', content: 'ok', loading: false },
+    { role: 'assistant', content: 'done', loading: undefined },
+  ])
+  assert.deepEqual(messages[3]?.toolInput, { path: 'README.md' })
+  assert.equal(messages[0]?.id, 'client-1')
+  assert.equal(page.snapshotSequence, 8)
 })

@@ -3,6 +3,7 @@ export const FLOWIX_DSH_BRIDGE_PROTOCOL_VERSION = 1 as const;
 export const FLOWIX_DSH_BRIDGE_CAPABILITIES = [
   "runtime-events",
   "session-control",
+  "session-history",
   "session-dispose",
   "run-cancel",
   "profile",
@@ -30,4 +31,10 @@ export interface FlowixDshBridgeStatus {
   model: string;
   cwd: string;
   sessions: Array<{ sessionId: string; status: "idle" | "running" }>;
+}
+
+export interface FlowixDshBridgeHistoryPage {
+  sessionId: string;
+  events: Array<Record<string, unknown>>;
+  snapshotSeq: number;
 }

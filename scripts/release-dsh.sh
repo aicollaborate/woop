@@ -25,16 +25,14 @@ if [[ "${DSH_PUBLISH:-0}" == "1" ]]; then
   export FLOWIX_DSH_REQUIRE_SIGNATURE=1
 fi
 if [[ -z "${FLOWIX_DSH_TARGETS:-}" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    FLOWIX_DSH_TARGETS="node24-macos-arm64,node24-macos-x64"
-  else
-    FLOWIX_DSH_TARGETS="node24-$(uname -s | tr '[:upper:]' '[:lower:]')-$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")"
-  fi
+  FLOWIX_DSH_TARGETS="$(node -p "'node24-' + (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform) + '-' + (process.arch === 'arm64' ? 'arm64' : 'x64')")"
 fi
 
-if [[ "$FLOWIX_DSH_TARGETS" == *node24-macos-* && "$(uname -s)" == "Darwin" ]]; then
-  npm run dsh:build:macos
-else
+if [[ "${FLOWIX_DSH_SKIP_BUILD:-0}" != "1" ]]; then
+  if [[ "$FLOWIX_DSH_TARGETS" == *,* ]]; then
+    echo "release-dsh.sh: one native Node architecture can build one managed runtime target; build each target under its matching Node and rerun with FLOWIX_DSH_SKIP_BUILD=1 to package prebuilt targets" >&2
+    exit 1
+  fi
   npm run dsh:build
 fi
 FLOWIX_DSH_R2_PREFIX="$PREFIX" npm run dsh:package -- --targets="$FLOWIX_DSH_TARGETS"

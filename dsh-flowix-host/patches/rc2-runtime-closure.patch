@@ -1,0 +1,35 @@
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index a7e39ab..e3068fb 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -8687,6 +8687,15 @@ importers:
+ 
+   python/sdk-runtime:
+     dependencies:
++      '@deepseek-ai/dsh-agent-presets':
++        specifier: workspace:^
++        version: link:../../packages/preset/agent-presets
++      '@deepseek-ai/dsh-file-reference':
++        specifier: workspace:^
++        version: link:../../packages/context/file-reference
++      '@deepseek-ai/dsh-host-apiproxy':
++        specifier: workspace:^
++        version: link:../../packages/host/apiproxy
+       '@deepseek-ai/cordis':
+         specifier: workspace:^
+         version: link:../../vendor/cordis
+diff --git a/python/sdk-runtime/package.json b/python/sdk-runtime/package.json
+index 3ccde1b..a12a200 100644
+--- a/python/sdk-runtime/package.json
++++ b/python/sdk-runtime/package.json
+@@ -6,6 +6,9 @@
+   "type": "module",
+   "dependencies": {
+     "@deepseek-ai/dsh-base": "workspace:^",
++    "@deepseek-ai/dsh-agent-presets": "workspace:^",
++    "@deepseek-ai/dsh-file-reference": "workspace:^",
++    "@deepseek-ai/dsh-host-apiproxy": "workspace:^",
+     "@deepseek-ai/dsh-api-remotes": "workspace:^",
+     "@deepseek-ai/dsh-api-gateway": "workspace:^",
+     "@deepseek-ai/dsh-client-connection": "workspace:^",
+

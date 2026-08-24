@@ -36,7 +36,7 @@ export interface RuntimeSpec {
 export interface RunStartParams {
   threadId: string
   runId: string
-  prompt: { text: string }
+  prompt: { modelText: string; displayText: string; clientMessageId: string }
 }
 
 export interface RuntimeDisposeParams {
@@ -45,6 +45,33 @@ export interface RuntimeDisposeParams {
 
 export interface SessionUsageParams {
   sessionId: string
+}
+
+export interface SessionHistoryParams {
+  sessionId: string
+  beforeSequence?: number
+  snapshotSequence?: number
+  limit: number
+}
+
+export interface HistoryMessage {
+  id: string
+  role: 'user' | 'assistant' | 'reasoning' | 'tool'
+  content: string
+  timestamp: string
+  isLoading?: boolean
+  isCompleted?: boolean
+  toolCallId?: string
+  toolName?: string
+  toolData?: string
+  toolInput?: unknown
+}
+
+export interface SessionHistoryPage {
+  messages: HistoryMessage[]
+  oldestSequence: number | null
+  hasMore: boolean
+  snapshotSequence: number
 }
 
 export interface ThreadParams {

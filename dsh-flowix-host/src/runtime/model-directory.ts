@@ -7,7 +7,7 @@
  * side stays the only source of truth.
  */
 
-import { catalogModels, catalogProvider, catalogProviderIds, catalogProviderTakesApiKey } from '../../vendor/deepseek-harness/packages/llm/llm-pi-ai/lib/types/catalog.js'
+import { catalogModels, catalogProvider, catalogProviderIds } from '../../vendor/deepseek-harness/packages/llm/llm-pi-ai/lib/types/catalog.js'
 import { discoverModels } from '../../vendor/deepseek-harness/packages/llm/llm-pi-ai/lib/types/discovery.js'
 import type { LlmDiscoveredModel, LlmModelDiscoveryRequest } from '@deepseek-ai/dsh-llm/types'
 
@@ -54,7 +54,7 @@ export function catalog(): CatalogProvider[] {
       ...(catalogProviderDefinition?.name === undefined ? {} : { displayName: catalogProviderDefinition.name }),
       ...(baseUrl === undefined ? {} : { baseUrl }),
       ...(apis.length === 1 ? { api: apis[0] } : {}),
-      takesApiKey: catalogProviderTakesApiKey(provider),
+      takesApiKey: catalogProviderDefinition?.auth.apiKey !== undefined,
       models,
     }
   })

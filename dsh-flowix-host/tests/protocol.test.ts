@@ -8,6 +8,7 @@ import {
   requireRunStart,
   requireRuntimeSpec,
   requireSessionUsage,
+  requireSessionHistory,
   requireThread,
   requireThreadRun,
 } from '../src/protocol/validation.ts'
@@ -52,6 +53,7 @@ test('method parameter validators consistently fail with -32602', () => {
     ['run.cancel', () => requireThreadRun({})],
     ['runtime.dispose', () => requireThread({})],
     ['session.usage', () => requireSessionUsage({})],
+    ['session.history', () => requireSessionHistory({})],
     ['models.discover', () => requireModelDiscover({ api: 'invalid' })],
     ['models.resolve', () => requireModelResolve({})],
   ] as const
@@ -62,6 +64,13 @@ test('method parameter validators consistently fail with -32602', () => {
       return true
     })
   }
+})
+
+test('session history pagination is bounded and cursor-safe', () => {
+  assert.deepEqual(requireSessionHistory({ sessionId: 's', beforeSequence: 12, snapshotSequence: 20, limit: 999 }), {
+    sessionId: 's', beforeSequence: 12, snapshotSequence: 20, limit: 50,
+  })
+  assert.throws(() => requireSessionHistory({ sessionId: 's', beforeSequence: -1, limit: 1 }), ProtocolInputError)
 })
 
 test('runtime spec is strict and fail closed', () => {

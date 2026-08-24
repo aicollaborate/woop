@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
 import { lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { basename, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import {
@@ -31,7 +30,11 @@ if (requested === undefined || !/^[0-9a-f]{40}$/i.test(requested)) {
 const upstreamRoot = resolve(repoRoot, '.build/upstream')
 const target = resolve(upstreamRoot, 'deepseek-harness')
 const compatibilityPath = resolve(hostRoot, 'vendor/deepseek-harness')
-const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'flowix-dsh-upstream-'))
+// Keep the temporary checkout on the workspace volume. Windows cannot rename
+// a directory atomically from the system temp drive (usually C:) into a
+// workspace located on another drive (for example D:), and reports EXDEV.
+await mkdir(upstreamRoot, { recursive: true })
+const temporaryRoot = await mkdtemp(resolve(upstreamRoot, '.flowix-dsh-upstream-'))
 const checkout = resolve(temporaryRoot, 'checkout')
 const backup = resolve(upstreamRoot, `.deepseek-harness.backup-${process.pid}`)
 

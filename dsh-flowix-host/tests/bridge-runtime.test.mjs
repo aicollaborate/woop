@@ -34,6 +34,14 @@ test('flowix-dsh-bridge emits native DSH events through its attached transport',
       listeners.set(name, callback)
       return () => listeners.delete(name)
     },
+    get(key) {
+      if (key !== 'sessionPersistence') return undefined
+      return { async inspect(sessionId) { return { events: [
+        { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+        { type: 'user/message', seq: 2, time: 2, data: { id: 'user-1', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } },
+        { type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+      ], meta: { id: sessionId } } } }
+    },
   }
   plugin(ctx)
   const notifications = []
@@ -43,7 +51,10 @@ test('flowix-dsh-bridge emits native DSH events through its attached transport',
     {
       async status() { return { provider: 'openai', model: 'test', cwd: '/tmp', sessions: [] } },
       async ensureSession(sessionId) { sessions.set(sessionId, true); return { sessionId } },
-      async prompt(sessionId) { return { messageId: `message-${sessionId}` } },
+      async prompt(sessionId, prompt) {
+        assert.deepEqual(prompt, { modelText: 'model hello', displayText: 'hello', clientMessageId: 'client-1' })
+        return { messageId: `message-${sessionId}` }
+      },
       async disposeSession(sessionId) { return sessions.delete(sessionId) },
       async cancel() { return true },
     },
@@ -54,6 +65,11 @@ test('flowix-dsh-bridge emits native DSH events through its attached transport',
   assert.deepEqual(notifications.slice(1).map(item => item.params.kind), ['session.event', 'agent.status'])
   assert.equal(ctx.flowixDshBridge.protocolVersion, 1)
   assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.session.ensure', { sessionId: 'session-2' })).sessionId, 'session-2')
-  assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.session.prompt', { sessionId: 'session-2', text: 'hello' })).messageId, 'message-session-2')
+  assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.session.prompt', {
+    sessionId: 'session-2', modelText: 'model hello', displayText: 'hello', clientMessageId: 'client-1',
+  })).messageId, 'message-session-2')
+  const history = await ctx.flowixDshBridge.handle('flowix.bridge.session.history', { sessionId: 'session-2' })
+  assert.equal(history.events.length, 3)
+  assert.equal(history.snapshotSeq, 3)
   assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.run.cancel', { sessionId: 'session-2' })).cancelled, true)
 })

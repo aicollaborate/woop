@@ -71,10 +71,14 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   // The Flowix composition is a normal DSH profile overlay. The profile owns
   // the bridge plugin; the base cordis config owns the DSH runtime roster.
   env.DSH_PROFILE = "flowix";
+  env.FLOWIX_DSH_SDK_SERVER = join(hostRoot(), "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js");
   // Flowix owns the harness home. Point the harness's own resolver (skills,
   // AGENTS.md, storage domains) at the single dsh root instead of ~/.dsh.
-  const dshHome = process.env.FLOWIX_DSH_HOME;
-  if (dshHome !== undefined && dshHome !== "") env.DSH_HOME = dshHome;
+  const dshHome = process.env.FLOWIX_DSH_HOME ?? process.env.DSH_HOME;
+  if (dshHome !== undefined && dshHome !== "") {
+    env.DSH_HOME = dshHome;
+    env.DSH_PROFILE_DIR = join(dshHome, "profiles", "flowix");
+  }
   // The vendored sandbox consumes this as a write-root list. Keep the JSON
   // boundary explicit so paths never become shell syntax or prompt text.
   env.DSH_WORKSPACE_ROOTS = JSON.stringify([
@@ -124,24 +128,23 @@ export function ensureFlowixProfile(): void {
     );
   }
   const profileDir = join(home, "profiles", "flowix");
-  const bridgeSourceDir = join(
-    sourceDir,
-    "node_modules",
-    "@flowix",
-    "dsh-flowix-bridge",
-  );
-  if (!existsSync(join(bridgeSourceDir, "package.json"))) {
-    throw new Error("Flowix DSH profile bundle is malformed: bridge package.json is missing");
-  }
-  copyProfilePackage(
-    bridgeSourceDir,
-    join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge"),
-  );
   const memorySourceDir = flowixMemorySourceDir();
   if (memorySourceDir === undefined) {
     throw new Error("Flowix DSH memory bundle is missing; reinstall the DSH package");
   }
   copyProfilePackage(memorySourceDir, join(profileDir, "node_modules", "dsh-flowix-memory"));
+  const bridgeSourceDir = join(sourceDir, "node_modules", "@flowix", "dsh-flowix-bridge");
+  if (!existsSync(join(bridgeSourceDir, "package.json"))) {
+    throw new Error("Flowix DSH bridge bundle is missing; reinstall the DSH package");
+  }
+  copyProfilePackage(bridgeSourceDir, join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge"));
+  const installedBridgePatch = join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge", "cordis.patch.yml");
+  const sdkServerEntry = pathToFileURL(join(hostRoot(), "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js")).href;
+  writeFileSync(
+    installedBridgePatch,
+    readFileSync(installedBridgePatch, "utf8").replace("__FLOWIX_DSH_SDK_SERVER__", JSON.stringify(sdkServerEntry)),
+    { encoding: "utf8", mode: 0o600 },
+  );
 
   const manifestPath = join(profileDir, "package.json");
   if (!existsSync(manifestPath)) {
@@ -216,6 +219,7 @@ function flowixProfileSourceDir(): string | undefined {
 
 function flowixMemorySourceDir(): string | undefined {
   return [
+    join(hostRoot(), "runtime", "node_modules", "dsh-flowix-memory"),
     join(hostRoot(), "dsh-flowix-memory"),
     join(hostRoot(), "..", "dsh-flowix-memory"),
     join(hostRoot(), "..", "..", "dsh-flowix-memory"),
@@ -244,6 +248,26 @@ export function runtimeLaunch(spec: RuntimeSpec): {
     return {
       command: configured,
       args: [],
+      env: runtimeEnvironment(spec),
+    };
+  }
+
+  // Managed Node Runtime Bundle: the host itself runs under the private Node
+  // executable and starts the deployed DSH JSON-RPC entry from the same
+  // versioned bundle. No system Node or SEA dispatcher is involved.
+  const bundledDshCliEntry = join(
+    hostRoot(),
+    "runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  );
+  if (existsSync(bundledDshCliEntry)) {
+    return {
+      command: process.execPath,
+      // Follow the official CLI/Web boot path: the CLI resolves the Flowix
+      // profile, composes dsh-base + profile/home patches, and then mounts the
+      // stdio JSON-RPC server contributed by the Flowix profile. Passing the
+      // empty profile root directly to packaged-bin would boot no plugins and
+      // make the child exit as soon as the client attempted initialization.
+      args: [bundledDshCliEntry, "--profile", "flowix"],
       env: runtimeEnvironment(spec),
     };
   }

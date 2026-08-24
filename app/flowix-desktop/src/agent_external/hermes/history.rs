@@ -496,6 +496,7 @@ fn page_from_messages(
         messages: page.into_iter().map(|(_, message)| message).collect(),
         oldest_sequence,
         has_more,
+        snapshot_sequence: None,
     }
 }
 

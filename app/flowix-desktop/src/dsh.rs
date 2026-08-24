@@ -6,10 +6,8 @@
 //! child process of Flowix; this keeps the existing stdio protocol and avoids
 //! exposing a local TCP service.
 
-use minisign_verify::{PublicKey, Signature};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -25,18 +23,30 @@ use crate::app::paths::get_app_data_path;
 
 mod activation;
 mod archive;
+mod cleanup;
+mod download;
+mod environment;
+mod health;
+mod manifest;
+mod publish;
+mod verify;
 
 use activation::activate_current;
 use archive::extract_archive;
+use cleanup::remove_runtime_root;
+use download::{normalized_sha256, partial_download_path, response_resumes};
+use environment::dsh_plugin_environment;
+pub use environment::managed_child_environment;
+use manifest::{
+    fetch_manifest, manifest_url, validate_manifest_version, version_is_at_least, DshArtifact,
+    DshManifest,
+};
+use publish::safe_bundle_path;
+use verify::verify_artifact;
 
 pub const DSH_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_PROFILE: &str = "flowix";
 const DSH_DIR_NAME: &str = "dsh";
-const MANIFEST_ENV: &str = "FLOWIX_DSH_MANIFEST_URL";
-// Keep the DSH update channel on the independent download origin. The Pages
-// site mirrors this file for compatibility, but DSH releases must not depend
-// on a Flowix website deploy being present.
-const DEFAULT_MANIFEST_URL: &str = "https://download.flowix-memo.com/dsh/latest.json";
 pub const DSH_DOWNLOAD_PROGRESS_EVENT: &str = "dsh-download-progress";
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -55,7 +65,6 @@ static DSH_DOWNLOAD_PROGRESS: OnceLock<Mutex<Option<DshDownloadProgress>>> = Onc
 /// Set FLOWIX_DSH_UPDATE_PUBLIC_KEY at compile time for production releases.
 /// Development manifests may omit `signature`, but production manifests should
 /// always include the full minisign signature text.
-const DSH_UPDATE_PUBLIC_KEY: Option<&str> = option_env!("FLOWIX_DSH_UPDATE_PUBLIC_KEY");
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,31 +120,6 @@ pub fn download_progress() -> Option<DshDownloadProgress> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DshManifest {
-    schema_version: u64,
-    product: String,
-    version: String,
-    protocol_version: u64,
-    #[serde(default)]
-    min_flowix_version: Option<String>,
-    platforms: HashMap<String, DshArtifact>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DshArtifact {
-    url: String,
-    sha256: String,
-    #[serde(default)]
-    size_bytes: Option<u64>,
-    #[serde(default)]
-    signature: Option<String>,
-    #[serde(default)]
-    build_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct DshRuntimeMetadata {
     schema_version: u64,
     product: String,
@@ -144,6 +128,26 @@ struct DshRuntimeMetadata {
     build_id: String,
     target: String,
     includes_ui: bool,
+    #[serde(default = "default_runtime_type")]
+    runtime_type: String,
+    #[serde(default)]
+    node_executable: Option<String>,
+    #[serde(default)]
+    entrypoint: Option<String>,
+    #[serde(default)]
+    cli_entrypoint: Option<String>,
+    #[serde(default)]
+    pnpm_entrypoint: Option<String>,
+    #[serde(default)]
+    node_version: Option<String>,
+    #[serde(default)]
+    node_abi: Option<String>,
+    #[serde(default)]
+    pnpm_version: Option<String>,
+}
+
+fn default_runtime_type() -> String {
+    "sea".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +161,22 @@ struct CurrentDsh {
     #[serde(default)]
     archive_size: Option<u64>,
     installed_at: String,
+    #[serde(default = "default_runtime_type")]
+    runtime_type: String,
+    #[serde(default)]
+    node_executable: Option<String>,
+    #[serde(default)]
+    entrypoint: Option<String>,
+    #[serde(default)]
+    cli_entrypoint: Option<String>,
+    #[serde(default)]
+    pnpm_entrypoint: Option<String>,
+    #[serde(default)]
+    node_version: Option<String>,
+    #[serde(default)]
+    node_abi: Option<String>,
+    #[serde(default)]
+    pnpm_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +186,15 @@ struct DshInstallation {
     build_id: Option<String>,
     sha256: Option<String>,
     archive_size: Option<u64>,
+    launch: ManagedDshLaunch,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedDshLaunch {
+    pub executable: PathBuf,
+    pub args: Vec<PathBuf>,
+    pub root: PathBuf,
+    pub cli_entrypoint: Option<PathBuf>,
 }
 
 pub fn status() -> DshStatus {
@@ -212,17 +241,22 @@ pub fn latest_archive_size() -> Option<u64> {
         .and_then(|artifact| artifact.size_bytes)
 }
 
-fn manifest_url() -> String {
-    std::env::var(MANIFEST_ENV).unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string())
-}
-
 /// Download and atomically install the current platform's DSH archive.
 /// Network and archive work is intentionally synchronous; the Tauri command
 /// runs it on a blocking worker so the UI thread remains responsive.
 pub fn install_runtime_with_progress(app: Option<AppHandle>) -> Result<DshStatus, String> {
+    install_runtime_with_progress_before_publish(app, || Ok(()))
+}
+
+/// Prepare and verify an update while the current host remains available, then
+/// invoke `before_publish` immediately before replacing the installed runtime.
+pub fn install_runtime_with_progress_before_publish(
+    app: Option<AppHandle>,
+    mut before_publish: impl FnMut() -> Result<(), String>,
+) -> Result<DshStatus, String> {
     let _operation_guard = try_acquire_operation_lock()?;
     DSH_UPDATE_CANCELLED.store(false, Ordering::Release);
-    let result = install_runtime_inner(app.as_ref());
+    let result = install_runtime_inner(app.as_ref(), &mut before_publish);
     if let Err(error) = &result {
         let phase = if is_cancelled_error(error) {
             "cancelled"
@@ -270,7 +304,7 @@ pub fn run_profile_plugin(
     package: Option<&str>,
 ) -> Result<String, String> {
     let _operation_guard = try_acquire_operation_lock()?;
-    let host = managed_host_path().ok_or("DeepSeek Harness runtime is not installed")?;
+    let launch = managed_launch_spec().ok_or("DeepSeek Harness runtime is not installed")?;
     let action = action.trim();
     if !matches!(action, "add" | "remove" | "update") {
         return Err("unsupported DSH plugin action".to_string());
@@ -289,17 +323,18 @@ pub fn run_profile_plugin(
         return Err("invalid DSH plugin package spec".to_string());
     }
 
-    let mut command = Command::new(&host);
+    let mut command = Command::new(&launch.executable);
+    if let Some(cli) = launch.cli_entrypoint.as_ref() {
+        command.arg(cli);
+    } else {
+        command.env("DSH_EMBEDDED_CLI_MODE", "1");
+    }
     command
         .env_clear()
         .envs(dsh_plugin_environment())
-        .env("DSH_EMBEDDED_CLI_MODE", "1")
+        .envs(managed_child_environment(&launch.root))
         .env("DSH_HOME", dsh_home)
-        .env(
-            "FLOWIX_DSH_ROOT",
-            host.parent()
-                .ok_or("managed DSH host has no parent directory")?,
-        )
+        .env("FLOWIX_DSH_ROOT", &launch.root)
         .args(["plugin", "--profile", DEFAULT_PROFILE, action]);
     if let Some(package) = package {
         command.arg(package);
@@ -326,63 +361,14 @@ fn is_required_flowix_profile_bundle(package: &str) -> bool {
     )
 }
 
-fn dsh_plugin_environment() -> HashMap<String, String> {
-    const KEYS: &[&str] = &[
-        "PATH",
-        "Path",
-        "PATHEXT",
-        "SystemRoot",
-        "WINDIR",
-        "COMSPEC",
-        "HOME",
-        "USERPROFILE",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "LANG",
-        "LC_ALL",
-        "NODE_USE_ENV_PROXY",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "ALL_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-        "no_proxy",
-    ];
-    KEYS.iter()
-        .filter_map(|key| {
-            std::env::var(key)
-                .ok()
-                .map(|value| ((*key).to_string(), value))
-        })
-        .collect()
-}
-
-/// Delete the runtime tree. Failures keep the `installed` state consistent:
-/// `current.json` is removed first, so a partially removed tree reports
-/// `installed: false` and a later install fully replaces it.
-fn remove_runtime_root(root: &Path) -> Result<(), String> {
-    if !root.exists() {
-        return Ok(());
-    }
-    if !root.is_dir() {
-        return Err(format!("DSH root {} is not a directory", root.display()));
-    }
-    let current_path = root.join("current.json");
-    if current_path.exists() {
-        fs::remove_file(&current_path).map_err(|e| format!("deactivate DSH installation: {e}"))?;
-    }
-    fs::remove_dir_all(root).map_err(|e| format!("remove DSH runtime directory: {e}"))?;
-    Ok(())
-}
-
-fn install_runtime_inner(app: Option<&AppHandle>) -> Result<DshStatus, String> {
+fn install_runtime_inner(
+    app: Option<&AppHandle>,
+    before_publish: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<DshStatus, String> {
     emit_progress(app, "checking", 0, None, false);
     let manifest = fetch_manifest()?;
     check_cancelled()?;
-    if manifest.schema_version != 1 {
+    if !matches!(manifest.schema_version, 1 | 2) {
         return Err(format!(
             "unsupported DSH manifest schema {}",
             manifest.schema_version
@@ -442,6 +428,13 @@ fn install_runtime_inner(app: Option<&AppHandle>) -> Result<DshStatus, String> {
 
     let result = extract_archive(&download.bytes, &staging)
         .and_then(|()| check_cancelled())
+        .and_then(|()| {
+            let metadata = validate_runtime_metadata(&staging, &manifest, target, artifact)?;
+            let launch = launch_from_metadata(&staging, &metadata)?;
+            health_check(&launch)
+        })
+        .and_then(|()| check_cancelled())
+        .and_then(|()| before_publish())
         .and_then(|()| publish_install(&root, &staging, &manifest, target, artifact));
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
@@ -466,28 +459,11 @@ fn current_artifact_matches(current: &DshInstallation, artifact: &DshArtifact) -
 /// Used by the Rust host resolver. The path is versioned and never points at
 /// a partially downloaded archive.
 pub fn managed_host_path() -> Option<PathBuf> {
-    current_installation().map(|installation| installation.host_path)
+    current_installation().map(|installation| installation.launch.executable)
 }
 
-fn fetch_manifest() -> Result<DshManifest, String> {
-    let url = manifest_url();
-    let response = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("create DSH update client: {e}"))?
-        .get(&url)
-        .header("Accept", "application/json")
-        .send()
-        .map_err(|e| format!("download DSH manifest: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "download DSH manifest from {url}: HTTP {}",
-            response.status()
-        ));
-    }
-    response
-        .json::<DshManifest>()
-        .map_err(|e| format!("parse DSH manifest: {e}"))
+pub fn managed_launch_spec() -> Option<ManagedDshLaunch> {
+    current_installation().map(|installation| installation.launch)
 }
 
 struct DownloadedArtifact {
@@ -501,14 +477,8 @@ fn download_artifact(
     app: Option<&AppHandle>,
     root: &Path,
 ) -> Result<DownloadedArtifact, String> {
-    let normalized_hash = expected_sha256.trim().to_ascii_lowercase();
-    if normalized_hash.len() != 64 || !normalized_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err("DSH manifest contains an invalid SHA-256 digest".to_string());
-    }
-    let partial_path = root
-        .join("downloads")
-        .join(format!("{normalized_hash}.part"));
+    let normalized_hash = normalized_sha256(expected_sha256)?;
+    let partial_path = partial_download_path(root, &normalized_hash);
     let mut existing = fs::metadata(&partial_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
@@ -528,7 +498,7 @@ fn download_artifact(
         existing = 0;
         response = request_artifact(&client, url, 0)?;
     }
-    let resumed = existing > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let resumed = response_resumes(existing, response.status());
     if existing > 0 && !resumed {
         existing = 0;
         response = request_artifact(&client, url, 0)?;
@@ -637,64 +607,6 @@ fn emit_progress(
     }
 }
 
-fn version_is_at_least(current: &str, required: &str) -> Result<bool, String> {
-    let current = semver::Version::parse(current.trim())
-        .map_err(|e| format!("invalid DSH version {current}: {e}"))?;
-    let required = semver::Version::parse(required.trim())
-        .map_err(|e| format!("invalid required DSH version {required}: {e}"))?;
-    Ok(current >= required)
-}
-
-fn validate_manifest_version(version: &str) -> Result<(), String> {
-    if version.trim() != version {
-        return Err("DSH manifest version must not contain surrounding whitespace".to_string());
-    }
-    semver::Version::parse(version)
-        .map(|_| ())
-        .map_err(|e| format!("invalid DSH manifest version {version}: {e}"))
-}
-
-fn verify_artifact(bytes: &[u8], artifact: &DshArtifact) -> Result<(), String> {
-    let digest = format!("{:x}", Sha256::digest(bytes));
-    if !digest.eq_ignore_ascii_case(artifact.sha256.trim()) {
-        return Err(format!(
-            "DSH package checksum mismatch: expected {}, got {}",
-            artifact.sha256, digest
-        ));
-    }
-    if let Some(signature_text) = artifact.signature.as_deref() {
-        match DSH_UPDATE_PUBLIC_KEY {
-            Some(public_key) => {
-                let key = PublicKey::decode(public_key)
-                    .map_err(|e| format!("parse DSH update public key: {e}"))?;
-                let signature = Signature::decode(signature_text)
-                    .map_err(|e| format!("parse DSH package signature: {e}"))?;
-                key.verify(bytes, &signature, false)
-                    .map_err(|e| format!("verify DSH package signature: {e}"))?;
-            }
-            None if cfg!(debug_assertions) => {
-                // Dev builds can consume the published signed manifest while
-                // the signing public key is supplied separately for release
-                // builds. SHA-256 is still checked above; production builds
-                // continue to reject signed packages without the public key.
-                tracing::warn!(
-                    "DSH package signature was not cryptographically verified: no public key in dev build"
-                );
-            }
-            None => {
-                return Err(
-                    "DSH package is signed but this Flowix build has no DSH public key".to_string(),
-                );
-            }
-        }
-    } else if DSH_UPDATE_PUBLIC_KEY.is_some() {
-        return Err(
-            "DSH package is unsigned but this is a signature-enforcing Flowix build".to_string(),
-        );
-    }
-    Ok(())
-}
-
 fn publish_install(
     root: &Path,
     staging: &Path,
@@ -702,23 +614,16 @@ fn publish_install(
     target: &str,
     artifact: &DshArtifact,
 ) -> Result<(), String> {
-    validate_runtime_metadata(staging, manifest, target, artifact)?;
-    let host = staging.join(if cfg!(windows) {
-        "dsh-host.exe"
-    } else {
-        "dsh-host"
-    });
-    if !host.is_file() {
-        return Err("DSH archive does not contain dsh-host".to_string());
-    }
+    let metadata = validate_runtime_metadata(staging, manifest, target, artifact)?;
+    let staged_launch = launch_from_metadata(staging, &metadata)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&host)
+        let mut permissions = fs::metadata(&staged_launch.executable)
             .map_err(|e| format!("inspect dsh-host: {e}"))?
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&host, permissions)
+        fs::set_permissions(&staged_launch.executable, permissions)
             .map_err(|e| format!("make dsh-host executable: {e}"))?;
     }
     let version_root = root.join("versions").join(&manifest.version);
@@ -742,11 +647,8 @@ fn publish_install(
         }
         return Err(format!("publish DSH version: {error}"));
     }
-    if let Err(error) = health_check(&version_root.join(if cfg!(windows) {
-        "dsh-host.exe"
-    } else {
-        "dsh-host"
-    })) {
+    let installed_launch = launch_from_metadata(&version_root, &metadata)?;
+    if let Err(error) = health_check(&installed_launch) {
         let _ = fs::remove_dir_all(&version_root);
         if let Some(previous) = backup.as_ref() {
             let _ = fs::rename(previous, &version_root);
@@ -760,6 +662,14 @@ fn publish_install(
         sha256: Some(artifact.sha256.trim().to_ascii_lowercase()),
         archive_size: artifact.size_bytes,
         installed_at: chrono::Utc::now().to_rfc3339(),
+        runtime_type: metadata.runtime_type,
+        node_executable: metadata.node_executable,
+        entrypoint: metadata.entrypoint,
+        cli_entrypoint: metadata.cli_entrypoint,
+        pnpm_entrypoint: metadata.pnpm_entrypoint,
+        node_version: metadata.node_version,
+        node_abi: metadata.node_abi,
+        pnpm_version: metadata.pnpm_version,
     };
     let current_path = root.join("current.json");
     let temp_path = root.join(format!(".current-{}.json", uuid::Uuid::new_v4()));
@@ -797,14 +707,14 @@ fn validate_runtime_metadata(
     manifest: &DshManifest,
     target: &str,
     artifact: &DshArtifact,
-) -> Result<(), String> {
+) -> Result<DshRuntimeMetadata, String> {
     let path = staging.join("dsh-runtime.json");
     let metadata: DshRuntimeMetadata = serde_json::from_str(
         &fs::read_to_string(&path)
             .map_err(|e| format!("read DSH archive metadata {}: {e}", path.display()))?,
     )
     .map_err(|e| format!("parse DSH archive metadata: {e}"))?;
-    if metadata.schema_version != 1 || metadata.product != "flowix-dsh" {
+    if !matches!(metadata.schema_version, 1 | 2) || metadata.product != "flowix-dsh" {
         return Err("DSH archive metadata schema or product mismatch".to_string());
     }
     if metadata.version != manifest.version {
@@ -833,6 +743,27 @@ fn validate_runtime_metadata(
     if metadata.includes_ui {
         return Err("DSH archive unexpectedly includes UI assets".to_string());
     }
+    if metadata.runtime_type == "node-bundle" {
+        if metadata
+            .node_version
+            .as_deref()
+            .is_some_and(|value| !value.starts_with('v') || value.len() < 4)
+        {
+            return Err("DSH archive has an invalid nodeVersion".to_string());
+        }
+        if metadata.node_abi.as_deref().is_some_and(|value| {
+            value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit())
+        }) {
+            return Err("DSH archive has an invalid nodeAbi".to_string());
+        }
+        if metadata
+            .pnpm_version
+            .as_deref()
+            .is_some_and(|value| value != "11.7.0")
+        {
+            return Err("DSH archive uses an unsupported private pnpm version".to_string());
+        }
+    }
     let manifest_build_id = artifact
         .build_id
         .as_deref()
@@ -845,7 +776,69 @@ fn validate_runtime_metadata(
             manifest_build_id, metadata.build_id
         ));
     }
-    Ok(())
+    launch_from_metadata(staging, &metadata)?;
+    Ok(metadata)
+}
+
+fn launch_from_metadata(
+    root: &Path,
+    metadata: &DshRuntimeMetadata,
+) -> Result<ManagedDshLaunch, String> {
+    if metadata.runtime_type == "node-bundle" {
+        let node = safe_bundle_path(
+            root,
+            metadata
+                .node_executable
+                .as_deref()
+                .ok_or("DSH node bundle is missing nodeExecutable")?,
+            "nodeExecutable",
+        )?;
+        let entry = safe_bundle_path(
+            root,
+            metadata
+                .entrypoint
+                .as_deref()
+                .ok_or("DSH node bundle is missing entrypoint")?,
+            "entrypoint",
+        )?;
+        if !node.is_file() || !entry.is_file() {
+            return Err("DSH node bundle executable or entrypoint is missing".to_string());
+        }
+        let cli_entrypoint = metadata
+            .cli_entrypoint
+            .as_deref()
+            .map(|value| safe_bundle_path(root, value, "cliEntrypoint"))
+            .transpose()?;
+        if cli_entrypoint.as_ref().is_some_and(|path| !path.is_file()) {
+            return Err("DSH node bundle CLI entrypoint is missing".to_string());
+        }
+        if let Some(value) = metadata.pnpm_entrypoint.as_deref() {
+            let pnpm = safe_bundle_path(root, value, "pnpmEntrypoint")?;
+            if !pnpm.is_file() {
+                return Err("DSH node bundle private pnpm entrypoint is missing".to_string());
+            }
+        }
+        return Ok(ManagedDshLaunch {
+            executable: node,
+            args: vec![entry],
+            root: root.to_path_buf(),
+            cli_entrypoint,
+        });
+    }
+    let host = root.join(if cfg!(windows) {
+        "dsh-host.exe"
+    } else {
+        "dsh-host"
+    });
+    if !host.is_file() {
+        return Err("DSH archive does not contain dsh-host".to_string());
+    }
+    Ok(ManagedDshLaunch {
+        executable: host,
+        args: Vec::new(),
+        root: root.to_path_buf(),
+        cli_entrypoint: None,
+    })
 }
 
 fn active_version_root(root: &Path) -> Option<PathBuf> {
@@ -884,10 +877,8 @@ fn cleanup_old_versions(
     }
 }
 
-fn health_check(host: &Path) -> Result<(), String> {
-    let root = host
-        .parent()
-        .ok_or_else(|| "DSH host has no parent directory".to_string())?;
+fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
+    let root = &launch.root;
     let session_root = root.join(format!(".health-check-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&session_root)
         .map_err(|e| format!("create DSH health-check directory: {e}"))?;
@@ -899,7 +890,10 @@ fn health_check(host: &Path) -> Result<(), String> {
         .map_err(|e| format!("write DSH health-check settings: {e}"))?;
     fs::write(&credentials_path, b"DSH_API_KEY: health-check\n")
         .map_err(|e| format!("write DSH health-check credentials: {e}"))?;
-    let mut child = Command::new(host)
+    let mut command = Command::new(&launch.executable);
+    command.args(&launch.args);
+    let mut child = command
+        .envs(managed_child_environment(root))
         .env("FLOWIX_DSH_SESSION_ROOT", &session_root)
         .env("DSH_HOME", &dsh_home)
         .env("DSH_SETTINGS_PATH", &settings_path)
@@ -937,22 +931,11 @@ fn health_check(host: &Path) -> Result<(), String> {
             "host.initialize",
             serde_json::json!({ "protocolVersion": DSH_PROTOCOL_VERSION }),
         )?;
-        let result = initialize.get("result");
-        let protocol_ok = result
-            .and_then(|value| value.get("protocolVersion"))
-            .and_then(serde_json::Value::as_u64)
-            == Some(DSH_PROTOCOL_VERSION);
-        let capabilities_ok = result
-            .and_then(|value| value.get("capabilities"))
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|capabilities| {
-                REQUIRED_HOST_CAPABILITIES.iter().all(|required| {
-                    capabilities
-                        .iter()
-                        .any(|capability| capability.as_str() == Some(required))
-                })
-            });
-        if initialize.get("error").is_some() || !protocol_ok || !capabilities_ok {
+        if !health::initialize_is_healthy(
+            &initialize,
+            DSH_PROTOCOL_VERSION,
+            REQUIRED_HOST_CAPABILITIES,
+        ) {
             return Err("DSH host.initialize health check failed".to_string());
         }
         let thread_id = "flowix-install-health-check";
@@ -1068,20 +1051,37 @@ fn current_installation() -> Option<DshInstallation> {
     if current.target != target_key() {
         return None;
     }
-    let host = root
-        .join("versions")
-        .join(&current.version)
-        .join(if cfg!(windows) {
-            "dsh-host.exe"
-        } else {
-            "dsh-host"
-        });
-    host.is_file().then_some(DshInstallation {
+    let version_root = root.join("versions").join(&current.version);
+    let metadata = DshRuntimeMetadata {
+        schema_version: 1,
+        product: "flowix-dsh".to_string(),
+        version: current.version.clone(),
+        protocol_version: DSH_PROTOCOL_VERSION,
+        build_id: current.build_id.clone().unwrap_or_default(),
+        target: runtime_target_key().to_string(),
+        includes_ui: false,
+        runtime_type: current.runtime_type.clone(),
+        node_executable: current.node_executable.clone(),
+        entrypoint: current.entrypoint.clone(),
+        cli_entrypoint: current.cli_entrypoint.clone(),
+        pnpm_entrypoint: current.pnpm_entrypoint.clone(),
+        node_version: current.node_version.clone(),
+        node_abi: current.node_abi.clone(),
+        pnpm_version: current.pnpm_version.clone(),
+    };
+    let launch = launch_from_metadata(&version_root, &metadata).ok()?;
+    let host = launch
+        .args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| launch.executable.clone());
+    Some(DshInstallation {
         version: current.version,
         host_path: host,
         build_id: current.build_id,
         sha256: current.sha256,
         archive_size: current.archive_size,
+        launch,
     })
 }
 
@@ -1225,6 +1225,12 @@ mod tests {
             build_id: Some("same-build".to_string()),
             sha256: None,
             archive_size: None,
+            launch: super::ManagedDshLaunch {
+                executable: std::path::PathBuf::from("dsh-host"),
+                args: Vec::new(),
+                root: std::path::PathBuf::from("."),
+                cli_entrypoint: None,
+            },
         };
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),

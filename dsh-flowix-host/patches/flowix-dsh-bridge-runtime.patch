@@ -2,14 +2,18 @@ diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.
 index ef3a562..bce9ab2 100644
 --- a/packages/sdk/server/src/server.ts
 +++ b/packages/sdk/server/src/server.ts
-@@ -26,6 +26,29 @@ import type {
+@@ -26,6 +26,33 @@ import type {
    SubagentStartedNotification,
  } from '@deepseek-ai/dsh-sdk-protocol'
  
 +interface HarnessSdkJsonRpcControl {
 +  status(): Promise<unknown>
 +  ensureSession(sessionId: string): Promise<{ sessionId: string }>
-+  prompt(sessionId: string, text: string): Promise<unknown>
++  prompt(sessionId: string, prompt: {
++    modelText: string
++    displayText: string
++    clientMessageId: string
++  }): Promise<unknown>
 +  disposeSession(sessionId: string): Promise<boolean>
 +  cancel(sessionId: string): Promise<boolean>
 +}
@@ -59,7 +63,26 @@ index ef3a562..bce9ab2 100644
      this.disposers.push(ctx.on('session/event', (session, event) => {
        const payload: SessionEventNotification = { sessionId: String(session.id), event }
        this.transport.notify('session.event', payload)
-@@ -168,6 +204,9 @@ export class HarnessSdkJsonRpcServer {
+@@ -140,6 +176,17 @@ export class HarnessSdkJsonRpcServer {
+       throw new Error(`session agent was disposed outside the server: ${params.sessionId}`)
+     }
+-    const message = createUserMessage({ content: params.contentBlocks, source: { kind: 'user' } })
++    const flowix = params as SessionPromptParams & {
++      flowixDisplayText?: string
++      flowixClientMessageId?: string
++    }
++    const message = createUserMessage({
++      content: params.contentBlocks,
++      source: {
++        kind: 'user',
++        ...(flowix.flowixDisplayText === undefined ? {} : { flowixDisplayText: flowix.flowixDisplayText }),
++        ...(flowix.flowixClientMessageId === undefined ? {} : { flowixClientMessageId: flowix.flowixClientMessageId }),
++      },
++    })
+     rec.handle.agent.followup(message)
+     return { messageId: message.id }
+   }
+@@ -168,6 +214,9 @@ export class HarnessSdkJsonRpcServer {
          failures.push(error)
        }
      }
@@ -69,7 +92,7 @@ index ef3a562..bce9ab2 100644
      const teardownResults = await Promise.allSettled([
        ...records.map(rec => Promise.resolve().then(() => rec.handle.dispose())),
        ...(this.llmFiber === undefined ? [] : [Promise.resolve().then(() => this.llmFiber?.dispose())]),
-@@ -197,10 +236,54 @@ export class HarnessSdkJsonRpcServer {
+@@ -197,10 +236,59 @@ export class HarnessSdkJsonRpcServer {
        case 'shutdown':
          return this.shutdown()
        default:
@@ -100,8 +123,13 @@ index ef3a562..bce9ab2 100644
 +        const record = await this.getOrCreateSession(sessionId)
 +        return { sessionId: String(record.handle.agent.session.id) }
 +      },
-+      prompt: async (sessionId, text) => {
-+        return this.prompt({ sessionId, contentBlocks: [{ type: 'text', text }] })
++      prompt: async (sessionId, prompt) => {
++        return this.prompt({
++          sessionId,
++          contentBlocks: [{ type: 'text', text: prompt.modelText }],
++          flowixDisplayText: prompt.displayText,
++          flowixClientMessageId: prompt.clientMessageId,
++        } as SessionPromptParams)
 +      },
 +      disposeSession: async (sessionId) => {
 +        const record = this.sessions.get(sessionId)

@@ -49,3 +49,33 @@ test('Flowix profile keeps the headless non-interactive runtime boundary', () =>
   assert.match(patch, /defaultPreset: !!js process\.env\.DSH_PERMISSION_MODE/)
   assert.equal((patch.match(/approval: never/g) ?? []).length, 3)
 })
+
+test('managed bundles keep Node and plugin package management private', () => {
+  const builder = read('scripts/build-runtime-bundle.mjs')
+  const closure = read('scripts/verify-runtime-closure.mjs')
+  const launcher = read('../app/flowix-desktop/src/dsh.rs')
+  const commands = read('../app/flowix-desktop/src/commands/dsh.rs')
+  const manager = read('../app/flowix-desktop/src/agent_external/deepseek_harness/manager.rs')
+  const packageGate = read('../scripts/verify-dsh-package.mjs')
+  const privateLock = read('private-pnpm/pnpm-lock.yaml')
+
+  assert.match(builder, /private-pnpm/)
+  assert.match(builder, /pnpm\.mjs/)
+  assert.match(builder, /await writePrivateShims\(bundle\)/)
+  assert.match(builder, /verify-runtime-closure\.mjs/)
+  assert.match(closure, /symbolic link is not allowed/)
+  assert.match(closure, /development-machine absolute path is not allowed/)
+  assert.match(launcher, /managed_child_environment\(&launch\.root\)/)
+  assert.match(launcher, /fn health_check[\s\S]*?\.envs\(managed_child_environment\(root\)\)/)
+  for (const field of ['pnpm_entrypoint', 'node_version', 'node_abi', 'pnpm_version']) {
+    assert.match(launcher, new RegExp(`${field}: current\\.${field}\\.clone\\(\\)`))
+  }
+  assert.match(launcher, /health_check\(&launch\)[\s\S]*?before_publish\(\)/)
+  assert.match(commands, /ensure_hosts_replaceable\(\)[\s\S]*?spawn_blocking/)
+  assert.match(commands, /install_runtime_with_progress_before_publish/)
+  assert.match(manager, /pub async fn ensure_hosts_replaceable/)
+  assert.doesNotMatch(launcher, /set_var\(/)
+  assert.match(packageGate, /SYSTEM-PNPM-MUST-NOT-RUN/)
+  assert.match(packageGate, /private native addon\/ABI check failed/)
+  assert.match(privateLock, /sha512-GcyFLBIMcSV2DyRD7mvgyltA\+fUFmN4a/)
+})

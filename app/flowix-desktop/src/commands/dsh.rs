@@ -33,10 +33,14 @@ pub async fn dsh_install_runtime(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<crate::dsh::DshStatus, String> {
-    prepare_runtime_replacement(&state).await?;
+    ensure_runtime_replaceable(&state).await?;
+    let manager = state.deepseek_harness.clone();
     let install_app = app.clone();
     let status = tauri::async_runtime::spawn_blocking(move || {
-        crate::dsh::install_runtime_with_progress(Some(install_app))
+        crate::dsh::install_runtime_with_progress_before_publish(Some(install_app), move || {
+            tauri::async_runtime::block_on(manager.invalidate_hosts())
+                .map_err(|error| format!("stop DeepSeek Harness before install: {error}"))
+        })
     })
     .await
     .map_err(|error| format!("DSH installer task failed: {error}"))??;
@@ -49,10 +53,14 @@ pub async fn dsh_update(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<crate::dsh::DshStatus, String> {
-    prepare_runtime_replacement(&state).await?;
+    ensure_runtime_replaceable(&state).await?;
+    let manager = state.deepseek_harness.clone();
     let update_app = app.clone();
     let status = tauri::async_runtime::spawn_blocking(move || {
-        crate::dsh::install_runtime_with_progress(Some(update_app))
+        crate::dsh::install_runtime_with_progress_before_publish(Some(update_app), move || {
+            tauri::async_runtime::block_on(manager.invalidate_hosts())
+                .map_err(|error| format!("stop DeepSeek Harness before update: {error}"))
+        })
     })
     .await
     .map_err(|error| format!("DSH updater task failed: {error}"))??;
@@ -67,10 +75,14 @@ pub async fn dsh_ensure_runtime(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<crate::dsh::DshStatus, String> {
-    prepare_runtime_replacement(&state).await?;
+    ensure_runtime_replaceable(&state).await?;
+    let manager = state.deepseek_harness.clone();
     let ensure_app = app.clone();
     let status = tauri::async_runtime::spawn_blocking(move || {
-        crate::dsh::install_runtime_with_progress(Some(ensure_app))
+        crate::dsh::install_runtime_with_progress_before_publish(Some(ensure_app), move || {
+            tauri::async_runtime::block_on(manager.invalidate_hosts())
+                .map_err(|error| format!("stop DeepSeek Harness before install/update: {error}"))
+        })
     })
     .await
     .map_err(|error| format!("DSH ensure task failed: {error}"))??;
@@ -78,13 +90,13 @@ pub async fn dsh_ensure_runtime(
     Ok(status)
 }
 
-async fn prepare_runtime_replacement(state: &State<'_, AppState>) -> Result<(), String> {
+async fn ensure_runtime_replaceable(state: &State<'_, AppState>) -> Result<(), String> {
     if crate::dsh::status().installed {
         state
             .deepseek_harness
-            .invalidate_hosts()
+            .ensure_hosts_replaceable()
             .await
-            .map_err(|error| format!("stop DeepSeek Harness before install/update: {error}"))?;
+            .map_err(|error| format!("prepare DeepSeek Harness install/update: {error}"))?;
     }
     Ok(())
 }

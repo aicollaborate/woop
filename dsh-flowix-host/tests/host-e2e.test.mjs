@@ -90,7 +90,7 @@ test('host drives the official SDK client across a runtime process', async () =>
     assert.deepEqual(bridge.result.capabilities, [
       'runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile',
     ])
-    const runId = request('run.start', { threadId: 'thread-1', runId: 'run-1', prompt: { text: 'hello' } })
+    const runId = request('run.start', { threadId: 'thread-1', runId: 'run-1', prompt: { modelText: 'hello', displayText: 'hello', clientMessageId: 'run-1' } })
     await waitFor(frame => frame.id === runId)
     await waitFor(frame => frame.method === 'run.event' && frame.params.event.type === 'run.completed')
 
@@ -112,7 +112,7 @@ test('host drives the official SDK client across a runtime process', async () =>
     // checked a nonexistent SDK property (`isRuntimeRunning`), closed this
     // slot after the first turn, and recreated the same persisted session id.
     const secondRunId = request('run.start', {
-      threadId: 'thread-1', runId: 'run-2', prompt: { text: 'follow-up' },
+      threadId: 'thread-1', runId: 'run-2', prompt: { modelText: 'follow-up', displayText: 'follow-up', clientMessageId: 'run-2' },
     })
     await waitFor(frame => frame.id === secondRunId)
     await waitFor(frame => frame.method === 'run.event'

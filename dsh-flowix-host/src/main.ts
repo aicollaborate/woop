@@ -14,6 +14,7 @@ import {
   requireModelDiscover,
   requireModelResolve,
   requireSessionUsage,
+  requireSessionHistory,
 } from './protocol/validation.ts'
 import { SessionPool } from './runtime/session-pool.ts'
 import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
@@ -76,13 +77,14 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
         protocolVersion: HOST_PROTOCOL_VERSION,
         buildId: SIDECAR_BUILD_ID,
         host: { name: 'flowix-dsh-host', version: '1.0.0' },
-        harness: { commit: '47f943859bef60e4160492346772ded9b24f765a', version: '0.1.0-rc.5' },
+        harness: { commit: 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e', version: '0.1.1-rc.2' },
         capabilities: [
           'streaming',
           'reasoning',
           'tools',
           'usage',
           'session-resume',
+          'session-history',
           'cancel-by-restart',
           'model-catalog',
           'model-discovery',
@@ -96,6 +98,10 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
     case 'runtime.status': return { runtimes: pool.status() }
     case 'runtime.dispose': return { disposed: await pool.dispose(requireThread(request.params).threadId) }
     case 'session.usage': return (await pool.usage(requireSessionUsage(request.params).sessionId)) ?? null
+    case 'session.history': {
+      const params = requireSessionHistory(request.params)
+      return await pool.history(params.sessionId, params.beforeSequence, params.limit, params.snapshotSequence)
+    }
     case 'runtime.bridge.capabilities': {
       const params = requireThread(request.params)
       return await pool.bridgeCapabilities(params.threadId)

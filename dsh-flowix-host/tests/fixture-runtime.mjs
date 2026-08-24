@@ -15,7 +15,7 @@ input.on('line', line => {
   if (request.method === 'flowix.bridge.capabilities') {
     send({ jsonrpc: '2.0', id: request.id, result: {
       protocolVersion: 1,
-      capabilities: ['runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile'],
+      capabilities: ['runtime-events', 'session-control', 'session-history', 'session-dispose', 'run-cancel', 'profile'],
     } })
     return
   }
@@ -27,6 +27,12 @@ input.on('line', line => {
   }
   if (request.method === 'flowix.bridge.session.ensure') {
     send({ jsonrpc: '2.0', id: request.id, result: { sessionId: request.params.sessionId } })
+    return
+  }
+  if (request.method === 'flowix.bridge.session.history') {
+    send({ jsonrpc: '2.0', id: request.id, result: {
+      sessionId: request.params.sessionId, events: [], snapshotSeq: 0,
+    } })
     return
   }
   if (request.method === 'flowix.bridge.session.dispose') {

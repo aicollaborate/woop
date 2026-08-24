@@ -207,6 +207,7 @@ pub async fn codex_thread_get(
                     messages: Vec::new(),
                     oldest_sequence: None,
                     has_more: false,
+                    snapshot_sequence: None,
                 });
             let mut combined = page.messages;
             combined.extend(messages);
@@ -354,6 +355,7 @@ pub async fn hermes_thread_get(
                     messages: Vec::new(),
                     oldest_sequence: None,
                     has_more: false,
+                    snapshot_sequence: None,
                 });
             let mut combined = page.messages;
             combined.extend(messages);
@@ -415,33 +417,18 @@ pub async fn deepseek_harness_thread_get(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
-    let mut page = state
-        .thread_manager
-        .get_external_event_messages_page("deepseek-harness", &thread_id, None, 50)
-        .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or(ThreadMessagesPage {
-            messages: Vec::new(),
-            oldest_sequence: None,
-            has_more: false,
-        });
+    let mut page = deepseek_harness_history_page(&state, &thread_id, None, None, 50).await?;
     let mut messages = page.messages;
+    let snapshot_sequence = page.snapshot_sequence;
     while page.has_more {
-        page = state
-            .thread_manager
-            .get_external_event_messages_page(
-                "deepseek-harness",
-                &thread_id,
-                page.oldest_sequence,
-                50,
-            )
-            .await
-            .map_err(|error| error.to_string())?
-            .unwrap_or(ThreadMessagesPage {
-                messages: Vec::new(),
-                oldest_sequence: None,
-                has_more: false,
-            });
+        page = deepseek_harness_history_page(
+            &state,
+            &thread_id,
+            page.oldest_sequence,
+            snapshot_sequence,
+            50,
+        )
+        .await?;
         let mut combined = page.messages;
         combined.extend(messages);
         messages = combined;
@@ -456,16 +443,20 @@ pub async fn deepseek_harness_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    Ok(state
-        .thread_manager
-        .get_external_event_messages_page("deepseek-harness", &thread_id, before_sequence, limit)
+    deepseek_harness_history_page(&state, &thread_id, before_sequence, None, limit).await
+}
+
+async fn deepseek_harness_history_page(
+    state: &AppState,
+    thread_id: &str,
+    before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
+    limit: i64,
+) -> Result<ThreadMessagesPage, String> {
+    state
+        .deepseek_harness
+        .session_history_page(thread_id, before_sequence, snapshot_sequence, limit)
         .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or(ThreadMessagesPage {
-            messages: Vec::new(),
-            oldest_sequence: None,
-            has_more: false,
-        }))
 }
 
 #[tauri::command]

@@ -205,14 +205,7 @@ CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和
 - 私钥密码条目: service `com.flowix.minisign`，account `flowix-shared`
 - key ID: `EA276A3620424B50`
 
-这是生产 Tauri Updater 与 DSH 的唯一签名来源。`~/.tauri/keys/` 下的
-`flowix-*` 文件不属于本项目生产流程；构建前会用 Tauri 实际签名探针校验，
-私钥推导出的 Key ID 必须与 `tauri.conf.production.json` 的公钥一致。
-Key ID 是 minisign 公钥推导出的标识，不是 macOS Keychain 条目的字段。
-
-macOS 的 `tauri:build:production` 和 `release:updater` 会自动读取上述 Keychain 条目；
-CI 或非 macOS 环境通过 `TAURI_SIGNING_PRIVATE_KEY(_PATH)` 显式提供同一把私钥。
-如果需要手动设置，本地签名前动态读取即可；下面的命令不会把私钥打印到终端或写入文件：
+本地签名前动态读取即可；下面的命令不会把私钥打印到终端或写入文件：
 
 ```bash
 export TAURI_SIGNING_PRIVATE_KEY="$(security find-generic-password -s com.flowix.minisign.private-key -a flowix-shared -w)"

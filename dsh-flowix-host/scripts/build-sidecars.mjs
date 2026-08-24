@@ -31,7 +31,6 @@ const requested = process.argv.filter(argument => argument.startsWith('--targets
 const targets = (requested ?? hostTarget()).split(',').filter(Boolean)
 for (const target of targets) validateTarget(target)
 
-await run('node', [resolve(root, 'scripts/build-host.mjs')], root)
 await mkdir(outdir, { recursive: true })
 await mkdir(tauriBins, { recursive: true })
 
@@ -39,6 +38,9 @@ const tooling = resolve(root, 'scripts/tooling')
 const vendorBuildEnv = { ...process.env, NODE_ENV: 'development' }
 await ensureVendorDevDependencies(vendorBuildEnv)
 await run(corepackCommand(), ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor, vendorBuildEnv)
+// A clean checkout has no workspace lib/ output. Build upstream first because
+// the Flowix launcher imports generated llm-pi-ai catalog/discovery modules.
+await run('node', [resolve(root, 'scripts/build-host.mjs')], root)
 
 // FLOWIX: a single pkg invocation with --launcher produces a dual-mode SEA.
 // The dispatcher in scripts/build-exe-for-python-sdk.ts loads the CJS launcher
@@ -75,10 +77,15 @@ for (const target of targets) {
   if (!existsSync(upstream)) throw new Error(`upstream product is missing: ${upstream}`)
 
   await stripProduct(upstream, target)
-  const hostOut = resolve(outdir, `dsh-host-${platform}-${arch}`)
+  const hostOut = resolve(outdir, `dsh-host-${platform}-${arch}${productExtension(target)}`)
   await copyFile(upstream, hostOut)
   await chmod(hostOut, 0o755)
   await copyFile(hostOut, resolve(tauriBins, tauriName('dsh-host', target)))
+  const ripgrep = `${upstream}-rg`
+  if (!existsSync(ripgrep)) throw new Error(`upstream ripgrep sidecar is missing: ${ripgrep}`)
+  await copyFile(ripgrep, `${hostOut}-rg`)
+  await chmod(`${hostOut}-rg`, 0o755)
+  await copyFile(`${hostOut}-rg`, `${resolve(tauriBins, tauriName('dsh-host', target))}-rg`)
   const hostHelper = `${upstream}-spawn-helper`
   if (existsSync(hostHelper)) {
     // Keep the helper in the DSH release staging area. It is part of the
@@ -109,7 +116,7 @@ for (const target of targets) {
 }
 
 for (const target of targets) {
-  await run('bash', [resolve(repo, 'scripts/sign-cli.sh'), `--host=${tauriTriple(target)}`], repo)
+  await run(process.execPath, [resolve(repo, 'scripts/sign-sidecars.mjs'), `--host=${tauriTriple(target)}`], repo)
 }
 
 process.stdout.write(`Flowix DSH sidecars staged in ${tauriBins}\n`)

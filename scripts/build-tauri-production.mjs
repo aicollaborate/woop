@@ -6,8 +6,6 @@ const platformArgIndex = process.argv.indexOf("--platform");
 const targetPlatform =
   platformArgIndex >= 0 ? process.argv[platformArgIndex + 1] : process.platform;
 
-loadMacKeychainSigningKey();
-
 // macOS 发版构建 ARM (aarch64) 与 Intel (x86_64) 两个独立 DMG。
 // target 的 bundle 落到 $CARGO_TARGET_DIR/<triple>/release/bundle/；sidecar
 // 也按 target 分别准备，避免把错误架构混入正式包。
@@ -38,8 +36,6 @@ if (!process.env.FLOWIX_DSH_UPDATE_PUBLIC_KEY?.trim()) {
   );
 }
 
-run("node", ["scripts/verify-tauri-signing-key.mjs"]);
-
 if (targetPlatform === "darwin") {
   run("npm", ["run", "cli:build:macos"]);
 } else {
@@ -66,37 +62,4 @@ for (const target of tauriTargets) {
     buildArgs.push("--target", target);
   }
   run("tauri", buildArgs);
-}
-
-function loadMacKeychainSigningKey() {
-  if (
-    process.platform !== "darwin" ||
-    process.env.FLOWIX_ALLOW_UNSIGNED === "1" ||
-    process.env.TAURI_SIGNING_PRIVATE_KEY?.trim() ||
-    process.env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()
-  ) {
-    return;
-  }
-
-  process.env.TAURI_SIGNING_PRIVATE_KEY = readKeychainItem(
-    "com.flowix.minisign.private-key",
-  );
-  process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = readKeychainItem(
-    "com.flowix.minisign",
-  );
-  console.log("[signing] loaded Tauri updater key from macOS Keychain");
-}
-
-function readKeychainItem(service) {
-  const result = spawnSync(
-    "security",
-    ["find-generic-password", "-s", service, "-a", "flowix-shared", "-w"],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `Unable to read macOS Keychain item ${service}; configure the signing environment explicitly.`,
-    );
-  }
-  return result.stdout.replace(/\r?\n$/u, "");
 }

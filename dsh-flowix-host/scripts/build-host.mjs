@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync as writeFile } from 'node:fs'
 import { copyFile, mkdir } from 'node:fs/promises'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { delimiter, resolve } from 'node:path'
 import { build } from 'esbuild'
 
 await import('./ensure-upstream.mjs')
@@ -15,7 +15,7 @@ const tooling = resolve(root, 'scripts/tooling')
 const buildEnv = {
   ...process.env,
   CI: 'true',
-  PATH: `${tooling}:${process.env.PATH ?? ''}`,
+  PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}`,
 }
 await mkdir(outdir, { recursive: true })
 
@@ -134,7 +134,7 @@ process.stdout.write('built ' + resolve(outdir, 'dsh-host.cjs') + '\n')
 // `tauri dev` rebuilds stay fast. Rebuild manually after editing vendored
 // harness sources: `npm --prefix dsh-flowix-host run build:runtime`.
 const runtimeBinary = resolve(outdir, process.platform === 'win32' ? 'dsh-runtime.exe' : 'dsh-runtime')
-if (!existsSync(runtimeBinary)) {
+if (process.env.FLOWIX_DSH_SKIP_RUNTIME !== '1' && !existsSync(runtimeBinary)) {
   process.stdout.write('packaged runtime missing; building via corepack pnpm exec tsx ...' + '\n')
   await new Promise((done, fail) => {
     const corepackCmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'

@@ -11,6 +11,7 @@ const stageRoot = resolve(repo, '.build/dsh-package')
 const releaseRoot = resolve(repo, '.build/releases/dsh')
 const dshBuildRoot = resolve(repo, '.build/flowix-dsh-host')
 const dshPackage = JSON.parse(await readFile(join(hostRoot, 'package.json'), 'utf8'))
+const privatePnpmVersion = '11.7.0'
 const requested = process.argv.find(value => value.startsWith('--targets='))?.slice('--targets='.length)
 const targets = (requested ? requested.split(',') : [hostTarget()]).filter(Boolean)
 const version = process.env.FLOWIX_DSH_VERSION?.trim() || dshPackage.version
@@ -25,40 +26,67 @@ const platforms = {}
 
 for (const target of targets) {
   const { platform, arch, triple } = targetInfo(target)
+  const bundleSource = resolve(repo, `.build/dsh-runtime-bundle/${target}`)
   const sourceHost = resolve(repo, `.build/flowix-dsh-host/dsh-host-${platform}-${arch}` + (platform === 'windows' ? '.exe' : ''))
-  if (!existsSync(sourceHost)) {
+  const isNodeBundle = existsSync(resolve(bundleSource, 'host/dsh-host.cjs'))
+  const bundleBuild = isNodeBundle
+    ? JSON.parse(await readFile(resolve(bundleSource, 'runtime-build.json'), 'utf8'))
+    : null
+  if (bundleBuild && bundleBuild.target !== target) {
+    throw new Error(`runtime build identity mismatch: requested ${target}, bundle contains ${bundleBuild.target}`)
+  }
+  if (!isNodeBundle && process.env.FLOWIX_DSH_ALLOW_LEGACY_SEA !== '1') {
+    throw new Error(`refusing to publish legacy SEA target ${target}; build the managed Node bundle or explicitly set FLOWIX_DSH_ALLOW_LEGACY_SEA=1`)
+  }
+  if (!isNodeBundle && !existsSync(sourceHost)) {
     throw new Error(`missing DSH host for ${target}: ${sourceHost}; run npm run dsh:build first`)
   }
 
   const packageDir = resolve(stageRoot, target)
   await mkdir(packageDir, { recursive: true })
+  if (isNodeBundle) {
+    await copyTree(bundleSource, packageDir)
+  } else {
   await copyFile(sourceHost, join(packageDir, platform === 'windows' ? 'dsh-host.exe' : 'dsh-host'))
+  const sourceRipgrep = `${sourceHost}-rg`
+  if (!existsSync(sourceRipgrep)) throw new Error(`missing DSH ripgrep sidecar for ${target}: ${sourceRipgrep}`)
+  await copyFile(sourceRipgrep, join(packageDir, platform === 'windows' ? 'dsh-host.exe-rg' : 'dsh-host-rg'))
   const sourceHelper = resolve(dshBuildRoot, `dsh-host-spawn-helper-${platform}-${arch}${platform === 'windows' ? '.exe' : ''}`)
   if (existsSync(sourceHelper)) {
     await copyFile(sourceHelper, join(packageDir, platform === 'windows' ? 'dsh-host-spawn-helper.exe' : 'dsh-host-spawn-helper'))
   }
-  await copyTree(resolve(repo, 'dsh-flowix-memory'), join(packageDir, 'dsh-flowix-memory'))
-  // The host/desktop bridge is a normal DSH profile bundle. Keep it visible
-  // in the standalone archive so DSH's profile loader resolves it from the
-  // profile directory instead of relying on host-generated plugin source.
-  await copyTree(resolve(hostRoot, 'profile/flowix'), join(packageDir, 'profile/flowix'))
+  }
+  if (!isNodeBundle) {
+    await copyTree(resolve(repo, 'dsh-flowix-memory'), join(packageDir, 'dsh-flowix-memory'))
+    await copyTree(resolve(hostRoot, 'profile/flowix'), join(packageDir, 'profile/flowix'))
+  }
   const buildIdPath = resolve(repo, '.build/flowix-dsh-host/dsh-build-id.txt')
   const buildId = existsSync(buildIdPath) ? (await readFile(buildIdPath, 'utf8')).trim() : null
   await writeFile(join(packageDir, 'dsh-runtime.json'), `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: isNodeBundle ? 2 : 1,
     product: 'flowix-dsh',
     version,
     protocolVersion: 1,
     buildId,
     target,
     includesUi: false,
+    runtimeType: isNodeBundle ? 'node-bundle' : 'sea',
+    ...(isNodeBundle ? {
+      nodeExecutable: platform === 'windows' ? 'node/node.exe' : 'node/node',
+      entrypoint: 'host/dsh-host.cjs',
+      cliEntrypoint: 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
+      pnpmEntrypoint: 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs',
+      nodeVersion: bundleBuild.nodeVersion,
+      nodeAbi: bundleBuild.nodeAbi,
+      pnpmVersion: bundleBuild.pnpmVersion ?? privatePnpmVersion,
+    } : {}),
   }, null, 2)}\n`)
 
   const extension = '.tar.gz'
   const filename = `Flowix-DSH_${version}_${target}${extension}`
   const archive = resolve(releaseRoot, filename)
   run('tar', ['-czf', archive, '-C', packageDir, '.'])
-  run(process.execPath, [resolve(repo, 'scripts/verify-dsh-package.mjs'), archive])
+  run(process.execPath, [resolve(repo, 'scripts/verify-dsh-package.mjs'), archive, packageDir])
   const bytes = await readFile(archive)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const row = {
@@ -86,7 +114,7 @@ for (const target of targets) {
 }
 
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   product: 'flowix-dsh',
   version,
   protocolVersion: 1,
@@ -116,7 +144,7 @@ function manifestPlatform(target) {
 }
 
 function hostTarget() {
-  const platform = process.platform === 'darwin' ? 'macos' : process.platform
+  const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
   return `node24-${platform}-${arch}`
 }

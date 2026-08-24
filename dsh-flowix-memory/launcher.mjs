@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { accessSync, constants } from 'node:fs'
+import { accessSync, constants, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { platform } from 'node:process'
@@ -62,6 +62,7 @@ function resolveCommand(command) {
 
 function isExecutable(path) {
   try {
+    if (!statSync(path).isFile()) return false
     accessSync(path, constants.X_OK)
     return true
   } catch {
@@ -70,10 +71,14 @@ function isExecutable(path) {
 }
 
 function proxyToCli(command) {
-  const child = spawn(command, ['mcp'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: process.env,
-  })
+  let child
+  try {
+    child = spawn(command, ['mcp'], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
+  } catch (error) {
+    process.stderr.write(`[${SERVER_NAME}] failed to start Flowix CLI: ${String(error)}\n`)
+    runUnavailableServer()
+    return
+  }
   process.stdin.pipe(child.stdin)
   child.stdout.pipe(process.stdout)
   child.stderr.pipe(process.stderr)

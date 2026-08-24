@@ -1,6 +1,8 @@
-import type { HostEvent, RunEndReason } from '../protocol/v1.ts'
+import type { HistoryMessage, HostEvent, RunEndReason } from '../protocol/v1.ts'
 import type { FlowixDshBridgeEvent } from '../bridge/protocol.ts'
 import { isRecord } from '../protocol/validation.ts'
+import { deriveEventMessage, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 export interface RunFailure {
   message: string
@@ -72,6 +74,153 @@ export function adaptSessionEvent(
     default:
       return []
   }
+}
+
+/**
+ * Build the human transcript from DSH's append-origin durable surface.
+ * Replacement surface nodes are model-context rewrites, while append-origin
+ * nodes are explicitly the messages the user already saw. Raw text chunks are
+ * never treated as assistant history; only reasoning chunks referenced by a
+ * finalized assistant message are projected alongside that message.
+ */
+export function materializeSessionHistory(
+  events: Array<Record<string, unknown>>,
+  beforeTurnSeq: number | undefined,
+  turnLimit: number,
+  snapshotSeq: number,
+): { messages: HistoryMessage[]; oldestSequence: number | null; hasMore: boolean; snapshotSequence: number } {
+  const bounded = events.filter(event => Number.isSafeInteger(event.seq) && Number(event.seq) <= snapshotSeq)
+  const allTurnStarts = bounded
+    .filter(event => event.type === 'turn/start')
+    .map(event => Number(event.seq))
+  const completedTurnStarts = allTurnStarts.filter((start, index) => {
+    const nextStart = allTurnStarts[index + 1] ?? Number.MAX_SAFE_INTEGER
+    return bounded.some(event => event.type === 'turn/end'
+      && Number(event.seq) > start && Number(event.seq) < nextStart)
+  })
+  const turnStarts = completedTurnStarts.filter(start => beforeTurnSeq === undefined || start < beforeTurnSeq)
+  const selectedStarts = turnStarts.slice(-Math.max(1, Math.min(turnLimit, 50)))
+  const oldestSequence = selectedStarts[0] ?? null
+  if (oldestSequence === null) {
+    return { messages: [], oldestSequence: null, hasMore: false, snapshotSequence: snapshotSeq }
+  }
+  const newestSelected = selectedStarts.at(-1)!
+  const followingTurn = allTurnStarts.find(start => start > newestSelected)
+  const upperBound = Math.min(beforeTurnSeq ?? Number.MAX_SAFE_INTEGER, followingTurn ?? Number.MAX_SAFE_INTEGER)
+  const selected = bounded.filter(event => Number(event.seq) >= oldestSequence && Number(event.seq) < upperBound)
+  const messages: HistoryMessage[] = []
+  const tools = new Map<string, number>()
+  const bySequence = new Map(bounded.map(event => [Number(event.seq), event]))
+  const appendSurface = selected.filter(event => isAppendSurfaceEvent(event as SessionEvent))
+  const appendTool = (source: Record<string, unknown> | undefined): void => {
+    if (source?.type !== 'tool/call' || !isRecord(source.data)) return
+    const id = stringValue(source.data.callId)
+    if (id === undefined || tools.has(id)) return
+    const name = stringValue(source.data.name) ?? 'tool'
+    tools.set(id, messages.length)
+    messages.push({ id: `dsh-history:tool:${id}`, role: 'tool', content: '', timestamp: eventTimestamp(source),
+      isLoading: true, isCompleted: false, toolCallId: id, toolName: name,
+      toolInput: parseJsonOrString(source.data.arguments) })
+  }
+
+  for (const event of selected) {
+    const data = isRecord(event.data) ? event.data : undefined
+    switch (event.type) {
+      case 'user/message': {
+        if (!isAppendSurfaceEvent(event as SessionEvent) || data === undefined
+          || !isRecord(data.source) || data.source.kind !== 'user') break
+        const projected = deriveEventMessage(event as SessionEvent)
+        if (projected === null) break
+        const source = isRecord(projected.source) ? projected.source : {}
+        const content = stringValue(source.flowixDisplayText) ?? messageText(projected as unknown as Record<string, unknown>)
+        if (content === '') break
+        messages.push({ id: stringValue(source.flowixClientMessageId) ?? String(projected.id), role: 'user', content,
+          timestamp: eventTimestamp(event), isCompleted: true })
+        break
+      }
+      case 'assistant/message': {
+        if (!isAppendSurfaceEvent(event as SessionEvent)) break
+        const reasoning = sourceSequences(event)
+          .map(sequence => bySequence.get(sequence))
+          .flatMap(source => reasoningText(source))
+          .join('')
+        if (reasoning !== '') {
+          messages.push({ id: `dsh-history:reasoning:${event.seq}`, role: 'reasoning', content: reasoning,
+            timestamp: eventTimestamp(event), isCompleted: true })
+        }
+        const projected = deriveEventMessage(event as SessionEvent)
+        if (projected === null) break
+        const content = messageText(projected as unknown as Record<string, unknown>)
+        if (content !== '') {
+          messages.push({ id: String(projected.id), role: 'assistant', content,
+            timestamp: eventTimestamp(event), isCompleted: data?.interrupted !== true })
+        }
+        for (const sequence of sourceSequences(event)) appendTool(bySequence.get(sequence))
+        break
+      }
+      case 'tool/result': {
+        if (!isAppendSurfaceEvent(event as SessionEvent) || data === undefined
+          || !isRecord(data.message) || !Array.isArray(data.message.content)) break
+        const block = data.message.content.find(item => isRecord(item) && item.type === 'tool-result')
+        if (!isRecord(block)) break
+        const id = stringValue(block.toolCallId)
+        if (id === undefined) break
+        for (const sequence of sourceSequences(event)) appendTool(bySequence.get(sequence))
+        const result = contentResult(block.content)
+        const content = typeof result === 'string' ? result : JSON.stringify(result)
+        const index = tools.get(id)
+        if (index !== undefined) {
+          const message = messages[index]!
+          message.content = content
+          message.toolData = content
+          message.isLoading = false
+          message.isCompleted = true
+        }
+        break
+      }
+      case 'turn/end': {
+        if (data === undefined || !isRecord(data.reason) || data.reason.kind !== 'error') break
+        const failure = normalizeFailure(data.reason.error, 'DeepSeek Harness turn failed')
+        messages.push({ id: `dsh-history:error:${event.seq}`, role: 'assistant',
+          content: failure.code === undefined ? failure.message : `[${failure.code}] ${failure.message}`,
+          timestamp: eventTimestamp(event), isCompleted: true })
+        break
+      }
+    }
+  }
+  return {
+    messages,
+    oldestSequence,
+    hasMore: turnStarts.length > selectedStarts.length,
+    snapshotSequence: snapshotSeq,
+  }
+}
+
+function sourceSequences(event: Record<string, unknown>): number[] {
+  return Array.isArray(event.sourceEventSeqs)
+    ? event.sourceEventSeqs.filter((value): value is number => Number.isSafeInteger(value))
+    : []
+}
+
+function reasoningText(event: Record<string, unknown> | undefined): string[] {
+  if (event?.type !== 'assistant/chunk' || !isRecord(event.data) || !isRecord(event.data.chunk)) return []
+  const chunk = event.data.chunk
+  return chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' ? [chunk.text] : []
+}
+
+function eventTimestamp(event: Record<string, unknown>): string {
+  const time = typeof event.time === 'number' && Number.isFinite(event.time) ? event.time : Date.now()
+  return new Date(time).toISOString()
+}
+
+function messageText(message: Record<string, unknown>): string {
+  if (typeof message.text === 'string') return message.text
+  if (!Array.isArray(message.content)) return ''
+  return message.content.flatMap(block => {
+    if (!isRecord(block)) return []
+    if ((block.type === 'text' || block.type === 'input-text' || block.type === 'output-text') && typeof block.text === 'string') return [block.text]
+    return []
+  }).join('')
 }
 
 export function endReasonFromNotifications(notifications: unknown[]): RunEndReason {

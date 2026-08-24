@@ -171,4 +171,7 @@ pub struct ThreadMessagesPage {
     pub oldest_sequence: Option<i64>,
     /// �?��还有更早的历�? false 时前�?��止顶�?prefetch�?
     pub has_more: bool,
+    /// Pins all pages in one history traversal to the same DSH event snapshot.
+    #[serde(default)]
+    pub snapshot_sequence: Option<i64>,
 }
