@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmod, cp, lstat, mkdir, readFile, readlink, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, readFile, readlink, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
@@ -32,10 +32,12 @@ const builtMarkers = [
 if (!builtMarkers.every(existsSync) || process.env.FLOWIX_DSH_REBUILD_LIBS === '1') {
   await run(corepack(), ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor)
 }
-await run(process.execPath, [resolve(hostRoot, 'scripts/build-host.mjs')], hostRoot, {
-  ...process.env,
-  FLOWIX_DSH_SKIP_RUNTIME: '1',
-})
+if (process.env.FLOWIX_DSH_SKIP_HOST_BUILD !== '1') {
+  await run(process.execPath, [resolve(hostRoot, 'scripts/build-host.mjs')], hostRoot, {
+    ...process.env,
+    FLOWIX_DSH_SKIP_RUNTIME: '1',
+  })
+}
 await rm(bundle, { recursive: true, force: true })
 await mkdir(bundle, { recursive: true })
 await run(corepack(), [
@@ -45,6 +47,11 @@ await run(corepack(), [
 ], vendor)
 await materializeLinks(join(runtime, 'node_modules'))
 await materializeWorkspaceRoots(runtime, vendor)
+// `pnpm deploy` preserves package `files` content, including the upstream
+// runtime source snapshot under runtime/src. It contains a second runtime
+// binary and a second node_modules tree and is not used by the managed host.
+// Remove it from the distributable bundle to avoid shipping build residue.
+await rm(join(runtime, 'src'), { recursive: true, force: true })
 // The headless DSH host does not ship the browser UI. The upstream CLI keeps
 // UI packages in its workspace dependency graph, so prune those packages
 // after deploy; the closure verifier explicitly treats them as optional for
@@ -64,7 +71,9 @@ await copyTree(resolve(hostRoot, 'profile/flowix'), join(bundle, 'profile/flowix
 await mkdir(join(bundle, 'host'), { recursive: true })
 await cp(resolve(repo, '.build/flowix-dsh-host/dsh-host.cjs'), join(bundle, 'host/dsh-host.cjs'))
 await mkdir(join(bundle, 'node'), { recursive: true })
-await cp(process.execPath, join(bundle, 'node', process.platform === 'win32' ? 'node.exe' : 'node'))
+const nodeExecutable = join(bundle, 'node', process.platform === 'win32' ? 'node.exe' : 'node')
+await cp(process.execPath, nodeExecutable)
+if (process.platform === 'darwin') await optimizeMacosBundle(bundle, target, nodeExecutable)
 await installPrivatePnpm(bundle)
 await writePrivateShims(bundle)
 await writeFile(join(bundle, 'runtime-build.json'), `${JSON.stringify({
@@ -82,6 +91,31 @@ function hostTarget() {
   return `node24-${platform}-${process.arch}`
 }
 function corepack() { return process.platform === 'win32' ? 'corepack.cmd' : 'corepack' }
+async function optimizeMacosBundle(bundleRoot, runtimeTarget, nodeExecutable) {
+  const nodeArch = runtimeTarget.endsWith('-arm64') ? 'arm64' : 'x86_64'
+  const temporaryNode = `${nodeExecutable}.thin`
+  await run('lipo', ['-thin', nodeArch, nodeExecutable, '-output', temporaryNode], bundleRoot)
+  await rename(temporaryNode, nodeExecutable)
+
+  const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
+  const entitlements = resolve(hostRoot, 'node-entitlements.plist')
+  const signArgs = ['--force', '--options', 'runtime', '--entitlements', entitlements]
+  if (identity !== '-') signArgs.push('--timestamp')
+  signArgs.push('--sign', identity, nodeExecutable)
+  await run('codesign', signArgs, bundleRoot)
+
+  const nodePty = join(bundleRoot, 'runtime/node_modules/node-pty')
+  const keepPrebuild = runtimeTarget.endsWith('-arm64') ? 'darwin-arm64' : 'darwin-x64'
+  const prebuilds = join(nodePty, 'prebuilds')
+  if (existsSync(prebuilds)) {
+    for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== keepPrebuild) {
+        await rm(join(prebuilds, entry.name), { recursive: true, force: true })
+      }
+    }
+  }
+  await rm(join(nodePty, 'third_party'), { recursive: true, force: true })
+}
 async function copyTree(source, destination) {
   await mkdir(dirname(destination), { recursive: true })
   await cp(source, destination, { recursive: true, dereference: true, force: true })
