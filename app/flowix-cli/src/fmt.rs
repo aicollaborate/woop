@@ -57,7 +57,11 @@ fn fmt_time(ms: i64) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-pub fn print_notebooks(configs: &[NotebookConfig], note_counts: &HashMap<String, usize>) {
+pub fn print_notebooks(
+    configs: &[NotebookConfig],
+    note_counts: &HashMap<String, usize>,
+    selected_notebook_id: Option<&str>,
+) {
     if configs.is_empty() {
         println!("(no notebooks found)");
         return;
@@ -70,6 +74,7 @@ pub fn print_notebooks(configs: &[NotebookConfig], note_counts: &HashMap<String,
             id: c.id.clone(),
             path: c.path.trim_end_matches('/').to_string(),
             notes: *note_counts.get(&c.id).unwrap_or(&0),
+            selected: selected_notebook_id == Some(c.id.as_str()),
             updated: fmt_time(c.updated_at),
         })
         .collect();
@@ -97,7 +102,7 @@ pub fn print_notebooks(configs: &[NotebookConfig], note_counts: &HashMap<String,
     let notes_w = "NOTES".len();
 
     println!(
-        "{}  {}  {}  {}  UPDATED",
+        "{}  {}  {}  {}  CURRENT  UPDATED",
         pad_right("NAME", name_w),
         pad_right("ID", id_w),
         pad_right("PATH", path_w),
@@ -116,11 +121,12 @@ pub fn print_notebooks(configs: &[NotebookConfig], note_counts: &HashMap<String,
         let name = truncate(&r.name, name_w);
         let path = truncate(&r.path, path_w);
         println!(
-            "{}  {}  {}  {:>notes_w$}  {}",
+            "{}  {}  {}  {:>notes_w$}  {:<7}  {}",
             pad_right(&name, name_w),
             pad_right(&r.id, id_w),
             pad_right(&path, path_w),
             r.notes,
+            if r.selected { "*" } else { "-" },
             r.updated,
             notes_w = notes_w
         );
@@ -132,6 +138,7 @@ struct Row {
     id: String,
     path: String,
     notes: usize,
+    selected: bool,
     updated: String,
 }
 
@@ -235,6 +242,7 @@ pub fn print_note(entry: &MemoIndexEntry, body: &str) {
 pub fn notebooks_to_json(
     configs: &[NotebookConfig],
     note_counts: &HashMap<String, usize>,
+    selected_notebook_id: Option<&str>,
 ) -> serde_json::Value {
     let arr: Vec<serde_json::Value> = configs
         .iter()
@@ -244,6 +252,7 @@ pub fn notebooks_to_json(
                 "id": c.id,
                 "path": c.path.trim_end_matches('/'),
                 "notes": note_counts.get(&c.id).copied().unwrap_or(0),
+                "selected": selected_notebook_id == Some(c.id.as_str()),
                 "updated_at": c.updated_at,
             })
         })
@@ -297,10 +306,19 @@ pub fn note_to_json_with_context(
     })
 }
 
-pub fn print_notebooks_json(configs: &[NotebookConfig], note_counts: &HashMap<String, usize>) {
+pub fn print_notebooks_json(
+    configs: &[NotebookConfig],
+    note_counts: &HashMap<String, usize>,
+    selected_notebook_id: Option<&str>,
+) {
     println!(
         "{}",
-        serde_json::to_string_pretty(&notebooks_to_json(configs, note_counts)).unwrap_or_default()
+        serde_json::to_string_pretty(&notebooks_to_json(
+            configs,
+            note_counts,
+            selected_notebook_id,
+        ))
+        .unwrap_or_default()
     );
 }
 
@@ -317,6 +335,28 @@ pub fn print_note_json(entry: &MemoIndexEntry, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn notebook(id: &str) -> NotebookConfig {
+        NotebookConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            icon: None,
+            path: format!("/notes/{id}"),
+            is_default: false,
+            sort: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn notebooks_json_marks_exactly_the_shared_selection() {
+        let configs = vec![notebook("one"), notebook("two")];
+        let value = notebooks_to_json(&configs, &HashMap::new(), Some("two"));
+        let rows = value.as_array().unwrap();
+        assert_eq!(rows[0]["selected"], false);
+        assert_eq!(rows[1]["selected"], true);
+    }
 
     #[test]
     fn display_width_ascii() {

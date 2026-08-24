@@ -45,7 +45,7 @@ pub(super) fn fetch_manifest() -> Result<DshManifest, String> {
         .map_err(|e| format!("download DSH manifest: {e}"))?
         .json()
         .map_err(|e| format!("parse DSH manifest: {e}"))?;
-    if manifest.schema_version != 1 || manifest.product != "flowix-dsh" {
+    if !matches!(manifest.schema_version, 1 | 2) || manifest.product != "flowix-dsh" {
         return Err("DSH manifest schema or product mismatch".into());
     }
     validate_manifest_version(&manifest.version)?;

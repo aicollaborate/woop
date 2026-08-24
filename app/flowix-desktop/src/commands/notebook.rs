@@ -605,8 +605,14 @@ pub fn clear_notebooks(state: State<AppState>, app: AppHandle) -> bool {
 pub fn set_current_notebook(notebook_id: Option<String>, state: State<AppState>, app: AppHandle) {
     // Fast path for ordinary switching: trust memo index and avoid synchronous
     // disk reconciliation. Search index rebuild is lazy, triggered by search.
-    if let Err(e) = switch_notebook_trusting_index(state.inner(), &app, notebook_id) {
+    if let Err(e) = switch_notebook_trusting_index(state.inner(), &app, notebook_id.clone()) {
         tracing::warn!("[set_current_notebook] switch failed: {e}");
+        return;
+    }
+    if let Err(e) =
+        read_lock(&state.memo_file, "memo_file").write_selected_notebook_id(notebook_id.as_deref())
+    {
+        tracing::warn!("[set_current_notebook] persist selection failed: {e}");
     }
 }
 

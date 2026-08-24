@@ -98,6 +98,32 @@ fn notebook_json_is_migrated_to_index_db() {
 }
 
 #[test]
+fn selected_notebook_state_is_shared_and_rejects_unknown_ids() {
+    let (mf, tmp) = fresh_memo_file();
+    assert_eq!(mf.read_selected_notebook_id().unwrap(), None);
+
+    mf.write_selected_notebook_id(Some("nb_test")).unwrap();
+    let other_process = MemoFile::new(tmp.join("config"));
+    assert_eq!(
+        other_process
+            .read_selected_notebook_id()
+            .unwrap()
+            .as_deref(),
+        Some("nb_test")
+    );
+
+    let error = mf.write_selected_notebook_id(Some("missing")).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(
+        mf.read_selected_notebook_id().unwrap().as_deref(),
+        Some("nb_test")
+    );
+
+    mf.write_selected_notebook_id(None).unwrap();
+    assert_eq!(other_process.read_selected_notebook_id().unwrap(), None);
+}
+
+#[test]
 fn content_revision_is_created_and_advanced_only_for_changed_bytes() {
     let (mf, _tmp) = fresh_memo_file();
     let memo = mf.create_memo("Revision", "# Revision", None).unwrap();

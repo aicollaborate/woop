@@ -152,7 +152,7 @@ export function ensureFlowixProfile(): void {
   }
   const sourcePatchPath = join(sourceDir, "cordis.patch.yml");
   const targetPatchPath = join(profileDir, "cordis.patch.yml");
-  if (existsSync(sourcePatchPath) && !existsSync(targetPatchPath)) {
+  if (existsSync(sourcePatchPath)) {
     copyFileSync(sourcePatchPath, targetPatchPath);
   }
   let manifest: Record<string, any>;

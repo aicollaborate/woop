@@ -13,6 +13,14 @@
 - id: session-title-llm
   disabled: true
 
+- id: settings
+  config:
+    path: !!js process.env.DSH_SETTINGS_PATH ?? undefined
+
+- id: credentials
+  config:
+    path: !!js process.env.DSH_CREDENTIALS_PATH ?? undefined
+
 # Flowix currently has no approval-response RPC. Every Flowix permission mode
 # therefore has to be non-interactive; the sandbox remains the enforcement
 # boundary selected by DSH_PERMISSION_MODE.

@@ -50,6 +50,15 @@ test('Flowix profile keeps the headless non-interactive runtime boundary', () =>
   assert.equal((patch.match(/approval: never/g) ?? []).length, 3)
 })
 
+test('Flowix profile routes probe snapshots into official settings providers', () => {
+  const patch = read('profile/flowix/cordis.patch.yml')
+  const environment = read('src/runtime/environment.ts')
+
+  assert.match(patch, /id: settings\n  config:\n    path: !!js process\.env\.DSH_SETTINGS_PATH/)
+  assert.match(patch, /id: credentials\n  config:\n    path: !!js process\.env\.DSH_CREDENTIALS_PATH/)
+  assert.match(environment, /if \(existsSync\(sourcePatchPath\)\) \{\n    copyFileSync\(sourcePatchPath, targetPatchPath\)/)
+})
+
 test('managed bundles keep Node and plugin package management private', () => {
   const builder = read('scripts/build-runtime-bundle.mjs')
   const closure = read('scripts/verify-runtime-closure.mjs')

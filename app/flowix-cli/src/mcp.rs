@@ -186,9 +186,13 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
     match parsed {
         cli::Cli::Notebooks { .. } => {
             reject_stdin(stdin)?;
-            let configs = store::notebooks_list_configs()?;
+            let (configs, selected_notebook_id) = store::notebooks_list_data()?;
             let counts = store::notebook_note_counts(&configs)?;
-            Ok(fmt::notebooks_to_json(&configs, &counts))
+            Ok(fmt::notebooks_to_json(
+                &configs,
+                &counts,
+                selected_notebook_id.as_deref(),
+            ))
         }
         cli::Cli::List { notebook, .. } => {
             reject_stdin(stdin)?;

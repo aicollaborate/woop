@@ -114,7 +114,10 @@ for (const target of targets) {
 }
 
 const manifest = {
-  schemaVersion: 2,
+  // Keep the published manifest at schema 1 until all released Flowix
+  // clients accept schema 2. The archive metadata may independently use
+  // schema 2; current clients already accept both metadata versions.
+  schemaVersion: 1,
   product: 'flowix-dsh',
   version,
   protocolVersion: 1,

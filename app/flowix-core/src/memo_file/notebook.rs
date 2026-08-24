@@ -104,6 +104,11 @@ impl MemoFile {
                 ON notebooks(is_default);
             CREATE INDEX IF NOT EXISTS idx_notebooks_sort
                 ON notebooks(sort);
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at INTEGER NOT NULL
+            );
             "#,
         )
         .map_err(sqlite_to_io)?;
@@ -140,6 +145,72 @@ impl MemoFile {
     pub fn get_notebook_config_by_id(&self, id: &str) -> Option<NotebookConfig> {
         let configs = self.read_notebook_configs().ok()?;
         configs.into_iter().find(|c| c.id == id)
+    }
+
+    /// Return the notebook most recently selected by the user interface.
+    ///
+    /// This is shared cross-process state. It is intentionally separate from
+    /// `current_notebook_id`, which is only the operation context of one
+    /// `MemoFile` instance. A stale value (for example after deletion) is
+    /// treated as no selection.
+    pub fn read_selected_notebook_id(&self) -> std::io::Result<Option<String>> {
+        let conn = self.open_index_db()?;
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT s.value
+                FROM app_state s
+                JOIN notebooks n ON n.id = s.value
+                WHERE s.key = 'selected_notebook_id'
+                "#,
+            )
+            .map_err(sqlite_to_io)?;
+        let mut rows = stmt.query([]).map_err(sqlite_to_io)?;
+        Ok(rows
+            .next()
+            .map_err(sqlite_to_io)?
+            .map(|row| row.get(0))
+            .transpose()
+            .map_err(sqlite_to_io)?)
+    }
+
+    /// Persist the notebook selected by the user interface for Desktop, CLI,
+    /// and MCP consumers that share this Flowix home.
+    pub fn write_selected_notebook_id(&self, id: Option<&str>) -> std::io::Result<()> {
+        let conn = self.open_index_db()?;
+        if let Some(id) = id {
+            let exists = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM notebooks WHERE id = ?1)",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(sqlite_to_io)?;
+            if !exists {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("notebook {id} not found"),
+                ));
+            }
+            conn.execute(
+                r#"
+                INSERT INTO app_state (key, value, updated_at)
+                VALUES ('selected_notebook_id', ?1, ?2)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                "#,
+                params![id, chrono::Utc::now().timestamp_millis()],
+            )
+            .map_err(sqlite_to_io)?;
+        } else {
+            conn.execute(
+                "DELETE FROM app_state WHERE key = 'selected_notebook_id'",
+                [],
+            )
+            .map_err(sqlite_to_io)?;
+        }
+        Ok(())
     }
 
     /// Read notebook configs from the global `index.db`.

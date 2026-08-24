@@ -29,24 +29,27 @@ fn read_notebook_configs_strict(mf: &MemoFile) -> Result<Vec<NotebookConfig>, Cl
 
 /// `flowix-cli notebooks --json` ── 输出 JSON 形式。
 pub fn cmd_notebooks_json() -> Result<(), CliError> {
-    let configs = notebooks_list_configs()?;
+    let (configs, selected_notebook_id) = notebooks_list_data()?;
     let note_counts = notebook_note_counts(&configs)?;
-    fmt::print_notebooks_json(&configs, &note_counts);
+    fmt::print_notebooks_json(&configs, &note_counts, selected_notebook_id.as_deref());
     Ok(())
 }
 
-/// notebook 列表的数据源，供 CLI 和 MCP 命令层复用。
-pub(crate) fn notebooks_list_configs() -> Result<Vec<NotebookConfig>, CliError> {
+/// notebook 列表和共享选择状态的数据源，供 CLI 和 MCP 命令层复用。
+pub(crate) fn notebooks_list_data() -> Result<(Vec<NotebookConfig>, Option<String>), CliError> {
     let mf = open()?;
-    MemoService::new(&mf).list_notebooks().map_err(Into::into)
+    let configs = MemoService::new(&mf).list_notebooks()?;
+    let selected_notebook_id = mf.read_selected_notebook_id()?;
+    Ok((configs, selected_notebook_id))
 }
 
 /// `flowix-cli notebooks` ── 列出所有 notebook。
 pub fn cmd_notebooks() -> Result<(), CliError> {
     let mf = open()?;
     let configs = read_notebook_configs_strict(&mf)?;
+    let selected_notebook_id = mf.read_selected_notebook_id()?;
     let note_counts = notebook_note_counts(&configs)?;
-    fmt::print_notebooks(&configs, &note_counts);
+    fmt::print_notebooks(&configs, &note_counts, selected_notebook_id.as_deref());
     Ok(())
 }
 
