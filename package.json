@@ -34,6 +34,7 @@
     "tauri:build:win": "node scripts/build-tauri-production.mjs --platform win32",
     "tauri:build:mac": "node scripts/build-tauri-production.mjs --platform darwin",
     "tauri:build:production": "node scripts/build-tauri-production.mjs",
+    "verify:tauri-signing-key": "node scripts/verify-tauri-signing-key.mjs",
     "release:updater": "bash scripts/release.sh",
     "verify:flowix-package": "node scripts/verify-flowix-package.mjs",
     "verify:dsh-package": "node scripts/verify-dsh-package.mjs",

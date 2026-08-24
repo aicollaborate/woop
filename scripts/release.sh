@@ -3,9 +3,12 @@
 # stable updater manifest through the flowix-home Pages site.
 #
 # Required:
-#   TAURI_SIGNING_PRIVATE_KEY           Tauri signer key string (modern key file contents)
+#   TAURI_SIGNING_PRIVATE_KEY           Tauri signer key string (CI / explicit override)
 #   TAURI_SIGNING_PRIVATE_KEY_PATH      or a path to the Tauri signer key file
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  optional key password
+#
+# On macOS, a normal build automatically reads the canonical
+# com.flowix.minisign.private-key Keychain item when neither key variable is set.
 #
 # Useful overrides:
 #   FLOWIX_HOME_DIR          local flowix-home checkout
@@ -36,7 +39,7 @@ FLOWIX_HOME_PROJECT="${FLOWIX_HOME_PROJECT:-flowix-home}"
 FLOWIX_HOME_BRANCH="${FLOWIX_HOME_BRANCH:-main}"
 RELEASE_OUT="${RELEASE_OUT:-$CARGO_TARGET_DIR/release/updater}"
 
-if [[ "${FLOWIX_SKIP_BUILD:-0}" != "1" && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
+if [[ "${FLOWIX_SKIP_BUILD:-0}" != "1" && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && "$(uname -s)" != "Darwin" ]]; then
   echo "release.sh: TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required" >&2
   exit 1
 fi
