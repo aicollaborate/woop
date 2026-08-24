@@ -116,6 +116,8 @@ mod tests {
     #[test]
     fn probe_snapshot_includes_unsaved_active_model() {
         let config = AiModelConfig {
+            provider: "deepseek".into(),
+            provider_id: "deepseek".into(),
             model: "model-b".into(),
             models: vec![AiModelEntry {
                 id: "model-a".into(),

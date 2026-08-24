@@ -143,6 +143,8 @@ impl DeepSeekHarnessManager {
             &thread_id,
             &run_id,
             "Reply with exactly: HARNESS_OK",
+            "Reply with exactly: HARNESS_OK",
+            "flowix-probe-message",
         );
         if let Err(error) = timed_host_request(&host, start).await {
             host.unsubscribe(&thread_id, &run_id).await;

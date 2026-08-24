@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::config::{
     normalize_agent_preset, normalize_permission, resolve_runtime_config, select_harness_config,
@@ -28,7 +28,7 @@ use crate::agent_external::{
     persist_external_chunk_for_thread_with_metadata, AgentChunkMetadata, StreamingEmitBuffer,
     STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
-use crate::agent_session::ThreadManager;
+use crate::agent_session::{ChatMessage, ThreadManager, ThreadMessagesPage};
 use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::config::{AiModelConfig, UserConfigStore};
 use crate::connection_probe::{TestConnectionErrorKind, TestConnectionResult};
@@ -230,7 +230,15 @@ impl DeepSeekHarnessManager {
         let mut events = host.subscribe(thread_id, run_id).await;
         let prompt_text = message.llm_content.as_deref().unwrap_or(&message.content);
         let prompt = append_workspace_context(prompt_text, &cwd, &workspace_paths);
-        let start = protocol::run_start_request(host.next_request_id(), thread_id, run_id, &prompt);
+        let client_message_id = format!("flowix:{thread_id}:{run_id}");
+        let start = protocol::run_start_request(
+            host.next_request_id(),
+            thread_id,
+            run_id,
+            &prompt,
+            &message.content,
+            &client_message_id,
+        );
         if let Err(error) = host.request(start).await {
             host.unsubscribe(thread_id, run_id).await;
             return Err(error);
@@ -325,8 +333,50 @@ impl DeepSeekHarnessManager {
         }
     }
 
-    fn plugin_settings_path(&self) -> PathBuf {
+    pub(crate) fn plugin_settings_path(&self) -> PathBuf {
         self.user_config.dsh_plugin_settings_path()
+    }
+
+    /// Read durable DSH history through the host bridge. DSH owns this event
+    /// log; Flowix only adapts the page into its IPC shape.
+    pub async fn session_history_page(
+        &self,
+        thread_id: &str,
+        before_sequence: Option<i64>,
+        snapshot_sequence: Option<i64>,
+        limit: i64,
+    ) -> Result<ThreadMessagesPage, String> {
+        let session_id = self
+            .sessions
+            .session_id(thread_id)
+            .await?
+            .ok_or_else(|| format!("no DeepSeek Harness session for thread {thread_id}"))?;
+        let (host, ephemeral) = self
+            .hosts
+            .existing_or_ephemeral(&self.host_launch_spec())
+            .await?;
+        let result = host
+            .request(protocol::session_history_request(
+                host.next_request_id(),
+                &session_id,
+                before_sequence,
+                snapshot_sequence,
+                limit,
+            ))
+            .await;
+        if ephemeral {
+            host.shutdown().await;
+        }
+        let page: DshSessionHistoryPage = result.and_then(|value| {
+            serde_json::from_value(value)
+                .map_err(|error| format!("invalid DSH session history response: {error}"))
+        })?;
+        Ok(ThreadMessagesPage {
+            messages: page.messages,
+            oldest_sequence: page.oldest_sequence,
+            has_more: page.has_more,
+            snapshot_sequence: Some(page.snapshot_sequence),
+        })
     }
 
     pub async fn stop_chat(
@@ -418,11 +468,20 @@ impl DeepSeekHarnessManager {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DshSessionHistoryPage {
+    messages: Vec<ChatMessage>,
+    oldest_sequence: Option<i64>,
+    has_more: bool,
+    snapshot_sequence: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::protocol::ThinkingSegment;
     use super::*;
-    use crate::config::AiModelEntry;
+    use crate::config::{AiConfigFile, AiModelEntry};
 
     #[test]
     fn permissions_fail_closed() {
