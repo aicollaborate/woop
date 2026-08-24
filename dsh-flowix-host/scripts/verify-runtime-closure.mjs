@@ -49,13 +49,19 @@ async function visitPackage(directory, requestedBy) {
   visited.add(real)
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-    await visitPackage(resolvePackage(dirname(directory), dependency), `${manifest.name ?? directory} -> ${dependency}`)
+    if (isHeadlessUiPackage(dependency)) continue
+    await visitPackage(resolvePackage(directory, dependency), `${manifest.name ?? directory} -> ${dependency}`)
   }
   const optionalPeers = manifest.peerDependenciesMeta ?? {}
   for (const dependency of Object.keys(manifest.peerDependencies ?? {})) {
+    if (isHeadlessUiPackage(dependency)) continue
     if (optionalPeers[dependency]?.optional || !dependency.startsWith('@deepseek-ai/')) continue
-    await visitPackage(resolvePackage(dirname(directory), dependency), `${manifest.name ?? directory} peer -> ${dependency}`)
+    await visitPackage(resolvePackage(directory, dependency), `${manifest.name ?? directory} peer -> ${dependency}`)
   }
+}
+
+function isHeadlessUiPackage(name) {
+  return name.startsWith('@deepseek-ai/dsh-client-ui-')
 }
 
 function resolvePackage(start, name) {

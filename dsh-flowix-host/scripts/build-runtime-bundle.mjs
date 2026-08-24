@@ -45,7 +45,11 @@ await run(corepack(), [
 ], vendor)
 await materializeLinks(join(runtime, 'node_modules'))
 await materializeWorkspaceRoots(runtime, vendor)
-await removeClientUiPackages(join(runtime, 'node_modules/@deepseek-ai'))
+// The headless DSH host does not ship the browser UI. The upstream CLI keeps
+// UI packages in its workspace dependency graph, so prune those packages
+// after deploy; the closure verifier explicitly treats them as optional for
+// this headless distribution.
+await removeClientUiPackages(runtime)
 
 await copyTree(resolve(repo, 'dsh-flowix-memory'), join(runtime, 'node_modules/dsh-flowix-memory'))
 // pnpm's legacy deploy can omit direct workspace roots even though their
@@ -97,14 +101,6 @@ async function materializeLinks(directory) {
     }
   }
 }
-async function removeClientUiPackages(scope) {
-  if (!existsSync(scope)) return
-  for (const entry of await readdir(scope, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name.startsWith('dsh-client-ui-')) {
-      await rm(join(scope, entry.name), { recursive: true, force: true })
-    }
-  }
-}
 async function materializeWorkspaceRoots(runtimeRoot, workspaceRoot) {
   const deployManifest = JSON.parse(await readFile(resolve(workspaceRoot, 'python/sdk-runtime/package.json'), 'utf8'))
   const required = Object.keys(deployManifest.dependencies ?? {})
@@ -118,6 +114,15 @@ async function materializeWorkspaceRoots(runtimeRoot, workspaceRoot) {
     const source = packages.get(name)
     if (source === undefined) throw new Error(`managed runtime dependency ${name} was omitted by pnpm deploy and is not a workspace package`)
     await copyTree(source, destination)
+  }
+}
+async function removeClientUiPackages(scope) {
+  if (!existsSync(scope)) return
+  for (const entry of await readdir(scope, { withFileTypes: true })) {
+    const path = join(scope, entry.name)
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('dsh-client-ui-')) await rm(path, { recursive: true, force: true })
+    else await removeClientUiPackages(path)
   }
 }
 async function indexWorkspacePackages(directory, packages) {
