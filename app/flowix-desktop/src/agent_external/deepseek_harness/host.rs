@@ -20,6 +20,12 @@ use crate::config::user::atomic_write_yaml;
 type RouteKey = (String, String);
 type PendingSender = oneshot::Sender<Result<Value, String>>;
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct DshCredentialsFile {
+    version: u32,
+    refs: BTreeMap<String, String>,
+}
+
 pub struct DshHostClient {
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Child>>,
@@ -255,16 +261,23 @@ pub(crate) fn sync_credential_file(
 
     let mut credentials = match fs::read_to_string(path) {
         Ok(content) if !content.trim().is_empty() => {
-            serde_yaml::from_str::<BTreeMap<String, String>>(&content)
-                .map_err(|_| "DSH credentials document is invalid".to_string())?
+            match serde_yaml::from_str::<DshCredentialsFile>(&content) {
+                Ok(document) if document.version == 1 => document.refs,
+                Ok(_) => return Err("unsupported DSH credentials document version".to_string()),
+                Err(_) => serde_yaml::from_str::<BTreeMap<String, String>>(&content)
+                    .map_err(|_| "DSH credentials document is invalid".to_string())?,
+            }
         }
         Ok(_) => BTreeMap::new(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(error) => return Err(format!("failed to read DSH credentials document: {error}")),
     };
     credentials.insert(reference.to_string(), value.to_string());
-    let content = serde_yaml::to_string(&credentials)
-        .map_err(|_| "failed to serialize DSH credentials document".to_string())?;
+    let content = serde_yaml::to_string(&DshCredentialsFile {
+        version: 1,
+        refs: credentials,
+    })
+    .map_err(|_| "failed to serialize DSH credentials document".to_string())?;
     atomic_write_yaml(path, &content)
         .map_err(|error| format!("failed to write DSH credentials document: {error}"))?;
     Ok(())
@@ -624,7 +637,7 @@ fn rust_target_triple() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::sync_credential_file;
+    use super::{sync_credential_file, DshCredentialsFile};
     use std::collections::BTreeMap;
 
     #[test]
@@ -634,14 +647,14 @@ mod tests {
         sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "secret-a").unwrap();
         sync_credential_file(&path, "FLOWIX_DSH_MINIMAX_API_KEY", "secret-b").unwrap();
 
-        let values: BTreeMap<String, String> =
+        let values: DshCredentialsFile =
             serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(
-            values.get("FLOWIX_DSH_OPENAI_API_KEY"),
+            values.refs.get("FLOWIX_DSH_OPENAI_API_KEY"),
             Some(&"secret-a".to_string())
         );
         assert_eq!(
-            values.get("FLOWIX_DSH_MINIMAX_API_KEY"),
+            values.refs.get("FLOWIX_DSH_MINIMAX_API_KEY"),
             Some(&"secret-b".to_string())
         );
     }
@@ -654,16 +667,58 @@ mod tests {
 
         sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "flowix-secret").unwrap();
 
-        let values: BTreeMap<String, String> =
+        let values: DshCredentialsFile =
             serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(values.version, 1);
         assert_eq!(
-            values.get("EXTERNAL_API_KEY"),
+            values.refs.get("EXTERNAL_API_KEY"),
             Some(&"external-secret".to_string())
         );
         assert_eq!(
-            values.get("FLOWIX_DSH_OPENAI_API_KEY"),
+            values.refs.get("FLOWIX_DSH_OPENAI_API_KEY"),
             Some(&"flowix-secret".to_string())
         );
+    }
+
+    #[test]
+    fn sync_credential_file_upgrades_legacy_documents_to_v1() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        let mut legacy = BTreeMap::new();
+        legacy.insert("EXTERNAL_API_KEY".to_string(), "external-secret".to_string());
+        std::fs::write(&path, serde_yaml::to_string(&legacy).unwrap()).unwrap();
+
+        sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "flowix-secret").unwrap();
+
+        let values: DshCredentialsFile =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(values.version, 1);
+        assert_eq!(
+            values.refs.get("EXTERNAL_API_KEY"),
+            Some(&"external-secret".to_string())
+        );
+        assert_eq!(
+            values.refs.get("FLOWIX_DSH_API_KEY"),
+            Some(&"flowix-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn sync_credential_file_rejects_unsupported_future_versions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        std::fs::write(
+            &path,
+            "version: 2
+refs:
+  EXTERNAL_API_KEY: external-secret
+",
+        )
+        .unwrap();
+
+        let error = sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "flowix-secret")
+            .expect_err("future-version document must be rejected");
+        assert!(error.contains("unsupported DSH credentials document version"));
     }
 
     #[test]
