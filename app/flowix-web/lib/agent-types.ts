@@ -27,10 +27,10 @@ export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'codex';
  * preference order.
  */
 export const LOCAL_AGENT_DISPLAY_PRIORITY = [
+  'deepseek-harness',
   'codex',
   'claude',
   'opencode',
-  'deepseek-harness',
 ] as const satisfies readonly AgentTypeKey[];
 
 export function pickFirstAvailableAgent(

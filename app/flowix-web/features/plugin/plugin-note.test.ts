@@ -32,6 +32,14 @@ describe('getPluginNoteInfo', () => {
     });
   });
 
+  it('recognizes a webpage artifact renderer', () => {
+    expect(getPluginNoteInfo(memo({
+      flowix_note_type: 'webpage',
+      flowix_plugin: 'webpage',
+      flowix_artifact: { renderer: 'webpage' },
+    }))?.renderer).toBe('webpage');
+  });
+
   it('keeps valid plugin pointers with missing or unknown renderers resolvable', () => {
     expect(getPluginNoteInfo(memo({
       flowix_note_type: 'legacy',

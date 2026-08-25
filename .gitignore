@@ -1,5 +1,10 @@
 # Dependencies
 node_modules/
+# Project-owned DSH runtime bundle; packaging copies this source verbatim.
+!dsh-flowix-host/profile/flowix/node_modules/
+!dsh-flowix-host/profile/flowix/node_modules/@flowix/
+!dsh-flowix-host/profile/flowix/node_modules/@flowix/dsh-flowix-bridge/
+!dsh-flowix-host/profile/flowix/node_modules/@flowix/dsh-flowix-bridge/**
 .pnp
 .pnp.js
 .pnpm-store/

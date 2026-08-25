@@ -9,6 +9,7 @@ export interface PluginNoteInfo {
 export type PluginArtifactRendererId =
   | 'markmap'
   | 'html'
+  | 'webpage'
   | 'json-viewer'
   | 'markdown'
   | 'text';
@@ -16,6 +17,7 @@ export type PluginArtifactRendererId =
 const PLUGIN_ARTIFACT_RENDERERS = new Set<PluginArtifactRendererId>([
   'markmap',
   'html',
+  'webpage',
   'json-viewer',
   'markdown',
   'text',

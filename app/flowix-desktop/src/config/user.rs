@@ -228,6 +228,10 @@ pub struct AiModelConfig {
     /// �?provider 隔�?�?key �? `provider -> apiKey`�?    /// 前�?切换供应商时直接读这�? 互相不串�?
     #[serde(default)]
     pub api_keys: HashMap<String, String>,
+    /// True when DSH owns a non-empty value for `api_key_env`. This is
+    /// returned over IPC but never persisted to settings.yaml.
+    #[serde(default)]
+    pub credential_configured: bool,
     /// 单�? `chat_stream` 调用跨所�?cycle �?token �??上限。`Usage` �?    /// provider 在每�?��的末尾单�?push 一�? agent �?cycle �?�� `total_tokens`,
     /// 超出即熔�?���?`AgentError::TokenBudget` 收口。`0` 表示不限�?(保留
     /// 历史行为, 也方便单�?。默�?180_000 ── 100 cycle × 1.8k token,
@@ -274,6 +278,7 @@ impl Default for AiModelConfig {
             models: Vec::new(),
             api_url: String::new(),
             api_keys: HashMap::new(),
+            credential_configured: false,
             max_total_tokens: default_max_total_tokens(),
         }
     }
@@ -313,7 +318,7 @@ pub struct DeepSeekHarnessLlmSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeepSeekHarnessProviderSettings {
+pub(crate) struct DeepSeekHarnessProviderSettings {
     #[serde(default, rename = "displayName")]
     pub display_name: String,
     #[serde(default, rename = "apiKeyEnv")]
@@ -334,7 +339,7 @@ pub struct DeepSeekHarnessModelSettings {
 }
 
 impl DeepSeekHarnessSettingsFile {
-    fn route_id_for_ai_config(config: &AiConfigFile) -> String {
+    pub(crate) fn route_id_for_ai_config(config: &AiConfigFile) -> String {
         let provider_id = config.model.provider_id.trim();
         if provider_id.is_empty() {
             // llm-pi-ai uses the provider map key as the route identity.
@@ -346,7 +351,7 @@ impl DeepSeekHarnessSettingsFile {
         }
     }
 
-    fn provider_settings_for_ai_config(
+    pub(crate) fn provider_settings_for_ai_config(
         config: &AiConfigFile,
     ) -> Option<DeepSeekHarnessProviderSettings> {
         let model = &config.model;
@@ -409,27 +414,18 @@ impl DeepSeekHarnessSettingsFile {
         }
     }
 
-    fn to_ai_config_for_route(
+    pub(crate) fn to_ai_config_for_route(
         route_id: &str,
         provider: &DeepSeekHarnessProviderSettings,
     ) -> AiConfigFile {
         // The settings document deliberately holds only a credential
-        // reference (`apiKeyEnv`), never the secret itself.  Seed the
-        // provider key here so `hydrate_ai_config_secrets` can look up the
-        // corresponding value in Flowix's owner-only secret store.
-        //
-        // Without this entry the hydration loop has no provider to inspect,
-        // so a correctly saved Harness key is silently dropped and the
-        // runtime fails its preflight with "API key is not configured".
+        // reference (`apiKeyEnv`), never the secret itself. The DSH host
+        // reports whether that reference is configured.
         let provider_name = if provider.display_name.trim().is_empty() {
             route_id.to_string()
         } else {
             provider.display_name.trim().to_string()
         };
-        let key_bucket = route_id.to_string();
-        let api_keys = (!key_bucket.is_empty())
-            .then(|| HashMap::from([(key_bucket, String::new())]))
-            .unwrap_or_default();
         AiConfigFile {
             model: AiModelConfig {
                 // The route key is the value sent to Harness. The display
@@ -453,7 +449,7 @@ impl DeepSeekHarnessSettingsFile {
                     })
                     .collect(),
                 api_url: provider.base_url.clone(),
-                api_keys,
+                api_keys: HashMap::new(),
                 ..AiModelConfig::default()
             },
         }
@@ -511,7 +507,7 @@ pub fn dsh_credential_ref_for_route(route: &str) -> String {
     format!("FLOWIX_DSH_{suffix}_API_KEY")
 }
 
-fn merge_harness_provider(
+pub(crate) fn merge_harness_provider(
     existing: &mut DeepSeekHarnessProviderSettings,
     incoming: DeepSeekHarnessProviderSettings,
 ) {
@@ -722,9 +718,7 @@ impl UserConfigStore {
     /// not consulted again.
     pub fn get_deepseek_harness_config(&self) -> Result<AiConfigFile, UserConfigError> {
         let settings = self.read_or_migrate_deepseek_harness_settings()?;
-        let mut config = settings.to_ai_config();
-        self.hydrate_ai_config_secrets(&mut config);
-        Ok(config)
+        Ok(settings.to_ai_config())
     }
 
     /// Return every configured llm-pi-ai route. The model manager must not
@@ -733,20 +727,15 @@ impl UserConfigStore {
     /// and credentials.
     pub fn get_deepseek_harness_configs(&self) -> Result<Vec<AiConfigFile>, UserConfigError> {
         let settings = self.read_or_migrate_deepseek_harness_settings()?;
-        let mut configs = settings.to_ai_configs();
-        for config in &mut configs {
-            self.hydrate_ai_config_secrets(config);
-        }
-        Ok(configs)
+        Ok(settings.to_ai_configs())
     }
 
-    /// Persist only the DeepSeek Harness settings. API keys remain in the
-    /// existing owner-only secret store and are never written to YAML.
+    /// Persist only the DeepSeek Harness settings. API keys are owned by DSH
+    /// and are never written to this document or Flowix's secret store.
     pub fn set_deepseek_harness_config(
         &self,
         config: &AiConfigFile,
     ) -> Result<(), UserConfigError> {
-        self.persist_ai_config_secrets(config)?;
         let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
         if let Some(provider) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
         {
@@ -773,7 +762,6 @@ impl UserConfigStore {
         &self,
         config: &AiConfigFile,
     ) -> Result<(), UserConfigError> {
-        self.persist_ai_config_secrets(config)?;
         let mut settings = self.read_deepseek_harness_settings()?.unwrap_or_default();
         let route_id = existing_harness_route_id(config);
         let Some(incoming) = DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
@@ -909,6 +897,23 @@ impl UserConfigStore {
             .delete(&account)
             .map(|_| ())
             .map_err(|err| UserConfigError::SecretStore(err.to_string()))
+    }
+
+    /// Read a pre-DSH-owned credential for one route during the one-time
+    /// migration. New DSH settings code must not use this as a runtime source.
+    pub(crate) fn legacy_dsh_secret(
+        &self,
+        provider: &str,
+    ) -> Result<Option<String>, UserConfigError> {
+        let account = entry_name(provider, SECRET_ACCOUNT_NAME);
+        self.secrets
+            .load(&account)
+            .map(|value| value.map(|secret| secret.into_inner()))
+            .map_err(|err| UserConfigError::SecretStore(err.to_string()))
+    }
+
+    pub(crate) fn delete_legacy_dsh_secret(&self, provider: &str) -> Result<(), UserConfigError> {
+        self.delete_provider_secret(provider)
     }
 
     pub fn save_cloud_refresh_token(&self, token: &str) -> Result<(), UserConfigError> {
@@ -1644,7 +1649,7 @@ apiKey = "k"
     }
 
     #[test]
-    fn deepseek_harness_config_hydrates_its_provider_key_from_secret_store() {
+    fn deepseek_harness_config_never_round_trips_provider_secrets() {
         let home = tempfile::tempdir().unwrap();
         let store = test_user_config_store(home.path().to_path_buf());
         let config = AiConfigFile {
@@ -1668,7 +1673,7 @@ apiKey = "k"
 
         let loaded = store.get_deepseek_harness_config().unwrap();
         assert_eq!(loaded.model.provider, "DeepSeek");
-        assert_eq!(loaded.model.effective_api_key("DeepSeek"), "test-key");
+        assert_eq!(loaded.model.effective_api_key("DeepSeek"), "");
     }
 
     #[test]
@@ -1720,7 +1725,7 @@ apiKey = "k"
         assert_eq!(loaded.model.api_protocol, "openai-responses");
         assert_eq!(loaded.model.models.len(), 2);
         assert_eq!(loaded.model.models[1].name, "Acme Think");
-        assert_eq!(loaded.model.effective_api_key("acme-gateway"), "test-key");
+        assert_eq!(loaded.model.effective_api_key("acme-gateway"), "");
     }
 
     #[test]

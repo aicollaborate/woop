@@ -533,7 +533,9 @@ export function MemoList() {
     const parts: string[] = [];
     if (activePluginId) {
       return {
-        headerLabel: activePluginId === 'mindmap' ? '思维导图' : activePluginId,
+        headerLabel: activePluginId === 'mindmap'
+          ? '思维导图'
+          : activePluginId === 'webpage' ? '网页' : activePluginId,
         hasActiveFilter: true,
       };
     }

@@ -17,8 +17,11 @@
 #   FLOWIX_SKIP_BUILD=1       collect artifacts already present in CARGO_TARGET_DIR
 #   FLOWIX_PUBLISH=1          upload R2 objects and deploy Pages
 #
-# The default mode is build + manifest generation only. Publishing is explicit
-# so a local build cannot accidentally replace the production manifest.
+# This is the only production publication path for the Flowix updater. The
+# GitHub release workflow creates draft artifacts but does not update the
+# configured updater endpoint. The default mode here is build + manifest
+# generation only; publishing is explicit so a local build cannot accidentally
+# replace the production manifest.
 
 set -euo pipefail
 
@@ -187,6 +190,13 @@ fs.writeFileSync(path.join(homeDir, 'src', 'latest.json'), json);
 console.log(`==> wrote ${path.join(out, 'latest.json')}`);
 console.log(`==> synced ${path.join(homeDir, 'src', 'latest.json')}`);
 NODE
+
+declare -a REQUIRED_PLATFORMS=()
+for target in $FLOWIX_TARGETS; do
+  REQUIRED_PLATFORMS+=("$(platform_for_target "$target")")
+done
+node "$REPO_ROOT/scripts/verify-updater-release.mjs" \
+  "$RELEASE_OUT/latest.json" "$VERSION" "$FLOWIX_R2_PREFIX" "${REQUIRED_PLATFORMS[@]}"
 
 if [[ "${FLOWIX_PUBLISH:-0}" != "1" ]]; then
   echo "==> publish skipped (set FLOWIX_PUBLISH=1 to upload R2 and deploy flowix-home)"

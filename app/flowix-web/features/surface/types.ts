@@ -45,7 +45,7 @@ export interface MindmapSurface extends PluginArtifactSurfaceBase {
 
 export interface HtmlSurface extends PluginArtifactSurfaceBase {
   kind: 'html';
-  renderer: 'html';
+  renderer: 'html' | 'webpage';
 }
 
 export interface JsonSurface extends PluginArtifactSurfaceBase {

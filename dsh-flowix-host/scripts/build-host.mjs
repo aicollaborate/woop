@@ -15,6 +15,11 @@ const tooling = resolve(root, 'scripts/tooling')
 const buildEnv = {
   ...process.env,
   CI: 'true',
+  NODE_ENV: 'development',
+  npm_config_production: 'false',
+  NPM_CONFIG_PRODUCTION: 'false',
+  PNPM_CONFIG_PRODUCTION: 'false',
+  FLOWIX_REPO_ROOT: repo,
   PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}`,
 }
 await mkdir(outdir, { recursive: true })
@@ -135,6 +140,9 @@ process.stdout.write('built ' + resolve(outdir, 'dsh-host.cjs') + '\n')
 // harness sources: `npm --prefix dsh-flowix-host run build:runtime`.
 const runtimeBinary = resolve(outdir, process.platform === 'win32' ? 'dsh-runtime.exe' : 'dsh-runtime')
 if (process.env.FLOWIX_DSH_SKIP_RUNTIME !== '1' && !existsSync(runtimeBinary)) {
+  if (process.platform === 'win32') {
+    await copyFile(resolve(tooling, 'pnpm.cmd'), resolve(vendor, 'node_modules/.bin/pnpm.cmd'))
+  }
   process.stdout.write('packaged runtime missing; building via corepack pnpm exec tsx ...' + '\n')
   await new Promise((done, fail) => {
     const corepackCmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'

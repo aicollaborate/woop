@@ -41,6 +41,16 @@ fn binary_describes_builtin_mindmap_tool() {
 }
 
 #[test]
+fn binary_describes_builtin_webpage_tool() {
+    let output = cli(&["plugin", "describe", "webpage", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(value["id"], "webpage");
+    assert_eq!(value["contentType"], "text/html");
+    assert_eq!(value["renderer"], "webpage");
+}
+
+#[test]
 fn binary_reports_usage_errors_with_expected_exit_code() {
     let missing = cli(&["list"]);
     assert_eq!(missing.status.code(), Some(2));

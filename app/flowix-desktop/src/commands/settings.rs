@@ -40,53 +40,94 @@ pub fn set_preference(
 /// settings-file provider at `~/.dsh/settings.yaml`, independently of
 /// the retired built-in agent's `agent-config.toml`.
 #[tauri::command]
-pub fn get_deepseek_harness_config(state: State<AppState>) -> Result<AiConfigFile, String> {
-    state
-        .user_config
-        .get_deepseek_harness_config()
-        .map_err(|error| error.to_string())
+pub async fn get_deepseek_harness_config(
+    state: State<'_, AppState>,
+) -> Result<AiConfigFile, String> {
+    let mut configs = load_dsh_model_configs(&state).await?;
+    hydrate_dsh_credentials_without_blocking(&state, &mut configs).await;
+    Ok(configs.into_iter().next().unwrap_or_default())
 }
 
 #[tauri::command]
-pub fn get_deepseek_harness_configs(state: State<AppState>) -> Result<Vec<AiConfigFile>, String> {
-    state
-        .user_config
-        .get_deepseek_harness_configs()
-        .map_err(|error| error.to_string())
+pub async fn get_deepseek_harness_configs(
+    state: State<'_, AppState>,
+) -> Result<Vec<AiConfigFile>, String> {
+    let mut configs = load_dsh_model_configs(&state).await?;
+    hydrate_dsh_credentials_without_blocking(&state, &mut configs).await;
+    Ok(configs)
+}
+
+async fn load_dsh_model_configs(state: &State<'_, AppState>) -> Result<Vec<AiConfigFile>, String> {
+    state.deepseek_harness.dsh_model_configs().await
+}
+
+/// Preferences must remain usable when Flowix has just installed an older or
+/// temporarily unavailable remote DSH runtime. Credential migration/status is
+/// best-effort here; save and connection-test commands still return actionable
+/// runtime errors when the user explicitly invokes them.
+async fn hydrate_dsh_credentials_without_blocking(
+    state: &State<'_, AppState>,
+    configs: &mut [AiConfigFile],
+) {
+    if let Err(error) = state
+        .deepseek_harness
+        .migrate_legacy_credentials(configs)
+        .await
+    {
+        tracing::warn!(%error, "could not migrate legacy Flowix credentials to DSH");
+    }
+    if let Err(error) = state
+        .deepseek_harness
+        .hydrate_credential_statuses(configs)
+        .await
+    {
+        for config in configs.iter_mut() {
+            // Unknown is treated conservatively as configured so merely
+            // opening/saving preferences cannot delete an existing DSH key.
+            config.model.credential_configured = true;
+        }
+        tracing::warn!(%error, "could not read credential status from DSH");
+    }
 }
 
 #[tauri::command]
 pub async fn set_deepseek_harness_config(
-    config: AiConfigFile,
+    mut config: AiConfigFile,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
     state.deepseek_harness.invalidate_hosts().await?;
     state
-        .user_config
-        .set_deepseek_harness_config(&config)
-        .map(|_| {
-            dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
-            Ok(())
-        })
-        .map_err(|error| error.to_string())?
+        .deepseek_harness
+        .persist_credential(&config.model)
+        .await?;
+    config.model.api_keys.clear();
+    state
+        .deepseek_harness
+        .persist_dsh_model_config(&config, false)
+        .await?;
+    dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn add_deepseek_harness_model(
-    config: AiConfigFile,
+    mut config: AiConfigFile,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
     state.deepseek_harness.invalidate_hosts().await?;
     state
-        .user_config
-        .add_deepseek_harness_config(&config)
-        .map(|_| {
-            dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
-            Ok(())
-        })
-        .map_err(|error| error.to_string())?
+        .deepseek_harness
+        .persist_credential(&config.model)
+        .await?;
+    config.model.api_keys.clear();
+    state
+        .deepseek_harness
+        .persist_dsh_model_config(&config, true)
+        .await?;
+    dispatcher::emit_to(&app, USER_CONFIG_CHANGED_EVENT, "dsh_config");
+    Ok(())
 }
 
 /// 文件监听�?黑名�?(PR2) —�?`preference.json::watcher` 字�?�?///

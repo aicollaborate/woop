@@ -17,6 +17,13 @@ pub const MINDMAP_RENDERER: &str = "markmap";
 pub const MINDMAP_PARSER: &str = "mindmap-markdown";
 pub const MINDMAP_OUTPUT_DIRECTORY: &str = ".plugin-output/mindmap";
 
+pub const WEBPAGE_PLUGIN_ID: &str = "webpage";
+pub const WEBPAGE_VERSION: &str = "0.1.0";
+pub const WEBPAGE_NOTE_TYPE: &str = "webpage";
+pub const WEBPAGE_RENDERER: &str = "webpage";
+pub const WEBPAGE_PARSER: &str = "html";
+pub const WEBPAGE_OUTPUT_DIRECTORY: &str = ".plugin-output/webpage";
+
 pub const MINDMAP_MANIFEST: &str = r#"{
   "schemaVersion": 2,
   "id": "mindmap",
@@ -41,6 +48,30 @@ pub const MINDMAP_MANIFEST: &str = r#"{
   }
 }"#;
 
+pub const WEBPAGE_MANIFEST: &str = r#"{
+  "schemaVersion": 2,
+  "id": "webpage",
+  "name": "网页",
+  "version": "0.1.0",
+  "kind": "artifact-tool",
+  "ui": { "placement": "sidebar", "order": 110, "icon": "webpage" },
+  "input": { "fields": [] },
+  "tool": {
+    "command": "flowix plugin create webpage",
+    "input": "stdin",
+    "contentType": "text/html",
+    "instructions": "SKILL.md"
+  },
+  "discovery": { "noteType": "webpage" },
+  "output": {
+    "format": "html",
+    "directory": ".plugin-output/webpage",
+    "extension": ".html",
+    "renderer": "webpage",
+    "parser": "html"
+  }
+}"#;
+
 pub const MINDMAP_SKILL: &str = r#"# Mindmap Artifact Tool
 
 Use this tool only when the user explicitly asks to create or generate a mind map.
@@ -55,6 +86,22 @@ Input contract:
 3. Keep node text concise; do not place explanatory paragraphs around the map.
 4. Do not wrap the input in a Markdown code fence.
 5. The CLI creates the artifact and its Flowix document. Do not create either file manually.
+"#;
+
+pub const WEBPAGE_SKILL: &str = r#"# Webpage Artifact Tool
+
+Use this tool only when the user explicitly asks to create a webpage artifact.
+
+Prepare one complete, self-contained HTML document, then pass it to
+`flowix plugin create webpage --notebook <name|id|path>` through stdin.
+
+Input contract:
+
+1. Include `<!doctype html>`, `<html>`, `<head>`, a non-empty `<title>`, and `<body>`.
+2. Inline required CSS, JavaScript, images, and data whenever practical.
+3. Do not use Markdown code fences or explanatory text around the HTML.
+4. Do not depend on Flowix or Tauri APIs, the parent window, or local filesystem paths.
+5. The CLI creates the artifact and its Flowix index document. Do not create either file manually.
 "#;
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,11 +121,31 @@ pub struct PluginToolDescription {
 }
 
 pub fn builtin_tools() -> Vec<PluginToolDescription> {
-    vec![mindmap_description()]
+    vec![mindmap_description(), webpage_description()]
 }
 
 pub fn describe_tool(id: &str) -> Option<PluginToolDescription> {
-    (id == MINDMAP_PLUGIN_ID).then(mindmap_description)
+    match id {
+        MINDMAP_PLUGIN_ID => Some(mindmap_description()),
+        WEBPAGE_PLUGIN_ID => Some(webpage_description()),
+        _ => None,
+    }
+}
+
+fn webpage_description() -> PluginToolDescription {
+    PluginToolDescription {
+        id: WEBPAGE_PLUGIN_ID,
+        name: "网页",
+        version: WEBPAGE_VERSION,
+        kind: "artifact-tool",
+        command: "flowix plugin create webpage --notebook <name|id|path>",
+        input: "stdin",
+        content_type: "text/html",
+        parser: WEBPAGE_PARSER,
+        renderer: WEBPAGE_RENDERER,
+        output_directory: WEBPAGE_OUTPUT_DIRECTORY,
+        instructions: WEBPAGE_SKILL,
+    }
 }
 
 fn mindmap_description() -> PluginToolDescription {
@@ -142,6 +209,38 @@ pub fn parse_mindmap_input(raw: &str) -> Result<ParsedMindmap, String> {
     Ok(ParsedMindmap { content, title })
 }
 
+pub fn parse_webpage_input(raw: &str) -> Result<ParsedMindmap, String> {
+    let content = raw.trim().replace("\r\n", "\n");
+    if content.is_empty() {
+        return Err("webpage input is empty".to_string());
+    }
+    if content.len() > 1_000_000 {
+        return Err("webpage input is too large (maximum 1000000 bytes)".to_string());
+    }
+    if content.contains("```") {
+        return Err("webpage input must not use Markdown code fences".to_string());
+    }
+    let lower = content.to_ascii_lowercase();
+    for required in ["<!doctype html", "<html", "<head", "<body"] {
+        if !lower.contains(required) {
+            return Err(format!("webpage input must contain {required}"));
+        }
+    }
+    let title_start = lower
+        .find("<title")
+        .and_then(|start| lower[start..].find('>').map(|offset| start + offset + 1))
+        .ok_or_else(|| "webpage input must contain a title element".to_string())?;
+    let title_end = lower[title_start..]
+        .find("</title>")
+        .map(|offset| title_start + offset)
+        .ok_or_else(|| "webpage input must contain a closed title element".to_string())?;
+    let title = content[title_start..title_end].trim().to_string();
+    if title.is_empty() || title.contains('<') || title.contains('>') {
+        return Err("webpage title must be non-empty plain text".to_string());
+    }
+    Ok(ParsedMindmap { content, title })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginArtifactPointer {
@@ -192,17 +291,25 @@ pub fn create_artifact(
     memo_file: &MemoFile,
     request: CreateArtifactRequest<'_>,
 ) -> Result<CreatedPluginArtifact, String> {
-    if request.plugin_id != MINDMAP_PLUGIN_ID {
-        return Err(format!("plugin tool not found: {}", request.plugin_id));
-    }
-    let parsed = parse_mindmap_input(request.content)?;
+    let (parsed, version, note_type, renderer, parser, output_directory, format, extension) =
+        match request.plugin_id {
+            MINDMAP_PLUGIN_ID => (
+                parse_mindmap_input(request.content)?, MINDMAP_VERSION, MINDMAP_NOTE_TYPE,
+                MINDMAP_RENDERER, MINDMAP_PARSER, MINDMAP_OUTPUT_DIRECTORY, "markdown", "md",
+            ),
+            WEBPAGE_PLUGIN_ID => (
+                parse_webpage_input(request.content)?, WEBPAGE_VERSION, WEBPAGE_NOTE_TYPE,
+                WEBPAGE_RENDERER, WEBPAGE_PARSER, WEBPAGE_OUTPUT_DIRECTORY, "html", "html",
+            ),
+            _ => return Err(format!("plugin tool not found: {}", request.plugin_id)),
+        };
     let notebook = resolve_notebook(memo_file, request.notebook)?;
     let notebook_path = PathBuf::from(&notebook.path);
     if !notebook_path.is_dir() {
         return Err(format!("notebook path is unavailable: {}", notebook.path));
     }
 
-    let relative_output = Path::new(MINDMAP_OUTPUT_DIRECTORY);
+    let relative_output = Path::new(output_directory);
     if !is_safe_relative_path(relative_output) {
         return Err("plugin output directory is invalid".to_string());
     }
@@ -218,9 +325,15 @@ pub fn create_artifact(
     if !canonical_output.starts_with(&canonical_notebook) {
         return Err("plugin output directory escaped notebook root".to_string());
     }
-    let artifact_path = output_file_path(&output_dir, &parsed.title);
-    let artifact_document =
-        artifact_document(&parsed.content, request.producer, request.source_note);
+    let artifact_path = output_file_path(&output_dir, &parsed.title, extension);
+    let artifact_document = artifact_document(
+        request.plugin_id,
+        version,
+        format,
+        &parsed.content,
+        request.producer,
+        request.source_note,
+    );
     atomic_write_bytes(&artifact_path, artifact_document.as_bytes())
         .map_err(|error| format!("write plugin artifact: {error}"))?;
 
@@ -232,9 +345,9 @@ pub fn create_artifact(
     let now = chrono::Local::now().to_rfc3339();
     let pointer = PluginArtifactPointer {
         path: relative_path,
-        format: "markdown".to_string(),
-        parser: MINDMAP_PARSER.to_string(),
-        renderer: MINDMAP_RENDERER.to_string(),
+        format: format.to_string(),
+        parser: parser.to_string(),
+        renderer: renderer.to_string(),
         title: parsed.title.clone(),
         content_hash: format!("sha256:{:x}", Sha256::digest(parsed.content.as_bytes())),
         created_at: now,
@@ -244,7 +357,7 @@ pub fn create_artifact(
             .filter(|value| !value.is_empty())
             .map(str::to_string),
     };
-    let pointer_body = pointer_document(&pointer)?;
+    let pointer_body = pointer_document(request.plugin_id, version, note_type, &pointer)?;
     let created = MemoService::new(memo_file)
         .create_external_memo_named(&notebook.id, &parsed.title, &pointer_body)
         .map_err(|error| {
@@ -255,12 +368,12 @@ pub fn create_artifact(
     Ok(CreatedPluginArtifact {
         ok: true,
         action: "pluginArtifactCreated",
-        plugin_id: MINDMAP_PLUGIN_ID.to_string(),
+        plugin_id: request.plugin_id.to_string(),
         note_id: created.memo.id,
         notebook_id: notebook.id,
         notebook: notebook.name,
         title: parsed.title,
-        renderer: MINDMAP_RENDERER.to_string(),
+        renderer: renderer.to_string(),
         artifact_path: artifact_path.to_string_lossy().to_string(),
         note_path: created.path.to_string_lossy().to_string(),
     })
@@ -302,7 +415,7 @@ fn is_safe_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
-fn output_file_path(output_dir: &Path, title: &str) -> PathBuf {
+fn output_file_path(output_dir: &Path, title: &str, extension: &str) -> PathBuf {
     let safe_title = title
         .chars()
         .map(|ch| {
@@ -315,18 +428,29 @@ fn output_file_path(output_dir: &Path, title: &str) -> PathBuf {
         .take(60)
         .collect::<String>();
     output_dir.join(format!(
-        "{}-{}-{}.md",
+        "{}-{}-{}.{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S"),
         if safe_title.is_empty() {
             "mindmap"
         } else {
             &safe_title
         },
-        &uuid::Uuid::new_v4().to_string()[..8]
+        &uuid::Uuid::new_v4().to_string()[..8],
+        extension,
     ))
 }
 
-fn artifact_document(content: &str, producer: &str, source_note: Option<&str>) -> String {
+fn artifact_document(
+    plugin_id: &str,
+    plugin_version: &str,
+    format: &str,
+    content: &str,
+    producer: &str,
+    source_note: Option<&str>,
+) -> String {
+    if format != "markdown" {
+        return content.to_string();
+    }
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct ArtifactMetadata<'a> {
@@ -341,8 +465,8 @@ fn artifact_document(content: &str, producer: &str, source_note: Option<&str>) -
     let source_note = source_note.map(str::trim).filter(|value| !value.is_empty());
     let producer = producer.trim();
     let metadata = ArtifactMetadata {
-        flowix_plugin: MINDMAP_PLUGIN_ID,
-        plugin_version: MINDMAP_VERSION,
+        flowix_plugin: plugin_id,
+        plugin_version,
         agent_type: if producer.is_empty() {
             "agent-cli"
         } else {
@@ -355,11 +479,16 @@ fn artifact_document(content: &str, producer: &str, source_note: Option<&str>) -
     format!("---\n{yaml}---\n\n{content}\n")
 }
 
-fn pointer_document(pointer: &PluginArtifactPointer) -> Result<String, String> {
+fn pointer_document(
+    plugin_id: &str,
+    plugin_version: &str,
+    note_type: &str,
+    pointer: &PluginArtifactPointer,
+) -> Result<String, String> {
     let frontmatter = PluginNoteFrontmatter {
-        flowix_note_type: MINDMAP_NOTE_TYPE.to_string(),
-        flowix_plugin: MINDMAP_PLUGIN_ID.to_string(),
-        flowix_plugin_version: MINDMAP_VERSION.to_string(),
+        flowix_note_type: note_type.to_string(),
+        flowix_plugin: plugin_id.to_string(),
+        flowix_plugin_version: plugin_version.to_string(),
         flowix_artifact: pointer.clone(),
     };
     let yaml = serde_yaml::to_string(&frontmatter)
@@ -369,7 +498,9 @@ fn pointer_document(pointer: &PluginArtifactPointer) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_artifact, parse_mindmap_input, CreateArtifactRequest};
+    use super::{
+        create_artifact, parse_mindmap_input, parse_webpage_input, CreateArtifactRequest,
+    };
     use flowix_core::memo_file::{MemoFile, NotebookConfig};
     use std::path::Path;
 
@@ -383,6 +514,17 @@ mod tests {
     fn rejects_multiple_roots_and_explanation() {
         assert!(parse_mindmap_input("# One\n# Two").is_err());
         assert!(parse_mindmap_input("Here it is\n# Root").is_err());
+    }
+
+    #[test]
+    fn validates_complete_webpage_and_reads_title() {
+        let parsed = parse_webpage_input(
+            "<!doctype html><html><head><title>Project Board</title></head><body></body></html>",
+        )
+        .unwrap();
+        assert_eq!(parsed.title, "Project Board");
+        assert!(parse_webpage_input("<html><body>missing title</body></html>").is_err());
+        assert!(parse_webpage_input("```html\n<!doctype html>\n```").is_err());
     }
 
     #[test]
@@ -429,5 +571,46 @@ mod tests {
             memo_file.read_all_memos_for_notebook_id(Some("work")).len(),
             1
         );
+    }
+
+
+    #[test]
+    fn creates_webpage_artifact_and_pointer_note() {
+        let temp = tempfile::tempdir().unwrap();
+        let notebook_path = temp.path().join("notes");
+        std::fs::create_dir_all(&notebook_path).unwrap();
+        let memo_file = MemoFile::new(temp.path().join("config"));
+        memo_file
+            .write_notebook_configs(&[NotebookConfig {
+                id: "work".to_string(),
+                name: "Work Notes".to_string(),
+                icon: None,
+                path: format!("{}/", notebook_path.display()),
+                is_default: true,
+                sort: 0,
+                created_at: 1,
+                updated_at: 1,
+            }])
+            .unwrap();
+
+        let html = "<!doctype html><html><head><title>Dashboard</title></head><body><script>document.body.dataset.ready='yes'</script></body></html>";
+        let created = create_artifact(
+            &memo_file,
+            CreateArtifactRequest {
+                plugin_id: "webpage",
+                notebook: notebook_path.to_str().unwrap(),
+                content: html,
+                source_note: None,
+                producer: "codex",
+            },
+        )
+        .unwrap();
+
+        assert_eq!(created.renderer, "webpage");
+        assert_eq!(std::fs::read_to_string(&created.artifact_path).unwrap(), html);
+        let pointer = std::fs::read_to_string(&created.note_path).unwrap();
+        assert!(pointer.contains("flowix_note_type: webpage"));
+        assert!(pointer.contains("renderer: webpage"));
+        assert!(created.artifact_path.ends_with(".html"));
     }
 }

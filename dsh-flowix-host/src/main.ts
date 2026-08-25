@@ -15,12 +15,16 @@ import {
   requireModelResolve,
   requireSessionUsage,
   requireSessionHistory,
+  requireCredentialReference,
+  requireCredentialSet,
+  requireModelSettingsWrite,
 } from './protocol/validation.ts'
 import { SessionPool } from './runtime/session-pool.ts'
-import { catalog, discover, resolveCatalogModel } from './runtime/model-directory.ts'
+import { catalog, resolveCatalogModel } from './runtime/model-directory.ts'
 import { catalog as pluginCatalog } from './runtime/plugin-directory.ts'
 import { ensureFlowixProfile } from './runtime/environment.ts'
 import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from './build-meta.ts'
+import { RuntimeAdmin } from './runtime/admin.ts'
 
 // The development CJS host delegates the `dsh` carrier to the built official
 // CLI. Production SEA builds make the same delegation in their upstream
@@ -69,6 +73,7 @@ function writeFrame(frame: unknown): void {
 const pool = new SessionPool((params: RunEventNotification) => {
   writeFrame({ jsonrpc: '2.0', method: 'run.event', params })
 })
+const admin = new RuntimeAdmin()
 
 async function dispatch(request: JsonRpcRequest): Promise<unknown> {
   switch (request.method) {
@@ -91,6 +96,8 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
           'plugin-catalog',
           'runtime-profile',
           'runtime-bridge',
+          'credentials-management',
+          'model-settings-management',
         ],
       }
     case 'host.ping': return { ok: true }
@@ -120,7 +127,7 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
     case 'models.catalog': return { providers: catalog() }
     case 'models.discover': {
       const params = requireModelDiscover(request.params)
-      const models = await discover({
+      const models = await admin.modelsDiscover({
         ...(params.provider === undefined ? {} : { provider: params.provider }),
         ...(params.baseUrl === undefined ? {} : { baseURL: params.baseUrl }),
         ...(params.api === undefined ? {} : { api: params.api }),
@@ -132,11 +139,32 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
       const params = requireModelResolve(request.params)
       return { model: resolveCatalogModel(params.provider, params.model) }
     }
+    case 'credentials.status': {
+      const params = requireCredentialReference(request.params)
+      return await admin.credentialDescribe(params.reference)
+    }
+    case 'credentials.set': {
+      const params = requireCredentialSet(request.params)
+      return await admin.credentialSet(params.reference, params.value)
+    }
+    case 'credentials.delete': {
+      const params = requireCredentialReference(request.params)
+      return await admin.credentialUnset(params.reference)
+    }
+    case 'settings.models.describe': return await admin.modelsDescribe()
+    case 'settings.models.upsert': {
+      const params = requireModelSettingsWrite(request.params, true)
+      return await admin.modelUpsert(params.route, params.profile!, params.expectedRevision)
+    }
+    case 'settings.models.remove': {
+      const params = requireModelSettingsWrite(request.params, false)
+      return await admin.modelRemove(params.route, params.expectedRevision)
+    }
     case 'plugins.catalog':
       ensureFlowixProfile()
       return { plugins: pluginCatalog() }
     case 'host.shutdown':
-      await pool.close()
+      await Promise.allSettled([pool.close(), admin.close()])
       setImmediate(() => process.exit(0))
       return { ok: true }
     default:
@@ -154,7 +182,8 @@ interface IncomingFrame {
 function responseId(frame: unknown): JsonRpcId | null {
   if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return null
   const id = (frame as { id?: unknown }).id
-  return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+  if (typeof id === 'string' || typeof id === 'number' || id === null) return id as JsonRpcId | null
+  return null
 }
 
 function errorResponse(id: JsonRpcId | null, error: unknown): void {

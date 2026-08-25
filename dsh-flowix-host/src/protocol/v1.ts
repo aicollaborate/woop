@@ -89,12 +89,28 @@ export interface ModelDiscoverParams {
   api?: 'openai-completions' | 'openai-responses' | 'anthropic-messages'
   /** One-shot probe credential; the host never stores it. */
   apiKey?: string
+  /** Stored DSH credential to use when no one-shot key was supplied. */
+  apiKeyEnv?: string
 }
 
 /** One `models.resolve` query for an exact provider/model route. */
 export interface ModelResolveParams {
   provider: string
   model: string
+}
+
+export interface CredentialReferenceParams {
+  reference: string
+}
+
+export interface CredentialSetParams extends CredentialReferenceParams {
+  value: string
+}
+
+export interface ModelSettingsWriteParams {
+  route: string
+  profile?: Record<string, unknown>
+  expectedRevision?: number
 }
 
 export type HostEvent =

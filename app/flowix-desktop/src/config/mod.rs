@@ -37,3 +37,6 @@ pub use user::{
     dsh_credential_ref_for_route, AiConfigFile, AiModelConfig, AiModelEntry, PreferenceFile, Theme,
     UserConfigError, UserConfigStore, DSH_SETTINGS_FILE_NAME,
 };
+pub(crate) use user::{
+    merge_harness_provider, DeepSeekHarnessProviderSettings, DeepSeekHarnessSettingsFile,
+};

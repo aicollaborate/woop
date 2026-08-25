@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, ModelDiscoverParams, RunStartParams, RuntimeSpec, SessionHistoryParams, SessionUsageParams } from './v1.ts'
+import type { CredentialReferenceParams, CredentialSetParams, JsonRpcRequest, ModelDiscoverParams, ModelSettingsWriteParams, RunStartParams, RuntimeSpec, SessionHistoryParams, SessionUsageParams } from './v1.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -72,6 +72,30 @@ function requireCredentialRef(value: unknown, name: string): string {
   return ref
 }
 
+export function requireCredentialReference(value: unknown): CredentialReferenceParams {
+  const params = requireRecord(value, 'credentials params')
+  return { reference: requireCredentialRef(params.reference, 'reference') }
+}
+
+export function requireCredentialSet(value: unknown): CredentialSetParams {
+  const params = requireRecord(value, 'credentials.set params')
+  return {
+    reference: requireCredentialRef(params.reference, 'reference'),
+    value: requireString(params.value, 'value'),
+  }
+}
+
+export function requireModelSettingsWrite(value: unknown, requireProfile: boolean): ModelSettingsWriteParams {
+  const params = requireRecord(value, 'model settings params')
+  const route = requireString(params.route, 'route')
+  const expectedRevision = params.expectedRevision === undefined
+    ? undefined
+    : requireNonNegativeInteger(params.expectedRevision, 'expectedRevision')
+  const profile = params.profile === undefined ? undefined : requireRecord(params.profile, 'profile')
+  if (requireProfile && profile === undefined) throw new ProtocolInputError(-32602, 'profile is required')
+  return { route, ...(profile === undefined ? {} : { profile }), ...(expectedRevision === undefined ? {} : { expectedRevision }) }
+}
+
 export function requireRunStart(value: unknown): RunStartParams {
   const params = requireRecord(value, 'run.start params')
   const prompt = requireRecord(params.prompt, 'prompt')
@@ -113,12 +137,16 @@ export function requireModelDiscover(value: unknown): ModelDiscoverParams {
   const baseUrl = optionalString(params.baseUrl)
   const api = params.api
   const apiKey = optionalString(params.apiKey)
+  const apiKeyEnv = params.apiKeyEnv === undefined
+    ? undefined
+    : requireCredentialRef(params.apiKeyEnv, 'apiKeyEnv')
   if (provider !== undefined) result.provider = provider
   if (baseUrl !== undefined) result.baseUrl = baseUrl
   if (api !== undefined) {
     result.api = api as Exclude<ModelDiscoverParams['api'], undefined>
   }
   if (apiKey !== undefined) result.apiKey = apiKey
+  if (apiKeyEnv !== undefined) result.apiKeyEnv = apiKeyEnv
   return result
 }
 

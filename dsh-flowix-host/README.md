@@ -171,6 +171,8 @@ architecture, and Node ABI metadata.
 
 Development overrides:
 
+- `FLOWIX_DSH_BUNDLE_ROOT`: complete local release bundle; Flowix launches
+  `node/<node> host/dsh-host.cjs`, matching the managed production contract
 - `FLOWIX_DSH_HOST_PATH`: host executable or built `.mjs`
 - `FLOWIX_DSH_RUNTIME_PATH`: Harness runtime executable
 - `FLOWIX_DSH_CORDIS_CONFIG`: alternate Cordis composition

@@ -11,6 +11,9 @@ import {
   requireSessionHistory,
   requireThread,
   requireThreadRun,
+  requireCredentialReference,
+  requireCredentialSet,
+  requireModelSettingsWrite,
 } from '../src/protocol/validation.ts'
 import { sessionPoolOptions } from '../src/runtime/pool-options.ts'
 
@@ -56,6 +59,10 @@ test('method parameter validators consistently fail with -32602', () => {
     ['session.history', () => requireSessionHistory({})],
     ['models.discover', () => requireModelDiscover({ api: 'invalid' })],
     ['models.resolve', () => requireModelResolve({})],
+    ['credentials.status', () => requireCredentialReference({ reference: 'not-valid' })],
+    ['credentials.set', () => requireCredentialSet({ reference: 'VALID_REF', value: '' })],
+    ['settings.models.upsert', () => requireModelSettingsWrite({ route: 'deepseek' }, true)],
+    ['settings.models.remove', () => requireModelSettingsWrite({ route: 'deepseek', expectedRevision: -1 }, false)],
   ] as const
   for (const [method, validate] of invalidParams) {
     assert.throws(validate, error => {

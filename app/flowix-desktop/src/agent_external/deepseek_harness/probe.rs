@@ -1,11 +1,12 @@
-use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
 
 use super::config::resolve_runtime_config;
-use super::discovery::{cleanup_probe_host, create_probe_settings_file, timed_host_request};
+use super::discovery::{
+    cleanup_probe_files, cleanup_probe_host, create_probe_settings_file, timed_host_request,
+};
 use super::error::harness_probe_failure;
-use super::host::{sync_credential_file, DshHostClient};
+use super::host::DshHostClient;
 use super::manager::{DeepSeekHarnessManager, HARNESS_PROBE_TIMEOUT};
 use super::protocol::{self, AdaptedEvent};
 use crate::agent_wire::AgentChunk;
@@ -21,7 +22,7 @@ impl DeepSeekHarnessManager {
     pub async fn test_connection(&self, config: &AiModelConfig) -> TestConnectionResult {
         let started = Instant::now();
         let model_id = config.model.trim().to_string();
-        let runtime_config = match resolve_runtime_config(config, None) {
+        let mut runtime_config = match resolve_runtime_config(config, None) {
             Ok(value) => value,
             Err(error) => {
                 return harness_probe_failure(
@@ -36,6 +37,18 @@ impl DeepSeekHarnessManager {
                 )
             }
         };
+        // A draft key is stored under a one-shot DSH credential reference,
+        // never over the route's saved reference. DSH deletes it at cleanup;
+        // Flowix never reads or copies the credentials document.
+        let temporary_credential = runtime_config
+            .api_key
+            .as_ref()
+            .map(|_| format!("FLOWIX_DSH_PROBE_{}", uuid::Uuid::new_v4().simple()));
+        let mut probe_config = config.clone();
+        if let Some(reference) = temporary_credential.as_deref() {
+            runtime_config.api_key_env = reference.to_string();
+            probe_config.api_key_env = reference.to_string();
+        }
 
         // The durable settings file may still describe the previously saved
         // model directory while this draft is being tested. Harness treats an
@@ -43,7 +56,7 @@ impl DeepSeekHarnessManager {
         // normal cached host would reject a newly added model as unknown.
         // Give this probe its own settings snapshot instead; no user config
         // is changed and the production host/cache is not disturbed.
-        let probe_settings_path = match create_probe_settings_file(config) {
+        let probe_settings_path = match create_probe_settings_file(&probe_config) {
             Ok(path) => path,
             Err(error) => {
                 return harness_probe_failure(
@@ -55,22 +68,7 @@ impl DeepSeekHarnessManager {
             }
         };
         let dsh_home = self.user_config.dsh_dir();
-        let probe_credentials_path = probe_settings_path.with_file_name(".credentials.yaml");
-        if let Some(api_key) = runtime_config.api_key.as_deref() {
-            if let Err(error) = sync_credential_file(
-                &probe_credentials_path,
-                &runtime_config.api_key_env,
-                api_key,
-            ) {
-                let _ = fs::remove_file(&probe_settings_path);
-                return harness_probe_failure(
-                    &model_id,
-                    started,
-                    TestConnectionErrorKind::Other,
-                    error,
-                );
-            }
-        }
+        let probe_credentials_path = dsh_home.join(".credentials.yaml");
         let host = match tokio::time::timeout(
             HARNESS_PROBE_TIMEOUT,
             DshHostClient::spawn(
@@ -85,7 +83,7 @@ impl DeepSeekHarnessManager {
         {
             Ok(Ok(host)) => host,
             Ok(Err(error)) => {
-                let _ = fs::remove_file(&probe_settings_path);
+                cleanup_probe_files(&probe_settings_path);
                 return harness_probe_failure(
                     &model_id,
                     started,
@@ -94,7 +92,7 @@ impl DeepSeekHarnessManager {
                 );
             }
             Err(_) => {
-                let _ = fs::remove_file(&probe_settings_path);
+                cleanup_probe_files(&probe_settings_path);
                 return harness_probe_failure(
                     &model_id,
                     started,
@@ -106,6 +104,50 @@ impl DeepSeekHarnessManager {
                 );
             }
         };
+
+        let credential_request = if let Some(api_key) = runtime_config.api_key.as_deref() {
+            protocol::credential_set_request(
+                host.next_request_id(),
+                &runtime_config.api_key_env,
+                api_key,
+            )
+        } else {
+            protocol::credential_status_request(host.next_request_id(), &runtime_config.api_key_env)
+        };
+        match timed_host_request(&host, credential_request).await {
+            Ok(value)
+                if value.get("configured").and_then(serde_json::Value::as_bool) == Some(true) => {}
+            Ok(_) => {
+                cleanup_probe_host(
+                    &host,
+                    "flowix-probe-credential-only",
+                    &probe_settings_path,
+                    temporary_credential.as_deref(),
+                )
+                .await;
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::BadConfig,
+                    "API key is not configured in DeepSeek Harness".to_string(),
+                );
+            }
+            Err(error) => {
+                cleanup_probe_host(
+                    &host,
+                    "flowix-probe-credential-only",
+                    &probe_settings_path,
+                    temporary_credential.as_deref(),
+                )
+                .await;
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::Other,
+                    error,
+                );
+            }
+        }
 
         let probe_id = uuid::Uuid::new_v4().to_string();
         let thread_id = format!("flowix-harness-probe-{probe_id}");
@@ -129,7 +171,13 @@ impl DeepSeekHarnessManager {
             "read-only",
         );
         if let Err(error) = timed_host_request(&host, ensure).await {
-            cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
+            cleanup_probe_host(
+                &host,
+                &thread_id,
+                &probe_settings_path,
+                temporary_credential.as_deref(),
+            )
+            .await;
             return harness_probe_failure(
                 &model_id,
                 started,
@@ -148,7 +196,13 @@ impl DeepSeekHarnessManager {
         );
         if let Err(error) = timed_host_request(&host, start).await {
             host.unsubscribe(&thread_id, &run_id).await;
-            cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
+            cleanup_probe_host(
+                &host,
+                &thread_id,
+                &probe_settings_path,
+                temporary_credential.as_deref(),
+            )
+            .await;
             return harness_probe_failure(
                 &model_id,
                 started,
@@ -203,7 +257,13 @@ impl DeepSeekHarnessManager {
         .await;
 
         host.unsubscribe(&thread_id, &run_id).await;
-        cleanup_probe_host(&host, &thread_id, &probe_settings_path).await;
+        cleanup_probe_host(
+            &host,
+            &thread_id,
+            &probe_settings_path,
+            temporary_credential.as_deref(),
+        )
+        .await;
 
         match outcome {
             Ok(Ok(summary)) => TestConnectionResult {

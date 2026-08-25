@@ -70,6 +70,11 @@ export class SessionPool {
       ...(spec.maxTokens === undefined ? {} : { maxTokens: spec.maxTokens }),
     })
     const bridge = new FlowixDshBridgeClient(harness)
+    // `runtime.ensure` is also the readiness boundary used by health checks
+    // and bridge introspection. Creating DeepSeekHarness alone does not spawn
+    // its JSON-RPC runtime; start the transport now so a capabilities request
+    // immediately following ensure cannot wait forever on an idle client.
+    ;(harness.client as unknown as { start(): void }).start()
     // This is the same minting path used by the official SDK. Flowix only
     // supplies an id when resuming a previously mapped Harness session.
     const sessionId = spec.sessionId ?? harness.session().id

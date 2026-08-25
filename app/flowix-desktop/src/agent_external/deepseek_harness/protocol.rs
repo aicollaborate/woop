@@ -143,14 +143,50 @@ pub fn plugins_catalog_request(id: u64) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "method": "plugins.catalog", "params": {} })
 }
 
+pub fn credential_status_request(id: u64, reference: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.status", "params": { "reference": reference } })
+}
+
+pub fn credential_set_request(id: u64, reference: &str, value: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.set", "params": { "reference": reference, "value": value } })
+}
+
+pub fn credential_delete_request(id: u64, reference: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.delete", "params": { "reference": reference } })
+}
+
+pub fn model_settings_describe_request(id: u64) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "settings.models.describe", "params": {} })
+}
+
+pub fn model_settings_upsert_request(
+    id: u64,
+    route: &str,
+    profile: &crate::config::DeepSeekHarnessProviderSettings,
+    expected_revision: u64,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "settings.models.upsert",
+        "params": { "route": route, "profile": profile, "expectedRevision": expected_revision }
+    })
+}
+
+pub fn model_settings_remove_request(id: u64, route: &str, expected_revision: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "settings.models.remove",
+        "params": { "route": route, "expectedRevision": expected_revision }
+    })
+}
+
 pub fn models_discover_request(
     id: u64,
     provider: Option<&str>,
     base_url: &str,
     api: &str,
     api_key: Option<&str>,
+    api_key_env: &str,
 ) -> Value {
-    let mut params = json!({ "baseUrl": base_url, "api": api });
+    let mut params = json!({ "baseUrl": base_url, "api": api, "apiKeyEnv": api_key_env });
     if let Some(provider) = provider {
         params["provider"] = json!(provider);
     }

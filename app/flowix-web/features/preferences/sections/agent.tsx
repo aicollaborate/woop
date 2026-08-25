@@ -398,6 +398,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   model: 'gpt-5.5',
   apiUrl: '',
   apiKeys: {},
+  credentialConfigured: false,
 };
 
 export function AgentSection({
@@ -915,6 +916,7 @@ export function AgentSection({
     setLocalConfig({
       ...localConfig,
       apiKeys: { ...localConfig.apiKeys, [keyBucket]: value },
+      credentialConfigured: value.trim().length > 0,
     });
     setTestStatus((s) => (s === 'testing' ? s : 'idle'));
   };
@@ -1140,6 +1142,9 @@ export function AgentSection({
       apiKeys: remainingModels.length > 0
         ? cardConfig.apiKeys
         : { ...cardConfig.apiKeys, [providerKeyBucket]: '' },
+      credentialConfigured: remainingModels.length > 0
+        ? cardConfig.credentialConfigured
+        : false,
     };
     const persistedConfig = remainingModels.length > 0
       ? nextConfig
@@ -1198,7 +1203,7 @@ export function AgentSection({
       ? catalogEntry?.takesApiKey !== false
       : cfg.provider !== 'Ollama' && cfg.provider !== 'OpenAI Compatible';
     const keyBucket = cfg.providerId?.trim() || cfg.provider;
-    if (keyRequired && (cfg.apiKeys[keyBucket] ?? '').trim() === '') {
+    if (keyRequired && !cfg.credentialConfigured && (cfg.apiKeys[keyBucket] ?? '').trim() === '') {
       return translate('preferences.agent.error.noApiKey');
     }
     const url = cfg.apiUrl.trim();
@@ -1561,7 +1566,7 @@ export function AgentSection({
               type="password"
               value={localConfig.apiKeys[apiKeyBucket] ?? ''}
               onChange={(e) => updateApiKey(e.target.value)}
-              placeholder="sk-..."
+              placeholder={localConfig.credentialConfigured ? '•••••••• (DSH)' : 'sk-...'}
               className={FIELD_INPUT_CLASS}
             />
           </Field>
@@ -1782,7 +1787,7 @@ export function AgentSection({
             type="password"
             value={localConfig.apiKeys[apiKeyBucket] ?? ''}
             onChange={(e) => updateApiKey(e.target.value)}
-            placeholder="sk-..."
+            placeholder={localConfig.credentialConfigured ? '•••••••• (DSH)' : 'sk-...'}
             className={FIELD_INPUT_CLASS}
           />
         </Field>
@@ -1878,7 +1883,8 @@ export function AgentSection({
 /** Whether one card's provider has a non-empty API key in its key bucket. */
 function hasConfiguredApiKey(card: ConfiguredModelCard): boolean {
   const bucket = card.config.providerId?.trim() || card.config.provider;
-  return (card.config.apiKeys[bucket] ?? '').trim().length > 0;
+  return card.config.credentialConfigured === true
+    || (card.config.apiKeys[bucket] ?? '').trim().length > 0;
 }
 
 function ConfiguredModelsList({

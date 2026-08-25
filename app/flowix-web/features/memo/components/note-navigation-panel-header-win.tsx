@@ -4,9 +4,11 @@ import { CaretDoubleLeftIcon } from '@phosphor-icons/react';
 
 import { Tooltip } from '@shared/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
+import { NotebookIconMenu } from './notebook-icon-menu';
 
 interface NoteNavigationPanelHeaderWinProps {
   onTogglePanel: () => void;
+  onOpenPreferences: (tab?: string) => void;
 }
 
 /**
@@ -28,13 +30,22 @@ interface NoteNavigationPanelHeaderWinProps {
  */
 export function NoteNavigationPanelHeaderWin({
   onTogglePanel,
+  onOpenPreferences,
 }: NoteNavigationPanelHeaderWinProps) {
   const { t } = useI18n();
   return (
     <div
       data-tauri-drag-region
-      className="shrink-0 h-9 px-2 flex items-center justify-end"
+      className="shrink-0 h-9 px-2 flex items-center justify-between"
     >
+      <div className="ml-1 flex items-center">
+        <NotebookIconMenu
+          noteNavigationVisible
+          onToggleNoteNavigation={onTogglePanel}
+          onOpenPreferences={onOpenPreferences}
+          buttonClassName="h-6 w-6"
+        />
+      </div>
       <Tooltip content={t("memo.navigation.collapsePanelTooltip")}>
         <button
           type="button"

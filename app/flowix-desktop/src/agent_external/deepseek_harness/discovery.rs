@@ -46,7 +46,10 @@ pub(crate) fn create_probe_settings_file(config: &AiModelConfig) -> Result<PathB
     }
     let content = UserConfigStore::deepseek_harness_settings_yaml(&snapshot)
         .map_err(|e| format!("failed to prepare Harness probe settings: {e}"))?;
-    let path = std::env::temp_dir().join(format!("flowix-dsh-probe-{}.yaml", uuid::Uuid::new_v4()));
+    let directory = std::env::temp_dir().join(format!("flowix-dsh-probe-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory)
+        .map_err(|e| format!("failed to create Harness probe directory: {e}"))?;
+    let path = directory.join("settings.yaml");
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
@@ -66,20 +69,31 @@ pub(crate) fn create_probe_settings_file(config: &AiModelConfig) -> Result<PathB
         Ok(path.clone())
     })();
     if result.is_err() {
-        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&directory);
     }
     result
+}
+
+/// Remove the private settings directory created for one connection probe.
+pub(crate) fn cleanup_probe_files(settings_path: &Path) {
+    if let Some(directory) = settings_path.parent() {
+        let _ = fs::remove_dir_all(directory);
+    }
 }
 
 pub(crate) async fn cleanup_probe_host<C: DshClient + ?Sized>(
     host: &Arc<C>,
     thread_id: &str,
     settings_path: &Path,
+    temporary_credential: Option<&str>,
 ) {
     dispose_probe_runtime(host, thread_id).await;
+    if let Some(reference) = temporary_credential {
+        let request = protocol::credential_delete_request(host.next_request_id(), reference);
+        let _ = tokio::time::timeout(Duration::from_secs(2), host.request(request)).await;
+    }
     host.shutdown().await;
-    let _ = fs::remove_file(settings_path);
-    let _ = fs::remove_file(settings_path.with_file_name(".credentials.yaml"));
+    cleanup_probe_files(settings_path);
 }
 
 #[cfg(test)]
@@ -163,7 +177,7 @@ mod tests {
         let credentials = temp.path().join(".credentials.yaml");
         fs::write(&settings, b"x").unwrap();
         fs::write(&credentials, b"x").unwrap();
-        cleanup_probe_host(&host, "probe-thread", &settings).await;
+        cleanup_probe_host(&host, "probe-thread", &settings, None).await;
         assert!(host.is_closed());
         assert!(!settings.exists());
         assert!(!credentials.exists());

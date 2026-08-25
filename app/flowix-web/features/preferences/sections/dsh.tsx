@@ -70,6 +70,7 @@ const DSH_PRESETS: readonly {
 export function DshSettingsSection() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<DshTab>('general');
+  const [useLocalDevRuntime, setUseLocalDevRuntime] = useState(false);
   const [status, setStatus] = useState<DshIntegrationStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const activeTabLabelKey = DSH_TABS.find((tab) => tab.id === activeTab)?.labelKey ?? DSH_TABS[0].labelKey;
@@ -121,13 +122,24 @@ export function DshSettingsSection() {
     );
   }
 
-  if (!status.installed) {
+  if (!status.installed && !(import.meta.env.DEV && useLocalDevRuntime)) {
+    if (import.meta.env.DEV) {
+      return (
+        <div className="flex min-h-[min(560px,calc(100vh-220px))] flex-col">
+          <DshDevRuntimeNotice onContinue={() => setUseLocalDevRuntime(true)} />
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-[min(560px,calc(100vh-220px))] flex-col">
         <DshInstallPage initialStatus={status} onInstalled={setStatus} />
       </div>
     );
   }
+
+  const displayedStatus = import.meta.env.DEV && useLocalDevRuntime
+    ? { ...status, installed: true }
+    : status;
 
   return (
     <div className="space-y-5">
@@ -173,9 +185,28 @@ export function DshSettingsSection() {
             modelDirectory={deepseekHarness}
           />
         )}
-        {activeTab === 'general' && <GeneralTab initialStatus={status} onUninstalled={handleUninstalled} />}
+        {activeTab === 'general' && <GeneralTab initialStatus={displayedStatus} onUninstalled={handleUninstalled} />}
         {activeTab === 'plugins' && <PluginsTab />}
         {activeTab === 'presets' && <PresetsTab />}
+      </div>
+    </div>
+  );
+}
+
+function DshDevRuntimeNotice({ onContinue }: { onContinue: () => void }) {
+  return (
+    <div className="flex flex-1 items-center justify-center px-1 py-2">
+      <div className="w-full max-w-xl rounded-2xl border border-[var(--divider)] bg-[var(--card)] p-8 text-center shadow-sm">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
+          <img src={iconDeepseek} alt="" className="h-8 w-8 object-contain" />
+        </div>
+        <h3 className="mt-5 text-lg font-semibold text-[var(--foreground)]">Dev 本地 DSH</h3>
+        <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+          开发版本使用本地 dsh-host 和 runtime，不下载或安装远程 DSH。
+        </p>
+        <Button type="button" className="mt-8" onClick={onContinue}>
+          继续使用本地 DSH
+        </Button>
       </div>
     </div>
   );

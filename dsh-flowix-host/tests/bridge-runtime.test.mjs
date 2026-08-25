@@ -27,6 +27,9 @@ test('flowix-dsh-bridge is a DSH bundle and keeps the runtime side UI-free', asy
 test('flowix-dsh-bridge emits native DSH events through its attached transport', async () => {
   const plugin = (await import(pathToFileURL(resolve(bridgeRoot, 'index.js')).href)).default
   const listeners = new Map()
+  const credentialValues = new Map()
+  let modelRevision = 0
+  let providers = {}
   const ctx = {
     provide(key, value) { this[key] = value },
     emit() {},
@@ -41,6 +44,29 @@ test('flowix-dsh-bridge emits native DSH events through its attached transport',
         { type: 'user/message', seq: 2, time: 2, data: { id: 'user-1', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } },
         { type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
       ], meta: { id: sessionId } } } }
+    },
+    credentials: {
+      async describe(reference) { return { configured: credentialValues.has(reference), writable: true, ...(credentialValues.has(reference) ? { source: 'file' } : {}) } },
+      async set(reference, value) { credentialValues.set(reference, value) },
+      async unset(reference) { credentialValues.delete(reference) },
+    },
+    settings: {
+      describe() { return [{ ns: 'llm-pi-ai', revision: modelRevision, user: { providers }, applies: 'live' }] },
+      async mutate(_ns, ops, expectedRevision) {
+        if (expectedRevision !== undefined) assert.equal(expectedRevision, modelRevision)
+        for (const op of ops) {
+          const route = op.path[1]
+          if (op.op === 'set') providers = { ...providers, [route]: op.value }
+          else { const next = { ...providers }; delete next[route]; providers = next }
+        }
+        modelRevision += 1
+      },
+    },
+    llm: {
+      async discoverModels(namespace, request) {
+        assert.equal(namespace, 'llm-pi-ai')
+        return [{ id: request.provider === 'deepseek' ? 'deepseek-chat' : 'custom' }]
+      },
     },
   }
   plugin(ctx)
@@ -72,4 +98,11 @@ test('flowix-dsh-bridge emits native DSH events through its attached transport',
   assert.equal(history.events.length, 3)
   assert.equal(history.snapshotSeq, 3)
   assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.run.cancel', { sessionId: 'session-2' })).cancelled, true)
+  assert.deepEqual(await ctx.flowixDshBridge.handle('flowix.bridge.credentials.set', { reference: 'DEEPSEEK_API_KEY', value: 'secret' }), { configured: true, writable: true, source: 'file' })
+  assert.deepEqual(await ctx.flowixDshBridge.handle('flowix.bridge.credentials.describe', { reference: 'DEEPSEEK_API_KEY' }), { configured: true, writable: true, source: 'file' })
+  assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.models.upsert', { route: 'deepseek', profile: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, expectedRevision: 0 })).revision, 1)
+  assert.deepEqual((await ctx.flowixDshBridge.handle('flowix.bridge.models.describe')).providers.deepseek, { apiKeyEnv: 'DEEPSEEK_API_KEY' })
+  assert.equal((await ctx.flowixDshBridge.handle('flowix.bridge.models.remove', { route: 'deepseek', expectedRevision: 1 })).revision, 2)
+  assert.deepEqual(await ctx.flowixDshBridge.handle('flowix.bridge.models.discover', { request: { provider: 'deepseek' } }), { models: [{ id: 'deepseek-chat' }] })
+  assert.deepEqual(await ctx.flowixDshBridge.handle('flowix.bridge.credentials.unset', { reference: 'DEEPSEEK_API_KEY' }), { configured: false, writable: true })
 })

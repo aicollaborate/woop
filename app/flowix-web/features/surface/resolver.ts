@@ -23,6 +23,7 @@ function artifactSurface(
     case 'markmap':
       return { ...base, kind: 'mindmap', renderer };
     case 'html':
+    case 'webpage':
       return { ...base, kind: 'html', renderer };
     case 'json-viewer':
       return { ...base, kind: 'json', renderer };

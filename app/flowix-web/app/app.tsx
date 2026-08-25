@@ -14,6 +14,7 @@ import { TooltipProvider } from "@shared/ui/tooltip";
 import "@features/shortcuts/actions";
 import { listenToUserConfigChanges, windows } from "@platform/tauri/client";
 import { syncUserConfigChange } from "./user-config-sync";
+import { invalidateDshModelConfigs } from "@features/agent/store/dsh-model-config-store";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("app");
@@ -113,6 +114,7 @@ function App() {
 
   useEffect(() => {
     return listenToUserConfigChanges((kind) => {
+      if (kind === "dsh_config") invalidateDshModelConfigs();
       syncUserConfigChange(kind, {
         reloadPreferences: loadInitial,
         refreshAgentRuntime: () => refreshAgentRuntime({ force: true }),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useImperativeHandle, useRef, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, type Ref } from 'react';
 import type { Markmap } from 'markmap-view';
 
 const MARKMAP_BRANCH_COLORS = [
@@ -134,6 +134,63 @@ function HtmlRenderer({ content }: RendererProps) {
   );
 }
 
+const WEBPAGE_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  'img-src data: blob:',
+  'font-src data:',
+  'media-src data: blob:',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "navigate-to 'none'",
+].join('; ');
+
+export function sandboxWebpageContent(content: string): string {
+  const parsed = new DOMParser().parseFromString(content, 'text/html');
+  const policy = parsed.createElement('meta');
+  policy.httpEquiv = 'Content-Security-Policy';
+  policy.content = WEBPAGE_CSP;
+
+  // Keep navigation inside the artifact. The iframe sandbox already blocks
+  // popups and top-level navigation; this capture guard also stops ordinary
+  // links and forms from replacing the artifact's own browsing context.
+  const navigationGuard = parsed.createElement('script');
+  navigationGuard.textContent = `
+    document.addEventListener('click', function (event) {
+      var target = event.target;
+      var link = target && target.closest ? target.closest('a[href]') : null;
+      if (!link) return;
+      var href = link.getAttribute('href') || '';
+      if (!href.startsWith('#')) event.preventDefault();
+    }, true);
+    document.addEventListener('submit', function (event) {
+      event.preventDefault();
+    }, true);
+  `;
+
+  parsed.head.prepend(navigationGuard);
+  parsed.head.prepend(policy);
+  return `<!doctype html>\n${parsed.documentElement.outerHTML}`;
+}
+
+function WebpageRenderer({ content }: RendererProps) {
+  const sandboxedContent = useMemo(() => sandboxWebpageContent(content), [content]);
+
+  return (
+    <iframe
+      title="Plugin webpage"
+      className="h-full w-full border-0 bg-white"
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+      srcDoc={sandboxedContent}
+    />
+  );
+}
+
 function TextRenderer({ content }: RendererProps) {
   return <pre className="h-full overflow-auto whitespace-pre-wrap p-6 text-sm">{content}</pre>;
 }
@@ -155,6 +212,9 @@ export const PluginArtifactRenderer = ({
   }
   if (renderer === 'html') {
     return <HtmlRenderer content={content} rendererRef={rendererRef} />;
+  }
+  if (renderer === 'webpage') {
+    return <WebpageRenderer content={content} rendererRef={rendererRef} />;
   }
   return <TextRenderer content={content} rendererRef={rendererRef} />;
 };

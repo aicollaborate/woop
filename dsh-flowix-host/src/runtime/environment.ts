@@ -71,7 +71,8 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   // The Flowix composition is a normal DSH profile overlay. The profile owns
   // the bridge plugin; the base cordis config owns the DSH runtime roster.
   env.DSH_PROFILE = "flowix";
-  env.FLOWIX_DSH_SDK_SERVER = join(hostRoot(), "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js");
+  const runtimeRoot = process.env.FLOWIX_DSH_RUNTIME_ROOT?.trim() || hostRoot();
+  env.FLOWIX_DSH_SDK_SERVER = join(runtimeRoot, "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js");
   // Flowix owns the harness home. Point the harness's own resolver (skills,
   // AGENTS.md, storage domains) at the single dsh root instead of ~/.dsh.
   const dshHome = process.env.FLOWIX_DSH_HOME ?? process.env.DSH_HOME;
@@ -139,7 +140,8 @@ export function ensureFlowixProfile(): void {
   }
   copyProfilePackage(bridgeSourceDir, join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge"));
   const installedBridgePatch = join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge", "cordis.patch.yml");
-  const sdkServerEntry = pathToFileURL(join(hostRoot(), "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js")).href;
+  const sdkRuntimeRoot = process.env.FLOWIX_DSH_RUNTIME_ROOT?.trim() || hostRoot();
+  const sdkServerEntry = pathToFileURL(join(sdkRuntimeRoot, "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js")).href;
   writeFileSync(
     installedBridgePatch,
     readFileSync(installedBridgePatch, "utf8").replace("__FLOWIX_DSH_SDK_SERVER__", JSON.stringify(sdkServerEntry)),
@@ -245,9 +247,22 @@ export function runtimeLaunch(spec: RuntimeSpec): {
   // not accidentally exercise a real model catalog instead of the fixture.
   const configured = process.env.FLOWIX_DSH_RUNTIME_PATH?.trim();
   if (configured !== undefined && configured !== "") {
+    let configuredArgs: string[] = [];
+    const rawArgs = process.env.FLOWIX_DSH_RUNTIME_ARGS?.trim();
+    if (rawArgs !== undefined && rawArgs !== "") {
+      try {
+        const parsed: unknown = JSON.parse(rawArgs);
+        if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+          throw new Error("must be a JSON array of strings");
+        }
+        configuredArgs = parsed as string[];
+      } catch (error) {
+        throw new Error(`FLOWIX_DSH_RUNTIME_ARGS is invalid: ${String(error)}`);
+      }
+    }
     return {
       command: configured,
-      args: [],
+      args: configuredArgs,
       env: runtimeEnvironment(spec),
     };
   }

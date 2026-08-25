@@ -14,6 +14,9 @@ export type AppUpdateDownloadProgress =
   | { phase: 'progress'; downloadedBytes: number; contentLength?: number }
   | { phase: 'finished'; downloadedBytes: number };
 
+let checkPromise: Promise<AppUpdate | null> | null = null;
+let installPromise: Promise<void> | null = null;
+
 function isTauriDesktopRuntime(): boolean {
   if (typeof window === 'undefined') return false;
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -26,42 +29,63 @@ function isTauriDesktopRuntime(): boolean {
  */
 export async function checkAppUpdate(): Promise<AppUpdate | null> {
   if (!isTauriDesktopRuntime()) return null;
+  if (installPromise) throw new Error('An application update is currently being installed.');
+  if (checkPromise) return checkPromise;
 
-  const update = await check({ timeout: 15_000 });
-  if (!update) return null;
+  const pending = (async () => {
+    const update = await check({ timeout: 15_000 });
+    if (!update) return null;
 
-  return {
-    update,
-    currentVersion: update.currentVersion,
-    version: update.version,
-    date: update.date,
-    body: update.body,
-  };
+    return {
+      update,
+      currentVersion: update.currentVersion,
+      version: update.version,
+      date: update.date,
+      body: update.body,
+    };
+  })();
+  checkPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (checkPromise === pending) checkPromise = null;
+  }
 }
 
 export async function installAppUpdate(
   appUpdate: AppUpdate,
   onProgress?: (progress: AppUpdateDownloadProgress) => void,
 ): Promise<void> {
-  let downloadedBytes = 0;
-  let contentLength: number | undefined;
+  if (installPromise) return installPromise;
+  if (checkPromise) throw new Error('An application update check is currently in progress.');
 
-  await appUpdate.update.download((event: DownloadEvent) => {
-    switch (event.event) {
-      case 'Started':
-        contentLength = event.data.contentLength;
-        onProgress?.({ phase: 'started', contentLength });
-        break;
-      case 'Progress':
-        downloadedBytes += event.data.chunkLength;
-        onProgress?.({ phase: 'progress', downloadedBytes, contentLength });
-        break;
-      case 'Finished':
-        onProgress?.({ phase: 'finished', downloadedBytes });
-        break;
-    }
-  });
+  const pending = (async () => {
+    let downloadedBytes = 0;
+    let contentLength: number | undefined;
 
-  await appUpdate.update.install();
-  await relaunch();
+    await appUpdate.update.download((event: DownloadEvent) => {
+      switch (event.event) {
+        case 'Started':
+          contentLength = event.data.contentLength;
+          onProgress?.({ phase: 'started', contentLength });
+          break;
+        case 'Progress':
+          downloadedBytes += event.data.chunkLength;
+          onProgress?.({ phase: 'progress', downloadedBytes, contentLength });
+          break;
+        case 'Finished':
+          onProgress?.({ phase: 'finished', downloadedBytes });
+          break;
+      }
+    });
+
+    await appUpdate.update.install();
+    await relaunch();
+  })();
+  installPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (installPromise === pending) installPromise = null;
+  }
 }

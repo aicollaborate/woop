@@ -3,6 +3,14 @@ import { chmod, cp, lstat, mkdir, readFile, readlink, readdir, rename, rm, write
 import { existsSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
+// pnpm may need to remove a stale modules tree during a bundle rebuild. The
+// build is non-interactive in both local automation and CI, so opt into its
+// deterministic no-prompt behavior.
+process.env.CI = 'true'
+process.env.NODE_ENV = 'development'
+process.env.NPM_CONFIG_PRODUCTION = 'false'
+process.env.npm_config_production = 'false'
+
 await import('./ensure-upstream.mjs')
 
 const hostRoot = resolve(import.meta.dirname, '..')
@@ -43,7 +51,7 @@ await mkdir(bundle, { recursive: true })
 await run(corepack(), [
   'pnpm@11.7.0', '--filter', 'dsh-jsonrpc-agent-pkg', 'deploy', '--legacy', '--prod',
   '--config.node-linker=hoisted', '--config.auto-install-peers=false',
-  '--config.link-workspace-packages=true', process.platform === 'win32' ? `"${runtime}"` : runtime,
+  '--config.link-workspace-packages=true', runtime,
 ], vendor)
 await materializeLinks(join(runtime, 'node_modules'))
 await materializeWorkspaceRoots(runtime, vendor)
@@ -76,6 +84,7 @@ await cp(process.execPath, nodeExecutable)
 if (process.platform === 'darwin') await optimizeMacosBundle(bundle, target, nodeExecutable)
 await installPrivatePnpm(bundle)
 await writePrivateShims(bundle)
+if (process.platform === 'win32') await optimizeWindowsBundle(bundle, target)
 await writeFile(join(bundle, 'runtime-build.json'), `${JSON.stringify({
   target,
   nodeVersion: process.version,
@@ -90,7 +99,12 @@ function hostTarget() {
   const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
   return `node24-${platform}-${process.arch}`
 }
-function corepack() { return process.platform === 'win32' ? 'corepack.cmd' : 'corepack' }
+function corepack() {
+  if (process.platform !== 'win32') return 'corepack'
+  // Invoke Corepack's JS entry directly. Spawning corepack.cmd through cmd.exe
+  // re-parses whitespace-bearing deploy targets and corrupts Windows paths.
+  return resolve(dirname(process.execPath), 'node_modules/corepack/dist/corepack.js')
+}
 async function optimizeMacosBundle(bundleRoot, runtimeTarget, nodeExecutable) {
   const nodeArch = runtimeTarget.endsWith('-arm64') ? 'arm64' : 'x86_64'
   const temporaryNode = `${nodeExecutable}.thin`
@@ -116,9 +130,46 @@ async function optimizeMacosBundle(bundleRoot, runtimeTarget, nodeExecutable) {
   }
   await rm(join(nodePty, 'third_party'), { recursive: true, force: true })
 }
+async function optimizeWindowsBundle(bundleRoot, runtimeTarget) {
+  // A target-specific archive cannot load node-pty binaries built for the
+  // other Windows architecture. Keep the x64 runtime closure unchanged and
+  // remove only the explicitly non-target prebuild.
+  const nodePty = join(bundleRoot, 'runtime/node_modules/node-pty')
+  const nonTargetPrebuild = runtimeTarget.endsWith('-x64') ? 'win32-arm64' : 'win32-x64'
+  await rm(join(nodePty, 'prebuilds', nonTargetPrebuild), { recursive: true, force: true })
+
+  // PDB files contain native debug symbols and are never loaded at runtime.
+  // Production symbols can be retained separately without shipping them to
+  // every user.
+  await removeFilesByExtension(bundleRoot, '.pdb')
+}
+async function removeFilesByExtension(directory, extension) {
+  if (!existsSync(directory)) return
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) await removeFilesByExtension(path, extension)
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(extension)) {
+      await rm(path, { force: true })
+    }
+  }
+}
 async function copyTree(source, destination) {
   await mkdir(dirname(destination), { recursive: true })
-  await cp(source, destination, { recursive: true, dereference: true, force: true })
+  await mkdir(destination, { recursive: true })
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const from = join(source, entry.name)
+    const to = join(destination, entry.name)
+    if (entry.isSymbolicLink()) {
+      const target = resolve(dirname(from), await readlink(from))
+      if (!existsSync(target)) continue
+      await copyTree(target, to)
+    } else if (entry.isDirectory()) {
+      await copyTree(from, to)
+    } else if (entry.isFile()) {
+      await mkdir(dirname(to), { recursive: true })
+      await cp(from, to, { force: true })
+    }
+  }
 }
 async function materializeLinks(directory) {
   if (!existsSync(directory)) return
@@ -127,8 +178,15 @@ async function materializeLinks(directory) {
     const info = await lstat(path)
     if (info.isSymbolicLink()) {
       const source = resolve(dirname(path), await readlink(path))
+      // pnpm deploy can leave workspace-only links pointing at its temporary
+      // hoisted tree. They are not part of the distributable closure; omit
+      // only broken links and keep materializing valid package links.
+      if (!existsSync(source)) {
+        await rm(path, { force: true })
+        continue
+      }
       await rm(path, { recursive: true, force: true })
-      await cp(source, path, { recursive: true, dereference: true })
+      await copyTree(source, path)
     } else if (info.isDirectory()) {
       if (entry.name === '.bin') await rm(path, { recursive: true, force: true })
       else await materializeLinks(path)
@@ -201,9 +259,31 @@ async function writePrivateShims(bundleRoot) {
     if (process.platform !== 'win32') await chmod(path, 0o755)
   }
 }
-async function run(command, args, cwd, env = process.env) {
+async function run(command, args, cwd, env = {
+  ...process.env,
+  CI: 'true',
+  NODE_ENV: 'development',
+  NPM_CONFIG_PRODUCTION: 'false',
+  npm_config_production: 'false',
+}) {
   process.stdout.write(`> ${basename(command)} ${args.join(' ')}\n`)
-  const child = spawn(command, args, { cwd, env, stdio: 'inherit', shell: process.platform === 'win32' && command.endsWith('.cmd') })
+  let executable = command
+  let executableArgs = args
+  let shell = false
+  if (process.platform === 'win32' && command.endsWith('corepack.js')) {
+    executable = process.execPath
+    executableArgs = [command, ...args]
+  }
+  if (process.platform === 'win32' && command.endsWith('.cmd')) {
+    // Node cannot reliably spawn .cmd files with shell=true when arguments
+    // contain spaces. Route through cmd.exe and quote each argument once.
+    const quote = (value) => `"${String(value).replaceAll('"', '\\"')}"`
+    executable = process.env.ComSpec || 'cmd.exe'
+    const commandPart = quote(command)
+    const commandLine = `${commandPart} ${args.map((value) => /\s/.test(String(value)) ? quote(value) : String(value)).join(' ')}`
+    executableArgs = ['/d', '/s', '/c', `"${commandLine}"`]
+  }
+  const child = spawn(executable, executableArgs, { cwd, env, stdio: 'inherit', shell })
   const code = await new Promise((ok, fail) => { child.once('error', fail); child.once('exit', ok) })
   if (code !== 0) throw new Error(`${command} exited with ${code}`)
 }

@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PuzzlePieceIcon, TreeStructureIcon } from '@phosphor-icons/react';
+import { BrowserIcon, PuzzlePieceIcon, TreeStructureIcon } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { plugins, type PluginDescriptor } from '@platform/tauri/client';
 import { listenToPluginCatalogChanges } from '@platform/tauri/client/plugin';
 
-const HIDDEN_SIDEBAR_PLUGIN_IDS = new Set(['mindmap']);
+// Built-in artifact tools are discovered through their pointer documents and
+// use the memo list as their index, rather than mounting a plugin workbench.
+const HIDDEN_SIDEBAR_PLUGIN_IDS = new Set(['mindmap', 'webpage']);
 
 export function PluginNavItems({
   activePluginId,
@@ -71,6 +73,9 @@ function pluginIcon(icon: string) {
     case 'mindmap':
     case 'tree-structure':
       return <TreeStructureIcon size={16} weight="bold" className="shrink-0" />;
+    case 'webpage':
+    case 'browser':
+      return <BrowserIcon size={16} weight="bold" className="shrink-0" />;
     default:
       return <PuzzlePieceIcon size={16} weight="bold" className="shrink-0" />;
   }

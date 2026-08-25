@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowUp, Loader2 } from 'lucide-react';
+import { ArrowUp, Check, Loader2, Plug } from 'lucide-react';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
@@ -51,6 +51,7 @@ import { UpdateProgress } from '@shared/ui/update-progress';
 import { useDshRuntimeInstaller } from '@features/preferences/hooks/use-dsh-runtime-installer';
 import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
+import { useCliLinkStatusStore } from '@features/preferences/store';
 import { useAppUpdater, type AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 import { getPluginNoteInfo } from '@features/plugin';
 import { FloatingPrompt, FloatingPromptStack } from '@features/shell/components/floating-prompt';
@@ -805,6 +806,7 @@ export function MainLayout() {
                   onEditNotebook={handleEditNotebook}
                   onDeleteNotebook={handleDeleteNotebook}
                   onTogglePanel={handleToggleNoteNavigation}
+                  onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   activePluginId={activePluginId}
                   onOpenPlugin={handleOpenPlugin}
                   onClosePlugin={closePluginSurface}
@@ -1069,10 +1071,18 @@ function DshInstallPrompt({
   const { t } = useI18n();
   const { busy, error, progress, install, cancel } = useDshRuntimeInstaller();
   const canCancel = busy && progress?.phase !== 'downloaded';
-  const [slide, setSlide] = useState<'intro' | 'download'>('intro');
+  const [slide, setSlide] = useState<'mcp' | 'intro' | 'download'>('mcp');
+  const [mcpCopied, setMcpCopied] = useState(false);
   const [checkingLocalAgents, setCheckingLocalAgents] = useState(false);
   const [localAgent, setLocalAgent] = useState<LocalAgentIntroOption | null>(null);
   const lastToastedInstallErrorRef = useRef<string | null>(null);
+  const cliStatus = useCliLinkStatusStore((state) => state.status);
+  const refreshCliStatus = useCliLinkStatusStore((state) => state.refreshIfStale);
+
+  useEffect(() => {
+    if (!open) return;
+    void refreshCliStatus();
+  }, [open, refreshCliStatus]);
 
   useEffect(() => {
     if (!open || !error) {
@@ -1118,6 +1128,19 @@ function DshInstallPrompt({
     if (await cancel()) toast.info(t('preferences.dsh.setup.cancelled'));
   };
 
+  const handleCopyMcp = async () => {
+    try {
+      await navigator.clipboard.writeText(t('preferences.dsh.setup.mcp.copyContent', {
+        command: cliStatus?.commandPath || 'flowix',
+      }));
+      setMcpCopied(true);
+      toast.success(t('preferences.mcp.copied'));
+      window.setTimeout(() => setMcpCopied(false), 1600);
+    } catch {
+      toast.error(t('preferences.mcp.copyFailed'));
+    }
+  };
+
   return (
     <FloatingPrompt open={open} onClose={onClose} className="max-h-[calc(100vh-2rem)] p-0">
         <div className="px-5 py-5 text-left">
@@ -1126,6 +1149,14 @@ function DshInstallPrompt({
             role="tablist"
             aria-label={t('preferences.dsh.setup.carousel')}
           >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={slide === 'mcp'}
+              aria-label={t('preferences.dsh.setup.mcp.slide')}
+              onClick={() => setSlide('mcp')}
+              className={`h-1.5 rounded-full transition-[width,background-color] ${slide === 'mcp' ? 'w-7 bg-[var(--primary)]' : 'w-3 bg-[var(--muted)]'}`}
+            />
             <button
               type="button"
               role="tab"
@@ -1149,10 +1180,30 @@ function DshInstallPrompt({
             aria-live="polite"
           >
             <div
-              className="flex w-[200%] items-start transition-transform duration-300 ease-out will-change-transform"
-              style={{ transform: slide === 'intro' ? 'translateX(0)' : 'translateX(-50%)' }}
+              className="flex w-[300%] items-start transition-transform duration-300 ease-out will-change-transform"
+              style={{
+                transform: slide === 'mcp'
+                  ? 'translateX(0)'
+                  : slide === 'intro'
+                    ? 'translateX(-33.333333%)'
+                    : 'translateX(-66.666667%)',
+              }}
             >
-              <section className="w-1/2 shrink-0" aria-hidden={slide !== 'intro'}>
+              <section className="w-1/3 shrink-0" aria-hidden={slide !== 'mcp'}>
+                <DialogHeader className="mb-0">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
+                    <Plug className="h-7 w-7" aria-hidden="true" />
+                  </div>
+                  <DialogTitle className="mt-3 text-base">
+                    {t('preferences.dsh.setup.mcp.title')}
+                  </DialogTitle>
+                  <DialogDescription className="mt-1 whitespace-pre-line text-xs leading-5">
+                    {t('preferences.dsh.setup.mcp.description')}
+                  </DialogDescription>
+                </DialogHeader>
+              </section>
+
+              <section className="w-1/3 shrink-0" aria-hidden={slide !== 'intro'}>
                 <DialogHeader className="mb-0">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)]">
                     <img
@@ -1180,7 +1231,7 @@ function DshInstallPrompt({
                 </DialogHeader>
               </section>
 
-              <section className="w-1/2 shrink-0" aria-hidden={slide !== 'download'}>
+              <section className="w-1/3 shrink-0" aria-hidden={slide !== 'download'}>
                 <DialogHeader className="mb-0">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)]">
                     <img src={iconDeepseek} alt="" className="h-7 w-7 object-contain" />
@@ -1208,9 +1259,24 @@ function DshInstallPrompt({
 
           <div className="relative mt-6 min-h-8">
             <div
+              className={`absolute inset-y-0 right-0 flex items-center gap-2 transition-opacity duration-200 ${slide === 'mcp' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              aria-hidden={slide !== 'mcp'}
+            >
+              <Button type="button" variant="outline" onClick={() => void handleCopyMcp()}>
+                {mcpCopied && <Check className="h-4 w-4" />}
+                {mcpCopied ? t('preferences.mcp.copied') : t('preferences.mcp.copy')}
+              </Button>
+              <Button type="button" onClick={() => setSlide('intro')}>
+                {t('preferences.dsh.setup.next')}
+              </Button>
+            </div>
+            <div
               className={`absolute inset-y-0 right-0 flex items-center gap-2 transition-opacity duration-200 ${slide === 'intro' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
               aria-hidden={slide !== 'intro'}
             >
+              <Button type="button" variant="outline" onClick={() => setSlide('mcp')}>
+                {t('preferences.dsh.setup.previous')}
+              </Button>
               <Button type="button" onClick={() => setSlide('download')}>
                 {t('preferences.dsh.setup.next')}
               </Button>

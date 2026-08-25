@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, OpenOptions};
+use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::process::Stdio;
@@ -15,16 +15,9 @@ use super::protocol;
 use crate::agent_external::shared::{
     configure_unix_process_group, kill_child_tree, read_capped_line, MAX_STDOUT_LINE_BYTES,
 };
-use crate::config::user::atomic_write_yaml;
 
 type RouteKey = (String, String);
 type PendingSender = oneshot::Sender<Result<Value, String>>;
-
-#[derive(serde::Deserialize, serde::Serialize)]
-struct DshCredentialsFile {
-    version: u32,
-    refs: BTreeMap<String, String>,
-}
 
 pub struct DshHostClient {
     stdin: Arc<Mutex<ChildStdin>>,
@@ -146,6 +139,8 @@ impl DshHostClient {
             "plugin-catalog",
             "runtime-profile",
             "session-history",
+            "credentials-management",
+            "model-settings-management",
         ] {
             if !capabilities
                 .iter()
@@ -153,7 +148,7 @@ impl DshHostClient {
             {
                 client.kill().await;
                 return Err(format!(
-                    "dsh-host is outdated: missing {required} capability; rebuild the host"
+                    "installed DeepSeek Harness runtime is incompatible: missing {required} capability; update or reinstall DSH from Flowix"
                 ));
             }
         }
@@ -226,78 +221,6 @@ impl DshHostClient {
     }
 }
 
-/// Bridge the existing Flowix secret store into the DSH-owned credentials
-/// document. The runtime never receives the value in its environment; the
-/// upstream credentials-local plugin reads this file and resolves the
-/// reference per request. This bridge is temporary until Flowix can call a
-/// first-class DSH credentials UI/API without starting a separate web host.
-pub(crate) fn sync_credential_file(
-    path: &Path,
-    reference: &str,
-    value: &str,
-) -> Result<(), String> {
-    if value.trim().is_empty() {
-        return Ok(());
-    }
-    if !is_credential_reference(reference) {
-        return Err("invalid DSH credential reference".to_string());
-    }
-    let Some(parent) = path.parent() else {
-        return Err("DSH credentials path has no parent directory".to_string());
-    };
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create DSH credentials directory: {error}"))?;
-    let lock_path = path.with_extension("yaml.flowix-lock");
-    let lock = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|error| format!("failed to open DSH credentials lock: {error}"))?;
-    set_owner_only_file(&lock_path);
-    fs2::FileExt::lock_exclusive(&lock)
-        .map_err(|error| format!("failed to lock DSH credentials document: {error}"))?;
-
-    let mut credentials = match fs::read_to_string(path) {
-        Ok(content) if !content.trim().is_empty() => {
-            match serde_yaml::from_str::<DshCredentialsFile>(&content) {
-                Ok(document) if document.version == 1 => document.refs,
-                Ok(_) => return Err("unsupported DSH credentials document version".to_string()),
-                Err(_) => serde_yaml::from_str::<BTreeMap<String, String>>(&content)
-                    .map_err(|_| "DSH credentials document is invalid".to_string())?,
-            }
-        }
-        Ok(_) => BTreeMap::new(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-        Err(error) => return Err(format!("failed to read DSH credentials document: {error}")),
-    };
-    credentials.insert(reference.to_string(), value.to_string());
-    let content = serde_yaml::to_string(&DshCredentialsFile {
-        version: 1,
-        refs: credentials,
-    })
-    .map_err(|_| "failed to serialize DSH credentials document".to_string())?;
-    atomic_write_yaml(path, &content)
-        .map_err(|error| format!("failed to write DSH credentials document: {error}"))?;
-    Ok(())
-}
-
-fn is_credential_reference(value: &str) -> bool {
-    let mut chars = value.chars();
-    matches!(chars.next(), Some(first) if first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
-}
-
-#[cfg(unix)]
-fn set_owner_only_file(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_file(_path: &Path) {}
-
 fn spawn_stdout_reader(
     client: Arc<DshHostClient>,
     mut reader: BufReader<tokio::process::ChildStdout>,
@@ -364,17 +287,30 @@ async fn fail_all(client: &DshHostClient, message: String) {
 }
 
 fn resolve_host_command() -> Result<(Command, PathBuf), String> {
-    if !crate::dsh::status().installed {
-        return Err("DeepSeek Harness runtime is not installed".to_string());
-    }
-
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source_root = root.join("dsh-flowix-host");
-    if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
-        return command_for_host_path_with_root(configured, Some(source_root.clone()));
-    }
     let dev_script = root.join(".build/flowix-dsh-host/dsh-host.cjs");
     if cfg!(debug_assertions) {
+        // Exercise a locally built release bundle through the exact same
+        // node-bundle contract as a managed production installation. The
+        // bundle-private Node must launch the host so host and runtime share
+        // one Node version/ABI and one immutable bundle root.
+        if std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT").is_some() {
+            let managed = crate::dsh::development_bundle_launch_spec()
+                .expect("FLOWIX_DSH_BUNDLE_ROOT was present")?;
+            let mut command = Command::new(&managed.executable);
+            command.args(&managed.args);
+            return Ok((command, managed.root));
+        }
+        // Repository development owns its local host/runtime pair. It must not
+        // depend on the release-only managed installer (whose manifest may not
+        // publish an artifact for the current platform yet).
+        if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
+            // Derive the host root from the configured artifact. This lets
+            // Dev validate either the source host or a complete standalone
+            // DSH bundle without forcing both through the repository root.
+            return command_for_host_path_with_root(configured, None);
+        }
         // In debug builds the dev bundle is the source of truth. Refuse to
         // fall through to a (possibly stale, possibly broken on Windows)
         // bundled sidecar so the failure is loud and points at the rebuild
@@ -386,6 +322,9 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
             "dsh-host dev bundle missing at {}; run `npm run dsh:build:dev`",
             dev_script.display(),
         ));
+    }
+    if !crate::dsh::status().installed {
+        return Err("DeepSeek Harness runtime is not installed".to_string());
     }
     // Production clients use only the independently downloaded, versioned DSH
     // runtime. The Flowix application intentionally does not ship a DSH host;
@@ -513,6 +452,11 @@ fn allowed_parent_environment() -> HashMap<String, String> {
         "https_proxy",
         "all_proxy",
         "no_proxy",
+        // Explicit development overrides for testing a separately published
+        // DSH runtime bundle without changing release installation state.
+        "FLOWIX_DSH_RUNTIME_PATH",
+        "FLOWIX_DSH_RUNTIME_ARGS",
+        "FLOWIX_DSH_RUNTIME_ROOT",
     ];
     let mut environment = KEYS
         .iter()
@@ -522,6 +466,15 @@ fn allowed_parent_environment() -> HashMap<String, String> {
                 .map(|value| ((*key).to_string(), value))
         })
         .collect::<HashMap<_, _>>();
+
+    // Bundle-root mode is intentionally a single-source launch contract.
+    // Do not let stale low-level overrides replace only its runtime while the
+    // host and profile still come from the selected bundle.
+    if std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT").is_some() {
+        environment.remove("FLOWIX_DSH_RUNTIME_PATH");
+        environment.remove("FLOWIX_DSH_RUNTIME_ARGS");
+        environment.remove("FLOWIX_DSH_RUNTIME_ROOT");
+    }
 
     // A macOS app launched from Finder commonly has no proxy variables in
     // its environment even though the system proxy is enabled. Python and
@@ -592,7 +545,9 @@ fn sidecar_build_id() -> Option<String> {
     // A downloaded DSH package owns its host/runtime build identity. Do not
     // inject a repository build id when a local release bundle is testing the
     // independently installed runtime.
-    if crate::dsh::managed_host_path().is_some() {
+    if crate::dsh::managed_host_path().is_some()
+        || std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT").is_some()
+    {
         return None;
     }
     // Production builds install the file under the same directory as flowix-cli.
@@ -632,124 +587,5 @@ fn rust_target_triple() -> &'static str {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         _ => "unknown-unknown-unknown",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{sync_credential_file, DshCredentialsFile};
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn sync_credential_file_merges_provider_references() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".credentials.yaml");
-        sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "secret-a").unwrap();
-        sync_credential_file(&path, "FLOWIX_DSH_MINIMAX_API_KEY", "secret-b").unwrap();
-
-        let values: DshCredentialsFile =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(
-            values.refs.get("FLOWIX_DSH_OPENAI_API_KEY"),
-            Some(&"secret-a".to_string())
-        );
-        assert_eq!(
-            values.refs.get("FLOWIX_DSH_MINIMAX_API_KEY"),
-            Some(&"secret-b".to_string())
-        );
-    }
-
-    #[test]
-    fn sync_credential_file_preserves_existing_entries() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".credentials.yaml");
-        std::fs::write(&path, "EXTERNAL_API_KEY: external-secret\n").unwrap();
-
-        sync_credential_file(&path, "FLOWIX_DSH_OPENAI_API_KEY", "flowix-secret").unwrap();
-
-        let values: DshCredentialsFile =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(values.version, 1);
-        assert_eq!(
-            values.refs.get("EXTERNAL_API_KEY"),
-            Some(&"external-secret".to_string())
-        );
-        assert_eq!(
-            values.refs.get("FLOWIX_DSH_OPENAI_API_KEY"),
-            Some(&"flowix-secret".to_string())
-        );
-    }
-
-    #[test]
-    fn sync_credential_file_upgrades_legacy_documents_to_v1() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".credentials.yaml");
-        let mut legacy = BTreeMap::new();
-        legacy.insert("EXTERNAL_API_KEY".to_string(), "external-secret".to_string());
-        std::fs::write(&path, serde_yaml::to_string(&legacy).unwrap()).unwrap();
-
-        sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "flowix-secret").unwrap();
-
-        let values: DshCredentialsFile =
-            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(values.version, 1);
-        assert_eq!(
-            values.refs.get("EXTERNAL_API_KEY"),
-            Some(&"external-secret".to_string())
-        );
-        assert_eq!(
-            values.refs.get("FLOWIX_DSH_API_KEY"),
-            Some(&"flowix-secret".to_string())
-        );
-    }
-
-    #[test]
-    fn sync_credential_file_rejects_unsupported_future_versions() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".credentials.yaml");
-        std::fs::write(
-            &path,
-            "version: 2
-refs:
-  EXTERNAL_API_KEY: external-secret
-",
-        )
-        .unwrap();
-
-        let error = sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "flowix-secret")
-            .expect_err("future-version document must be rejected");
-        assert!(error.contains("unsupported DSH credentials document version"));
-    }
-
-    #[test]
-    fn sync_credential_file_rejects_invalid_documents_and_references() {
-        let temp = tempfile::tempdir().unwrap();
-        let invalid_path = temp.path().join("invalid.yaml");
-        std::fs::write(&invalid_path, "not: [valid").unwrap();
-        assert!(sync_credential_file(&invalid_path, "FLOWIX_DSH_API_KEY", "secret").is_err());
-
-        let valid_path = temp.path().join("valid.yaml");
-        assert!(sync_credential_file(&valid_path, "not-a-reference", "secret").is_err());
-        assert!(!valid_path.exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn sync_credential_file_secures_document_and_lock() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".credentials.yaml");
-        sync_credential_file(&path, "FLOWIX_DSH_API_KEY", "secret").unwrap();
-
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        let lock = path.with_extension("yaml.flowix-lock");
-        assert_eq!(
-            std::fs::metadata(lock).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
     }
 }

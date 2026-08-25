@@ -95,7 +95,10 @@ pub(crate) fn create_data(
 fn map_runtime_error(message: String) -> CliError {
     if message.starts_with("plugin tool not found:") || message.starts_with("notebook not found:") {
         CliError::NotFound(message)
-    } else if message.starts_with("mindmap ") || message.starts_with("plugin create requires") {
+    } else if message.starts_with("mindmap ")
+        || message.starts_with("webpage ")
+        || message.starts_with("plugin create requires")
+    {
         CliError::Usage(message)
     } else {
         CliError::Other(message)

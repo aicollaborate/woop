@@ -221,6 +221,11 @@ try {
     || !bridge.capabilities.includes('session-control')) {
     throw new Error('DSH runtime bridge is missing baseline capabilities')
   }
+  const models = await probe.request('settings.models.describe', {}, 30_000)
+  if (typeof models?.revision !== 'number' || models?.providers === null
+    || typeof models?.providers !== 'object' || Array.isArray(models.providers)) {
+    throw new Error('DSH model settings bridge returned an invalid descriptor')
+  }
   await probe.request('runtime.dispose', { threadId }, 15_000)
   await probe.request('host.shutdown', {}, 15_000)
   await probe.close()

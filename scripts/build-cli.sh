@@ -25,12 +25,14 @@ export CARGO_TARGET_DIR
 PROFILE="release"
 # BUILD_MODE: host (单当前 host) | all (CI 三平台四 triple) | macos (macOS arm64 + Intel)
 BUILD_MODE="host"
+TARGET_TRIPLE=""
 
 for arg in "$@"; do
   case "$arg" in
     --debug) PROFILE="debug" ;;
     --all)   BUILD_MODE="all" ;;
     --macos) BUILD_MODE="macos" ;;
+    --target=*) BUILD_MODE="target"; TARGET_TRIPLE="${arg#*=}" ;;
     -h|--help)
       sed -n '2,13p' "$0"
       exit 0
@@ -127,6 +129,17 @@ case "$BUILD_MODE" in
     # (macOS 本地缺 linux/windows cross toolchain, --all 会挂)。
     TRIPLES=(aarch64-apple-darwin x86_64-apple-darwin)
     ;;
+  target)
+    case "$TARGET_TRIPLE" in
+      x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin|x86_64-pc-windows-msvc)
+        TRIPLES=("$TARGET_TRIPLE")
+        ;;
+      *)
+        echo "error: unsupported target: $TARGET_TRIPLE" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   host)
     TRIPLES=()
     ;;
@@ -156,10 +169,12 @@ else
     --bin flowix-cli \
     $([ "$PROFILE" = "release" ] && echo "--release")
   bin_path="$CARGO_TARGET_DIR/$PROFILE/flowix-cli"
+  [[ "$host" == *windows* ]] && bin_path="${bin_path}.exe"
   if [ ! -f "$bin_path" ]; then
     # If callers override CARGO_TARGET_DIR or Cargo uses host-specific output,
     # keep a fallback that mirrors explicit --target builds.
     bin_path="$CARGO_TARGET_DIR/$host/$PROFILE/flowix-cli"
+    [[ "$host" == *windows* ]] && bin_path="${bin_path}.exe"
   fi
   copy_to_binaries "$host" "$bin_path"
   bash "$SCRIPT_DIR/sign-cli.sh" --host="$host"

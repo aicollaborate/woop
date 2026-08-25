@@ -92,6 +92,7 @@ describe('resolveThirdColumnSurface', () => {
   it('maps built-in artifact renderers to parallel surface kinds', () => {
     const cases = [
       ['html', 'html'],
+      ['webpage', 'html'],
       ['json-viewer', 'json'],
       ['markdown', 'text'],
       ['text', 'text'],

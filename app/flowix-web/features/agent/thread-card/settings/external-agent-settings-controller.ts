@@ -23,10 +23,11 @@ import {
 } from "@features/agent/runtime/agent-runtime-spec";
 import { useAgentAccessStore } from "@features/agent/store/agent-access-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { loadDshModelConfigs } from "@features/agent/store/dsh-model-config-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
-import { agent, deepseekHarness } from "@platform/tauri/client";
+import { agent } from "@platform/tauri/client";
 import {
   applyPopoverPosition,
   calculateAnchoredPopoverPosition,
@@ -340,54 +341,24 @@ export class ExternalAgentSettingsController {
 
   loadDefaultModel(): void {
     const typeKey = this.getTypeKey();
-    if (typeKey === "deepseek-harness") {
-      // DSH 的默认模型来自全局 dsh-settings 配置, 而非 ~/.codex/config.toml。
-      void deepseekHarness
-        .get()
-        .then((file) => {
-          if (this.isDestroyed()) return;
+    const isDeepseekHarness = typeKey === "deepseek-harness";
+    if (isDeepseekHarness) {
+      void loadDshModelConfigs()
+        .then((configs) => {
+          if (this.isDestroyed() || this.getTypeKey() !== typeKey) return;
           const configuredDefault = useAgentAccessStore
             .getState()
             .config.defaults?.runtime?.['deepseek-harness']?.model;
+          const firstConfig = configs[0]?.model;
           this.dshDefaultModel = configuredDefault?.key
             && configuredDefault.key !== 'inherit'
             ? configuredDefault.key.trim()
-            : file.model.model.trim();
+            : firstConfig?.model.trim() ?? "";
           this.dshDefaultProviderId = configuredDefault?.key
             && configuredDefault.key !== 'inherit'
             ? configuredDefault.providerId?.trim() || undefined
-            : file.model.providerId?.trim() || undefined;
-          this.refreshEmptySettings();
-          if (this.open && this.kind === "model") {
-            this.renderPopover();
-            this.schedulePosition();
-          }
-        })
-        .catch(() => {
-          // 无全局配置时保留通用 Default label。
-        });
-    } else {
-      void agent
-        .getCodexDefaultModel()
-        .then((model) => {
-          if (this.isDestroyed()) return;
-          this.codexDefaultModel = model.trim();
-          this.refreshEmptySettings();
-          if (this.open && this.kind === "model") {
-            this.renderPopover();
-            this.schedulePosition();
-          }
-        })
-        .catch(() => {
-          // Keep the generic default label when Codex has no configured default.
-        });
-    }
+            : firstConfig?.providerId?.trim() || undefined;
 
-    if (typeKey === "deepseek-harness") {
-      void deepseekHarness
-        .list()
-        .then((configs) => {
-          if (this.isDestroyed() || this.getTypeKey() !== typeKey) return;
           const seen = new Set<string>();
           this.localSupportedModelsTypeKey = typeKey;
           this.localSupportedModels = configs.flatMap((file) => {
@@ -427,6 +398,20 @@ export class ExternalAgentSettingsController {
         });
       return;
     }
+    void agent
+      .getCodexDefaultModel()
+      .then((model) => {
+        if (this.isDestroyed()) return;
+        this.codexDefaultModel = model.trim();
+        this.refreshEmptySettings();
+        if (this.open && this.kind === "model") {
+          this.renderPopover();
+          this.schedulePosition();
+        }
+      })
+      .catch(() => {
+        // Keep the generic default label when Codex has no configured default.
+      });
 
     const listSupportedModels =
       "listSupportedModels" in agent &&

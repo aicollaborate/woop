@@ -14,8 +14,7 @@ use super::config::{
 use super::discovery::{cleanup_probe_host, create_probe_settings_file, timed_host_request};
 use super::error::{harness_probe_failure, resolved_session_id};
 use super::event_adapter::append_thinking_segments;
-use super::host::{sync_credential_file, DshHostClient};
-use super::host_registry::{HostLaunchSpec, HostRegistry, ProcessDshClientFactory};
+use super::host_registry::{HostLaunchSpec, HostLease, HostRegistry, ProcessDshClientFactory};
 use super::protocol::{self, AdaptedEvent};
 use super::run_coordinator::RunCoordinator;
 use super::run_projector::{Projection, RunEventProjector};
@@ -30,7 +29,10 @@ use crate::agent_external::{
 };
 use crate::agent_session::{ChatMessage, ThreadManager, ThreadMessagesPage};
 use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
-use crate::config::{AiModelConfig, UserConfigStore};
+use crate::config::{
+    dsh_credential_ref_for_route, merge_harness_provider, AiConfigFile, AiModelConfig,
+    DeepSeekHarnessProviderSettings, DeepSeekHarnessSettingsFile, UserConfigStore,
+};
 use crate::connection_probe::{TestConnectionErrorKind, TestConnectionResult};
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
@@ -51,14 +53,16 @@ pub struct DeepSeekHarnessManager {
     sessions: SessionRegistry,
     pub(crate) user_config: Arc<UserConfigStore>,
     pub(crate) session_root: PathBuf,
-    /// Harness child processes are keyed by credential. One process cannot
-    /// safely serve two different API keys because the key is injected through
-    /// its environment, but different keys can be used concurrently.
+    /// Harness child processes are keyed by the DSH credential reference.
+    /// Secret values remain in the DSH credentials service and never become
+    /// part of the registry key or child environment.
     pub(crate) hosts: HostRegistry,
     pub(crate) runs: RunCoordinator,
+    pub(crate) lifecycle_gate: tokio::sync::Mutex<()>,
 }
 
 pub(crate) const HARNESS_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const SHARED_HOST_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[async_trait::async_trait]
 impl ExternalLifecycleEmitter for DeepSeekHarnessManager {
@@ -112,6 +116,7 @@ impl DeepSeekHarnessManager {
             session_root,
             hosts: HostRegistry::new(Arc::new(ProcessDshClientFactory)),
             runs: RunCoordinator::default(),
+            lifecycle_gate: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -129,14 +134,18 @@ impl DeepSeekHarnessManager {
         let run_id = crate::agent_external::resolve_run_id(&thread_id, message.run_id.as_deref());
         let session_id = self.sessions.session_id(&thread_id).await?;
         let stream_end_emitted = Arc::new(AtomicBool::new(false));
-        self.runs
-            .register(
-                &thread_id,
-                &run_id,
-                session_id.as_deref(),
-                stream_end_emitted.clone(),
-            )
-            .await?;
+        {
+            let _lifecycle = self.lifecycle_gate.lock().await;
+            self.runs
+                .register(
+                    &thread_id,
+                    &run_id,
+                    session_id.as_deref(),
+                    stream_end_emitted.clone(),
+                )
+                .await?;
+            self.hosts.run_started().await;
+        }
 
         let manager = self.clone();
         let app_handle = app_handle.clone();
@@ -165,7 +174,9 @@ impl DeepSeekHarnessManager {
                     Some(error)
                 }
             };
-            manager.runs.remove_if_matches(&thread_id, &run_id).await;
+            if manager.runs.remove_if_matches(&thread_id, &run_id).await {
+                manager.hosts.run_finished().await;
+            }
             manager
                 .emit_stream_end(
                     &app_handle,
@@ -195,9 +206,7 @@ impl DeepSeekHarnessManager {
         let requested_cwd = message.cwd_for_runtime(AGENT_TYPE).map(PathBuf::from);
         let cwd = self.sessions.resolve_cwd(thread_id, requested_cwd).await?;
         let configured = select_harness_config(
-            self.user_config
-                .get_deepseek_harness_configs()
-                .map_err(|error| error.to_string())?,
+            self.dsh_model_configs().await?,
             message.provider_id_for_runtime(AGENT_TYPE),
         )?;
         let runtime_config =
@@ -305,7 +314,7 @@ impl DeepSeekHarnessManager {
     pub(crate) async fn ensure_host(
         &self,
         runtime_config: &HarnessRuntimeConfig,
-    ) -> Result<Arc<dyn DshClient>, String> {
+    ) -> Result<HostLease, String> {
         let host_key = runtime_config.host_key();
         let credential = runtime_config
             .api_key
@@ -316,10 +325,177 @@ impl DeepSeekHarnessManager {
             .await
     }
 
-    pub(crate) async fn model_host(&self) -> Result<(Arc<dyn DshClient>, bool), String> {
-        self.hosts
-            .existing_or_ephemeral(&self.host_launch_spec())
-            .await
+    pub(crate) async fn model_host(&self) -> Result<HostLease, String> {
+        self.hosts.shared(&self.host_launch_spec()).await
+    }
+
+    fn credential_reference(config: &AiModelConfig) -> String {
+        if !config.api_key_env.trim().is_empty() {
+            config.api_key_env.trim().to_string()
+        } else {
+            let route = if config.provider_id.trim().is_empty() {
+                config.provider.trim()
+            } else {
+                config.provider_id.trim()
+            };
+            dsh_credential_ref_for_route(route)
+        }
+    }
+
+    pub async fn credential_configured(&self, reference: &str) -> Result<bool, String> {
+        let host = self.model_host().await?;
+        let result = timed_host_request(
+            &host.client(),
+            protocol::credential_status_request(host.next_request_id(), reference),
+        )
+        .await;
+        Ok(result?
+            .get("configured")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    pub async fn hydrate_credential_statuses(
+        &self,
+        configs: &mut [crate::config::AiConfigFile],
+    ) -> Result<(), String> {
+        for config in configs {
+            let reference = Self::credential_reference(&config.model);
+            config.model.api_key_env = reference.clone();
+            config.model.credential_configured = self.credential_configured(&reference).await?;
+        }
+        Ok(())
+    }
+
+    /// Move any key written by an older Flowix build into DSH, then remove
+    /// the duplicate only after DSH confirms ownership.
+    pub async fn migrate_legacy_credentials(
+        &self,
+        configs: &[crate::config::AiConfigFile],
+    ) -> Result<(), String> {
+        for config in configs {
+            let route = if config.model.provider_id.trim().is_empty() {
+                config.model.provider.trim()
+            } else {
+                config.model.provider_id.trim()
+            };
+            let Some(secret) = self
+                .user_config
+                .legacy_dsh_secret(route)
+                .map_err(|error| error.to_string())?
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let reference = Self::credential_reference(&config.model);
+            if !self.credential_configured(&reference).await? {
+                let host = self.model_host().await?;
+                let result = timed_host_request(
+                    &host.client(),
+                    protocol::credential_set_request(host.next_request_id(), &reference, &secret),
+                )
+                .await;
+                result?;
+            }
+            if self.credential_configured(&reference).await? {
+                self.user_config
+                    .delete_legacy_dsh_secret(route)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn persist_credential(&self, config: &AiModelConfig) -> Result<(), String> {
+        let reference = Self::credential_reference(config);
+        let route = if config.provider_id.trim().is_empty() {
+            config.provider.trim()
+        } else {
+            config.provider_id.trim()
+        };
+        let value = config.effective_api_key(route).trim();
+        let host = self.model_host().await?;
+        let request = if !value.is_empty() {
+            protocol::credential_set_request(host.next_request_id(), &reference, value)
+        } else if config.credential_configured {
+            return Ok(());
+        } else {
+            protocol::credential_delete_request(host.next_request_id(), &reference)
+        };
+        let result = timed_host_request(&host.client(), request).await;
+        result.map(|_| ())
+    }
+
+    pub async fn dsh_model_configs(&self) -> Result<Vec<AiConfigFile>, String> {
+        let host = self.model_host().await?;
+        let result = timed_host_request(
+            &host.client(),
+            protocol::model_settings_describe_request(host.next_request_id()),
+        )
+        .await;
+        let value = result?;
+        let providers: std::collections::BTreeMap<String, DeepSeekHarnessProviderSettings> =
+            serde_json::from_value(value.get("providers").cloned().unwrap_or_default())
+                .map_err(|error| format!("invalid DSH model settings: {error}"))?;
+        Ok(providers
+            .iter()
+            .map(|(route, provider)| {
+                DeepSeekHarnessSettingsFile::to_ai_config_for_route(route, provider)
+            })
+            .collect())
+    }
+
+    pub async fn persist_dsh_model_config(
+        &self,
+        config: &AiConfigFile,
+        merge_models: bool,
+    ) -> Result<(), String> {
+        let host = self.model_host().await?;
+        let current_result = timed_host_request(
+            &host.client(),
+            protocol::model_settings_describe_request(host.next_request_id()),
+        )
+        .await;
+        let current = match current_result {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        let revision = current
+            .get("revision")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "DSH model settings did not return a revision".to_string());
+        let revision = match revision {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        let route = DeepSeekHarnessSettingsFile::route_id_for_ai_config(config);
+        let request = if let Some(mut incoming) =
+            DeepSeekHarnessSettingsFile::provider_settings_for_ai_config(config)
+        {
+            if merge_models {
+                let providers: std::collections::BTreeMap<String, DeepSeekHarnessProviderSettings> =
+                    match serde_json::from_value(
+                        current.get("providers").cloned().unwrap_or_default(),
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => return Err(format!("invalid DSH model settings: {error}")),
+                    };
+                if let Some(mut existing) = providers.get(&route).cloned() {
+                    merge_harness_provider(&mut existing, incoming);
+                    incoming = existing;
+                }
+            }
+            protocol::model_settings_upsert_request(
+                host.next_request_id(),
+                &route,
+                &incoming,
+                revision,
+            )
+        } else {
+            protocol::model_settings_remove_request(host.next_request_id(), &route, revision)
+        };
+        let result = timed_host_request(&host.client(), request).await;
+        result.map(|_| ())
     }
 
     fn host_launch_spec(&self) -> HostLaunchSpec {
@@ -351,10 +527,7 @@ impl DeepSeekHarnessManager {
             .session_id(thread_id)
             .await?
             .ok_or_else(|| format!("no DeepSeek Harness session for thread {thread_id}"))?;
-        let (host, ephemeral) = self
-            .hosts
-            .existing_or_ephemeral(&self.host_launch_spec())
-            .await?;
+        let host = self.hosts.shared(&self.host_launch_spec()).await?;
         let result = host
             .request(protocol::session_history_request(
                 host.next_request_id(),
@@ -364,9 +537,6 @@ impl DeepSeekHarnessManager {
                 limit,
             ))
             .await;
-        if ephemeral {
-            host.shutdown().await;
-        }
         let page: DshSessionHistoryPage = result.and_then(|value| {
             serde_json::from_value(value)
                 .map_err(|error| format!("invalid DSH session history response: {error}"))
@@ -398,7 +568,9 @@ impl DeepSeekHarnessManager {
             let request = protocol::run_cancel_request(host.next_request_id(), thread_id, &run_id);
             let _ = host.request(request).await;
         }
-        self.runs.remove_if_matches(thread_id, &run_id).await;
+        if self.runs.remove_if_matches(thread_id, &run_id).await {
+            self.hosts.run_finished().await;
+        }
         self.emit_stream_end(
             app,
             thread_id,
@@ -415,7 +587,9 @@ impl DeepSeekHarnessManager {
     }
 
     pub async fn stop_all(&self) -> usize {
+        let _lifecycle = self.lifecycle_gate.lock().await;
         let count = self.runs.clear().await;
+        self.hosts.clear_runs().await;
         self.hosts.shutdown_all().await;
         count
     }
@@ -428,6 +602,15 @@ impl DeepSeekHarnessManager {
                 stopped += 1
             }
         }
+        if self.runs.is_empty().await {
+            if self.hosts.shutdown_if_idle(SHARED_HOST_IDLE_TIMEOUT).await {
+                tracing::debug!("shut down idle shared DeepSeek Harness host");
+            }
+        } else {
+            // Streaming activity may not issue request/response calls, so an
+            // active run itself keeps the shared process warm.
+            self.hosts.touch().await;
+        }
         stopped
     }
 
@@ -435,10 +618,11 @@ impl DeepSeekHarnessManager {
     /// configuration change. A live run must finish first: closing its host
     /// would terminate the runtime underneath an in-flight tool call.
     pub async fn invalidate_hosts(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle_gate.lock().await;
         if !self.runs.is_empty().await {
             return Err("DeepSeek Harness 配置运行中不可修改，请先停止当前任务".to_string());
         }
-        self.hosts.shutdown_all().await;
+        self.hosts.shutdown_if_no_runs().await?;
         Ok(())
     }
 
@@ -460,10 +644,11 @@ impl DeepSeekHarnessManager {
     /// binary underneath a live session would strand the run without its
     /// final StreamEnd. `~/.dsh` user state is untouched by the caller.
     pub async fn prepare_uninstall(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle_gate.lock().await;
         if !self.runs.is_empty().await {
             return Err("DeepSeek Harness 正在运行任务，请先停止后再卸载".to_string());
         }
-        self.hosts.shutdown_all().await;
+        self.hosts.shutdown_if_no_runs().await?;
         Ok(())
     }
 }

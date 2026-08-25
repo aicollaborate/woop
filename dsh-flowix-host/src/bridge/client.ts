@@ -4,6 +4,8 @@ import type {
   FlowixDshBridgeEvent,
   FlowixDshBridgeHistoryPage,
   FlowixDshBridgeStatus,
+  FlowixDshCredentialInfo,
+  FlowixDshModelsSettings,
 } from "./protocol.ts";
 
 /**
@@ -40,9 +42,22 @@ export class FlowixDshBridgeClient {
   }
 
   async capabilities(): Promise<FlowixDshBridgeCapabilities> {
-    return requireCapabilities(
-      await this.harness.client.request("flowix.bridge.capabilities"),
-    );
+    // The SDK JSON-RPC server can accept requests before Cordis has finished
+    // activating the bridge's injected settings/credentials/llm services.
+    // Retry only the explicit not-yet-registered response; every other error
+    // remains immediate and actionable.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return requireCapabilities(
+          await this.harness.client.request("flowix.bridge.capabilities"),
+        );
+      } catch (error) {
+        if (attempt >= 99 || !/unknown DeepSeek Harness SDK runtime method: flowix\.bridge\.capabilities/i.test(errorMessage(error))) {
+          throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
   }
 
   async status(): Promise<FlowixDshBridgeStatus> {
@@ -113,6 +128,48 @@ export class FlowixDshBridgeClient {
     return isRecord(value) && value.disposed === true;
   }
 
+  async credentialDescribe(reference: string): Promise<FlowixDshCredentialInfo> {
+    return requireCredentialInfo(await this.harness.client.request(
+      "flowix.bridge.credentials.describe", { reference },
+    ));
+  }
+
+  async credentialSet(reference: string, value: string): Promise<FlowixDshCredentialInfo> {
+    return requireCredentialInfo(await this.harness.client.request(
+      "flowix.bridge.credentials.set", { reference, value },
+    ));
+  }
+
+  async credentialUnset(reference: string): Promise<FlowixDshCredentialInfo> {
+    return requireCredentialInfo(await this.harness.client.request(
+      "flowix.bridge.credentials.unset", { reference },
+    ));
+  }
+
+  async modelsDescribe(): Promise<FlowixDshModelsSettings> {
+    return requireModelsSettings(await this.harness.client.request("flowix.bridge.models.describe"));
+  }
+
+  async modelsDiscover(request: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
+    const value = await this.harness.client.request("flowix.bridge.models.discover", { request });
+    if (!isRecord(value) || !Array.isArray(value.models) || !value.models.every(isRecord)) {
+      throw new Error("flowix bridge returned invalid discovered models");
+    }
+    return value.models;
+  }
+
+  async modelUpsert(route: string, profile: Record<string, unknown>, expectedRevision?: number): Promise<FlowixDshModelsSettings> {
+    return requireModelsSettings(await this.harness.client.request(
+      "flowix.bridge.models.upsert", { route, profile, ...(expectedRevision === undefined ? {} : { expectedRevision }) },
+    ));
+  }
+
+  async modelRemove(route: string, expectedRevision?: number): Promise<FlowixDshModelsSettings> {
+    return requireModelsSettings(await this.harness.client.request(
+      "flowix.bridge.models.remove", { route, ...(expectedRevision === undefined ? {} : { expectedRevision }) },
+    ));
+  }
+
   subscribeEvents(): {
     next(): Promise<FlowixDshBridgeEvent>;
     close(): void;
@@ -129,6 +186,10 @@ export class FlowixDshBridgeClient {
       },
     };
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function requireCapabilities(value: unknown): FlowixDshBridgeCapabilities {
@@ -169,6 +230,20 @@ function requireEvent(notification: {
     throw new Error("flowix bridge returned invalid event");
   }
   return value as unknown as FlowixDshBridgeEvent;
+}
+
+function requireCredentialInfo(value: unknown): FlowixDshCredentialInfo {
+  if (!isRecord(value) || typeof value.configured !== "boolean" || typeof value.writable !== "boolean") {
+    throw new Error("flowix bridge returned invalid credential info");
+  }
+  return value as FlowixDshCredentialInfo;
+}
+
+function requireModelsSettings(value: unknown): FlowixDshModelsSettings {
+  if (!isRecord(value) || !Number.isSafeInteger(value.revision) || !isRecord(value.providers) || !["live", "restart"].includes(value.applies)) {
+    throw new Error("flowix bridge returned invalid model settings");
+  }
+  return value as FlowixDshModelsSettings;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

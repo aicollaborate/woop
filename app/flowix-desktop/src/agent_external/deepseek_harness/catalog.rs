@@ -9,7 +9,6 @@ use super::discovery::timed_host_request;
 use super::error::{resolved_session_id, validate_plugin_key};
 use super::manager::{DeepSeekHarnessManager, DeepSeekHarnessSessionUsage};
 use super::protocol;
-use super::transport::DshClient;
 use super::AGENT_TYPE;
 use crate::config::AiModelConfig;
 
@@ -17,15 +16,12 @@ impl DeepSeekHarnessManager {
     /// Return the vendored llm-pi-ai catalog without requiring a configured
     /// provider or API key. The response is static and contains no secrets.
     pub async fn model_catalog(&self) -> Result<serde_json::Value, String> {
-        let (host, ephemeral) = self.model_host().await?;
+        let host = self.model_host().await?;
         let result = timed_host_request(
-            &host,
+            &host.client(),
             protocol::models_catalog_request(host.next_request_id()),
         )
         .await;
-        if ephemeral {
-            host.shutdown().await;
-        }
         result
     }
 
@@ -57,12 +53,7 @@ impl DeepSeekHarnessManager {
             .and_then(|config| config.model.as_ref())
             .and_then(|model| model.key.as_deref());
 
-        let configured = select_harness_config(
-            self.user_config
-                .get_deepseek_harness_configs()
-                .map_err(|error| error.to_string())?,
-            provider_id,
-        )?;
+        let configured = select_harness_config(self.dsh_model_configs().await?, provider_id)?;
         let runtime_config = resolve_runtime_config(&configured, model_id)?;
         let cwd = instance
             .as_ref()
@@ -124,7 +115,7 @@ impl DeepSeekHarnessManager {
             .await
             .map_err(|error| error.to_string())?;
         let result = timed_host_request(
-            &host,
+            &host.client(),
             protocol::session_usage_request(host.next_request_id(), &session_id),
         )
         .await?;
@@ -140,15 +131,12 @@ impl DeepSeekHarnessManager {
     /// used by dsh-host. This is metadata only and does not require a model or
     /// API key, so the preferences page can load it before the first chat.
     pub async fn plugin_catalog(&self) -> Result<serde_json::Value, String> {
-        let (host, ephemeral) = self.model_host().await?;
+        let host = self.model_host().await?;
         let result = timed_host_request(
-            &host,
+            &host.client(),
             protocol::plugins_catalog_request(host.next_request_id()),
         )
         .await;
-        if ephemeral {
-            host.shutdown().await;
-        }
         result.and_then(|value| {
             value
                 .get("plugins")
@@ -170,6 +158,7 @@ impl DeepSeekHarnessManager {
         plugin_key: &str,
         enabled: bool,
     ) -> Result<serde_json::Value, String> {
+        let _lifecycle = self.lifecycle_gate.lock().await;
         validate_plugin_key(plugin_key)?;
         if !self.runs.is_empty().await {
             return Err("DeepSeek Harness 插件运行中不可切换，请先停止当前任务".to_string());
@@ -179,7 +168,7 @@ impl DeepSeekHarnessManager {
             .set_deepseek_harness_plugin_enabled(plugin_key, enabled)
             .map_err(|error| error.to_string())?;
 
-        self.hosts.shutdown_all().await;
+        self.hosts.shutdown_if_no_runs().await?;
 
         self.plugin_catalog().await
     }
@@ -189,9 +178,8 @@ impl DeepSeekHarnessManager {
     /// to every model id; this method intentionally remains string-only.
     pub async fn supported_models(&self) -> Result<Vec<String>, String> {
         let configs = self
-            .user_config
-            .get_deepseek_harness_configs()
-            .map_err(|error| error.to_string())?
+            .dsh_model_configs()
+            .await?
             .into_iter()
             .flat_map(|config| {
                 let model = config.model;
@@ -225,18 +213,16 @@ impl DeepSeekHarnessManager {
     ) -> Result<serde_json::Value, String> {
         let runtime_config = resolve_runtime_config(config, None)?;
         let provider = catalog_provider_id(&runtime_config.provider_name);
-        let (host, ephemeral) = self.model_host().await?;
+        let host = self.model_host().await?;
         let request = protocol::models_discover_request(
             host.next_request_id(),
             provider,
             &runtime_config.base_url,
             &runtime_config.api_protocol,
             runtime_config.api_key.as_deref(),
+            &runtime_config.api_key_env,
         );
-        let result = timed_host_request(&host, request).await;
-        if ephemeral {
-            host.shutdown().await;
-        }
+        let result = timed_host_request(&host.client(), request).await;
         result
     }
 }

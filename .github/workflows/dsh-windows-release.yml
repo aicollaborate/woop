@@ -1,0 +1,88 @@
+name: Publish DSH Windows runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the signed archive and manifest to the configured R2 bucket
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: dsh-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and test the Windows DSH bundle
+        shell: pwsh
+        run: |
+          corepack enable
+          npm run dsh:build:windows
+          npm --prefix dsh-flowix-host run check
+          npm --prefix dsh-flowix-host run test:sidecar:e2e
+
+      - name: Package signed Windows DSH archive
+        shell: pwsh
+        env:
+          FLOWIX_DSH_REQUIRE_SIGNATURE: '1'
+          FLOWIX_DSH_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: npm run dsh:package -- --targets=node24-windows-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-windows-release
+          path: |
+            .build/releases/dsh/Flowix-DSH_*
+            .build/releases/dsh/dsh-latest.json
+          if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dsh-windows-release
+          path: dsh-release
+
+      - name: Install Wrangler
+        run: npm install --global wrangler@4
+
+      - name: Publish Windows DSH archive and manifest
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DSH_R2_BUCKET: ${{ vars.FLOWIX_DSH_R2_BUCKET || 'flowix-downloads' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=dsh-release/dsh-latest.json
+          version=$(node -p "JSON.parse(require('fs').readFileSync('$manifest', 'utf8')).version")
+          prefix="dsh/v${version}"
+          archive=$(find dsh-release -type f -name 'Flowix-DSH_*windows-x64*' -print -quit)
+          test -n "$archive"
+          wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$(basename "$archive")" --file "$archive" --remote
+          if [[ -f "${archive}.minisig" ]]; then
+            wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$(basename "$archive").minisig" --file "${archive}.minisig" --remote
+          fi
+          wrangler r2 object put "$DSH_R2_BUCKET/$prefix/dsh-latest.json" --file "$manifest" --remote
+          wrangler r2 object put "$DSH_R2_BUCKET/dsh/latest.json" --file "$manifest" --remote

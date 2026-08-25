@@ -57,6 +57,8 @@ const REQUIRED_HOST_CAPABILITIES: &[&str] = &[
     "model-discovery",
     "plugin-catalog",
     "runtime-profile",
+    "credentials-management",
+    "model-settings-management",
 ];
 static DSH_UPDATE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static DSH_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -198,6 +200,29 @@ pub struct ManagedDshLaunch {
 }
 
 pub fn status() -> DshStatus {
+    if let Some(result) = development_bundle_launch_spec() {
+        return match result {
+            Ok(launch) => DshStatus {
+                installed: true,
+                executable_path: launch.args.first().map(|path| path.display().to_string()),
+                version: Some("dev".to_string()),
+                source: Some("flowix-dev-bundle".to_string()),
+                profile: DEFAULT_PROFILE.to_string(),
+                message: None,
+                archive_size: None,
+            },
+            Err(message) => DshStatus {
+                installed: false,
+                executable_path: None,
+                version: None,
+                source: Some("flowix-dev-bundle".to_string()),
+                profile: DEFAULT_PROFILE.to_string(),
+                message: Some(message),
+                archive_size: None,
+            },
+        };
+    }
+
     match current_installation() {
         Some(installation) => DshStatus {
             installed: true,
@@ -218,6 +243,60 @@ pub fn status() -> DshStatus {
             archive_size: None,
         },
     }
+}
+
+/// Resolve the complete local runtime bundle used by Tauri development.
+/// Returning the validation error here makes status reporting and process
+/// launching share one definition of "available".
+pub(crate) fn development_bundle_launch_spec() -> Option<Result<ManagedDshLaunch, String>> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT")
+        .map(PathBuf::from)
+        .map(development_bundle_launch_spec_at)
+}
+
+fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, String> {
+    let canonical = dunce::canonicalize(&root)
+        .map_err(|error| format!("invalid DSH bundle root {}: {error}", root.display()))?;
+    let node = canonical
+        .join("node")
+        .join(if cfg!(windows) { "node.exe" } else { "node" });
+    let host = canonical.join("host").join("dsh-host.cjs");
+    let runtime = canonical
+        .join("runtime")
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh")
+        .join("lib")
+        .join("bin.js");
+    let profile = canonical
+        .join("profile")
+        .join(DEFAULT_PROFILE)
+        .join("package.json");
+
+    for (label, path) in [
+        ("private Node", &node),
+        ("host entrypoint", &host),
+        ("DSH runtime entrypoint", &runtime),
+        ("Flowix profile", &profile),
+    ] {
+        if !path.is_file() {
+            return Err(format!(
+                "DSH bundle at {} is incomplete: {label} is missing at {}",
+                canonical.display(),
+                path.display()
+            ));
+        }
+    }
+
+    Ok(ManagedDshLaunch {
+        executable: node,
+        args: vec![host],
+        root: canonical,
+        cli_entrypoint: None,
+    })
 }
 
 /// Best-effort size lookup for the install card. A manifest outage must not
@@ -971,13 +1050,18 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
             .and_then(|value| value.get("capabilities"))
             .and_then(serde_json::Value::as_array)
             .is_some_and(|capabilities| {
-                ["runtime-events", "session-control"]
-                    .iter()
-                    .all(|required| {
-                        capabilities
-                            .iter()
-                            .any(|capability| capability.as_str() == Some(required))
-                    })
+                [
+                    "runtime-events",
+                    "session-control",
+                    "credentials-management",
+                    "model-settings-management",
+                ]
+                .iter()
+                .all(|required| {
+                    capabilities
+                        .iter()
+                        .any(|capability| capability.as_str() == Some(required))
+                })
             });
         if !bridge_capabilities_ok {
             return Err("DSH runtime bridge health check failed".to_string());
@@ -1290,7 +1374,7 @@ mod tests {
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::write(
             staging.join("dsh-host"),
-            b"#!/bin/sh\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"buildId\":\"test-build\",\"capabilities\":[\"model-catalog\",\"model-discovery\",\"plugin-catalog\",\"runtime-profile\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"sessionId\":\"health\",\"generation\":1}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"capabilities\":[\"runtime-events\",\"session-control\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"disposed\":true}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{\"ok\":true}}'\n",
+            b"#!/bin/sh\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"buildId\":\"test-build\",\"capabilities\":[\"model-catalog\",\"model-discovery\",\"plugin-catalog\",\"runtime-profile\",\"credentials-management\",\"model-settings-management\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"sessionId\":\"health\",\"generation\":1}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"capabilities\":[\"runtime-events\",\"session-control\",\"credentials-management\",\"model-settings-management\"]}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"disposed\":true}}'\nread request\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{\"ok\":true}}'\n",
         )
         .unwrap();
         write_test_runtime_metadata(&staging, version, "test-build");

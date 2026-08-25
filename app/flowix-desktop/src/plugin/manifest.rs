@@ -329,6 +329,7 @@ pub(super) fn validate_manifest(manifest: &PluginManifest) -> Result<PluginDefin
         "markmap" if parser == PluginParser::MindmapMarkdown => {}
         "json-viewer" if parser == PluginParser::Json => {}
         "html" if parser == PluginParser::Html => {}
+        "webpage" if parser == PluginParser::Html => {}
         "text" | "markdown" => {}
         other => return Err(format!("unsupported plugin output renderer: {other}")),
     }

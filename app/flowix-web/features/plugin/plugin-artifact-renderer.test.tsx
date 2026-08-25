@@ -2,7 +2,11 @@ import { act, createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { PluginArtifactRenderer, type PluginArtifactRendererHandle } from './plugin-artifact-renderer';
+import {
+  PluginArtifactRenderer,
+  sandboxWebpageContent,
+  type PluginArtifactRendererHandle,
+} from './plugin-artifact-renderer';
 
 const markmapMocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -90,5 +94,29 @@ describe('PluginArtifactRenderer markmap canvas', () => {
     expect(markmapMocks.fit).toHaveBeenCalledOnce();
     expect(markmapMocks.rescale).toHaveBeenNthCalledWith(1, 1.2);
     expect(markmapMocks.rescale).toHaveBeenNthCalledWith(2, 0.8);
+  });
+
+  it('renders webpage artifacts in an isolated scripted iframe', async () => {
+    const html = '<!doctype html><html><head><title>Demo</title></head><body><script>window.ready=true</script></body></html>';
+    await act(async () => root.render(createElement(PluginArtifactRenderer, {
+      renderer: 'webpage',
+      content: html,
+    })));
+
+    const frame = container.querySelector('iframe');
+    expect(frame?.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(frame?.getAttribute('srcdoc')).toContain("default-src 'none'");
+    expect(sandboxWebpageContent(html)).toContain("connect-src 'none'");
+  });
+
+  it('injects the policy into the real head instead of matching fake head text', () => {
+    const html = '<!doctype html><!-- <head>fake</head> --><html><head><title>Safe</title></head><body></body></html>';
+    const sandboxed = sandboxWebpageContent(html);
+    const parsed = new DOMParser().parseFromString(sandboxed, 'text/html');
+
+    expect(parsed.head.querySelector('meta[http-equiv="Content-Security-Policy"]')).not.toBeNull();
+    expect(parsed.head.firstElementChild?.tagName).toBe('META');
+    expect(sandboxed).toContain("navigate-to 'none'");
   });
 });

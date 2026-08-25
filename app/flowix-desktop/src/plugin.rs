@@ -30,6 +30,8 @@ use manifest::{validate_manifest, PluginDefinition, PluginManifest, PluginParser
 
 const MINDMAP_MANIFEST: &str = flowix_plugin_runtime::MINDMAP_MANIFEST;
 const MINDMAP_SKILL: &str = flowix_plugin_runtime::MINDMAP_SKILL;
+const WEBPAGE_MANIFEST: &str = flowix_plugin_runtime::WEBPAGE_MANIFEST;
+const WEBPAGE_SKILL: &str = flowix_plugin_runtime::WEBPAGE_SKILL;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,33 +102,44 @@ fn plugin_root() -> Result<PathBuf, String> {
 
 pub fn ensure_builtin_plugins() -> Result<(), String> {
     let root = plugin_root()?;
-    let mindmap = root.join("mindmap");
-    fs::create_dir_all(&mindmap).map_err(|e| format!("create mindmap plugin: {e}"))?;
-    let manifest = mindmap.join("plugin.json");
+    ensure_builtin_plugin(&root, "mindmap", MINDMAP_MANIFEST, MINDMAP_SKILL)?;
+    ensure_builtin_plugin(&root, "webpage", WEBPAGE_MANIFEST, WEBPAGE_SKILL)?;
+    Ok(())
+}
+
+fn ensure_builtin_plugin(
+    root: &Path,
+    plugin_id: &str,
+    expected_manifest: &str,
+    expected_skill: &str,
+) -> Result<(), String> {
+    let plugin = root.join(plugin_id);
+    fs::create_dir_all(&plugin).map_err(|e| format!("create {plugin_id} plugin: {e}"))?;
+    let manifest = plugin.join("plugin.json");
     // The built-in plugin is versioned with the host application.  Older
     // installations may still have the pre-declaration manifest (including
     // the removed agent selector), which would fail validation and silently
     // disappear from the sidebar.  Reconcile it on every startup so the
     // built-in definition is migrated before plugin discovery runs.
     let needs_manifest_migration = match fs::read_to_string(&manifest) {
-        Ok(existing) => existing != MINDMAP_MANIFEST,
+        Ok(existing) => existing != expected_manifest,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
         Err(error) => {
-            return Err(format!("read mindmap manifest: {error}"));
+            return Err(format!("read {plugin_id} manifest: {error}"));
         }
     };
     if needs_manifest_migration {
-        fs::write(&manifest, MINDMAP_MANIFEST)
-            .map_err(|e| format!("write mindmap manifest: {e}"))?;
+        fs::write(&manifest, expected_manifest)
+            .map_err(|e| format!("write {plugin_id} manifest: {e}"))?;
     }
-    let skill = mindmap.join("SKILL.md");
+    let skill = plugin.join("SKILL.md");
     let needs_skill_migration = match fs::read_to_string(&skill) {
-        Ok(existing) => existing != MINDMAP_SKILL,
+        Ok(existing) => existing != expected_skill,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-        Err(error) => return Err(format!("read mindmap skill: {error}")),
+        Err(error) => return Err(format!("read {plugin_id} skill: {error}")),
     };
     if needs_skill_migration {
-        fs::write(&skill, MINDMAP_SKILL).map_err(|e| format!("write mindmap skill: {e}"))?;
+        fs::write(&skill, expected_skill).map_err(|e| format!("write {plugin_id} skill: {e}"))?;
     }
     Ok(())
 }
@@ -158,7 +171,7 @@ fn read_plugin(path: &Path) -> Result<PluginDescriptor, String> {
     let skill_path = path.join(instructions_path);
     let skill = fs::read_to_string(&skill_path)
         .map_err(|e| format!("read {}: {e}", skill_path.display()))?;
-    let is_system = manifest.id == "mindmap";
+    let is_system = matches!(manifest.id.as_str(), "mindmap" | "webpage");
     Ok(PluginDescriptor {
         manifest,
         installed_path: path.to_string_lossy().to_string(),

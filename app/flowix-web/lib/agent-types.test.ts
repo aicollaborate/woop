@@ -9,14 +9,14 @@ describe('pickFirstAvailableAgent', () => {
       opencode: { available: true },
       claude: { available: true },
       codex: { available: true },
-    })).toBe('codex');
+    })).toBe('deepseek-harness');
   });
 
   it('falls through unavailable runtimes in priority order', () => {
     expect(pickFirstAvailableAgent({
       claude: { available: true },
       opencode: { available: true },
-      'deepseek-harness': { available: true },
+      'deepseek-harness': { available: false },
     })).toBe('claude');
   });
 

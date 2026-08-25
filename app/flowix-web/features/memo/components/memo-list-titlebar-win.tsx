@@ -29,7 +29,7 @@ export function MemoListTitlebarWin({
       className="relative h-9 px-2 shrink-0 flex items-center justify-between gap-1"
     >
       <div className="ml-1 flex items-center">
-        {selectedNotebook && (
+        {!noteNavigationVisible && selectedNotebook && (
           <NotebookIconMenu
             noteNavigationVisible={noteNavigationVisible}
             onToggleNoteNavigation={onToggleNoteNavigation}

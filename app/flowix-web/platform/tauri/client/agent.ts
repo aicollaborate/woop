@@ -28,6 +28,8 @@ export interface AgentConfig {
   apiUrl: string;
   /** 按 provider 隔离的秘钥桶。切换供应商时直接读这桶, 互不串。 */
   apiKeys: Record<string, string>;
+  /** DSH owns a key for apiKeyEnv. The secret itself is never returned. */
+  credentialConfigured?: boolean;
 }
 
 export interface AgentModelConfig {

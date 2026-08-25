@@ -7,6 +7,8 @@ export const FLOWIX_DSH_BRIDGE_CAPABILITIES = [
   "session-dispose",
   "run-cancel",
   "profile",
+  "credentials-management",
+  "model-settings-management",
 ] as const;
 
 export type FlowixDshBridgeCapability =
@@ -37,4 +39,16 @@ export interface FlowixDshBridgeHistoryPage {
   sessionId: string;
   events: Array<Record<string, unknown>>;
   snapshotSeq: number;
+}
+
+export interface FlowixDshCredentialInfo {
+  configured: boolean;
+  source?: string;
+  writable: boolean;
+}
+
+export interface FlowixDshModelsSettings {
+  revision: number;
+  providers: Record<string, Record<string, unknown>>;
+  applies: "live" | "restart";
 }

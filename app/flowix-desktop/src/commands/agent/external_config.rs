@@ -60,9 +60,9 @@ fn external_availability(entry: AgentExternalEntry, label: &str) -> AgentRuntime
 }
 
 #[tauri::command]
-pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
-    let dsh_config = state.user_config.get_deepseek_harness_config();
-
+pub async fn agent_runtime_status(
+    state: State<'_, AppState>,
+) -> Result<AgentRuntimeStatus, String> {
     // The external CLI path comes from agent-external-config.json. Runtime
     // preflight can still add dependency details without hiding the entry.
     let cfg = &state.agent_external_config;
@@ -73,37 +73,52 @@ pub fn agent_runtime_status(state: State<'_, AppState>) -> AgentRuntimeStatus {
     let claude = external_availability(cfg.get_entry("claude"), "Claude Code CLI");
     let hermes = external_availability(cfg.get_entry("hermes"), "Hermes Agent CLI");
     let opencode = external_availability(cfg.get_entry("opencode"), "OpenCode CLI");
-    let deepseek_harness = if !crate::dsh::status().installed {
+    let dsh_status = crate::dsh::status();
+    let deepseek_harness = if !dsh_status.installed {
         AgentRuntimeAvailability {
             available: false,
-            reason: Some("DeepSeek Harness runtime is not installed".to_string()),
+            reason: dsh_status
+                .message
+                .or_else(|| Some("DeepSeek Harness runtime is not installed".to_string())),
         }
     } else {
-        match dsh_config.map(|config| {
-            crate::agent_external::deepseek_harness::resolve_runtime_config(&config.model, None)
-        }) {
-            Ok(Ok(_)) => AgentRuntimeAvailability {
-                available: true,
-                reason: None,
-            },
-            Ok(Err(reason)) => AgentRuntimeAvailability {
+        match state.deepseek_harness.dsh_model_configs().await {
+            Ok(configs)
+                if configs.iter().any(|config| {
+                    crate::agent_external::deepseek_harness::resolve_runtime_config(
+                        &config.model,
+                        None,
+                    )
+                    .is_ok()
+                }) =>
+            {
+                AgentRuntimeAvailability {
+                    available: true,
+                    reason: None,
+                }
+            }
+            Ok(configs) if configs.is_empty() => AgentRuntimeAvailability {
                 available: false,
-                reason: Some(reason),
+                reason: Some("No DeepSeek Harness model is configured".to_string()),
+            },
+            Ok(_) => AgentRuntimeAvailability {
+                available: false,
+                reason: Some("DeepSeek Harness has no usable model configuration".to_string()),
             },
             Err(error) => AgentRuntimeAvailability {
                 available: false,
-                reason: Some(error.to_string()),
+                reason: Some(format!("Could not read DeepSeek Harness models: {error}")),
             },
         }
     };
 
-    AgentRuntimeStatus {
+    Ok(AgentRuntimeStatus {
         codex,
         claude,
         hermes,
         opencode,
         deepseek_harness,
-    }
+    })
 }
 
 /// 偏好设置展示用的 external agent 条目视图�?

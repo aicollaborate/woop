@@ -22,6 +22,7 @@ interface NoteNavigationPanelProps {
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
   onTogglePanel: () => void;
+  onOpenPreferences: (tab?: string) => void;
   activePluginId: string | null;
   onOpenPlugin: (plugin: PluginDescriptor) => void | Promise<void>;
   onClosePlugin: () => void;
@@ -47,6 +48,7 @@ export function NoteNavigationPanel({
   onEditNotebook,
   onDeleteNotebook,
   onTogglePanel,
+  onOpenPreferences,
   activePluginId,
   onOpenPlugin,
   onClosePlugin,
@@ -65,7 +67,10 @@ export function NoteNavigationPanel({
             - Win: h-9 (在 OS 标题栏下方, 仅做内部 UI) + rounded-lg 按钮
           两者都整块作为窗口拖动区 (data-tauri-drag-region)。 */}
       {isWindowsPlatform() ? (
-        <NoteNavigationPanelHeaderWin onTogglePanel={onTogglePanel} />
+        <NoteNavigationPanelHeaderWin
+          onTogglePanel={onTogglePanel}
+          onOpenPreferences={onOpenPreferences}
+        />
       ) : (
         <NoteNavigationPanelHeaderMac onTogglePanel={onTogglePanel} />
       )}
