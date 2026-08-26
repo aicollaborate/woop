@@ -190,11 +190,46 @@ for (const row of rows) {
   };
 }
 
+// x-flowix-installers: 官网下载弹窗专用扩展块,Tauri updater 忽略未知字段。
+// `platforms` 只允许本次全局版本的构建(塞旧版本会让客户端无限重装),
+// 滞后平台(如 Windows 未跟上)由这里从上一版 manifest 结转并自带 version。
+const installers = {};
+const DMG_TRIPLES = {
+  'darwin-aarch64': ['aarch64-apple-darwin', `Flowix-${version}-macOS-Apple-Silicon.dmg`],
+  'darwin-x86_64': ['x86_64-apple-darwin', `Flowix-${version}-macOS-Intel.dmg`],
+};
+for (const platform of Object.keys(platforms)) {
+  const entry = {
+    version,
+    url: platforms[platform].url,
+    sizeBytes: fs.statSync(path.join(out, rows.find(r => r.startsWith(`${platform}|`)).split('|')[1])).size,
+  };
+  const dmg = DMG_TRIPLES[platform];
+  if (dmg) {
+    // 官网分发 DMG(updater 归档只供 App 内更新);发布流程需把营销命名的
+    // DMG 上传到同前缀,否则官网会退回模板静态链接。
+    entry.url = `${publicBase}/${prefix}/${dmg[1]}`;
+    const localDmg = path.join(process.env.CARGO_TARGET_DIR || '', dmg[0], 'release', 'bundle', 'dmg');
+    try {
+      const found = fs.readdirSync(localDmg).find(f => f.endsWith('.dmg'));
+      if (found) entry.sizeBytes = fs.statSync(path.join(localDmg, found)).size;
+    } catch (_) { /* DMG 不在本机时保留 updater 产物大小 */ }
+  }
+  installers[platform] = entry;
+}
+try {
+  const previous = JSON.parse(fs.readFileSync(path.join(homeDir, 'src', 'latest.json'), 'utf8'));
+  for (const [platform, entry] of Object.entries(previous['x-flowix-installers'] || {})) {
+    if (!installers[platform] && entry && typeof entry.url === 'string') installers[platform] = entry;
+  }
+} catch (_) { /* 首次发布或无上一版 manifest */ }
+
 const manifest = {
   version,
   notes: `Flowix ${version}`,
   pub_date: new Date().toISOString(),
   platforms,
+  'x-flowix-installers': installers,
 };
 const json = `${JSON.stringify(manifest, null, 2)}\n`;
 fs.writeFileSync(path.join(out, 'latest.json'), json);
