@@ -31,7 +31,13 @@ fn read_notebook_configs_strict(mf: &MemoFile) -> Result<Vec<NotebookConfig>, Cl
 pub fn cmd_notebooks_json() -> Result<(), CliError> {
     let (configs, selected_notebook_id) = notebooks_list_data()?;
     let note_counts = notebook_note_counts(&configs)?;
-    fmt::print_notebooks_json(&configs, &note_counts, selected_notebook_id.as_deref());
+    let tag_counts = notebook_tag_counts(&configs)?;
+    fmt::print_notebooks_json(
+        &configs,
+        &note_counts,
+        &tag_counts,
+        selected_notebook_id.as_deref(),
+    );
     Ok(())
 }
 
@@ -49,7 +55,13 @@ pub fn cmd_notebooks() -> Result<(), CliError> {
     let configs = read_notebook_configs_strict(&mf)?;
     let selected_notebook_id = mf.read_selected_notebook_id()?;
     let note_counts = notebook_note_counts(&configs)?;
-    fmt::print_notebooks(&configs, &note_counts, selected_notebook_id.as_deref());
+    let tag_counts = notebook_tag_counts(&configs)?;
+    fmt::print_notebooks(
+        &configs,
+        &note_counts,
+        &tag_counts,
+        selected_notebook_id.as_deref(),
+    );
     Ok(())
 }
 
@@ -60,6 +72,19 @@ pub(crate) fn notebook_note_counts(
     MemoService::new(&mf)
         .notebook_note_counts(configs)
         .map_err(Into::into)
+}
+
+pub(crate) fn notebook_tag_counts(
+    configs: &[NotebookConfig],
+) -> Result<HashMap<String, usize>, CliError> {
+    let mf = open()?;
+    Ok(configs
+        .iter()
+        .map(|config| {
+            let count = mf.derived_tags_for_notebook_id(Some(&config.id)).len();
+            (config.id.clone(), count)
+        })
+        .collect())
 }
 
 /// 按 `name` 或 `id` 找 notebook。id 优先, 避免同名 notebook 歧义。
@@ -86,6 +111,24 @@ pub(crate) fn open_in(notebook_key: &str) -> Result<(MemoFile, NotebookConfig), 
     Ok((mf, nb))
 }
 
+/// Resolve an explicit notebook or fall back to the shared desktop selection.
+pub(crate) fn resolve_notebook_key(notebook: Option<&str>) -> Result<String, CliError> {
+    if let Some(value) = notebook.filter(|value| !value.trim().is_empty()) {
+        return Ok(value.to_string());
+    }
+    let mf = open()?;
+    if let Some(selected) = mf.read_selected_notebook_id()? {
+        return Ok(selected);
+    }
+    let configs = read_notebook_configs_strict(&mf)?;
+    configs
+        .iter()
+        .find(|config| config.is_default)
+        .or_else(|| configs.first())
+        .map(|config| config.id.clone())
+        .ok_or_else(|| CliError::NotFound("no notebook is configured".into()))
+}
+
 /// `flowix-cli list <notebook> --json` ── 输出 JSON 形式。
 pub fn cmd_list_json(notebook_key: &str) -> Result<(), CliError> {
     let entries = notes_list_entries(notebook_key)?;
@@ -108,6 +151,43 @@ pub fn cmd_list(notebook_key: &str) -> Result<(), CliError> {
     let entries = notes_list_entries(notebook_key)?;
     fmt::print_notes(&entries);
     Ok(())
+}
+
+pub(crate) fn notebook_tags(notebook: Option<&str>) -> Result<serde_json::Value, CliError> {
+    let notebook_key = resolve_notebook_key(notebook)?;
+    let (memo_file, config) = open_in(&notebook_key)?;
+    let tags = memo_file
+        .derived_tags_for_notebook_id(Some(&config.id))
+        .into_iter()
+        .map(|tag| tag.name)
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "ok": true,
+        "action": "tags",
+        "notebook": config.name,
+        "notebook_id": config.id,
+        "total": tags.len(),
+        "tags": tags,
+    }))
+}
+
+pub fn cmd_tags(notebook: Option<&str>, json: bool) -> Result<(), CliError> {
+    let result = notebook_tags(notebook)?;
+    if json {
+        print_pretty_json(&result)
+    } else {
+        let tags = result["tags"].as_array().cloned().unwrap_or_default();
+        if tags.is_empty() {
+            println!("(no tags)");
+        } else {
+            for tag in tags {
+                if let Some(name) = tag.as_str() {
+                    println!("{name}");
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// id 解析辅助: 把 `id_arg` (6 位 shortid / filename basename)
@@ -174,7 +254,7 @@ pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
     })
 }
 
-/// `flowix-cli create <notebook>` ── 从 stdin 读 body, 创建一条新笔记。
+/// `flowix-cli create <notebook>` ── 从 stdin 或 UTF-8 `--file` 读 body。
 ///
 /// 面向 AI agent 的接口 ── body 永远从 stdin 读, 不依赖 $EDITOR,
 /// Windows / Linux / macOS 行为完全一致。
@@ -186,11 +266,16 @@ pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
 ///
 /// 写盘走 `MemoFile::create_memo` ── 自动写 .md + 同步 memo index + 派生字段。
 ///
-/// 实际写盘逻辑在 [`create_note`]；本函数只是 `read_stdin() + create_note`
+/// 实际写盘逻辑在 [`create_note`]；本函数只是输入读取 + `create_note`
 /// 的薄壳。MCP 命令层直接把工具输入传给 `create_note`。
-pub fn cmd_create(notebook_key: &str, json: bool) -> Result<(), CliError> {
-    let (mut mf, nb) = open_in(notebook_key)?;
-    let body = read_stdin()?;
+pub fn cmd_create(
+    notebook_key: Option<&str>,
+    file: Option<&str>,
+    json: bool,
+) -> Result<(), CliError> {
+    let notebook_key = resolve_notebook_key(notebook_key)?;
+    let (mut mf, nb) = open_in(&notebook_key)?;
+    let body = read_text_input(file)?;
     let payload = create_note(&mut mf, &nb, &body)?;
     if json {
         print_pretty_json(&payload)?;
@@ -241,6 +326,20 @@ fn read_stdin() -> Result<String, CliError> {
         .read_to_string(&mut s)
         .map_err(CliError::Io)?;
     Ok(strip_utf8_bom(s))
+}
+
+/// Read content directly from a UTF-8 file when `--file` is supplied. This
+/// bypasses PowerShell 5.1's `$OutputEncoding`, which can replace CJK text
+/// before it reaches stdin. Without `--file`, preserve the stdin contract.
+fn read_text_input(file: Option<&str>) -> Result<String, CliError> {
+    match file {
+        Some(path) => std::fs::read_to_string(path)
+            .map(strip_utf8_bom)
+            .map_err(|error| {
+                CliError::Other(format!("failed to read UTF-8 input file `{path}`: {error}"))
+            }),
+        None => read_stdin(),
+    }
 }
 
 /// 剥离首部 UTF-8 BOM (U+FEFF)。
@@ -395,6 +494,7 @@ pub fn cmd_edit(
     old: Option<&str>,
     new: Option<&str>,
     new_from_stdin: bool,
+    new_file: Option<&str>,
     dry_run: bool,
     json: bool,
 ) -> Result<(), CliError> {
@@ -414,6 +514,14 @@ pub fn cmd_edit(
         ));
     }
 
+    let input_count =
+        usize::from(new.is_some()) + usize::from(new_from_stdin) + usize::from(new_file.is_some());
+    if input_count != 1 {
+        return Err(CliError::Usage(
+            "edit: use exactly one of --new/-n, --new-stdin, or --new-file <path>".into(),
+        ));
+    }
+
     let new = if new_from_stdin {
         let s = read_stdin()?;
         if s.is_empty() {
@@ -422,6 +530,8 @@ pub fn cmd_edit(
             ));
         }
         s
+    } else if let Some(path) = new_file {
+        read_text_input(Some(path))?
     } else {
         match new {
             Some(n) => n.to_string(),
@@ -529,7 +639,7 @@ fn edit_note_impl(
     })
 }
 
-/// `flowix-cli write <id>` ── 从 stdin 读 body, 覆盖现有笔记内容。
+/// `flowix-cli write <id>` ── 从 stdin 或 UTF-8 `--file` 读 body 并覆盖。
 ///
 /// `edit` 的非交互等价物 ── 适合脚本化批量改写、管道入内容、CI 注入等场景。
 ///
@@ -542,11 +652,11 @@ fn edit_note_impl(
 ///
 /// stdin 为空 → 报错, 不写盘 (避免误操作清空笔记)。
 ///
-/// 实际写盘在 [`write_note`]；本函数只是 `read_stdin() + write_note` 的薄壳。
+/// 实际写盘在 [`write_note`]；本函数只是输入读取 + `write_note` 的薄壳。
 /// MCP 命令层直接把工具输入传给 `write_note`。
-pub fn cmd_write(id_arg: &str, json: bool) -> Result<(), CliError> {
+pub fn cmd_write(id_arg: &str, file: Option<&str>, json: bool) -> Result<(), CliError> {
     let (mut mf, full_id) = resolve_id(id_arg)?;
-    let body = read_stdin()?;
+    let body = read_text_input(file)?;
     let payload = write_note(&mut mf, &full_id, &body)?;
     if json {
         print_pretty_json(&payload)?;
@@ -666,6 +776,47 @@ mod tests {
         assert_eq!(strip_utf8_bom("".into()), "");
         // 中间的 U+FEFF 不是 BOM, 不动
         assert_eq!(strip_utf8_bom("a\u{FEFF}b".into()), "a\u{FEFF}b");
+    }
+
+    #[test]
+    fn file_input_reads_cjk_utf8_and_strips_bom() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("中文说明.md");
+        std::fs::write(&path, "\u{FEFF}# 首次正确生成\n正文内容").unwrap();
+
+        let body = read_text_input(path.to_str()).unwrap();
+        assert_eq!(body, "# 首次正确生成\n正文内容");
+    }
+
+    #[test]
+    fn file_input_rejects_non_utf8_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("invalid.md");
+        std::fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
+
+        let error = read_text_input(path.to_str()).unwrap_err().to_string();
+        assert!(error.contains("UTF-8 input file"));
+    }
+
+    #[test]
+    fn notebook_tags_returns_sorted_unique_tags() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        let nb_dir = tmp.path().join("notebooks").join("work");
+        seed_notebook_config(&data_dir, &config_dir, &nb_dir);
+
+        with_flowix_env(&config_dir, &data_dir, || {
+            let (mut mf, nb) = open_in("work").unwrap();
+            create_note(&mut mf, &nb, "---\ntags: [产品, 产品/设计]\n---\n# A").unwrap();
+            create_note(&mut mf, &nb, "---\ntags: [产品, 测试]\n---\n# B").unwrap();
+            let result = notebook_tags(Some("work")).unwrap();
+            assert_eq!(result["total"], 3);
+            assert_eq!(
+                result["tags"],
+                serde_json::json!(["产品", "产品/设计", "测试"])
+            );
+        });
     }
 
     #[test]

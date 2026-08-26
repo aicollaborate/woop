@@ -3,7 +3,7 @@
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle
 that registers the **local `flowix-cli` MCP server** with any Harness
 instance. Once installed, the agent gets the
-`mcp__dsh-flowix-memory__flowix_memo` tool to search, read, create, and edit
+`mcp__flowix__memo` tool to search, read, create, and edit
 Flowix Markdown memos, and to create declared plugin artifacts such as mind
 maps.
 
@@ -58,8 +58,17 @@ Start Harness with the profile you installed into (`dsh --profile flowix`),
 then check that the tool is registered:
 
 ```
-mcp__dsh-flowix-memory__flowix_memo
+mcp__flowix__memo
 ```
+
+Prefer structured arguments:
+
+```json
+{"action":"search","query":"product plan","notebook":"work","limit":20}
+```
+
+The legacy `{ "command": "search ...", "stdin": "..." }` form remains
+accepted for compatibility but is no longer the recommended contract.
 
 ## Configuration
 

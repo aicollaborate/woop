@@ -1,8 +1,8 @@
 import type { HistoryMessage, HostEvent, RunEndReason } from '../protocol/v1.ts'
 import type { FlowixDshBridgeEvent } from '../bridge/protocol.ts'
 import { isRecord } from '../protocol/validation.ts'
-import { deriveEventMessage, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { deriveEventMessage, isAppendSurfaceEvent } from '../../vendor/deepseek-harness/packages/core/session/src/surface.ts'
+import type { SessionEvent } from '../../vendor/deepseek-harness/packages/core/session/src/types.ts'
 
 export interface RunFailure {
   message: string
@@ -111,7 +111,6 @@ export function materializeSessionHistory(
   const messages: HistoryMessage[] = []
   const tools = new Map<string, number>()
   const bySequence = new Map(bounded.map(event => [Number(event.seq), event]))
-  const appendSurface = selected.filter(event => isAppendSurfaceEvent(event as SessionEvent))
   const appendTool = (source: Record<string, unknown> | undefined): void => {
     if (source?.type !== 'tool/call' || !isRecord(source.data)) return
     const id = stringValue(source.data.callId)
@@ -131,7 +130,7 @@ export function materializeSessionHistory(
           || !isRecord(data.source) || data.source.kind !== 'user') break
         const projected = deriveEventMessage(event as SessionEvent)
         if (projected === null) break
-        const source = isRecord(projected.source) ? projected.source : {}
+        const source: Record<string, unknown> = isRecord(projected.source) ? projected.source : {}
         const content = stringValue(source.flowixDisplayText) ?? messageText(projected as unknown as Record<string, unknown>)
         if (content === '') break
         messages.push({ id: stringValue(source.flowixClientMessageId) ?? String(projected.id), role: 'user', content,

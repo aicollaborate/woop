@@ -97,7 +97,7 @@ bash scripts/apple-signing/sign-and-notarize.sh
 ```
 
 The script will:
-1. Build via `npm run tauri:build:production`
+1. Build via `npm run tauri:build:prod`
 2. Mount the final .dmg and verify that its CLI is executable, has the expected architecture, and that all nested signatures are valid
 3. Submit that exact .dmg to Apple's notary service
 4. Staple the notarization ticket back onto the .dmg and verify Gatekeeper acceptance
@@ -306,4 +306,4 @@ This builds the editor bundle, Rust native API, signed `FlowixIOS` archive, and 
 | `sign-and-notarize.sh`: "not in the codesigning identity list" | The literal string doesn't match what's in Keychain (often a single quote / extra space) | Re-run `security find-identity -v -p codesigning` and copy the line verbatim |
 | `notarytool` returns "Invalid" / Pending never completes | Usually one of the JIT entitlements is being scrutinized | The script does **not** add `--no-wait` so you can read the submission log: `xcrun notarytool log <submission-id> --apple-id $APPLE_ID --team-id $APPLE_TEAM_ID --password $APPLE_APP_SPECIFIC_PASSWORD` |
 | `stapler validate` says ticket not present | Notarization didn't complete | Re-run with `SKIP_BUILD=1` so the .dmg isn't rebuilt |
-| verification says `packaged CLI is not executable` | The sidecar lost its Unix execute bit before Tauri bundled it | Rebuild through `scripts/build-cli.sh`; it installs macOS/Linux sidecars with mode `0755` and now fails if that invariant is broken |
+| verification says `packaged CLI is not executable` | The sidecar lost its Unix execute bit before Tauri bundled it | Rebuild through `scripts/build-cli.mjs`; it installs macOS/Linux sidecars with mode `0755` and fails if that invariant is broken |

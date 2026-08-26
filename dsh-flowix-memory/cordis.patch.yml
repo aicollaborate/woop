@@ -9,7 +9,7 @@
     - id: dsh-flowix-memory
       name: '@deepseek-ai/dsh-mcp-client'
       config:
-        serverName: dsh-flowix-memory
+        serverName: flowix
         transport: stdio
         command: !!js process.execPath
         args:

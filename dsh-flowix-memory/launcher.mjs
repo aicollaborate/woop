@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
-import { accessSync, constants, statSync } from 'node:fs'
+import { accessSync, constants, readFileSync, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { platform } from 'node:process'
 import { createInterface } from 'node:readline'
 
-const SERVER_NAME = 'dsh-flowix-memory'
-const TOOL_NAME = 'flowix_memo'
+const SERVER_NAME = 'flowix'
+const TOOL_NAME = 'memo'
 const INSTALL_URL = 'https://flowix-memo.com/latest.json'
+const TOOL_SCHEMA = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'memo-tool-schema.json'), 'utf8'))
 
 const cli = findCli()
 if (cli !== undefined) {
@@ -129,7 +131,7 @@ function runUnavailableServer() {
           tools: [{
             name: TOOL_NAME,
             description: 'Search and edit Flowix memos. Requires the Flowix CLI.',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+            inputSchema: TOOL_SCHEMA,
           }],
         },
       })

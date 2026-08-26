@@ -8,11 +8,9 @@ import { openAgentSetup } from '@features/agent/agent-setup';
 import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
 import { useI18n } from '@/lib/i18n';
 import { FieldRow, SectionHeader } from '@features/preferences/sections/primitives';
-import { AgentSection } from '@features/preferences/sections/agent';
 import { ExternalPathRow } from '@features/preferences/sections/external-path-row';
 import {
   agent,
-  deepseekHarness,
   type AgentExternalEntry,
 } from '@platform/tauri/client';
 import { Button } from '@shared/ui/button';
@@ -27,8 +25,7 @@ type CollapsibleAgentKey =
   | 'gemini'
   | 'hermes'
   | 'openclaw'
-  | 'opencode'
-  | 'deepseek-harness';
+  | 'opencode';
 
 /// "使用自定义模型" 文档链接, codex/claude 的"查看"按钮跳转此处。
 const CUSTOM_MODEL_DOCS_URL = 'https://flowix-memo.com/docs/ai-access/';
@@ -38,6 +35,7 @@ const CUSTOM_MODEL_DOCS_URL = 'https://flowix-memo.com/docs/ai-access/';
 const HIDDEN_PREFERENCE_AGENT_KEYS: ReadonlySet<AgentTypeKey> = new Set([
   'openclaw',
   'gemini',
+  'deepseek-harness',
 ]);
 
 export function AgentsSection() {
@@ -90,8 +88,7 @@ export function AgentsSection() {
       typeKey === 'gemini' ||
       typeKey === 'hermes' ||
       typeKey === 'openclaw' ||
-      typeKey === 'opencode' ||
-      typeKey === 'deepseek-harness';
+      typeKey === 'opencode';
     if (!isCollapsible) {
       return null;
     }
@@ -168,19 +165,6 @@ export function AgentsSection() {
               />
             );
           };
-          if (typeKey === 'deepseek-harness') {
-            return renderCollapsible(
-              'deepseek-harness',
-              <div className="border-t border-[var(--divider)] py-3">
-                <AgentSection
-                  configStore={deepseekHarness}
-                  configChangeKind="dsh_config"
-                  testConnection={deepseekHarness.testConnection}
-                  modelDirectory={deepseekHarness}
-                />
-              </div>,
-            );
-          }
           if (typeKey === 'claude') {
             return renderCollapsible(
               'claude',

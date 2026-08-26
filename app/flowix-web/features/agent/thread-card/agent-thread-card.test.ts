@@ -1403,7 +1403,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       name: "mcp_tool_call",
       input: {
         server: "mcp_servers-flowix",
-        tool: "flowix_memo",
+        tool: "memo",
         arguments: { command: "notebooks" },
       },
       agent_type: "codex",
@@ -1417,7 +1417,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(
       tool?.querySelector(".agent-thread-card__message-tool-concrete-name")
         ?.textContent,
-    ).toBe("flowix_memo");
+    ).toBe("memo");
     expect(
       tool?.querySelector(".agent-thread-card__message-tool-summary")
         ?.textContent,

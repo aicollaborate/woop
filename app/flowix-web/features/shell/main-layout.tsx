@@ -910,6 +910,24 @@ export function MainLayout() {
           )}
           {/* Memo detail */}
             <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
+            {isMemoListHidden && (
+              <button
+                type="button"
+                data-memo-list-preview-edge-trigger
+                onMouseEnter={handleMemoListPreviewTriggerEnter}
+                onMouseLeave={handleMemoListPreviewTriggerLeave}
+                onClick={handleToggleMemoList}
+                aria-label={t('document.titlebar.showSidebar')}
+                title={t('document.titlebar.showSidebarTooltip')}
+                className="group absolute left-0 top-1/2 z-[60] flex h-14 w-5 -translate-y-1/2 items-center justify-center text-[var(--muted-foreground)] opacity-55 transition-[color,opacity] duration-150 hover:text-[var(--foreground)] hover:opacity-75 focus-visible:outline-none focus-visible:text-[var(--brand)] focus-visible:opacity-100"
+              >
+                <span className="flex flex-col items-center gap-[6px]" aria-hidden="true">
+                  <span className="h-0.5 w-1.5 rounded-full bg-current transition-[width] group-hover:w-2" />
+                  <span className="h-0.5 w-1.5 rounded-full bg-current transition-[width] group-hover:w-2" />
+                  <span className="h-0.5 w-1.5 rounded-full bg-current transition-[width] group-hover:w-2" />
+                </span>
+              </button>
+            )}
             {/* Fixed top navigation bar */}
             {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar

@@ -20,7 +20,7 @@ automatically through Corepack.
 ## 1. Standalone CLI
 
 ```bash
-npm run cli:build
+npm run cli:build:prod
 ```
 
 The command builds `app/flowix-cli` in release mode, stages the target-specific
@@ -40,7 +40,8 @@ sidecar embedded in the Flowix NSIS package.
 ## 2. Standalone DSH
 
 ```bash
-npm run dsh:release:windows
+npm run dsh:build:prod -- --target=node24-windows-x64
+npm run dsh:package -- --targets=node24-windows-x64
 ```
 
 This performs the following fixed sequence:
@@ -59,10 +60,16 @@ Outputs:
 .build/releases/dsh/dsh-latest.json
 ```
 
-For publishing, set a DSH signing key and use:
+The Windows-only workflow may upload this versioned archive, but it must not
+replace either the versioned or stable DSH manifest. Stable publication is
+performed only by the full four-platform release matrix. To publish manually,
+prebuild every target on its native Node 24 runner, collect the bundle
+directories, then use:
 
 ```bash
-DSH_PUBLISH=1 FLOWIX_DSH_TARGETS=node24-windows-x64 bash scripts/release-dsh.sh
+DSH_PUBLISH=1 FLOWIX_DSH_SKIP_BUILD=1 \
+FLOWIX_DSH_TARGETS=node24-macos-arm64,node24-macos-x64,node24-linux-x64,node24-windows-x64 \
+bash scripts/release-dsh.sh
 ```
 
 Publishing requires `FLOWIX_DSH_SIGNING_PRIVATE_KEY` or
@@ -73,7 +80,7 @@ stable `dsh/latest.json` pointer.
 ## 3. Flowix Windows installer
 
 ```bash
-npm run tauri:build:win
+npm run tauri:build:prod -- --platform win32
 ```
 
 This is the canonical local entry point. It:

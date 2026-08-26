@@ -1,15 +1,15 @@
 # Flowix Harness host and Runtime
 
 `dsh-host` is the process boundary between Flowix Desktop and the pinned
-Harness SDK. Flowix downloads this dual-mode Node SEA only after the user
-chooses to install DSH. Its default mode is the long-lived host using the
-official TypeScript SDK client; runtime children execute the same file with
-`DSH_EMBEDDED_RUNTIME_MODE=1`. Harness is an agent runtime, so its model route is supplied
+Harness SDK. Flowix downloads a self-contained managed Node bundle only after
+the user chooses to install DSH. The long-lived host uses the official
+TypeScript SDK client and starts the bundled CLI/profile runtime. Harness is
+an agent runtime, so its model route is supplied
 by the official `llm-pi-ai.providers` settings section and is not limited to
 DeepSeek models.
 
 ```text
-Flowix UI -> Tauri/Rust -> downloaded dsh-host -> official SDK client -> dsh-host(runtime mode)
+Flowix UI -> Tauri/Rust -> managed Node host -> official SDK client -> bundled DSH CLI/profile
                 events <- JSON-RPC v1 <- session notifications <-|
 ```
 
@@ -19,7 +19,7 @@ the local build through an ignored compatibility link at
 `vendor/deepseek-harness`; see `UPSTREAM.md` for its commit and license.
 
 The DSH runtime is released independently from the Flowix Tauri application.
-Its archive contains the JSON-RPC host, the packaged headless Harness runtime,
+Its archive contains the JSON-RPC host, the headless Harness runtime,
 the `dsh-flowix-memory` MCP bundle, and the `profile/flowix` profile bundle
 containing `@flowix/dsh-flowix-bridge`. It mounts no browser server or UI
 surface; UI-only DSH profile bundles are outside the Flowix host contract.
@@ -47,10 +47,18 @@ To refresh the checkout explicitly, update `upstream.lock.json` and run:
 npm --prefix dsh-flowix-host run vendor:sync
 ```
 
-Build and stage native sidecars for the current host:
+Build the development host used by Tauri dev:
 
 ```bash
-npm run dsh:build
+npm run dsh:build:dev
+```
+
+Build the production managed bundle for the current platform, or pass an
+explicit matching target:
+
+```bash
+npm run dsh:build:prod
+npm run dsh:build:prod -- --target=node24-windows-x64
 ```
 
 Create a standalone DSH archive and manifest:
@@ -63,24 +71,16 @@ The output is written to `.build/releases/dsh/`. Flowix downloads this
 archive into a versioned platform data directory and starts `dsh-host` over
 stdin/stdout JSON-RPC; end users do not need Node, npm, or pnpm.
 
-`npm run tauri:dev` rebuilds the development host before starting Tauri. This
-prevents an old `target/debug/dsh-host` sidecar from shadowing the current host
-implementation.
+`npm run tauri:dev` rebuilds the development host before starting Tauri.
+Production DSH bundles are independent downloads and are never Tauri
+`externalBin` files. Each target must be built under its matching Node 24
+platform and architecture.
 
-On macOS, the standalone DSH release uses `npm run dsh:build:macos` to stage
-the requested Apple Silicon and Intel products. These are release inputs for
-the independently downloaded DSH archive; they are not Tauri externalBin
-files and are never included in the Flowix application. The builder deploys
-the upstream generic runtime, prunes it to the transitive graph rooted at the
-official base plus Flowix profile bundles, packages the host and runtime roles into one SEA,
-strips local symbols, and signs the final Mach-O.
-
-For host-only development, run `npm --prefix dsh-flowix-host run build`.
+For host-only development, run `npm --prefix dsh-flowix-host run build:dev`.
 The generated host is written to `.build/flowix-dsh-host/dsh-host.cjs`; Rust
-uses it when no packaged sidecar is available.
+uses it in debug builds.
 The dev Tauri config intentionally does not require DSH externalBin files;
-build `dsh-host` plus the generated Harness runtime when testing DSH locally. Production
-Flowix packages download DSH separately.
+production Flowix packages download DSH separately.
 
 ## Protocol
 
@@ -173,7 +173,6 @@ Development overrides:
 
 - `FLOWIX_DSH_BUNDLE_ROOT`: complete local release bundle; Flowix launches
   `node/<node> host/dsh-host.cjs`, matching the managed production contract
-- `FLOWIX_DSH_HOST_PATH`: host executable or built `.mjs`
 - `FLOWIX_DSH_RUNTIME_PATH`: Harness runtime executable
 - `FLOWIX_DSH_CORDIS_CONFIG`: alternate Cordis composition
 - `FLOWIX_DSH_SESSION_ROOT`: session persistence root
@@ -182,7 +181,6 @@ Development overrides:
 - `FLOWIX_DSH_PROFILE_SOURCE`: explicit profile/flowix payload for development or packaging
 - `FLOWIX_DSH_MAX_IDLE_RUNTIMES`: retained idle runtime cap (default `2`)
 - `FLOWIX_DSH_IDLE_TTL_MS`: idle runtime lifetime in milliseconds (default `300000`)
-- `FLOWIX_DSH_STRIP=0`: disable release-sidecar symbol stripping for diagnostics
 
 ## Security boundary
 
@@ -208,11 +206,8 @@ The Host and runtime environment deliberately do not forward `SSH_AUTH_SOCK`.
 ```bash
 npm --prefix dsh-flowix-host run check
 npm --prefix dsh-flowix-host run test:e2e
-npm --prefix dsh-flowix-host run test:sidecar:e2e
 cargo test -p flowix-desktop deepseek_harness --lib
 ```
 
-The fixture E2E covers the official SDK client and event normalization. The
-sidecar E2E additionally runs both process roles of the packaged executable against a
-local mock OpenAI-compatible SSE endpoint, exercising persistence and the real
-Harness agent loop without using a real API key or consuming model quota.
+The fixture E2E covers the official SDK client and event normalization against
+a local mock endpoint without using a real API key or consuming model quota.

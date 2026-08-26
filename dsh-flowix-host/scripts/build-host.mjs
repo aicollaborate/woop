@@ -1,9 +1,14 @@
 import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync as writeFile } from 'node:fs'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { readFileSync, readdirSync } from 'node:fs'
-import { delimiter, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { relative, resolve } from 'node:path'
 import { build } from 'esbuild'
+
+if (Number(process.versions.node.split('.')[0]) !== 24) {
+  throw new Error(`DSH builds require Node 24; current runtime is ${process.version}`)
+}
 
 await import('./ensure-upstream.mjs')
 
@@ -11,7 +16,6 @@ const root = resolve(import.meta.dirname, '..')
 const repo = resolve(root, '..')
 const outdir = resolve(repo, '.build/flowix-dsh-host')
 const vendor = resolve(root, 'vendor/deepseek-harness')
-const tooling = resolve(root, 'scripts/tooling')
 const buildEnv = {
   ...process.env,
   CI: 'true',
@@ -20,38 +24,67 @@ const buildEnv = {
   NPM_CONFIG_PRODUCTION: 'false',
   PNPM_CONFIG_PRODUCTION: 'false',
   FLOWIX_REPO_ROOT: repo,
-  PATH: `${tooling}${delimiter}${process.env.PATH ?? ''}`,
 }
 await mkdir(outdir, { recursive: true })
 
-// Generate (or reuse) a build identity for the dual-mode DSH SEA and write
-// it next to the bundle so the launcher can pass it as an env var. The
-// same identifier is baked into the bundle via esbuild --define so a
-// binary that drifted from its env can be detected at startup.
+// Derive a reproducible identity from every source and lock input that defines
+// the Flowix host/profile bundle. This detects stale outputs across worktrees
+// and does not depend on a previously generated .build file.
 const buildIdPath = resolve(outdir, 'dsh-build-id.txt')
 const envBuildId = process.env.FLOWIX_DSH_BUILD_ID?.trim()
-if (existsSync(buildIdPath)) {
-  const persisted = readFileSync(buildIdPath, 'utf8').trim()
-  if (envBuildId !== undefined && envBuildId !== '' && envBuildId !== persisted) {
-    throw new Error(
-      `FLOWIX_DSH_BUILD_ID=${envBuildId} conflicts with persisted ${persisted} in ${buildIdPath}`,
-    )
-  }
+const buildId = sourceBuildId()
+if (envBuildId !== undefined && envBuildId !== '' && envBuildId !== buildId) {
+  throw new Error(`FLOWIX_DSH_BUILD_ID=${envBuildId} does not match source build id ${buildId}`)
 }
-const buildId = envBuildId && envBuildId !== ''
-  ? envBuildId
-  : (existsSync(buildIdPath)
-      ? readFileSync(buildIdPath, 'utf8').trim()
-      : (await generateBuildId()))
 if (!buildId) throw new Error('empty build id computed for dsh-host bundle')
 await writeFile(buildIdPath, buildId + '\n', 'utf8')
-process.stdout.write('dsh sidecar build id: ' + buildId + '\n')
+process.stdout.write('dsh host build id: ' + buildId + '\n')
 
-async function generateBuildId() {
-  const { randomBytes } = await import('node:crypto')
-  // 6 bytes (~48 bits) of entropy is plenty for distinguishing sidecar pairs.
-  // Render as base32 so the value is filesystem and shell safe everywhere.
-  return randomBytes(6).toString('base64url')
+function sourceBuildId() {
+  const hash = createHash('sha256')
+  const inputs = [
+    resolve(root, 'src'),
+    resolve(root, 'profile'),
+    resolve(root, 'patches'),
+    resolve(root, 'package.json'),
+    resolve(root, 'upstream.lock.json'),
+    resolve(repo, 'dsh-flowix-memory'),
+    resolve(repo, 'package-lock.json'),
+  ]
+  const add = (path) => {
+    if (!existsSync(path)) throw new Error(`DSH build identity input is missing: ${path}`)
+    const entries = readdirSync(path, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))
+    for (const entry of entries) {
+      const child = resolve(path, entry.name)
+      if (entry.isDirectory() && !['node_modules', '.git', '.build'].includes(entry.name)) add(child)
+      else if (entry.isFile()) {
+        hash.update(relative(repo, child).replaceAll('\\', '/'))
+        hash.update('\0')
+        hash.update(readFileSync(child))
+        hash.update('\0')
+      }
+    }
+  }
+  for (const input of inputs) {
+    if (readdirSafe(input)) add(input)
+    else {
+      hash.update(relative(repo, input).replaceAll('\\', '/'))
+      hash.update('\0')
+      hash.update(readFileSync(input))
+      hash.update('\0')
+    }
+  }
+  return hash.digest('hex').slice(0, 24)
+}
+
+function readdirSafe(path) {
+  try {
+    readdirSync(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 
@@ -75,6 +108,26 @@ if (!vendorReady) {
     })
     child.once('error', fail)
     child.once('exit', code => code === 0 ? done() : fail(new Error('pnpm install exited ' + code)))
+  })
+}
+
+const runtimeMarkers = [
+  resolve(vendor, 'apps/cli/lib/bin.js'),
+  resolve(vendor, 'packages/sdk/server/lib/index.js'),
+  resolve(vendor, 'packages/core/session/lib/types/index.d.ts'),
+]
+if (!runtimeMarkers.every(existsSync) || process.env.FLOWIX_DSH_REBUILD_LIBS === '1') {
+  process.stdout.write('vendored Harness libraries are missing; building host runtime outputs...\n')
+  await new Promise((done, fail) => {
+    const corepackCmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
+    const child = spawn(corepackCmd, ['pnpm@11.7.0', 'run', 'build:lib:host'], {
+      cwd: vendor,
+      stdio: 'inherit',
+      env: buildEnv,
+      shell: process.platform === 'win32',
+    })
+    child.once('error', fail)
+    child.once('exit', code => code === 0 ? done() : fail(new Error('Harness library build exited ' + code)))
   })
 }
 
@@ -106,8 +159,7 @@ const inlineLlmVersion = {
  * Output a CommonJS bundle as `dsh-host.cjs` so `resolve_host_command` in the
  * desktop crate can launch the dev host directly via `node dsh-host.cjs`.
  * `splitting` is only valid for `esm`, so a single-file CJS bundle is the
- * right shape here and matches the launcher contract pkg's `--launcher` flag
- * expects in the production build pipeline.
+ * right shape for both source development and the managed production bundle.
  */
 await build({
   entryPoints: [resolve(root, 'src/main.ts')],
@@ -126,41 +178,3 @@ await build({
   plugins: [inlineLlmVersion],
 })
 process.stdout.write('built ' + resolve(outdir, 'dsh-host.cjs') + '\n')
-
-// Build the packaged runtime so dev mode can spawn a self-contained SEA binary
-// instead of relying on the vendored tsx + bin.ts path. The vendored tsx path
-// is fragile: Cordis plugin loading goes through workspace links and tsx has
-// ordering surprises that leave the harness client in an inconsistent state
-// when anything fails during init. The packaged runtime is what production
-// ships, so using it in dev means dev and prod share the same failure
-// surface and there is no second code path to debug.
-//
-// Skip the build when the artifact is already present so incremental
-// `tauri dev` rebuilds stay fast. Rebuild manually after editing vendored
-// harness sources: `npm --prefix dsh-flowix-host run build:runtime`.
-const runtimeBinary = resolve(outdir, process.platform === 'win32' ? 'dsh-runtime.exe' : 'dsh-runtime')
-if (process.env.FLOWIX_DSH_SKIP_RUNTIME !== '1' && !existsSync(runtimeBinary)) {
-  if (process.platform === 'win32') {
-    await copyFile(resolve(tooling, 'pnpm.cmd'), resolve(vendor, 'node_modules/.bin/pnpm.cmd'))
-  }
-  process.stdout.write('packaged runtime missing; building via corepack pnpm exec tsx ...' + '\n')
-  await new Promise((done, fail) => {
-    const corepackCmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
-    const child = spawn(corepackCmd, ['pnpm@11.7.0', 'exec', 'tsx', 'scripts/build-exe-for-python-sdk.ts', '--skip-build'], {
-      cwd: vendor,
-      stdio: 'inherit',
-      env: buildEnv,
-      shell: process.platform === 'win32',
-    })
-    child.once('error', fail)
-    child.once('exit', code => code === 0 ? done() : fail(new Error('packaged runtime build exited ' + code)))
-  })
-  const platformForUpstream = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform
-  const upstreamExt = process.platform === 'win32' ? '.exe' : ''
-  const upstream = resolve(vendor, `dist-exe/dsh-jsonrpc-agent-pkg-${platformForUpstream}-${process.arch}${upstreamExt}`)
-  if (!existsSync(upstream)) {
-    throw new Error('packaged runtime missing at ' + upstream + ' after build; check upstream output naming')
-  }
-  await copyFile(upstream, runtimeBinary)
-  process.stdout.write('built ' + runtimeBinary + '\n')
-}

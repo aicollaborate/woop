@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -9,7 +9,6 @@ const repo = resolve(import.meta.dirname, '..')
 const hostRoot = resolve(repo, 'dsh-flowix-host')
 const stageRoot = resolve(repo, '.build/dsh-package')
 const releaseRoot = resolve(repo, '.build/releases/dsh')
-const dshBuildRoot = resolve(repo, '.build/flowix-dsh-host')
 const dshPackage = JSON.parse(await readFile(join(hostRoot, 'package.json'), 'utf8'))
 const privatePnpmVersion = '11.7.0'
 const requested = process.argv.find(value => value.startsWith('--targets='))?.slice('--targets='.length)
@@ -25,53 +24,31 @@ await mkdir(releaseRoot, { recursive: true })
 const platforms = {}
 
 for (const target of targets) {
-  const { platform, arch, triple } = targetInfo(target)
+  const { platform } = targetInfo(target)
   const bundleSource = resolve(repo, `.build/dsh-runtime-bundle/${target}`)
-  const sourceHost = resolve(repo, `.build/flowix-dsh-host/dsh-host-${platform}-${arch}` + (platform === 'windows' ? '.exe' : ''))
   const isNodeBundle = existsSync(resolve(bundleSource, 'host/dsh-host.cjs'))
-  const bundleBuild = isNodeBundle
-    ? JSON.parse(await readFile(resolve(bundleSource, 'runtime-build.json'), 'utf8'))
-    : null
-  if (bundleBuild && bundleBuild.target !== target) {
+  if (!isNodeBundle) {
+    throw new Error(`missing managed DSH bundle for ${target}; run npm run dsh:build:prod -- --target=${target}`)
+  }
+  const bundleBuild = JSON.parse(await readFile(resolve(bundleSource, 'runtime-build.json'), 'utf8'))
+  if (bundleBuild.target !== target) {
     throw new Error(`runtime build identity mismatch: requested ${target}, bundle contains ${bundleBuild.target}`)
-  }
-  if (!isNodeBundle && process.env.FLOWIX_DSH_ALLOW_LEGACY_SEA !== '1') {
-    throw new Error(`refusing to publish legacy SEA target ${target}; build the managed Node bundle or explicitly set FLOWIX_DSH_ALLOW_LEGACY_SEA=1`)
-  }
-  if (!isNodeBundle && !existsSync(sourceHost)) {
-    throw new Error(`missing DSH host for ${target}: ${sourceHost}; run npm run dsh:build first`)
   }
 
   const packageDir = resolve(stageRoot, target)
   await mkdir(packageDir, { recursive: true })
-  if (isNodeBundle) {
-    await copyTree(bundleSource, packageDir)
-  } else {
-  await copyFile(sourceHost, join(packageDir, platform === 'windows' ? 'dsh-host.exe' : 'dsh-host'))
-  const sourceRipgrep = `${sourceHost}-rg`
-  if (!existsSync(sourceRipgrep)) throw new Error(`missing DSH ripgrep sidecar for ${target}: ${sourceRipgrep}`)
-  await copyFile(sourceRipgrep, join(packageDir, platform === 'windows' ? 'dsh-host.exe-rg' : 'dsh-host-rg'))
-  const sourceHelper = resolve(dshBuildRoot, `dsh-host-spawn-helper-${platform}-${arch}${platform === 'windows' ? '.exe' : ''}`)
-  if (existsSync(sourceHelper)) {
-    await copyFile(sourceHelper, join(packageDir, platform === 'windows' ? 'dsh-host-spawn-helper.exe' : 'dsh-host-spawn-helper'))
-  }
-  }
-  if (!isNodeBundle) {
-    await copyTree(resolve(repo, 'dsh-flowix-memory'), join(packageDir, 'dsh-flowix-memory'))
-    await copyTree(resolve(hostRoot, 'profile/flowix'), join(packageDir, 'profile/flowix'))
-  }
+  await copyTree(bundleSource, packageDir)
   const buildIdPath = resolve(repo, '.build/flowix-dsh-host/dsh-build-id.txt')
   const buildId = existsSync(buildIdPath) ? (await readFile(buildIdPath, 'utf8')).trim() : null
   await writeFile(join(packageDir, 'dsh-runtime.json'), `${JSON.stringify({
-    schemaVersion: isNodeBundle ? 2 : 1,
+    schemaVersion: 2,
     product: 'flowix-dsh',
     version,
     protocolVersion: 1,
     buildId,
     target,
     includesUi: false,
-    runtimeType: isNodeBundle ? 'node-bundle' : 'sea',
-    ...(isNodeBundle ? {
+    runtimeType: 'node-bundle',
       nodeExecutable: platform === 'windows' ? 'node/node.exe' : 'node/node',
       entrypoint: 'host/dsh-host.cjs',
       cliEntrypoint: 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
@@ -79,7 +56,6 @@ for (const target of targets) {
       nodeVersion: bundleBuild.nodeVersion,
       nodeAbi: bundleBuild.nodeAbi,
       pnpmVersion: bundleBuild.pnpmVersion ?? privatePnpmVersion,
-    } : {}),
   }, null, 2)}\n`)
 
   const extension = '.tar.gz'

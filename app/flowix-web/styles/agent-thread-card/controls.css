@@ -265,7 +265,10 @@
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  padding: 2rem 1.5rem 0 1.5rem;
+  /* Keep a small scroll-end safe area below the persistent 38px loading
+   * indicator. WebView2 can otherwise clip its bottom edge when Windows
+   * display scaling produces a fractional scroll boundary. */
+  padding: 2rem 1.5rem 4px 1.5rem;
   /* transition 配合 .--collapsed 折叠: padding 3.6rem 12px → 0, 150ms ease 塌缩。
    * 注: 现在折叠改用 display: none ── body 直接消失; padding transition
    * 仍保留, 给后续若想"保留行只压内容"的玩法留接口。 */

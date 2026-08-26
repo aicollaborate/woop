@@ -1,39 +1,10 @@
 import type { ScrollSnapshot } from "@features/agent/thread-card/agent-thread-card-dom";
 
-export function getAgentThreadCardFullscreenContainer(
-  dom: HTMLElement,
-): HTMLElement | null {
-  const container = dom.closest(".document-container");
-  return container instanceof HTMLElement ? container : null;
-}
-
 export function getAgentThreadCardEditorScrollContainer(
   dom: HTMLElement,
 ): HTMLElement | null {
   const container = dom.closest(".editor-content");
   return container instanceof HTMLElement ? container : null;
-}
-
-export function syncAgentThreadCardFullscreenBounds(options: {
-  dom: HTMLElement;
-  container: HTMLElement;
-  titlebarHeight: number;
-}): void {
-  const { dom, container, titlebarHeight } = options;
-  const rect = container.getBoundingClientRect();
-  dom.style.setProperty("--atc-fullscreen-top", `${rect.top}px`);
-  dom.style.setProperty("--atc-fullscreen-left", `${rect.left}px`);
-  dom.style.setProperty("--atc-fullscreen-width", `${rect.width}px`);
-  dom.style.setProperty("--atc-fullscreen-height", `${rect.height}px`);
-  dom.style.setProperty("--atc-titlebar-height", `${titlebarHeight}px`);
-}
-
-export function clearAgentThreadCardFullscreenBounds(dom: HTMLElement): void {
-  dom.style.removeProperty("--atc-fullscreen-top");
-  dom.style.removeProperty("--atc-fullscreen-left");
-  dom.style.removeProperty("--atc-fullscreen-width");
-  dom.style.removeProperty("--atc-fullscreen-height");
-  dom.style.removeProperty("--atc-titlebar-height");
 }
 
 export function captureAgentThreadCardScrollSnapshot(

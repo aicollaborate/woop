@@ -4,29 +4,16 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "^22.19.0 || >=24"
+    "node": ">=24 <25"
   },
   "scripts": {
     "vendor:sync": "node scripts/sync-upstream.mjs",
     "vendor:ensure": "node scripts/ensure-upstream.mjs",
     "vendor:install": "npm run vendor:ensure && corepack pnpm@11.7.0 --dir vendor/deepseek-harness install --frozen-lockfile",
-    "build": "node scripts/build-host.mjs",
     "build:dev": "node scripts/build-host.mjs",
-    "build:runtime": "node scripts/build-runtime.mjs",
-    "build:sidecars": "node scripts/build-runtime-bundle.mjs",
-    "build:macos": "node scripts/build-runtime-bundle.mjs",
-    "build:windows": "node scripts/build-runtime-bundle.mjs --target=node24-windows-x64",
-    "build:bundle": "node scripts/build-runtime-bundle.mjs",
-    "build:bundle:windows": "node scripts/build-runtime-bundle.mjs --target=node24-windows-x64",
-    "build:bundle:macos": "node scripts/build-runtime-bundle.mjs",
-    "build:bundle:macos:arm64": "node scripts/build-runtime-bundle.mjs --target=node24-macos-arm64",
-    "build:bundle:macos:x64": "node scripts/build-runtime-bundle.mjs --target=node24-macos-x64",
-    "stage:sidecars": "node scripts/build-runtime-bundle.mjs",
-    "stage:sidecars:macos": "node scripts/build-runtime-bundle.mjs",
-    "stage:sidecars:windows": "node scripts/build-runtime-bundle.mjs --target=node24-windows-x64",
+    "build:prod": "node scripts/build-runtime-bundle.mjs",
     "test": "node vendor/deepseek-harness/node_modules/tsx/dist/cli.mjs --test tests/*.test.ts",
-    "test:e2e": "npm run build && node --test tests/host-e2e.test.mjs tests/plugin-cli-e2e.test.mjs",
-    "test:sidecar:e2e": "node --test tests/sidecar-e2e.test.mjs",
+    "test:e2e": "npm run build:dev && node --test tests/host-e2e.test.mjs tests/plugin-cli-e2e.test.mjs",
     "check": "node vendor/deepseek-harness/node_modules/typescript/bin/tsc --noEmit -p tsconfig.json && npm test"
   }
 }

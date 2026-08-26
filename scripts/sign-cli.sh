@@ -16,7 +16,7 @@
 #   WINDOWS_CERTIFICATE_PASSWORD  .pfx 导出密码
 #   WINDOWS_TIMESTAMP_URL      RFC 3161 timestamp URL (默认 http://timestamp.sectigo.com)
 #
-# Fallback (dev 本地无证书, 跟 `cli:build:all` 一起跑不挂):
+# Fallback (dev 本地无证书时不中断构建):
 #   APPLE_SIGNING_IDENTITY='-'  → ad-hoc 签 (`codesign --sign -`), 跳过 notarization
 #   APPLE_SIGNING_IDENTITY 空    → 打印 skip 后退出 0
 #   WINDOWS_CERTIFICATE 空       → 打印 skip 后退出 0
@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-# repo root 解析 ── 跟 `build-cli.sh` 一致, 走脚本自身位置
+# repo root 解析 ── 跟 `build-cli.mjs` 一致, 走脚本自身位置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BINARIES_DIR="$REPO_ROOT/app/flowix-desktop/binaries"

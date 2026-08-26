@@ -1,10 +1,6 @@
-﻿// Build identity for the dual-mode DSH SEA (host and runtime share one
-// binary; DSH_EMBEDDED_RUNTIME_MODE=1 picks the runtime branch). The literal
-// is replaced at bundle time by esbuild --define (see scripts/build-host.mjs
-// and scripts/build-sidecars.mjs) so each sidecar embeds a fresh identifier
-// for the launchers build-id check.
+// Build identity embedded into the host by scripts/build-host.mjs.
 declare const __FLOWIX_DSH_BUILD_ID__: string
 
-export const SIDECAR_BUILD_ID: string = __FLOWIX_DSH_BUILD_ID__
+export const HOST_BUILD_ID: string = __FLOWIX_DSH_BUILD_ID__
 
-export const SIDECAR_BUILD_ID_ENV = 'FLOWIX_DSH_BUILD_ID'
+export const HOST_BUILD_ID_ENV = 'FLOWIX_DSH_BUILD_ID'

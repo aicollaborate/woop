@@ -37,7 +37,7 @@ pub fn cmd_describe(plugin_id: &str, json: bool) -> Result<(), CliError> {
 
 pub fn cmd_create(
     plugin_id: &str,
-    notebook: &str,
+    notebook: Option<&str>,
     source_note: Option<&str>,
     producer: &str,
     json: bool,
@@ -48,7 +48,8 @@ pub fn cmd_create(
         .read_to_string(&mut content)
         .map_err(CliError::Io)?;
     let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
-    let created = create_data(plugin_id, notebook, source_note, producer, content)?;
+    let notebook = crate::store::resolve_notebook_key(notebook)?;
+    let created = create_data(plugin_id, &notebook, source_note, producer, content)?;
     if json {
         print_pretty_json(&created)
     } else {

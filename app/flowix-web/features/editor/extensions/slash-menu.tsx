@@ -75,6 +75,7 @@ function isAgentSlashEnabled(typeKey: AgentTypeKey): boolean {
 function getAvailableSlashMenuItems(): SlashMenuItem[] {
   return SLASH_MENU_ITEMS.filter((item) => {
     if (!isAgentThreadSlashMenuItemId(item.id)) return true;
+    if (item.id === 'agent-thread-deepseek-harness') return true;
     const typeKey = AGENT_THREAD_TYPE_BY_SLASH_ID[item.id];
     if (!isAgentSlashEnabled(typeKey)) return false;
     return item.alwaysVisible || isAgentRuntimeAvailable(typeKey);
@@ -536,11 +537,16 @@ function handleSelect(item: SlashMenuItem): void {
   if (isAgentThreadSlashMenuItemId(item.id)) {
     const agentThreadType = AGENT_THREAD_TYPE_BY_SLASH_ID[item.id];
     const runtimeStatus = useAgentRuntimeStore.getState().statusByType[agentThreadType];
+    // DSH is always discoverable in the slash menu. Until availability is
+    // positively confirmed (including while status is still loading), guide
+    // the user to installation/model setup instead of inserting a dead card.
+    if (agentThreadType === 'deepseek-harness' && runtimeStatus?.available !== true) {
+      closeMenu();
+      void windows.openPreferences('dsh');
+      return;
+    }
     if (runtimeStatus?.available === false) {
       closeMenu();
-      if (agentThreadType === 'deepseek-harness') {
-        void windows.openPreferences('agents');
-      }
       return;
     }
     const replaceRange = isBlockStartTrigger(editor)

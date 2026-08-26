@@ -23,7 +23,7 @@ import { SessionPool } from './runtime/session-pool.ts'
 import { catalog, resolveCatalogModel } from './runtime/model-directory.ts'
 import { catalog as pluginCatalog } from './runtime/plugin-directory.ts'
 import { ensureFlowixProfile } from './runtime/environment.ts'
-import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from './build-meta.ts'
+import { HOST_BUILD_ID, HOST_BUILD_ID_ENV } from './build-meta.ts'
 import { RuntimeAdmin } from './runtime/admin.ts'
 
 // The development CJS host delegates the `dsh` carrier to the built official
@@ -44,17 +44,16 @@ if (process.env.DSH_EMBEDDED_CLI_MODE === '1') {
 }
 
 
-// Refuse to start when the bundled build identity disagrees with the one the
-// launcher requested. This catches stale Cargo target dirs and dev/prod mixups.
-const requestedBuildId = process.env[SIDECAR_BUILD_ID_ENV]?.trim()
-if (requestedBuildId !== undefined && requestedBuildId !== '' && requestedBuildId !== SIDECAR_BUILD_ID) {
+// Refuse to start when the development launcher selected stale host output.
+const requestedBuildId = process.env[HOST_BUILD_ID_ENV]?.trim()
+if (requestedBuildId !== undefined && requestedBuildId !== '' && requestedBuildId !== HOST_BUILD_ID) {
   process.stderr.write(
-    `[dsh-host] FATAL: bundle buildId "${SIDECAR_BUILD_ID}" disagrees with launcher request "${requestedBuildId}".\n` +
-    '[dsh-host] The dsh-host bundle is out of sync with the rest of the sidecar pair; rebuild via `pnpm dsh:build`.\n',
+    `[dsh-host] FATAL: bundle buildId "${HOST_BUILD_ID}" disagrees with launcher request "${requestedBuildId}".\n` +
+    '[dsh-host] Rebuild via `npm run dsh:build:dev`.\n',
   )
   process.exit(2)
 }
-if (SIDECAR_BUILD_ID === 'uninitialized' || SIDECAR_BUILD_ID === '') {
+if (HOST_BUILD_ID === 'uninitialized' || HOST_BUILD_ID === '') {
   process.stderr.write('[dsh-host] FATAL: build id is empty; the bundle was produced without a build identity.\n')
   process.exit(2)
 }
@@ -80,7 +79,7 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
     case 'host.initialize':
       return {
         protocolVersion: HOST_PROTOCOL_VERSION,
-        buildId: SIDECAR_BUILD_ID,
+        buildId: HOST_BUILD_ID,
         host: { name: 'flowix-dsh-host', version: '1.0.0' },
         harness: { commit: 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e', version: '0.1.1-rc.2' },
         capabilities: [

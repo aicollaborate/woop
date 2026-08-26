@@ -18,8 +18,11 @@ npm run tauri:android:dev # Android 真机/模拟器；首次先运行 npm run t
 npm run tauri:ios:dev     # iOS 真机/模拟器；首次先运行 npm run tauri:ios:init
 npm run dev:mobile -- --port 1421 # 仅移动端前端预览 (localhost:1421)，不包含 Tauri 原生能力
 npm run tauri build      # 生产构建
-npm run cli:build        # 编 CLI sidecar 到 app/flowix-desktop/binaries/（当前 host）
-npm run cli:build:all    # CI 用：三平台（linux / macOS ×2 / windows）全编
+npm run cli:build:dev    # CLI debug build
+npm run cli:build:prod   # CLI production build for the current platform
+npm run dsh:build:dev    # DSH source-development host
+npm run dsh:build:prod   # DSH managed production bundle
+npm run tauri:build:prod # Flowix production bundle + updater artifacts
 pkill -f "node.*vite" 2>/dev/null   # 端口冲突时
 sudo xcode-select -r                 # 首次运行
 ```
@@ -51,8 +54,7 @@ cargo test --workspace --lib                         # 跑全部
 通过差异化 Tauri 配置，让 dev 版与已安装的生产版同时运行：
 
 - **dev**：`npm run tauri:dev` → `app/flowix-desktop/tauri.conf.dev.json` → bundle ID `com.flowix.app.dev` / `Flowix Dev`
-- **生产**：`npm run tauri:build:production` → `tauri.conf.json` + 平台覆盖层 + 签名覆盖层 → 平台专用 `tauri.*.production.local.json` → bundle ID `com.flowix.app` / `Flowix`
-- **默认 build**：`npm run tauri:build` → 默认 `tauri.conf.json` → 生产身份（无签名，便于本地试装）
+- **生产**：`npm run tauri:build:prod` → `tauri.conf.json` + 平台覆盖层 + 签名覆盖层 → 平台专用 `tauri.*.production.local.json` → bundle ID `com.flowix.app` / `Flowix`
 
 `tauri:dev` 通过 `--config` 指向独立配置，**不要**改 `tauri.conf.json` 的 `identifier` / `productName` / `mainBinaryName` / `bundle.macOS.bundleName` —— 这四个字段是生产身份的锚点。`tauri.conf.production.json` 作为覆盖层被 `tauri build --config` 深合并在 `tauri.conf.json` 之上，因此 dev 配置改动不会污染生产链路。
 
@@ -63,7 +65,7 @@ dev 与生产现使用不同 bundle ID（`com.flowix.app.dev` vs `com.flowix.app
 构建 macOS 生产包后，如果没有 Developer ID，也要对 bundle 内 sidecar 和 `.app` 做一次本地 ad-hoc codesign，让 `entitlements.plist` 写进可执行产物；否则 security-scoped bookmarks / user-selected folder 权限相关 entitlement 不会实际生效。
 
 ```bash
-npm run tauri:build:production
+npm run tauri:build:prod
 
 codesign --force --options runtime --sign - \
   --entitlements app/flowix-desktop/entitlements.plist \
@@ -177,7 +179,7 @@ bash scripts/apple-signing/sign-and-notarize.sh
 
 `sign-and-notarize.sh` 内部步骤：
 
-1. `npm run tauri:build:production`（生成 `.build/cargo-target/<target>/release/bundle/{macos,dmg}/`）
+1. `npm run tauri:build:prod`（生成 `.build/cargo-target/<target>/release/bundle/{macos,dmg}/`）
 2. 挂载最终 DMG，校验内嵌 `flowix-cli` 的可执行位、架构、Developer ID 与 nested signature
 3. 对这个未经后续修改的 DMG 执行 `xcrun notarytool submit --keychain-profile flowix-notarize --wait`
 4. `xcrun stapler staple` 钉 ticket，并再次验证 stapler + Gatekeeper
@@ -185,7 +187,6 @@ bash scripts/apple-signing/sign-and-notarize.sh
 
 CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和外层 `.app`，再生成 DMG。DMG 生成后禁止重新签或修改 `.app`，否则公证的将不是最终实际分发内容。
 
-> ⚠️ **不要** 用 `npm run tauri:build`（默认无签名）、`npm run tauri:build:mac`/`win`（platform 特定全路径）。
 
 ### 4 个 env var 各自去哪
 
@@ -219,7 +220,7 @@ export FLOWIX_DSH_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY
 
 | 知识点 | 详细 |
 |---|---|
-| **CARGO_TARGET_DIR** | `scripts/build-cli.sh` 把它设到 `$REPO_ROOT/.build/cargo-target`，**不是** `app/flowix-desktop/target/release`。`sign-and-notarize.sh` 内部已经按这个路径找 |
+| **CARGO_TARGET_DIR** | `scripts/build-cli.mjs` 把它设到 `$REPO_ROOT/.build/cargo-target`，**不是** `app/flowix-desktop/target/release`。`sign-and-notarize.sh` 内部已经按这个路径找 |
 | **Tauri 自带 notarization 跳过** | Tauri 读 `APPLE_PASSWORD` env var 才走内部 notarize。我们不设，Tauri warn 但不拒；手动 `notarytool submit` 在 `sign-and-notarize.sh` 里完成 |
 | **codesign private key 永远不存 Keychain 之外** | `~/.flowix-signing/devid.key` 是唯一副本；`.gitignore` 已把 `*.p12` / `*.key` / `*.csr` / `developerID_application.*` 加进去 |
 | **已发布 DMG 的签名 cert 寿命** | 6 个月 Developer ID Application cert（Apple 写死，不能 1 年） |
@@ -622,7 +623,7 @@ flowix-main/
 │               └── sections/             # 各分区面板
 │
 ├── scripts/
-│   ├── build-cli.sh                      # 编 CLI sidecar
+│   ├── build-cli.mjs                     # 编 CLI sidecar
 │   ├── gen-icon.mjs                      # 生成图标
 │   ├── prepare-tauri-production-config.mjs  # env var → tauri.macos.production.local.json
 │   ├── build-tauri-production.mjs       # cli:build + prepare + tauri build 的编排

@@ -21,7 +21,6 @@ import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
 import { windows } from "@platform/tauri/client";
-import { isWindowsPlatform } from "@features/shortcuts";
 import { normalizePlainLinkHref } from "@features/editor/extensions/markdown-link";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
@@ -91,7 +90,6 @@ export { localFilePathFromAgentHref } from "@features/agent/thread-card/link-nav
 //
 // 用 px 写死而非 var 是有意: h-9 是 Tailwind 直接出 36px 的常量, 改
 // 一边就要同步改另一边, 这里保留纯数字 + 注释避免魔法值漂移。
-const WINDOWS_TITLEBAR_HEIGHT_PX = 36;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
 const FULLSCREEN_EXIT_FALLBACK_MIN_TOP_PX = 24;
@@ -373,8 +371,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       dom: this.dom,
       isFullscreen: () => this.isFullscreen,
       isDestroyed: () => this.isDestroyed,
-      getTitlebarHeight: () =>
-        isWindowsPlatform() ? WINDOWS_TITLEBAR_HEIGHT_PX : 0,
       minExitTopPx: FULLSCREEN_EXIT_FALLBACK_MIN_TOP_PX,
       maxExitTopPx: FULLSCREEN_EXIT_FALLBACK_MAX_TOP_PX,
       exitTopRatio: FULLSCREEN_EXIT_FALLBACK_TOP_RATIO,

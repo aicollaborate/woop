@@ -8,10 +8,12 @@ if defined FLOWIX_REPO_ROOT (
 if "%~1"=="run" if "%~2"=="verify-runtime-closure" exit /b 0
 if "%~1"=="--filter" (
   rem Node's shell=true path loses quoting around the whitespace-bearing
-  rem target. Reconstruct the pinned target from the upstream workspace root.
+  rem target. Use the pinned path relative to the upstream workspace root so
+  rem pnpm receives exactly one deploy target even when the repo path has spaces.
   if exist "%CD%\python\sdk-runtime\src\deepseek_harness_runtime\runtime\node\package.json" exit /b 0
-  call corepack.cmd pnpm@11.7.0 --filter "%~2" deploy %4 %5 %6 %7 %8 "%CD%\python\sdk-runtime\src\deepseek_harness_runtime\runtime\node"
-  exit /b %errorlevel%
+  rem Do not use CALL here: CALL reparses the command line and can split the
+  rem deploy target a second time. Tail-call Corepack and propagate its status.
+  corepack.cmd pnpm@11.7.0 --filter dsh-jsonrpc-agent-pkg deploy --legacy --prod --config.node-linker=hoisted --config.auto-install-peers=true --config.link-workspace-packages=true python\sdk-runtime\src\deepseek_harness_runtime\runtime\node
 )
 if "%~1"=="dlx" if "%~2"=="@yao-pkg/pkg@6.21.0" (
   rem %%* is immutable after SHIFT in cmd.exe, so forward arguments 3..9
@@ -19,5 +21,4 @@ if "%~1"=="dlx" if "%~2"=="@yao-pkg/pkg@6.21.0" (
   call "%FLOWIX_REPO%\node_modules\.bin\pkg.cmd" %3 %4 %5 %6 %7 %8 %9
   exit /b %errorlevel%
 )
-call corepack.cmd pnpm@11.7.0 %*
-exit /b %errorlevel%
+corepack.cmd pnpm@11.7.0 %*

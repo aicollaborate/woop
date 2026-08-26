@@ -36,7 +36,7 @@ DESKTOP_DIR="$REPO_ROOT/app/flowix-desktop"
 ENTITLEMENTS="$DESKTOP_DIR/entitlements.plist"
 VERIFY_RELEASE="$REPO_ROOT/scripts/verify-macos-release.sh"
 
-# CARGO_TARGET_DIR is exported by scripts/build-cli.sh - usually
+# CARGO_TARGET_DIR is exported by scripts/build-cli.mjs - usually
 # $REPO_ROOT/.build/cargo-target. Tauri's bundle output goes there, NOT
 # under app/flowix-desktop/target/release.
 # `tauri build --target <triple>` 把 bundle 落到 $CARGO_TARGET_DIR/<triple>/release/bundle/,
@@ -112,14 +112,14 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   # internal codesign step uses it. Wrap the build in a retry loop so a transient
   # timestamp hiccup doesn't kill the whole release (memory
   # `flowix-release-build-detached-timestamp-retry`).
-  bash "$SCRIPT_DIR/with-timestamp-retry.sh" -- npm run tauri:build:production
+  bash "$SCRIPT_DIR/with-timestamp-retry.sh" -- npm run tauri:build:prod
 else
   echo "==> [build] Skipping build (SKIP_BUILD=1)"
 fi
 
 # ---- 2-4. Per-target: verify the final DMG, notarize + staple, verify again ----
 # 方案 B: macOS 出 ARM + Intel 两个独立 DMG, 每个 target 各走一遍签名 + notarize。
-# `build-cli.sh` signs the staging sidecar, then Tauri signs the nested code and
+# `build-cli.mjs` signs the staging sidecar, then Tauri signs the nested code and
 # outer app before creating the DMG. Do not mutate the .app after that point:
 # doing so would leave the already-created DMG stale.
 if [ -n "${DMG_PATH:-}" ]; then
@@ -140,7 +140,7 @@ sign_and_notarize_target() {
   dmg="$(ls -t "$bundle_dmg/"*.dmg 2>/dev/null | head -1 || true)"
   if [ -z "$dmg" ] || [ ! -f "$dmg" ]; then
     echo "ERROR: .dmg not found under $bundle_dmg for $triple." >&2
-    echo "       Run a full tauri:build:production first." >&2
+    echo "       Run a full tauri:build:prod first." >&2
     exit 1
   fi
 

@@ -5,7 +5,7 @@ import { test } from 'node:test'
 
 const launcher = resolve(import.meta.dirname, '../../dsh-flowix-memory/launcher.mjs')
 
-test('memory launcher keeps flowix_memo available when Flowix CLI is missing', async () => {
+test('memory launcher keeps memo available when Flowix CLI is missing', async () => {
   const child = spawn(process.execPath, [launcher], {
     env: {
       PATH: '',
@@ -34,8 +34,9 @@ test('memory launcher keeps flowix_memo available when Flowix CLI is missing', a
     assert.equal((await next()).id, 1)
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
     const list = await next()
-    assert.equal(list.result.tools[0].name, 'flowix_memo')
-    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'flowix_memo', arguments: { command: 'notebooks' } } })
+    assert.equal(list.result.tools[0].name, 'memo')
+    assert.ok(list.result.tools[0].inputSchema.properties.action.enum.includes('create'))
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memo', arguments: { command: 'notebooks' } } })
     const call = await next()
     assert.equal(call.result.isError, true)
     assert.match(call.result.content[0].text, /Flowix CLI is unavailable/u)

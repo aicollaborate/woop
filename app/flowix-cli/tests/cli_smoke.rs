@@ -24,10 +24,10 @@ fn binary_prints_version_and_help() {
     let help = cli(&["--help"]);
     assert!(help.status.success());
     let text = stdout(&help);
-    assert!(text.contains("USAGE:"));
-    assert!(text.contains("COMMANDS:"));
-    assert!(text.contains("create <notebook>"));
-    assert!(text.contains("plugin create <id>"));
+    assert!(text.contains("Usage:"));
+    assert!(text.contains("Commands:"));
+    assert!(text.contains("create"));
+    assert!(text.contains("defaults to the current notebook"));
 }
 
 #[test]
@@ -52,13 +52,13 @@ fn binary_describes_builtin_webpage_tool() {
 
 #[test]
 fn binary_reports_usage_errors_with_expected_exit_code() {
-    let missing = cli(&["list"]);
+    let missing = cli(&["show"]);
     assert_eq!(missing.status.code(), Some(2));
-    assert!(stderr(&missing).contains("usage: flowix list <notebook>"));
+    assert!(stderr(&missing).contains("Usage: flowix show <id>"));
 
     let unknown = cli(&["unknown-command"]);
     assert_eq!(unknown.status.code(), Some(2));
-    assert!(stderr(&unknown).contains("unknown command"));
+    assert!(stderr(&unknown).contains("unrecognized subcommand"));
 }
 
 #[test]

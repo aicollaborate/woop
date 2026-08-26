@@ -457,15 +457,14 @@
   color: var(--foreground);
 }
 
-/* Keep expanded overrides after the base textarea rules above. The base
- * field-sizing: content is ideal for compact cards, but in the expanded
- * three-row layout it can create a circular grid measurement and stretch an
- * empty textarea unexpectedly. */
+/* Keep expanded overrides after the base textarea rules above. The input keeps
+ * its compact height when empty, grows with content, and scrolls after five
+ * line-heights. */
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer,
 .markdown-editor .agent-composer--expanded {
-  grid-template-rows: auto 1.6rem auto;
+  grid-template-rows: auto minmax(1.6rem, auto) auto;
 }
 
 .markdown-editor
@@ -474,10 +473,10 @@
   textarea,
 .markdown-editor .agent-composer--expanded textarea {
   width: auto;
-  height: 1.6rem;
+  height: auto;
   min-height: 1.6rem;
-  max-height: 1.6rem;
+  max-height: calc(5 * 1.35em);
   flex: none;
-  field-sizing: fixed;
+  field-sizing: content;
   align-self: center;
 }

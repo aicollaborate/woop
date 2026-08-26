@@ -8,8 +8,16 @@ const productionConfigPath = path.join(tauriDir, "tauri.conf.production.json");
 const platformArgIndex = process.argv.indexOf("--platform");
 const targetPlatform =
   platformArgIndex >= 0 ? process.argv[platformArgIndex + 1] : process.platform;
+if (!["win32", "darwin", "linux"].includes(targetPlatform)) {
+  throw new Error(`Unsupported --platform value: ${targetPlatform ?? "<missing>"}`);
+}
+
+const cargoManifest = fs.readFileSync(path.join(repoRoot, "app", "Cargo.toml"), "utf8");
+const cargoVersion = /^version\s*=\s*"([^"]+)"/mu.exec(cargoManifest)?.[1];
+const packageVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 
 const allowUnsigned = process.env.FLOWIX_ALLOW_UNSIGNED === "1";
+const allowUnsignedWindows = allowUnsigned || process.env.FLOWIX_ALLOW_UNSIGNED_WINDOWS === "1";
 
 if (!allowUnsigned && !process.env.FLOWIX_DSH_UPDATE_PUBLIC_KEY?.trim()) {
   throw new Error(
@@ -51,9 +59,9 @@ function mergeConfig(base, override) {
   return merged;
 }
 
-function requiredEnv(name) {
+function requiredEnv(name, allowMissing = allowUnsigned) {
   const value = process.env[name];
-  if (!value && !allowUnsigned) {
+  if (!value && !allowMissing) {
     throw new Error(`${name} is required for a signed production build. Set FLOWIX_ALLOW_UNSIGNED=1 only for local unsigned packages.`);
   }
   return value;
@@ -61,6 +69,12 @@ function requiredEnv(name) {
 
 const base = stripCommentKeys(readJson(baseConfigPath));
 const productionOverride = stripCommentKeys(readJson(productionConfigPath));
+if (!cargoVersion || cargoVersion !== base.version || cargoVersion !== packageVersion) {
+  throw new Error(
+    `Flowix version mismatch: Cargo=${cargoVersion ?? "<missing>"}, ` +
+    `Tauri=${base.version ?? "<missing>"}, package=${packageVersion ?? "<missing>"}`,
+  );
+}
 let platformOverride = {};
 let outputPath;
 
@@ -90,7 +104,7 @@ if (targetPlatform === "win32") {
     delete production.bundle.macOS.signingIdentity;
     delete production.bundle.macOS.providerShortName;
   }
-  const thumbprint = requiredEnv("WINDOWS_CERT_THUMBPRINT");
+  const thumbprint = requiredEnv("WINDOWS_CERT_THUMBPRINT", allowUnsignedWindows);
   if (thumbprint) {
     production.bundle.windows.certificateThumbprint = thumbprint;
   } else {

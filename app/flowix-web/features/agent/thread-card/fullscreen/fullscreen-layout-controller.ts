@@ -2,19 +2,15 @@ import type { ScrollSnapshot } from "@features/agent/thread-card/agent-thread-ca
 import {
   adjustEditorScrollToCardTop,
   captureAgentThreadCardScrollSnapshot,
-  clearAgentThreadCardFullscreenBounds,
   getAgentThreadCardEditorScrollContainer,
-  getAgentThreadCardFullscreenContainer,
   getFullscreenExitFallbackTop,
   restoreAgentThreadCardScrollSnapshotAfterFocusChange,
-  syncAgentThreadCardFullscreenBounds,
 } from "@features/agent/thread-card/fullscreen/fullscreen-scroll";
 
 export interface FullscreenLayoutControllerOptions {
   dom: HTMLElement;
   isFullscreen: () => boolean;
   isDestroyed: () => boolean;
-  getTitlebarHeight: () => number;
   minExitTopPx: number;
   maxExitTopPx: number;
   exitTopRatio: number;
@@ -25,24 +21,32 @@ export class FullscreenLayoutController {
   private readonly dom: HTMLElement;
   private readonly isFullscreen: () => boolean;
   private readonly isDestroyed: () => boolean;
-  private readonly getTitlebarHeight: () => number;
   private readonly minExitTopPx: number;
   private readonly maxExitTopPx: number;
   private readonly exitTopRatio: number;
   private readonly scrollDeltaEpsilonPx: number;
+  private fullscreenContainer: HTMLElement | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private readonly syncFullscreenBounds = (): void => {
+    const container = this.fullscreenContainer;
+    if (!container || !this.isFullscreen()) return;
 
-  private container: HTMLElement | null = null;
+    const rect = container.getBoundingClientRect();
+    this.dom.style.setProperty("--atc-fullscreen-top", `${rect.top}px`);
+    this.dom.style.setProperty("--atc-fullscreen-left", `${rect.left}px`);
+    this.dom.style.setProperty("--atc-fullscreen-width", `${rect.width}px`);
+    this.dom.style.setProperty("--atc-fullscreen-height", `${rect.height}px`);
+  };
+
   private returnAnchor: {
     scrollContainer: HTMLElement;
     topWithinContainer: number;
   } | null = null;
-  private resizeObserver: ResizeObserver | null = null;
 
   constructor(options: FullscreenLayoutControllerOptions) {
     this.dom = options.dom;
     this.isFullscreen = options.isFullscreen;
     this.isDestroyed = options.isDestroyed;
-    this.getTitlebarHeight = options.getTitlebarHeight;
     this.minExitTopPx = options.minExitTopPx;
     this.maxExitTopPx = options.maxExitTopPx;
     this.exitTopRatio = options.exitTopRatio;
@@ -50,29 +54,27 @@ export class FullscreenLayoutController {
   }
 
   enter(): void {
-    this.container = this.getFullscreenContainer();
-    this.syncBounds();
-    this.observeContainer();
-    window.addEventListener("resize", this.boundSyncBounds);
-    window.requestAnimationFrame(() => this.syncBounds());
+    const container = this.dom.closest<HTMLElement>(".document-container");
+    this.fullscreenContainer = container;
+    if (!container) return;
+
+    this.syncFullscreenBounds();
+    window.addEventListener("resize", this.syncFullscreenBounds);
+    if ("ResizeObserver" in window) {
+      this.resizeObserver = new ResizeObserver(this.syncFullscreenBounds);
+      this.resizeObserver.observe(container);
+    }
+    window.requestAnimationFrame(this.syncFullscreenBounds);
   }
 
   exit(): void {
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    this.container = null;
-    window.removeEventListener("resize", this.boundSyncBounds);
-    this.clearBounds();
+    this.stopTrackingFullscreenBounds();
     this.restoreReturnAnchor();
   }
 
   dispose(): void {
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    window.removeEventListener("resize", this.boundSyncBounds);
-    this.clearBounds();
+    this.stopTrackingFullscreenBounds();
     this.returnAnchor = null;
-    this.container = null;
   }
 
   captureReturnAnchor(): void {
@@ -102,38 +104,15 @@ export class FullscreenLayoutController {
     return getAgentThreadCardEditorScrollContainer(this.dom);
   }
 
-  syncBounds(): void {
-    if (!this.isFullscreen()) return;
-    const container = this.container ?? this.getFullscreenContainer();
-    if (!container) return;
-    this.container = container;
-    syncAgentThreadCardFullscreenBounds({
-      dom: this.dom,
-      container,
-      titlebarHeight: this.getTitlebarHeight(),
-    });
-  }
-
-  private readonly boundSyncBounds = (): void => {
-    this.syncBounds();
-  };
-
-  private getFullscreenContainer(): HTMLElement | null {
-    return getAgentThreadCardFullscreenContainer(this.dom);
-  }
-
-  private observeContainer(): void {
+  private stopTrackingFullscreenBounds(): void {
+    window.removeEventListener("resize", this.syncFullscreenBounds);
     this.resizeObserver?.disconnect();
-    if (!this.container || !("ResizeObserver" in window)) return;
-
-    this.resizeObserver = new ResizeObserver(() => {
-      this.syncBounds();
-    });
-    this.resizeObserver.observe(this.container);
-  }
-
-  private clearBounds(): void {
-    clearAgentThreadCardFullscreenBounds(this.dom);
+    this.resizeObserver = null;
+    this.fullscreenContainer = null;
+    this.dom.style.removeProperty("--atc-fullscreen-top");
+    this.dom.style.removeProperty("--atc-fullscreen-left");
+    this.dom.style.removeProperty("--atc-fullscreen-width");
+    this.dom.style.removeProperty("--atc-fullscreen-height");
   }
 
   private restoreReturnAnchor(): void {

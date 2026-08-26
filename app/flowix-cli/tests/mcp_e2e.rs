@@ -71,7 +71,22 @@ fn call_tool(
         stdout,
         id,
         "tools/call",
-        json!({"name": "flowix_memo", "arguments": arguments}),
+        json!({"name": "memo", "arguments": arguments}),
+    )
+}
+
+fn call_structured(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    id: u64,
+    arguments: Value,
+) -> Value {
+    request(
+        stdin,
+        stdout,
+        id,
+        "tools/call",
+        json!({"name": "memo", "arguments": arguments}),
     )
 }
 
@@ -101,11 +116,12 @@ fn mcp_process_initializes_and_exposes_one_tool() {
     let listed = request(&mut stdin, &mut stdout, 2, "tools/list", json!({}));
     let tools = listed["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 1);
-    assert_eq!(tools[0]["name"], "flowix_memo");
-    assert!(tools[0]["description"]
-        .as_str()
+    assert_eq!(tools[0]["name"], "memo");
+    assert!(tools[0]["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
         .unwrap()
-        .contains("Shell syntax"));
+        .iter()
+        .any(|action| action == "create"));
 
     drop(stdin);
     assert!(child.wait().unwrap().success());
@@ -149,6 +165,67 @@ fn mcp_tool_creates_reads_and_rejects_shell_syntax() {
         .as_str()
         .unwrap()
         .contains("shell syntax"));
+
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn structured_actions_create_edit_list_and_show_without_cli_strings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_dir = tmp.path().join("config");
+    let notebook_dir = tmp.path().join("notebooks").join("work");
+    seed_notebook(&config_dir, &notebook_dir);
+
+    let (mut child, mut stdin, mut stdout) = spawn_mcp(&config_dir);
+    let created = call_structured(
+        &mut stdin,
+        &mut stdout,
+        1,
+        json!({"action":"create", "content":"# 结构化 MCP\n\n首次正确生成\n"}),
+    );
+    assert_eq!(created["result"]["isError"], false, "{created}");
+    let id = created["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let edited = call_structured(
+        &mut stdin,
+        &mut stdout,
+        2,
+        json!({"action":"edit", "id":id, "old":"首次正确生成", "content":"结构化编辑成功"}),
+    );
+    assert_eq!(edited["result"]["isError"], false, "{edited}");
+
+    let listed = call_structured(
+        &mut stdin,
+        &mut stdout,
+        3,
+        json!({"action":"list", "limit":1, "offset":0}),
+    );
+    assert_eq!(
+        listed["result"]["structuredContent"]["notes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let tags = call_structured(&mut stdin, &mut stdout, 4, json!({"action":"tags"}));
+    assert_eq!(tags["result"]["isError"], false, "{tags}");
+    assert!(tags["result"]["structuredContent"]["tags"].is_array());
+
+    let shown = call_structured(
+        &mut stdin,
+        &mut stdout,
+        5,
+        json!({"action":"show", "id":id}),
+    );
+    assert!(shown["result"]["structuredContent"]["body"]
+        .as_str()
+        .unwrap()
+        .contains("结构化编辑成功"));
 
     drop(stdin);
     assert!(child.wait().unwrap().success());

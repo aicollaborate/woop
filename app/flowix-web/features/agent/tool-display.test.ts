@@ -63,7 +63,7 @@ describe("Codex protocol tool summaries", () => {
       toolName: "mcp_tool_call",
       input: {
         server: "mcp_servers-flowix",
-        tool: "flowix_memo",
+        tool: "memo",
         arguments: {
           command: "search CODEX-SMOKE --notebook nb_1 --limit 5",
           stdin: "temporary body",
@@ -71,7 +71,7 @@ describe("Codex protocol tool summaries", () => {
       },
     });
     expect(memo?.summary).toBe(
-      "flowix_memo · command: search CODEX-SMOKE --notebook nb_1 --limit 5 · stdin: temporary body",
+      "memo · command: search CODEX-SMOKE --notebook nb_1 --limit 5 · stdin: temporary body",
     );
 
     const resource = createAgentToolDisplay({

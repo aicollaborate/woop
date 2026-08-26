@@ -4,6 +4,7 @@
   "patches": [
     "patches/rc2-flowix-runtime.patch",
     "patches/rc2-runtime-closure.patch",
-    "patches/rc2-node-bundle-cli.patch"
+    "patches/rc2-node-bundle-cli.patch",
+    "patches/windows-plugin-paths.patch"
   ]
 }

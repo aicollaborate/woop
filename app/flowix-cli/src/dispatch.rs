@@ -24,12 +24,14 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             }
         }
         cli::Cli::List { notebook, json } => {
+            let notebook = store::resolve_notebook_key(notebook.as_deref())?;
             if json {
                 store::cmd_list_json(&notebook)
             } else {
                 store::cmd_list(&notebook)
             }
         }
+        cli::Cli::Tags { notebook, json } => store::cmd_tags(notebook.as_deref(), json),
         cli::Cli::Show { id, json } => {
             if json {
                 store::cmd_show_json(&id)
@@ -37,7 +39,11 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
                 store::cmd_show(&id)
             }
         }
-        cli::Cli::Create { notebook, json } => store::cmd_create(&notebook, json),
+        cli::Cli::Create {
+            notebook,
+            file,
+            json,
+        } => store::cmd_create(notebook.as_deref(), file.as_deref(), json),
         cli::Cli::Delete { id, json } => store::cmd_delete(&id, json),
         cli::Cli::Search {
             query,
@@ -50,6 +56,7 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             old,
             new,
             new_from_stdin,
+            new_file,
             dry_run,
             json,
         } => store::cmd_edit(
@@ -57,10 +64,11 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             old.as_deref(),
             new.as_deref(),
             new_from_stdin,
+            new_file.as_deref(),
             dry_run,
             json,
         ),
-        cli::Cli::Write { id, json } => store::cmd_write(&id, json),
+        cli::Cli::Write { id, file, json } => store::cmd_write(&id, file.as_deref(), json),
         cli::Cli::PluginList { json } => plugin::cmd_list(json),
         cli::Cli::PluginDescribe { plugin_id, json } => plugin::cmd_describe(&plugin_id, json),
         cli::Cli::PluginCreate {
@@ -71,7 +79,7 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             json,
         } => plugin::cmd_create(
             &plugin_id,
-            &notebook,
+            notebook.as_deref(),
             source_note.as_deref(),
             &producer,
             json,

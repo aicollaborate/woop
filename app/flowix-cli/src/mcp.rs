@@ -1,14 +1,14 @@
 //! Model Context Protocol stdio frontend for external Agents.
 //!
-//! The server intentionally exposes exactly one tool, `flowix_memo`. Its input is a
+//! The server intentionally exposes exactly one tool, `memo`. Its input is a
 //! restricted Flowix CLI command plus optional stdin content. Commands are parsed into
 //! argv and dispatched directly to the typed store layer; no system shell is spawned.
 
-use crate::{cli, errors::CliError, fmt, output, plugin, store};
+use crate::{cli, errors::CliError, fmt, operation, output, plugin, store};
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, Write};
 
-pub const TOOL_NAME: &str = "flowix_memo";
+pub const TOOL_NAME: &str = "memo";
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2024-11-05",
@@ -17,7 +17,7 @@ const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     LATEST_PROTOCOL_VERSION,
 ];
 
-pub const TOOL_DESCRIPTION: &str = "Manage Flowix notebooks, Markdown notes, and declared plugin artifacts using restricted Flowix CLI syntax. Do not include the leading `flowix`. Supported commands: `notebooks`; `list <notebook>`; `show <id>`; `search <query> [--notebook <name|id>] [--limit <1..200>]`; `create <notebook>` with the complete non-empty Markdown body in `stdin`; `edit <id> --old <exact-text> (--new <text> | --new-stdin)` where `--old` must occur exactly once and `stdin` supplies the replacement when `--new-stdin` is used; `edit` also supports `--dry-run`; `write <id>` with the complete replacement Markdown body in `stdin`; `delete <id>`; `plugin list`; `plugin describe <id>`; `plugin create mindmap --notebook <name|id|path> [--source-note <id|path>]` with final Markmap Markdown in `stdin`; and `plugin create webpage --notebook <name|id|path> [--source-note <id|path>]` with one complete self-contained HTML document in `stdin`. Mindmaps must start with exactly one level-one heading. Webpages must include doctype, html, head, a non-empty title, and body. Quoted arguments are supported. Shell syntax and arbitrary programs are forbidden, including pipes, redirects, semicolons, `&&`, command substitution, and environment expansion. `delete` is destructive. Results are always returned as structured data, so `--json` is unnecessary.";
+pub const TOOL_DESCRIPTION: &str = "Search, read, create, edit, and delete Flowix memos using structured actions. Also supports declared artifacts. Prefer `action`; legacy `command`/`stdin` remains temporarily compatible. Delete is destructive.";
 
 /// Run the MCP line-delimited JSON-RPC loop until stdin reaches EOF.
 pub fn run_mcp<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(), CliError> {
@@ -76,30 +76,21 @@ fn initialize_result(params: &Value) -> Value {
             "title": "Flowix Memo",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use the flowix_memo tool to search, read, create, and edit Flowix Markdown memos, and to create declared plugin artifacts such as mind maps."
+        "instructions": "Use the memo tool to search, read, create, and edit Flowix Markdown memos, and to create declared plugin artifacts such as mind maps."
     })
 }
 
 fn tool_definition() -> Value {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../dsh-flowix-memory/memo-tool-schema.json"
+    ))
+    .expect("memo tool schema must be valid JSON");
     json!({
         "name": TOOL_NAME,
         "title": "Flowix Memo",
         "description": TOOL_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "A supported Flowix command without the leading `flowix`, for example `search \"product plan\" --notebook work --limit 10`."
-                },
-                "stdin": {
-                    "type": "string",
-                    "description": "Content passed to the command. Required for `create` and `write`, and for `edit` when `--new-stdin` is used. Do not use it with other commands."
-                }
-            },
-            "required": ["command"],
-            "additionalProperties": false
-        }
+        "inputSchema": schema,
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false}
     })
 }
 
@@ -117,22 +108,38 @@ fn call_tool(params: &Value) -> Result<Value, CliError> {
     let arguments = object
         .get("arguments")
         .and_then(Value::as_object)
-        .ok_or_else(|| CliError::Usage("flowix_memo arguments must be an object".into()))?;
+        .ok_or_else(|| CliError::Usage("memo arguments must be an object".into()))?;
     validate_argument_keys(arguments)?;
-    let command = arguments
-        .get("command")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CliError::Usage("flowix_memo.command must be a string".into()))?;
+    if arguments.contains_key("action") && arguments.contains_key("command") {
+        return Err(CliError::Usage(
+            "memo accepts either structured `action` or legacy `command`, not both".into(),
+        ));
+    }
     let stdin = match arguments.get("stdin") {
         Some(value) => Some(
             value
                 .as_str()
-                .ok_or_else(|| CliError::Usage("flowix_memo.stdin must be a string".into()))?,
+                .ok_or_else(|| CliError::Usage("memo.stdin must be a string".into()))?,
         ),
         None => None,
     };
 
-    match execute_command(command, stdin) {
+    let execution = if arguments.contains_key("action") {
+        if stdin.is_some() {
+            return Err(CliError::Usage(
+                "structured actions use `content`; legacy `stdin` is not allowed".into(),
+            ));
+        }
+        operation::execute(parse_structured_operation(arguments)?)
+    } else {
+        let command = arguments
+            .get("command")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CliError::Usage("memo requires `action` or legacy `command`".into()))?;
+        execute_command(command, stdin)
+    };
+
+    match execution {
         Ok(data) => Ok(tool_result(data, false)),
         Err(error) => {
             let error_data = json!({
@@ -148,15 +155,135 @@ fn call_tool(params: &Value) -> Result<Value, CliError> {
 }
 
 fn validate_argument_keys(arguments: &Map<String, Value>) -> Result<(), CliError> {
-    if let Some(key) = arguments
-        .keys()
-        .find(|key| key.as_str() != "command" && key.as_str() != "stdin")
-    {
+    const KEYS: &[&str] = &[
+        "action",
+        "notebook",
+        "id",
+        "query",
+        "content",
+        "old",
+        "limit",
+        "offset",
+        "dryRun",
+        "pluginId",
+        "sourceNote",
+        "producer",
+        "command",
+        "stdin",
+    ];
+    if let Some(key) = arguments.keys().find(|key| !KEYS.contains(&key.as_str())) {
         return Err(CliError::Usage(format!(
-            "flowix_memo does not accept argument `{key}`"
+            "memo does not accept argument `{key}`"
         )));
     }
     Ok(())
+}
+
+fn parse_structured_operation(
+    arguments: &Map<String, Value>,
+) -> Result<operation::FlowixOperation, CliError> {
+    use operation::FlowixOperation;
+    let action = required_string(arguments, "action")?;
+    let notebook = optional_string(arguments, "notebook")?;
+    let content = || required_string(arguments, "content");
+    let id = || required_string(arguments, "id");
+    let limit = integer(arguments, "limit", 50, 1, 200)?;
+    let offset = integer(arguments, "offset", 0, 0, usize::MAX)?;
+    let dry_run = boolean(arguments, "dryRun", false)?;
+    match action.as_str() {
+        "notebooks" => Ok(FlowixOperation::Notebooks),
+        "list" => Ok(FlowixOperation::List {
+            notebook,
+            limit,
+            offset,
+        }),
+        "tags" => Ok(FlowixOperation::Tags { notebook }),
+        "show" => Ok(FlowixOperation::Show { id: id()? }),
+        "search" => Ok(FlowixOperation::Search {
+            query: required_string(arguments, "query")?,
+            notebook,
+            limit,
+        }),
+        "create" => Ok(FlowixOperation::Create {
+            notebook,
+            content: content()?,
+        }),
+        "edit" => Ok(FlowixOperation::Edit {
+            id: id()?,
+            old: required_string(arguments, "old")?,
+            replacement: content()?,
+            dry_run,
+        }),
+        "write" => Ok(FlowixOperation::Write {
+            id: id()?,
+            content: content()?,
+        }),
+        "delete" => Ok(FlowixOperation::Delete { id: id()? }),
+        "artifact.list" => Ok(FlowixOperation::ArtifactList),
+        "artifact.describe" => Ok(FlowixOperation::ArtifactDescribe {
+            plugin_id: required_string(arguments, "pluginId")?,
+        }),
+        "artifact.create" => Ok(FlowixOperation::ArtifactCreate {
+            plugin_id: required_string(arguments, "pluginId")?,
+            notebook,
+            source_note: optional_string(arguments, "sourceNote")?,
+            producer: optional_string(arguments, "producer")?.unwrap_or_else(|| "agent-mcp".into()),
+            content: content()?,
+        }),
+        _ => Err(CliError::Usage(format!("unknown memo action: `{action}`"))),
+    }
+}
+
+fn required_string(arguments: &Map<String, Value>, key: &str) -> Result<String, CliError> {
+    optional_string(arguments, key)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| CliError::Usage(format!("memo.{key} must be a non-empty string")))
+}
+
+fn optional_string(arguments: &Map<String, Value>, key: &str) -> Result<Option<String>, CliError> {
+    arguments
+        .get(key)
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| CliError::Usage(format!("memo.{key} must be a string")))
+        })
+        .transpose()
+}
+
+fn integer(
+    arguments: &Map<String, Value>,
+    key: &str,
+    default: usize,
+    min: usize,
+    max: usize,
+) -> Result<usize, CliError> {
+    let value = match arguments.get(key) {
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| CliError::Usage(format!("memo.{key} must be an integer")))?
+            as usize,
+        None => default,
+    };
+    if value < min || value > max {
+        return Err(CliError::Usage(format!(
+            "memo.{key} must be between {min} and {max}"
+        )));
+    }
+    Ok(value)
+}
+
+fn boolean(arguments: &Map<String, Value>, key: &str, default: bool) -> Result<bool, CliError> {
+    arguments
+        .get(key)
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| CliError::Usage(format!("memo.{key} must be a boolean")))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(default))
 }
 
 fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError> {
@@ -164,9 +291,7 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
     let args = shell_words::split(command)
         .map_err(|error| CliError::Usage(format!("invalid command quoting: {error}")))?;
     if args.is_empty() {
-        return Err(CliError::Usage(
-            "flowix_memo.command cannot be empty".into(),
-        ));
+        return Err(CliError::Usage("memo.command cannot be empty".into()));
     }
     if args[0] == "flowix" || args[0] == "flowix-cli" {
         return Err(CliError::Usage(
@@ -178,7 +303,7 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
         .any(|arg| matches!(arg.as_str(), "help" | "--help" | "-h" | "--version" | "-V"))
     {
         return Err(CliError::Usage(
-            "help and version commands are not available through flowix_memo".into(),
+            "help and version commands are not available through memo".into(),
         ));
     }
 
@@ -188,22 +313,35 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             reject_stdin(stdin)?;
             let (configs, selected_notebook_id) = store::notebooks_list_data()?;
             let counts = store::notebook_note_counts(&configs)?;
+            let tag_counts = store::notebook_tag_counts(&configs)?;
             Ok(fmt::notebooks_to_json(
                 &configs,
                 &counts,
+                &tag_counts,
                 selected_notebook_id.as_deref(),
             ))
         }
         cli::Cli::List { notebook, .. } => {
             reject_stdin(stdin)?;
+            let notebook = store::resolve_notebook_key(notebook.as_deref())?;
             Ok(fmt::notes_to_json(&store::notes_list_entries(&notebook)?))
+        }
+        cli::Cli::Tags { notebook, .. } => {
+            reject_stdin(stdin)?;
+            store::notebook_tags(notebook.as_deref())
         }
         cli::Cli::Show { id, .. } => {
             reject_stdin(stdin)?;
             Ok(store::note_show_data(&id)?.to_json())
         }
-        cli::Cli::Create { notebook, .. } => {
+        cli::Cli::Create { notebook, file, .. } => {
+            if file.is_some() {
+                return Err(CliError::Usage(
+                    "MCP cannot read client-local --file paths; use structured `content`".into(),
+                ));
+            }
             let body = require_stdin(stdin, "create")?;
+            let notebook = store::resolve_notebook_key(notebook.as_deref())?;
             let (mut memo_file, notebook_config) = store::open_in(&notebook)?;
             output::to_json_value(&store::create_note(&mut memo_file, &notebook_config, body)?)
         }
@@ -232,9 +370,16 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             old,
             new,
             new_from_stdin,
+            new_file,
             dry_run,
             ..
         } => {
+            if new_file.is_some() {
+                return Err(CliError::Usage(
+                    "MCP cannot read client-local --new-file paths; use structured `content`"
+                        .into(),
+                ));
+            }
             let old = old.ok_or_else(|| CliError::Usage("edit requires --old <text>".into()))?;
             let new = if new_from_stdin {
                 require_stdin(stdin, "edit --new-stdin")?.to_string()
@@ -252,7 +397,12 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             }?;
             output::to_json_value(&result)
         }
-        cli::Cli::Write { id, .. } => {
+        cli::Cli::Write { id, file, .. } => {
+            if file.is_some() {
+                return Err(CliError::Usage(
+                    "MCP cannot read client-local --file paths; use structured `content`".into(),
+                ));
+            }
             let body = require_stdin(stdin, "write")?;
             let (mut memo_file, full_id) = store::resolve_id(&id)?;
             output::to_json_value(&store::write_note(&mut memo_file, &full_id, body)?)
@@ -273,6 +423,7 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             ..
         } => {
             let content = require_stdin(stdin, "plugin create")?;
+            let notebook = store::resolve_notebook_key(notebook.as_deref())?;
             output::to_json_value(&plugin::create_data(
                 &plugin_id,
                 &notebook,
@@ -282,7 +433,7 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
             )?)
         }
         cli::Cli::Version | cli::Cli::Completion { .. } | cli::Cli::Mcp => Err(CliError::Usage(
-            "command is not available through flowix_memo".into(),
+            "command is not available through memo".into(),
         )),
     }
 }
@@ -321,7 +472,23 @@ fn reject_stdin(stdin: Option<&str>) -> Result<(), CliError> {
 }
 
 fn tool_result(data: Value, is_error: bool) -> Value {
-    let text = serde_json::to_string_pretty(&data).unwrap_or_else(|_| data.to_string());
+    let text = if is_error {
+        data.pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("Flowix operation failed")
+            .to_string()
+    } else {
+        let action = data
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("completed");
+        let id = data
+            .get("id")
+            .and_then(Value::as_str)
+            .map(|id| format!(" ({id})"))
+            .unwrap_or_default();
+        format!("Flowix {action}{id}")
+    };
     json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": data,
@@ -374,15 +541,20 @@ mod tests {
         let tools = responses[0]["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], TOOL_NAME);
-        assert!(tools[0]["description"]
-            .as_str()
+        assert!(tools[0]["inputSchema"]["properties"]["action"]["enum"]
+            .as_array()
             .unwrap()
-            .contains("create <notebook>"));
-        assert!(tools[0]["description"]
-            .as_str()
+            .iter()
+            .any(|action| action == "create"));
+        assert!(tools[0]["inputSchema"]["properties"]["action"]["enum"]
+            .as_array()
             .unwrap()
-            .contains("plugin create mindmap"));
-        assert_eq!(tools[0]["inputSchema"]["required"], json!(["command"]));
+            .iter()
+            .any(|action| action == "artifact.create"));
+        assert_eq!(
+            tools[0]["inputSchema"]["anyOf"],
+            json!([{"required":["action"]},{"required":["command"]}])
+        );
     }
 
     #[test]

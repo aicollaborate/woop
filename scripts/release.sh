@@ -15,7 +15,7 @@
 #   FLOWIX_R2_PUBLIC_BASE    public package origin
 #   FLOWIX_UPDATER_ENDPOINT  manifest URL written to the production config
 #   FLOWIX_SKIP_BUILD=1       collect artifacts already present in CARGO_TARGET_DIR
-#   FLOWIX_PUBLISH=1          upload R2 objects and deploy Pages
+#   FLOWIX_PUBLISH=1          publish a complete prebuilt four-platform set
 #
 # This is the only production publication path for the Flowix updater. The
 # GitHub release workflow creates draft artifacts but does not update the
@@ -69,6 +69,18 @@ if [[ -z "${FLOWIX_TARGETS:-}" ]]; then
     *) FLOWIX_TARGETS="x86_64-unknown-linux-gnu" ;;
   esac
 fi
+if [[ "${FLOWIX_PUBLISH:-0}" == "1" ]]; then
+  if [[ "${FLOWIX_SKIP_BUILD:-0}" != "1" ]]; then
+    echo "release.sh: production publishing requires FLOWIX_SKIP_BUILD=1 and a complete prebuilt platform set" >&2
+    exit 1
+  fi
+  for required in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc x86_64-unknown-linux-gnu; do
+    if [[ " $FLOWIX_TARGETS " != *" $required "* ]]; then
+      echo "release.sh: production manifest is missing required target $required" >&2
+      exit 1
+    fi
+  done
+fi
 
 rm -rf "$RELEASE_OUT"
 mkdir -p "$RELEASE_OUT"
@@ -76,7 +88,7 @@ mkdir -p "$RELEASE_OUT"
 if [[ "${FLOWIX_SKIP_BUILD:-0}" != "1" ]]; then
   echo "==> building Flowix ${VERSION}"
   cd "$REPO_ROOT"
-  npm run tauri:build:production
+  npm run tauri:build:prod
 fi
 
 find_artifact() {
@@ -88,7 +100,7 @@ find_artifact() {
     [[ -d "$search_root" ]] || continue
     candidate="$(find "$search_root" -type f \( \
       -name '*.app.tar.gz' -o \
-      -name '*.nsis.zip' -o \
+      -name '*-setup.exe' -o \
       -name '*.AppImage.tar.gz' \
     \) ! -name '*.sig' -print -quit)"
     if [[ -n "$candidate" ]]; then
@@ -111,7 +123,7 @@ platform_for_target() {
 artifact_suffix_for_target() {
   case "$1" in
     *apple-darwin) echo "app.tar.gz" ;;
-    *windows-msvc) echo "nsis.zip" ;;
+    *windows-msvc) echo "nsis.exe" ;;
     *linux-gnu) echo "AppImage.tar.gz" ;;
     *) echo "" ;;
   esac
@@ -186,9 +198,7 @@ const manifest = {
 };
 const json = `${JSON.stringify(manifest, null, 2)}\n`;
 fs.writeFileSync(path.join(out, 'latest.json'), json);
-fs.writeFileSync(path.join(homeDir, 'src', 'latest.json'), json);
 console.log(`==> wrote ${path.join(out, 'latest.json')}`);
-console.log(`==> synced ${path.join(homeDir, 'src', 'latest.json')}`);
 NODE
 
 declare -a REQUIRED_PLATFORMS=()
@@ -221,6 +231,23 @@ for target in $FLOWIX_TARGETS; do
 done
 
 echo "==> building flowix-home"
+home_manifest="$FLOWIX_HOME_DIR/src/latest.json"
+home_manifest_backup="$(mktemp)"
+home_manifest_existed=0
+if [[ -f "$home_manifest" ]]; then
+  cp "$home_manifest" "$home_manifest_backup"
+  home_manifest_existed=1
+fi
+restore_home_manifest() {
+  if [[ "$home_manifest_existed" == "1" ]]; then
+    cp "$home_manifest_backup" "$home_manifest"
+  else
+    rm -f "$home_manifest"
+  fi
+  rm -f "$home_manifest_backup"
+}
+trap restore_home_manifest EXIT
+cp "$RELEASE_OUT/latest.json" "$home_manifest"
 npm --prefix "$FLOWIX_HOME_DIR" run build
 echo "==> deploying flowix-home"
 "$WRANGLER" pages deploy "$FLOWIX_HOME_DIR/_site" \

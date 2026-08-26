@@ -60,6 +60,7 @@ fn fmt_time(ms: i64) -> String {
 pub fn print_notebooks(
     configs: &[NotebookConfig],
     note_counts: &HashMap<String, usize>,
+    tag_counts: &HashMap<String, usize>,
     selected_notebook_id: Option<&str>,
 ) {
     if configs.is_empty() {
@@ -74,6 +75,7 @@ pub fn print_notebooks(
             id: c.id.clone(),
             path: c.path.trim_end_matches('/').to_string(),
             notes: *note_counts.get(&c.id).unwrap_or(&0),
+            tags: *tag_counts.get(&c.id).unwrap_or(&0),
             selected: selected_notebook_id == Some(c.id.as_str()),
             updated: fmt_time(c.updated_at),
         })
@@ -100,20 +102,23 @@ pub fn print_notebooks(
         .saturating_add(2)
         .clamp(4, 40);
     let notes_w = "NOTES".len();
+    let tags_w = "TAGS".len();
 
     println!(
-        "{}  {}  {}  {}  CURRENT  UPDATED",
+        "{}  {}  {}  {}  {}  CURRENT  UPDATED",
         pad_right("NAME", name_w),
         pad_right("ID", id_w),
         pad_right("PATH", path_w),
-        pad_right("NOTES", notes_w)
+        pad_right("NOTES", notes_w),
+        pad_right("TAGS", tags_w)
     );
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}  {}",
         "-".repeat(name_w),
         "-".repeat(id_w),
         "-".repeat(path_w),
         "-".repeat(notes_w),
+        "-".repeat(tags_w),
         "-".repeat(19)
     );
 
@@ -121,14 +126,16 @@ pub fn print_notebooks(
         let name = truncate(&r.name, name_w);
         let path = truncate(&r.path, path_w);
         println!(
-            "{}  {}  {}  {:>notes_w$}  {:<7}  {}",
+            "{}  {}  {}  {:>notes_w$}  {:>tags_w$}  {:<7}  {}",
             pad_right(&name, name_w),
             pad_right(&r.id, id_w),
             pad_right(&path, path_w),
             r.notes,
+            r.tags,
             if r.selected { "*" } else { "-" },
             r.updated,
-            notes_w = notes_w
+            notes_w = notes_w,
+            tags_w = tags_w,
         );
     }
 }
@@ -138,6 +145,7 @@ struct Row {
     id: String,
     path: String,
     notes: usize,
+    tags: usize,
     selected: bool,
     updated: String,
 }
@@ -242,6 +250,7 @@ pub fn print_note(entry: &MemoIndexEntry, body: &str) {
 pub fn notebooks_to_json(
     configs: &[NotebookConfig],
     note_counts: &HashMap<String, usize>,
+    tag_counts: &HashMap<String, usize>,
     selected_notebook_id: Option<&str>,
 ) -> serde_json::Value {
     let arr: Vec<serde_json::Value> = configs
@@ -252,6 +261,7 @@ pub fn notebooks_to_json(
                 "id": c.id,
                 "path": c.path.trim_end_matches('/'),
                 "notes": note_counts.get(&c.id).copied().unwrap_or(0),
+                "tags": tag_counts.get(&c.id).copied().unwrap_or(0),
                 "selected": selected_notebook_id == Some(c.id.as_str()),
                 "updated_at": c.updated_at,
             })
@@ -309,6 +319,7 @@ pub fn note_to_json_with_context(
 pub fn print_notebooks_json(
     configs: &[NotebookConfig],
     note_counts: &HashMap<String, usize>,
+    tag_counts: &HashMap<String, usize>,
     selected_notebook_id: Option<&str>,
 ) {
     println!(
@@ -316,6 +327,7 @@ pub fn print_notebooks_json(
         serde_json::to_string_pretty(&notebooks_to_json(
             configs,
             note_counts,
+            tag_counts,
             selected_notebook_id,
         ))
         .unwrap_or_default()
@@ -352,10 +364,16 @@ mod tests {
     #[test]
     fn notebooks_json_marks_exactly_the_shared_selection() {
         let configs = vec![notebook("one"), notebook("two")];
-        let value = notebooks_to_json(&configs, &HashMap::new(), Some("two"));
+        let value = notebooks_to_json(
+            &configs,
+            &HashMap::new(),
+            &HashMap::from([("two".to_string(), 3)]),
+            Some("two"),
+        );
         let rows = value.as_array().unwrap();
         assert_eq!(rows[0]["selected"], false);
         assert_eq!(rows[1]["selected"], true);
+        assert_eq!(rows[1]["tags"], 3);
     }
 
     #[test]

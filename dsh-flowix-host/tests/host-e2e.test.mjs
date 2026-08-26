@@ -16,7 +16,8 @@ test('host drives the official SDK client across a runtime process', async () =>
     cwd: root,
     env: {
       ...process.env,
-      FLOWIX_DSH_RUNTIME_PATH: fixture,
+      FLOWIX_DSH_RUNTIME_PATH: process.platform === 'win32' ? process.execPath : fixture,
+      ...(process.platform === 'win32' ? { FLOWIX_DSH_RUNTIME_ARGS: JSON.stringify([fixture]) } : {}),
       FLOWIX_DSH_ROOT: root,
       FLOWIX_DSH_SESSION_ROOT: sessionRoot,
       FLOWIX_DSH_MAX_IDLE_RUNTIMES: '1',
@@ -88,7 +89,7 @@ test('host drives the official SDK client across a runtime process', async () =>
     const bridgeId = request('runtime.bridge.capabilities', { threadId: 'thread-1' })
     const bridge = await waitFor(frame => frame.id === bridgeId)
     assert.deepEqual(bridge.result.capabilities, [
-      'runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile',
+      'runtime-events', 'session-control', 'session-history', 'session-dispose', 'run-cancel', 'profile',
     ])
     const runId = request('run.start', { threadId: 'thread-1', runId: 'run-1', prompt: { modelText: 'hello', displayText: 'hello', clientMessageId: 'run-1' } })
     await waitFor(frame => frame.id === runId)

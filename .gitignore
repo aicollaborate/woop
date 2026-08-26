@@ -27,6 +27,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Dev launcher runtime artifacts
+*.pid
+*.stderr.path
+
 # Editor / OS
 .DS_Store
 Thumbs.db

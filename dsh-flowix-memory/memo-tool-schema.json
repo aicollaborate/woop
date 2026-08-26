@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["notebooks", "list", "tags", "show", "search", "create", "edit", "write", "delete", "artifact.list", "artifact.describe", "artifact.create"],
+      "description": "Structured operation. Prefer this over the legacy command field."
+    },
+    "notebook": { "type": "string", "description": "Notebook name or id; defaults to the current notebook where supported." },
+    "id": { "type": "string", "description": "Memo id or filename." },
+    "query": { "type": "string" },
+    "content": { "type": "string", "description": "Complete Markdown, replacement body, or artifact source." },
+    "old": { "type": "string", "description": "Exact text that must occur once for edit." },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+    "offset": { "type": "integer", "minimum": 0, "default": 0 },
+    "dryRun": { "type": "boolean", "default": false },
+    "pluginId": { "type": "string" },
+    "sourceNote": { "type": "string" },
+    "producer": { "type": "string", "default": "agent-mcp" },
+    "command": { "type": "string", "deprecated": true, "description": "Legacy restricted CLI command without the flowix prefix." },
+    "stdin": { "type": "string", "deprecated": true, "description": "Legacy content paired with command." }
+  },
+  "anyOf": [{ "required": ["action"] }, { "required": ["command"] }],
+  "additionalProperties": false
+}

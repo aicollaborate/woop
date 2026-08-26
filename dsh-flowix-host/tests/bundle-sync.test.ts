@@ -12,7 +12,7 @@ function read(relative: string): string {
 const SHARED_NEEDLES = [
   "id: dsh-flowix-memory",
   "name: '@deepseek-ai/dsh-mcp-client'",
-  'serverName: dsh-flowix-memory',
+  'serverName: flowix',
   'transport: stdio',
 ] as const
 

@@ -33,9 +33,9 @@ jobs:
         shell: pwsh
         run: |
           corepack enable
-          npm run dsh:build:windows
+          npm run dsh:build:prod -- --target=node24-windows-x64
           npm --prefix dsh-flowix-host run check
-          npm --prefix dsh-flowix-host run test:sidecar:e2e
+          npm --prefix dsh-flowix-host run test:e2e
 
       - name: Package signed Windows DSH archive
         shell: pwsh
@@ -67,7 +67,7 @@ jobs:
       - name: Install Wrangler
         run: npm install --global wrangler@4
 
-      - name: Publish Windows DSH archive and manifest
+      - name: Publish Windows DSH archive
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -84,5 +84,4 @@ jobs:
           if [[ -f "${archive}.minisig" ]]; then
             wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$(basename "$archive").minisig" --file "${archive}.minisig" --remote
           fi
-          wrangler r2 object put "$DSH_R2_BUCKET/$prefix/dsh-latest.json" --file "$manifest" --remote
-          wrangler r2 object put "$DSH_R2_BUCKET/dsh/latest.json" --file "$manifest" --remote
+          echo "Windows archive published. Stable manifests are published only by the full release matrix."

@@ -170,6 +170,9 @@
 }
 
 .markdown-editor .agent-thread-card--fullscreen {
+  /* Fullscreen is scoped to the third-column document container. Keeping the
+   * card in that containing block makes it follow panel movement when the
+   * memo list is shown or hidden. */
   position: fixed;
   top: var(--atc-fullscreen-top, 0px);
   left: var(--atc-fullscreen-left, 0px);
@@ -399,4 +402,3 @@
     transform: scale(1.15);
   }
 }
-

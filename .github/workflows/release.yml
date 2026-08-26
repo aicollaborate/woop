@@ -171,7 +171,7 @@ jobs:
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          bash scripts/build-cli.sh --target=${{ matrix.target }}
+          npm run cli:build:prod -- --target=${{ matrix.target }}
 
       - name: Import Windows signing certificate for Tauri
         if: matrix.target == 'x86_64-pc-windows-msvc'
@@ -299,17 +299,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build DSH sidecars
+      - name: Build DSH managed bundle
         shell: bash
         run: |
           corepack enable
-          npm --prefix dsh-flowix-host run build:bundle -- --target=${{ matrix.target }}
+          npm run dsh:build:prod -- --target=${{ matrix.target }}
 
       - name: Check DSH host
         run: npm --prefix dsh-flowix-host run check
 
-      - name: Run DSH sidecar E2E
-        run: npm --prefix dsh-flowix-host run test:sidecar:e2e
+      - name: Run DSH host E2E
+        run: npm --prefix dsh-flowix-host run test:e2e
 
       - name: Package signed DSH archive
         shell: bash

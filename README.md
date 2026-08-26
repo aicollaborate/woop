@@ -57,7 +57,7 @@ Use agents inside Flowix or connect **Codex**, **Claude Code**, **OpenCode**, **
 
 ## dsh-flowix-memory plugin
 
-[dsh-flowix-memory](dsh-flowix-memory/README.md) is a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that connects any Harness agent to your **local Flowix notes** through the bundled `flowix-cli` MCP server: the agent gets the `mcp__dsh-flowix-memory__flowix_memo` tool to search, read, create, and edit Flowix memos (including mind maps).
+[dsh-flowix-memory](dsh-flowix-memory/README.md) is a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that connects any Harness agent to your **local Flowix notes** through the bundled `flowix-cli` MCP server: the agent gets the `mcp__flowix__memo` tool to search, read, create, and edit Flowix memos (including mind maps).
 
 Install it into the `flowix` Harness profile from the flowix-main checkout (not yet published to npm). In other DSH clients, `flowix` is an ordinary custom profile name:
 

@@ -5,7 +5,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 
 const artifact = process.argv[2]
 if (!artifact || !existsSync(artifact)) {
@@ -32,6 +32,11 @@ console.log(`==> Verified Flowix artifact excludes DSH: ${basename(artifact)}`)
 function listArchive(file) {
   if (/\.tar\.gz$/iu.test(file)) return run('tar', ['-tzf', file])
   if (/\.zip$/iu.test(file)) return run('unzip', ['-Z1', file])
+  if (/\.exe$/iu.test(file)) {
+    const sevenZip = process.env.SEVEN_ZIP
+      || (process.platform === 'win32' ? 'C:/Program Files/7-Zip/7z.exe' : '7z')
+    return run(sevenZip, ['l', '-ba', resolve(file)])
+  }
   if (/\.AppImage$/iu.test(file)) {
     console.error('ERROR: AppImage is not an updater archive; verify its extracted staging directory instead.')
     process.exit(2)

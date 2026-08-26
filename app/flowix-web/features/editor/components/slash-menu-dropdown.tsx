@@ -111,6 +111,9 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
     keywords: ['dsh', 'deepseek', 'harness', 'agent', 'code', 'bianma', '任务', 'renwu', 'task'],
     icon: getAgentType('deepseek-harness').icon,
     sectionKey: 'editor.slash.section.agent',
+    // Keep DSH discoverable before the runtime and model are configured.
+    // Selection performs the availability check and routes setup to Preferences.
+    alwaysVisible: true,
   },
   {
     id: 'agent-thread-codex',

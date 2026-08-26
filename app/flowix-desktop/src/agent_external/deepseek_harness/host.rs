@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command as StdCommand;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -37,7 +37,7 @@ impl DshHostClient {
         plugin_settings_path: &Path,
     ) -> Result<Arc<Self>, String> {
         let (mut command, host_root) = resolve_host_command()?;
-        if let Some(build_id) = sidecar_build_id() {
+        if let Some(build_id) = development_host_build_id() {
             command.env("FLOWIX_DSH_BUILD_ID", build_id);
         }
         command
@@ -100,10 +100,8 @@ impl DshHostClient {
             }
         };
 
-        // The host embeds the build identity that was baked into the source
-        // bundle. The launcher reads it back so a binary built against one
-        // dsh-host/dsh-runtime pair cannot be silently replaced with a
-        // mismatched sidecar from a stale Cargo target directory.
+        // The host embeds a build identity so stale development output is
+        // detected before requests are sent to the runtime.
         let host_build_id = result
             .get("buildId")
             .and_then(Value::as_str)
@@ -127,7 +125,7 @@ impl DshHostClient {
                 client.kill().await;
                 return Err(format!(
                     "dsh-host buildId mismatch (host={host_build_id}, launcher={expected}); \
-                     the sidecar pair is out of sync, rebuild via `pnpm dsh:build`"
+                     rebuild via `npm run dsh:build:dev`"
                 ));
             }
         } else {
@@ -302,19 +300,11 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
             command.args(&managed.args);
             return Ok((command, managed.root));
         }
-        // Repository development owns its local host/runtime pair. It must not
+        // Repository development owns its local host/runtime path. It must not
         // depend on the release-only managed installer (whose manifest may not
         // publish an artifact for the current platform yet).
-        if let Some(configured) = std::env::var_os("FLOWIX_DSH_HOST_PATH").map(PathBuf::from) {
-            // Derive the host root from the configured artifact. This lets
-            // Dev validate either the source host or a complete standalone
-            // DSH bundle without forcing both through the repository root.
-            return command_for_host_path_with_root(configured, None);
-        }
         // In debug builds the dev bundle is the source of truth. Refuse to
-        // fall through to a (possibly stale, possibly broken on Windows)
-        // bundled sidecar so the failure is loud and points at the rebuild
-        // command instead of silently spawning a host that crashes.
+        // fall through to an installed production bundle.
         if dev_script.is_file() {
             return command_for_host_path_with_root(dev_script, Some(source_root.clone()));
         }
@@ -367,10 +357,6 @@ fn bundled_flowix_cli_path() -> Option<PathBuf> {
     None
 }
 
-fn command_for_host_path(path: PathBuf) -> Result<(Command, PathBuf), String> {
-    command_for_host_path_with_root(path, None)
-}
-
 fn command_for_host_path_with_root(
     path: PathBuf,
     source_root: Option<PathBuf>,
@@ -399,30 +385,6 @@ fn command_for_host_path_with_root(
     } else {
         Ok((Command::new(canonical), host_root))
     }
-}
-
-#[allow(dead_code)]
-fn packaged_runtime_candidate() -> Option<PathBuf> {
-    // Development builds use the freshly-built dsh-host bundle, which spawns
-    // the runtime out of .build/flowix-dsh-host/ via devPackagedRuntimeBinary.
-    // Honoring a packaged sidecar here would shadow that dev path and make
-    // rebuilds look ineffective.
-    if cfg!(debug_assertions) {
-        return None;
-    }
-    let parent = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
-    // Prefer the tauri-triple suffix that matches the host triple; fall back
-    // to the bare `dsh-runtime` name for installs that still ship a runtime
-    // sidecar. Production builds no longer ship dsh-runtime (see
-    // scripts/build-sidecars.mjs); this lookup is kept for diagnostic use only.
-    let triple_suffix = rust_target_triple().to_string();
-    let triple = parent.join(format!("dsh-runtime-{triple_suffix}{exe_suffix}"));
-    if triple.is_file() {
-        return Some(triple);
-    }
-    let bare = parent.join(format!("dsh-runtime{exe_suffix}"));
-    bare.is_file().then_some(bare)
 }
 
 fn allowed_parent_environment() -> HashMap<String, String> {
@@ -538,10 +500,8 @@ fn macos_https_proxy() -> Option<String> {
     None
 }
 
-/// Locate the build identity shared by the dsh-host and dsh-runtime sidecars.
-/// `None` means the env var simply will not be set; the host still validates
-/// that `initialize` returns a non-empty buildId but does not enforce equality.
-fn sidecar_build_id() -> Option<String> {
+/// Locate the repository development host build identity.
+fn development_host_build_id() -> Option<String> {
     // A downloaded DSH package owns its host/runtime build identity. Do not
     // inject a repository build id when a local release bundle is testing the
     // independently installed runtime.
@@ -570,22 +530,4 @@ fn sidecar_build_id() -> Option<String> {
         directory = dir.parent();
     }
     None
-}
-
-/// The rustc target triple the desktop binary was compiled for. Used to pick
-/// the matching `dsh-runtime-<triple>` sidecar from the same directory as
-/// flowix.exe / Flowix.app. The result is computed at runtime because we do
-/// not have a build script; the table is small enough that the lookup is
-/// cheaper than the I/O it gates.
-fn rust_target_triple() -> &'static str {
-    let arch = std::env::consts::ARCH;
-    let os = std::env::consts::OS;
-    match (os, arch) {
-        ("macos", "x86_64") => "x86_64-apple-darwin",
-        ("macos", "aarch64") => "aarch64-apple-darwin",
-        ("windows", _) => "x86_64-pc-windows-msvc",
-        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
-        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
-        _ => "unknown-unknown-unknown",
-    }
 }

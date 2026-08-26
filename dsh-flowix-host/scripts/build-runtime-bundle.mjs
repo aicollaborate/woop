@@ -3,6 +3,10 @@ import { chmod, cp, lstat, mkdir, readFile, readlink, readdir, rename, rm, write
 import { existsSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
+if (Number(process.versions.node.split('.')[0]) !== 24) {
+  throw new Error(`DSH production bundles require Node 24; current runtime is ${process.version}`)
+}
+
 // pnpm may need to remove a stale modules tree during a bundle rebuild. The
 // build is non-interactive in both local automation and CI, so opt into its
 // deterministic no-prompt behavior.
@@ -34,17 +38,14 @@ const privatePnpmVersion = '11.7.0'
 await run(corepack(), ['pnpm@11.7.0', 'install', '--frozen-lockfile', '--prod=false'], vendor)
 const builtMarkers = [
   resolve(vendor, 'apps/cli/lib/bin.js'),
-  resolve(vendor, 'packages/examples/jsonrpc-demo/lib/packaged-bin.js'),
+  resolve(vendor, 'packages/sdk/server/lib/index.js'),
   resolve(vendor, 'packages/llm/llm-pi-ai/lib/types/catalog.js'),
 ]
 if (!builtMarkers.every(existsSync) || process.env.FLOWIX_DSH_REBUILD_LIBS === '1') {
   await run(corepack(), ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor)
 }
 if (process.env.FLOWIX_DSH_SKIP_HOST_BUILD !== '1') {
-  await run(process.execPath, [resolve(hostRoot, 'scripts/build-host.mjs')], hostRoot, {
-    ...process.env,
-    FLOWIX_DSH_SKIP_RUNTIME: '1',
-  })
+  await run(process.execPath, [resolve(hostRoot, 'scripts/build-host.mjs')], hostRoot)
 }
 await rm(bundle, { recursive: true, force: true })
 await mkdir(bundle, { recursive: true })

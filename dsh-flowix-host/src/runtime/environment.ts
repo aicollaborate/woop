@@ -9,12 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { RuntimeSpec } from "../protocol/v1.ts";
 import { disabledPluginKeys } from "./plugin-directory.ts";
 import { applyPluginDisables } from "./plugin-composition.ts";
-import { SIDECAR_BUILD_ID, SIDECAR_BUILD_ID_ENV } from "../build-meta.ts";
 import { mergeFlowixProfileBundles } from "./profile-manifest.ts";
 import DEFAULT_CORDIS_CONFIG from "../../config/flowix.cordis.yml";
 import STANDARD_PRESET from "../../vendor/deepseek-harness/apps/cli/config/agent-presets/standard/agent.cordis.yml";
@@ -71,8 +70,7 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   // The Flowix composition is a normal DSH profile overlay. The profile owns
   // the bridge plugin; the base cordis config owns the DSH runtime roster.
   env.DSH_PROFILE = "flowix";
-  const runtimeRoot = process.env.FLOWIX_DSH_RUNTIME_ROOT?.trim() || hostRoot();
-  env.FLOWIX_DSH_SDK_SERVER = join(runtimeRoot, "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js");
+  env.FLOWIX_DSH_SDK_SERVER = sdkJsonRpcServerEntry();
   // Flowix owns the harness home. Point the harness's own resolver (skills,
   // AGENTS.md, storage domains) at the single dsh root instead of ~/.dsh.
   const dshHome = process.env.FLOWIX_DSH_HOME ?? process.env.DSH_HOME;
@@ -140,8 +138,7 @@ export function ensureFlowixProfile(): void {
   }
   copyProfilePackage(bridgeSourceDir, join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge"));
   const installedBridgePatch = join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge", "cordis.patch.yml");
-  const sdkRuntimeRoot = process.env.FLOWIX_DSH_RUNTIME_ROOT?.trim() || hostRoot();
-  const sdkServerEntry = pathToFileURL(join(sdkRuntimeRoot, "runtime", "node_modules", "@deepseek-ai", "dsh-sdk-jsonrpc-server", "lib", "index.js")).href;
+  const sdkServerEntry = pathToFileURL(sdkJsonRpcServerEntry()).href;
   writeFileSync(
     installedBridgePatch,
     readFileSync(installedBridgePatch, "utf8").replace("__FLOWIX_DSH_SDK_SERVER__", JSON.stringify(sdkServerEntry)),
@@ -212,9 +209,6 @@ function flowixProfileSourceDir(): string | undefined {
   const candidates = [
     configured === undefined || configured === "" ? undefined : resolve(configured),
     join(hostRoot(), "profile", "flowix"),
-    // Packaged sidecar E2E keeps the host in app/flowix-desktop/binaries while
-    // the source checkout owns the profile at the repository root.
-    join(hostRoot(), "..", "..", "dsh-flowix-host", "profile", "flowix"),
   ].filter((value): value is string => value !== undefined);
   return candidates.find((candidate) => existsSync(join(candidate, "package.json")));
 }
@@ -233,10 +227,6 @@ function flowixMemorySourceDir(): string | undefined {
  * travels into the runtime so a paired host/runtime always come from the same
  * build; the launcher refuses mismatches.
  */
-function withBuildId(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...env, [SIDECAR_BUILD_ID_ENV]: SIDECAR_BUILD_ID };
-}
-
 export function runtimeLaunch(spec: RuntimeSpec): {
   command: string;
   args: string[];
@@ -287,66 +277,28 @@ export function runtimeLaunch(spec: RuntimeSpec): {
     };
   }
 
-  // Release path: when dsh-host runs as a SEA, the runtime sidecar lives
-  // next to it inside the bundle. Probe the directory that owns the current
-  // executable (the SEA itself) for both the rustc-triple-suffixed and the
-  // bare names, in that order.
-  const packaged = packagedRuntimeBinary();
-  if (packaged !== undefined) {
+  // Repository development has exactly one supported runtime path. It uses
+  // the same official CLI/profile composition contract as managed bundles,
+  // while loading the CLI and SDK server from their stable source outputs.
+  const devDshCliEntry = join(
+    hostRoot(),
+    "vendor/deepseek-harness/apps/cli/lib/bin.js",
+  );
+  if (existsSync(devDshCliEntry)) {
+    // Resolve this eagerly so a missing SDK server fails at the runtime launch
+    // boundary with its exact expected path.
+    sdkJsonRpcServerEntry();
     return {
-      command: packaged,
-      args: [cordisConfigPath()],
-      env: withBuildId({
-        ...runtimeEnvironment(spec),
-        DSH_EMBEDDED_RUNTIME_MODE: "1",
-      }),
+      command: process.execPath,
+      args: [devDshCliEntry, "--profile", "flowix"],
+      env: runtimeEnvironment(spec),
     };
   }
 
-  // Dev path: prefer the packaged runtime that build-host.mjs produced. The
-  // vendored tsx + bin.ts path is fragile (Cordis plugin tree loads through
-  // workspace links and tsx has ordering surprises that leave the harness
-  // client in an inconsistent state when init fails), so dev and prod both
-  // use the SEA binary. If it is missing the build pipeline was skipped;
-  // fall back to tsx so a cold checkout can still boot the launcher.
-  const devPackaged = devPackagedRuntimeBinary();
-  if (devPackaged !== undefined) {
-    return {
-      command: devPackaged,
-      args: [cordisConfigPath()],
-      env: withBuildId({
-        ...runtimeEnvironment(spec),
-        DSH_EMBEDDED_RUNTIME_MODE: "1",
-      }),
-    };
-  }
-
-  const root = hostRoot();
-  const bin = join(
-    root,
-    "vendor/deepseek-harness/packages/examples/jsonrpc-demo/src/bin.ts",
+  throw new Error(
+    `No supported DSH runtime found. Expected managed CLI at ${bundledDshCliEntry} ` +
+    `or repository development CLI at ${devDshCliEntry}.`,
   );
-  const tsxLoader = join(
-    root,
-    "vendor/deepseek-harness/node_modules/tsx/dist/esm/index.mjs",
-  );
-  if (!existsSync(bin) || !existsSync(tsxLoader)) {
-    throw new Error(
-      "dsh-runtime is not bundled and the vendored development runtime is not installed; run npm --prefix dsh-flowix-host run build:dev (which auto-builds the packaged runtime)",
-    );
-  }
-  return {
-    command: process.execPath,
-    args: ["--import", pathToFileURL(tsxLoader).href, bin, cordisConfigPath()],
-    // The agent runs with the user's workspace as cwd, but the vendored
-    // Harness source tree owns the TS path aliases for all @deepseek-ai/*
-    // workspace packages. Without this explicit config, tsx resolves from
-    // the user's cwd and the child exits before the first model request.
-    env: withBuildId({
-      ...runtimeEnvironment(spec),
-      TSX_TSCONFIG_PATH: join(root, "vendor/deepseek-harness/tsconfig.json"),
-    }),
-  };
 }
 
 function cordisConfigPath(disabled = disabledPluginKeys()): string {
@@ -407,6 +359,25 @@ function sessionBaseRoot(): string {
   return process.env.FLOWIX_DSH_SESSION_ROOT ?? join(hostRoot(), ".sessions");
 }
 
+function sdkJsonRpcServerEntry(): string {
+  const runtimeRoot = process.env.FLOWIX_DSH_RUNTIME_ROOT?.trim() || hostRoot();
+  const bundled = join(
+    runtimeRoot,
+    "runtime/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js",
+  );
+  if (existsSync(bundled)) return bundled;
+
+  const development = join(
+    hostRoot(),
+    "vendor/deepseek-harness/packages/sdk/server/lib/index.js",
+  );
+  if (existsSync(development)) return development;
+  throw new Error(
+    `DSH SDK JSON-RPC server is missing. Expected managed entry at ${bundled} ` +
+    `or repository development entry at ${development}.`,
+  );
+}
+
 function hostRoot(): string {
   const configured = process.env.FLOWIX_DSH_ROOT;
   if (configured !== undefined && configured !== "") return configured;
@@ -446,50 +417,4 @@ function hasScopeDisables(
     if (key.startsWith(prefix)) return true;
   }
   return false;
-}
-/**
- * Locate the packaged runtime that build-host.mjs produced for the host
- * platform. Returns undefined if not built, in which case the caller falls
- * back to the vendored tsx + bin.ts path.
- */
-function devPackagedRuntimeBinary(): string | undefined {
-  const binary = join(
-    hostRoot(),
-    "../.build/flowix-dsh-host/dsh-runtime" +
-      (process.platform === "win32" ? ".exe" : ""),
-  );
-  return existsSync(binary) ? binary : undefined;
-}
-
-/**
- * Locate the runtime sidecar that ships next to this dsh-host process.
- * Mirrors `host.rs:packaged_runtime_candidate` so the launcher and the
- * host agree on which binary counts as the runtime.
- *
- * Returns undefined for the dev bundle (process.execPath is node) and when
- * the sidecar is missing from the install directory.
- */
-function packagedRuntimeBinary(): string | undefined {
-  const exe = process.execPath;
-  const exeExt = extname(exe).toLowerCase();
-  // The vendored dev bundle runs under node and lives in
-  // .build/flowix-dsh-host/; only SEA launches report a real .exe path here.
-  if (exeExt === ".exe" || exeExt === "" || exeExt === ".bin") {
-    // Dev bundle: the vendored launcher runs as `node dsh-host.cjs`,
-    // so process.execPath points to the node binary. The dispatcher only
-    // exists inside the SEA, so falling through to devPackagedRuntimeBinary
-    // is required; otherwise the host would spawn plain node.exe as the
-    // runtime and the turn would fail with no script.
-    if (basename(exe, exeExt).toLowerCase() === "node") {
-      return undefined;
-    }
-    // FLOWIX: dual-mode SEA. The host and the runtime are the same binary.
-    // The dispatcher in scripts/build-exe-for-python-sdk.ts reads
-    // DSH_EMBEDDED_RUNTIME_MODE and routes the process into the vendored
-    // packaged-bin entry when the host launches us in runtime mode. A
-    // separate dsh-runtime sidecar would only duplicate the whole closure
-    // inside the NSIS installer, so the install ships dsh-host only.
-    return exe;
-  }
-  return undefined;
 }
