@@ -956,6 +956,30 @@ fn cleanup_old_versions(
     }
 }
 
+/// Write a file that must stay owner-only. `dsh-credentials-local` rejects
+/// `.credentials.yaml` unless its mode is 600; plain `fs::write` creates it
+/// with the process umask (typically 644) and fails that assert.
+fn write_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(contents)?;
+        // `mode` only applies at creation; normalize pre-existing files too.
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)
+    }
+}
+
 fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
     let root = &launch.root;
     let session_root = root.join(format!(".health-check-{}", uuid::Uuid::new_v4()));
@@ -967,7 +991,7 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
     let credentials_path = dsh_home.join(".credentials.yaml");
     fs::write(&settings_path, b"llm-pi-ai:\n  providers: {}\n")
         .map_err(|e| format!("write DSH health-check settings: {e}"))?;
-    fs::write(&credentials_path, b"DSH_API_KEY: health-check\n")
+    write_private_file(&credentials_path, b"DSH_API_KEY: health-check\n")
         .map_err(|e| format!("write DSH health-check credentials: {e}"))?;
     let mut command = Command::new(&launch.executable);
     command.args(&launch.args);
@@ -1221,6 +1245,25 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_is_owner_only_on_create_and_normalize() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("fresh.yaml");
+        super::write_private_file(&fresh, b"a").unwrap();
+        let mode = fresh.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        // A pre-existing world-readable file must be tightened, not left at 644.
+        let stale = dir.path().join("stale.yaml");
+        std::fs::write(&stale, b"a").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o644)).unwrap();
+        super::write_private_file(&stale, b"b").unwrap();
+        let mode = stale.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read(&stale).unwrap(), b"b");
+    }
 
     #[test]
     fn protects_only_flowix_profile_requirements_from_managed_removal() {
