@@ -218,6 +218,12 @@ export class SessionPool {
     return slot.bridge.status()
   }
 
+  async backgroundJobs(threadId: string): Promise<unknown> {
+    const slot = this.slots.get(threadId)
+    if (slot === undefined) throw new Error(`runtime is not initialized for thread ${threadId}`)
+    return { jobs: await slot.bridge.backgroundJobs(slot.spec.sessionId) }
+  }
+
 
   private async execute(
     slot: RuntimeSlot,

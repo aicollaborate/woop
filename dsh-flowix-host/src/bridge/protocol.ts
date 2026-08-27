@@ -6,6 +6,7 @@ export const FLOWIX_DSH_BRIDGE_CAPABILITIES = [
   "session-history",
   "session-dispose",
   "run-cancel",
+  "background-jobs",
   "profile",
   "credentials-management",
   "model-settings-management",
@@ -39,6 +40,16 @@ export interface FlowixDshBridgeHistoryPage {
   sessionId: string;
   events: Array<Record<string, unknown>>;
   snapshotSeq: number;
+}
+
+export interface FlowixDshBackgroundJob {
+  id: string;
+  kind: string;
+  label: string;
+  status: "running" | "stopping" | "completed" | "killed" | "failed";
+  detail?: string;
+  startedAt: number;
+  finishedAt?: number;
 }
 
 export interface FlowixDshCredentialInfo {

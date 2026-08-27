@@ -28,6 +28,7 @@ import { AgentConversationSurfaceController } from '@features/agent/thread-card/
 import { createExternalAgentRuntimeHandle } from '@features/agent/services/external-agent-runtime-service';
 import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
 import { markConversationWorkspaceStarted } from '@features/agent/runtime/workspace-snapshot';
+import { AgentBackgroundTerminals } from '@features/agent/components/agent-background-terminals';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -101,6 +102,7 @@ export function AgentConversationDetail({
   );
   const domRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const composerMountRef = useRef<HTMLDivElement>(null);
   const loadingIndicatorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesControllerRef = useRef<AgentThreadCardMessagesController | null>(null);
@@ -209,14 +211,15 @@ export function AgentConversationDetail({
   useLayoutEffect(() => {
     const dom = domRef.current;
     const body = bodyRef.current;
+    const composerMount = composerMountRef.current;
     const loadingIndicator = loadingIndicatorRef.current;
-    if (!dom || !body || !loadingIndicator) return;
+    if (!dom || !body || !composerMount || !loadingIndicator) return;
 
     const composerParts = createAgentComposerDom({
       variant: 'expanded',
       t: (key) => tRef.current(key),
     });
-    dom.append(composerParts.composer);
+    composerMount.append(composerParts.composer);
     const {
       composer,
       composerImages,
@@ -457,6 +460,14 @@ export function AgentConversationDetail({
             </span>
             <span className="agent-thread-card__loading-text" />
           </div>
+        </div>
+        <div className="agent-conversation-detail__composer-stack">
+          <AgentBackgroundTerminals
+            threadId={threadId}
+            agentType={instance.agentType === 'codex' ? 'codex' : 'deepseek-harness'}
+            enabled={instance.agentType === 'codex' || instance.agentType === 'deepseek-harness'}
+          />
+          <div ref={composerMountRef} />
         </div>
       </div>
     </section>

@@ -131,6 +131,21 @@ pub fn run_cancel_request(id: u64, thread_id: &str, run_id: &str) -> Value {
     })
 }
 
+pub fn runtime_bridge_jobs_request(id: u64, thread_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "runtime.bridge.jobs.list",
+        "params": { "threadId": thread_id }
+    })
+}
+
+pub fn runtime_status_request(id: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "runtime.status", "params": {}
+    })
+}
+
 pub fn shutdown_request(id: u64) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "method": "host.shutdown", "params": {} })
 }

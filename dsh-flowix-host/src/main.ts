@@ -116,6 +116,10 @@ async function dispatch(request: JsonRpcRequest): Promise<unknown> {
       const params = requireThread(request.params)
       return await pool.bridgeStatus(params.threadId)
     }
+    case 'runtime.bridge.jobs.list': {
+      const params = requireThread(request.params)
+      return await pool.backgroundJobs(params.threadId)
+    }
     case 'run.start':
       pool.startRun(requireRunStart(request.params))
       return { accepted: true }

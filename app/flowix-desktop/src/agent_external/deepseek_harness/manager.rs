@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::config::{
     normalize_agent_preset, normalize_permission, resolve_runtime_config, select_harness_config,
@@ -216,7 +217,10 @@ impl DeepSeekHarnessManager {
         self.runs
             .bind_host(thread_id, run_id, runtime_config.host_key())
             .await;
-        let host = self.ensure_host(&runtime_config).await?;
+        // Reuse the already-running shared host for the cheap status probe.
+        // In particular, do not resolve a model config or call runtime.ensure
+        // while a turn may still be using this thread's runtime.
+        let host = self.model_host().await?;
         let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
         let ensure = protocol::runtime_ensure_request(
             host.next_request_id(),
@@ -613,6 +617,66 @@ impl DeepSeekHarnessManager {
 
     pub async fn running_threads(&self) -> HashMap<String, RunInfo> {
         self.runs.running_threads(AGENT_TYPE).await
+    }
+
+    /// Read DSH's owner-scoped background jobs. DSH owns the process registry;
+    /// Flowix only forwards the safe public snapshots to the UI.
+    pub async fn background_jobs(&self, thread_id: &str) -> Result<Value, String> {
+        // The host-side job registry is scoped to a live DSH Agent.  After
+        // Flowix restarts, an existing conversation still has a persisted
+        // session id but no SessionPool slot yet; querying the bridge in that
+        // state either fails with "runtime is not initialized" or sees no
+        // owner and the UI silently renders nothing.  Rehydrate the slot
+        // before listing jobs, but do not start runtimes for brand-new empty
+        // conversations.
+        let Some(session_id) = self.sessions.session_id(thread_id).await? else {
+            return Ok(serde_json::json!({ "jobs": [] }));
+        };
+        // Reuse the already-running shared host for the cheap status probe.
+        // In particular, do not resolve a model config or call runtime.ensure
+        // while a turn may still be using this thread's runtime.
+        let host = self.model_host().await?;
+        let run_active = self.runs.running_threads(AGENT_TYPE).await.contains_key(thread_id);
+        let status = host
+            .request(protocol::runtime_status_request(host.next_request_id()))
+            .await?;
+        let has_runtime = status
+            .get("runtimes")
+            .and_then(Value::as_array)
+            .is_some_and(|runtimes| {
+                runtimes.iter().any(|runtime| {
+                    runtime.get("threadId").and_then(Value::as_str) == Some(thread_id)
+                })
+            });
+        // A run registers before its async runtime.ensure starts.  Do not race
+        // that startup window by creating a second slot with reduced settings;
+        // the next poll will see the slot once the run has initialized it.
+        if !has_runtime && !run_active {
+            let configured = select_harness_config(self.dsh_model_configs().await?, None)?;
+            let runtime_config = resolve_runtime_config(&configured, None)?;
+            let cwd = self.sessions.resolve_cwd(thread_id, None).await?;
+            let ensure = protocol::runtime_ensure_request(
+                host.next_request_id(),
+                thread_id,
+                Some(&session_id),
+                &cwd.to_string_lossy(),
+                &[],
+                &runtime_config.provider,
+                &runtime_config.provider_name,
+                &runtime_config.api_protocol,
+                &runtime_config.api_key_env,
+                &runtime_config.base_url,
+                &runtime_config.model,
+                normalize_agent_preset(None),
+                normalize_permission(None),
+            );
+            host.request(ensure).await?;
+        }
+        host.request(protocol::runtime_bridge_jobs_request(
+            host.next_request_id(),
+            thread_id,
+        ))
+        .await
     }
 
     pub async fn stop_all(&self) -> usize {

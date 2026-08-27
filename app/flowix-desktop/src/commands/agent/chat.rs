@@ -177,6 +177,28 @@ pub async fn agent_running_threads(
     Ok(state.external_runtimes.running_threads().await)
 }
 
+/// List Codex background terminals for the currently displayed conversation.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn agent_background_terminals(
+    threadId: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .codex_app_server
+        .list_background_terminals(&threadId)
+        .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn agent_background_jobs(
+    threadId: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state.deepseek_harness.background_jobs(&threadId).await
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn agent_external_events(

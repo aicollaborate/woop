@@ -594,6 +594,8 @@ pub fn run() {
             commands::agent::chat::chat_with_agent_stream,
             commands::agent::chat::stop_agent_stream,
             commands::agent::chat::agent_running_threads,
+            commands::agent::chat::agent_background_terminals,
+            commands::agent::chat::agent_background_jobs,
             commands::agent::chat::agent_external_events,
             // thread
             commands::thread::thread_list,

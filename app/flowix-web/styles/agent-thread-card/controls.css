@@ -342,6 +342,14 @@
   padding-inline: 0;
 }
 
+.agent-conversation-detail__composer-stack {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
 /* 独立对话的消息区不允许长 URL / token / 代码行把整个 surface 撑出
  * 横向滚动。仅限第三列 AgentConversationDetail, 不影响文档内嵌卡片及其
  * fullscreen 模式。 */

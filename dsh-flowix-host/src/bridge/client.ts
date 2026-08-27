@@ -4,6 +4,7 @@ import type {
   FlowixDshBridgeEvent,
   FlowixDshBridgeHistoryPage,
   FlowixDshBridgeStatus,
+  FlowixDshBackgroundJob,
   FlowixDshCredentialInfo,
   FlowixDshModelsSettings,
 } from "./protocol.ts";
@@ -101,6 +102,17 @@ export class FlowixDshBridgeClient {
       { sessionId },
     );
     return isRecord(value) && value.cancelled === true;
+  }
+
+  async backgroundJobs(sessionId: string): Promise<FlowixDshBackgroundJob[]> {
+    const value = await this.harness.client.request(
+      "flowix.bridge.jobs.list",
+      { sessionId },
+    );
+    if (!isRecord(value) || !Array.isArray(value.jobs)) {
+      throw new Error("flowix bridge returned invalid jobs.list result");
+    }
+    return value.jobs as FlowixDshBackgroundJob[];
   }
 
   async history(

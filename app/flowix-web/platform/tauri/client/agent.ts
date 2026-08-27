@@ -211,6 +211,10 @@ export const agent = {
   // 鍚庣闀滃儚 `cancel_flags` 鐨勭敓鍛藉懆鏈? 涓?`StreamStart/End` chunk 鍚屾銆?
   runningThreads: () =>
     invoke<Record<string, RunInfo>>('agent_running_threads'),
+  backgroundTerminals: (threadId: string) =>
+    invoke<unknown>('agent_background_terminals', { threadId }),
+  backgroundJobs: (threadId: string) =>
+    invoke<unknown>('agent_background_jobs', { threadId }),
   externalEvents: (threadId: string, afterId?: number | null, limit?: number) =>
     invoke<AgentExternalEvent[]>('agent_external_events', { threadId, afterId, limit }),
   listThreads: () =>

@@ -385,6 +385,27 @@ impl CodexAppServerManager {
             .collect()
     }
 
+    /// Return Codex's background terminal processes for a product thread.
+    /// The app-server response is intentionally kept as JSON: the protocol is
+    /// experimental and its terminal fields have changed between Codex builds.
+    pub async fn list_background_terminals(&self, flowix_thread_id: &str) -> Result<Value, String> {
+        self.ensure_connection().await?;
+        let stored = self
+            .inner
+            .thread_manager
+            .get_external_session(flowix_thread_id, AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some(codex_thread_id) = select_external_session_for_runtime(stored, None) else {
+            return Ok(json!({ "data": [] }));
+        };
+        self.request(
+            "thread/backgroundTerminals/list",
+            json!({ "threadId": codex_thread_id }),
+        )
+        .await
+    }
+
     pub async fn stop_all(&self) -> usize {
         let active = std::mem::take(&mut *self.inner.active_turns.lock().await);
         let count = active.len();
