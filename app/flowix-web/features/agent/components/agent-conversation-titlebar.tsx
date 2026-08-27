@@ -88,7 +88,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   };
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
       <span className="agent-thread-card__badge-hover-wrapper shrink-0">
         <BadgeHoverCard
           sessionId={instance.threadId ?? ''}
@@ -114,7 +114,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
             }} />
         </div>
       ) : (
-        <div className="min-w-0 flex-1 truncate text-sm font-semibold leading-none text-[var(--foreground)]" onDoubleClick={() => {
+        <div className="min-w-0 flex-[0_1_auto] truncate text-sm font-semibold leading-none text-[var(--foreground)]" onDoubleClick={() => {
           setTitleDraft(instance.title?.trim() || '');
           setIsEditingTitle(true);
         }}>{presentation.title}</div>
