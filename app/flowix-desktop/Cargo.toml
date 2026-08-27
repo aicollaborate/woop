@@ -10,13 +10,6 @@ default-run = "flowix-desktop"
 name = "flowix_desktop"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-# DSH 全链路测试需要真实 Wry AppHandle —— macOS 的事件循环只能建在主线程,
-# 因此不能用 #[tokio::test] (跑在 worker 线程), 必须自带 main() 的 harness。
-[[test]]
-name = "deepseek_harness_e2e"
-path = "tests/deepseek_harness_e2e/main.rs"
-harness = false
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
