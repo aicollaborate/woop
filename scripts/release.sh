@@ -361,35 +361,43 @@ for target in $FLOWIX_TARGETS; do
     --file "$RELEASE_OUT/$name.sig" --remote
 done
 
-# flowix-home (官网下载页) 部署: 仅在 full release 时跑。
-# partial release 时 combined manifest 不存在, 此时跳过整段, flowix-home 保留
-# 上一版的 latest.json ── 滞后平台继续指向它们上次发布的下载链接, 行为正确。
-if [[ $IS_FULL_RELEASE -eq 1 ]]; then
-  echo "==> building flowix-home"
-  home_manifest="$FLOWIX_HOME_DIR/src/latest.json"
-  home_manifest_backup="$(mktemp)"
-  home_manifest_existed=0
-  if [[ -f "$home_manifest" ]]; then
-    cp "$home_manifest" "$home_manifest_backup"
-    home_manifest_existed=1
-  fi
-  restore_home_manifest() {
-    if [[ "$home_manifest_existed" == "1" ]]; then
-      cp "$home_manifest_backup" "$home_manifest"
-    else
-      rm -f "$home_manifest"
-    fi
-    rm -f "$home_manifest_backup"
-  }
-  trap restore_home_manifest EXIT
-  cp "$COMBINED_MANIFEST" "$home_manifest"
-  npm --prefix "$FLOWIX_HOME_DIR" run build
-  echo "==> deploying flowix-home"
-  "$WRANGLER" pages deploy "$FLOWIX_HOME_DIR/_site" \
-    --project-name "$FLOWIX_HOME_PROJECT" --branch "$FLOWIX_HOME_BRANCH"
-else
-  echo "==> partial release: skipping flowix-home deploy (combined site manifest not regenerated)"
+# flowix-home (官网下载页) 部署。
+# * full release: 用 combined manifest 整体覆盖 (存量客户端的 legacy updater
+#   语义 + 官网 x-flowix-installers 一起刷新)。
+# * partial release: 只把本次发布的 group 的 x-flowix-installers 条目合并进
+#   官网 manifest ── version/platforms 一字不动 (那是存量客户端的 updater
+#   语义, 只能在 full release 重生成), 但官网弹窗立即显示新版本与下载链接。
+home_manifest="$FLOWIX_HOME_DIR/src/latest.json"
+home_manifest_backup="$(mktemp)"
+home_manifest_existed=0
+if [[ -f "$home_manifest" ]]; then
+  cp "$home_manifest" "$home_manifest_backup"
+  home_manifest_existed=1
 fi
+restore_home_manifest() {
+  if [[ "$home_manifest_existed" == "1" ]]; then
+    cp "$home_manifest_backup" "$home_manifest"
+  else
+    rm -f "$home_manifest"
+  fi
+  rm -f "$home_manifest_backup"
+}
+trap restore_home_manifest EXIT
+
+if [[ $IS_FULL_RELEASE -eq 1 ]]; then
+  echo "==> flowix-home: full release (combined site manifest)"
+  cp "$COMBINED_MANIFEST" "$home_manifest"
+else
+  echo "==> flowix-home: merging shipped installer entries into site manifest"
+  ACTIVE_GROUPS_STR="${ACTIVE_GROUPS[*]}" \
+  FLOWIX_HOME_MANIFEST="$home_manifest" \
+  FLOWIX_RELEASE_OUT="$RELEASE_OUT" \
+  node "$REPO_ROOT/scripts/merge-site-installers.mjs"
+fi
+npm --prefix "$FLOWIX_HOME_DIR" run build
+echo "==> deploying flowix-home"
+"$WRANGLER" pages deploy "$FLOWIX_HOME_DIR/_site" \
+  --project-name "$FLOWIX_HOME_PROJECT" --branch "$FLOWIX_HOME_BRANCH"
 
 echo "==> published Flowix ${VERSION}"
 for group in "${ACTIVE_GROUPS[@]}"; do
