@@ -33,6 +33,9 @@ pub struct AppState {
     pub search: RwLock<MemoIndex>,
     pub search_rebuild: SearchRebuildCoordinator,
     pub external_runtimes: Arc<ExternalRuntimeRegistry>,
+    /// Long-lived Codex App Server. Codex owns its thread history and model
+    /// catalog; Flowix stores only the mapping to its local conversation.
+    pub codex_app_server: Arc<crate::agent_external::codex::CodexAppServerManager>,
     pub deepseek_harness: Arc<crate::agent_external::deepseek_harness::DeepSeekHarnessManager>,
     pub thread_manager: Arc<ThreadManager>,
     /// Agent 可访问目录 (notebook + 用户额外 folder), 持久化在

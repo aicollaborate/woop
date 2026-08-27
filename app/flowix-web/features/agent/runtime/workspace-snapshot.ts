@@ -96,8 +96,8 @@ function migrateLegacyWorkspace(
 }
 
 /**
- * Return the frozen workspace for an instance, capturing and persisting it
- * once when an old/new instance does not have one yet.
+ * Return the workspace selected for the next turn, capturing and persisting
+ * an initial selection when an old/new instance does not have one yet.
  */
 export function ensureConversationWorkspaceSnapshot(
   instanceId: string,
@@ -186,10 +186,10 @@ export function ensureConversationWorkspaceSnapshot(
   };
 }
 
-/** Mark the first send boundary. This is intentionally local optimistic state:
- * the backend still validates and commits the actual cwd before running. It
- * lets unsupported runtimes disable their workspace control immediately after
- * the conversation has started instead of allowing one misleading selection.
+/** Mark the send boundary for the current desired workspace revision. This is
+ * intentionally local optimistic state: the backend still validates and
+ * commits the actual cwd before running. A workspace selected during an
+ * in-flight turn increments `revision`, leaving it pending until next send.
  */
 export function markConversationWorkspaceStarted(instanceId: string): void {
   const session = useAgentSessionStore.getState();

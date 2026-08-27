@@ -50,12 +50,69 @@ const CONVERSATION_GROUP_LABEL_KEY = {
 } as const;
 const logger = createLogger('agent-conversation-list');
 
+// A thread can temporarily be represented by two instance records while an
+// old local/external identity is being reconciled.  `instanceId` is the card
+// identity, but `threadId` is the conversation identity shown in this list.
+// Keep the record with the useful product title when repairing that state;
+// otherwise a later runtime fallback such as "Codex session" can hide the
+// title derived from the user's first prompt.
+function isFallbackConversationTitle(title: string, agentType: AgentTypeKey): boolean {
+  const normalized = title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  if (!normalized) return true;
+  const fallbackTitles = new Set([
+    `${agentType} session`,
+    `${agentType} 会话`,
+    'codex session',
+    'codex 会话',
+    'claude code session',
+    'claude code 会话',
+    'hermes session',
+    'hermes 会话',
+    'gemini cli session',
+    'gemini cli 会话',
+    'opencode session',
+    'opencode 会话',
+    'openclaw session',
+    'openclaw 会话',
+  ]);
+  return fallbackTitles.has(normalized);
+}
+
+function preferConversationInstance(
+  current: AgentConversationInstance,
+  candidate: AgentConversationInstance,
+): AgentConversationInstance {
+  const currentFallback = isFallbackConversationTitle(current.title, current.agentType);
+  const candidateFallback = isFallbackConversationTitle(candidate.title, candidate.agentType);
+  if (currentFallback !== candidateFallback) return currentFallback ? candidate : current;
+  if (candidate.updatedAt !== current.updatedAt) {
+    return candidate.updatedAt > current.updatedAt ? candidate : current;
+  }
+  return candidate.instanceId > current.instanceId ? candidate : current;
+}
+
+/** Collapse malformed/legacy duplicate rows without collapsing unbound cards. */
+function dedupeConversationInstances(
+  source: Iterable<AgentConversationInstance>,
+): AgentConversationInstance[] {
+  const byIdentity = new Map<string, AgentConversationInstance>();
+  for (const instance of source) {
+    const identity = instance.threadId ? `thread:${instance.threadId}` : `instance:${instance.instanceId}`;
+    const previous = byIdentity.get(identity);
+    byIdentity.set(identity, previous ? preferConversationInstance(previous, instance) : instance);
+  }
+  return [...byIdentity.values()];
+}
+
 export function AgentConversationList() {
   const { t } = useI18n();
   const instances = useAgentSessionStore((state) => state.conversationRegistry.instances);
   const currentNotebookId = useMemoStore((state) => state.selectedNotebook?.id ?? null);
   const selectedInstanceId = useWorkspaceRestoreStore(
     (state) => state.agentConversation.selectedInstanceId,
+  );
+  const conversationDetailOpen = useWorkspaceRestoreStore(
+    (state) => state.agentConversation.detailOpen,
   );
   const [persistedInstances, setPersistedInstances] = useState<Record<string, AgentConversationInstance>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -99,7 +156,8 @@ export function AgentConversationList() {
         merged[instance.instanceId] = instance;
       }
     }
-    return Object.values(merged).sort((a, b) => b.createdAt - a.createdAt);
+    return dedupeConversationInstances(Object.values(merged))
+      .sort((a, b) => b.createdAt - a.createdAt);
   }, [instances, persistedInstances]);
 
   // 运行态来自 canonical thread projections；使用合并后的列表作为索引输入，
@@ -116,7 +174,8 @@ export function AgentConversationList() {
   const previousRunningRef = useRef<ReadonlyMap<string, boolean>>(new Map());
 
   // 监听 running 跳变: true → false 时把 instanceId 加进 justEndedIds;
-  // 再次进入 running 时主动从 set 移除 (用户重启 agent, 不应该残留灰色 dot)。
+  // 但当前正在查看的对话不属于“待查看”。再次进入 running 时主动从 set
+  // 移除 (用户重启 agent, 不应该残留灰色 dot)。
   useEffect(() => {
     const previous = previousRunningRef.current;
     const currentIds = new Set<string>();
@@ -127,8 +186,13 @@ export function AgentConversationList() {
       const isRunning = isAgentConversationRunning(instance, conversationRunIndex);
       const wasRunning = previous.get(instance.instanceId) ?? false;
       if (wasRunning && !isRunning) {
-        // 刚结束: 加入集合 (如果尚未存在)。
-        if (!nextJustEnded.has(instance.instanceId)) {
+        const isBeingViewed = conversationDetailOpen
+          && selectedInstanceId === instance.instanceId;
+        // 运行结束时如果详情页正打开，用户已经在看，不应产生待查看提示。
+        if (isBeingViewed) {
+          if (nextJustEnded.delete(instance.instanceId)) changed = true;
+        } else if (!nextJustEnded.has(instance.instanceId)) {
+          // 刚结束且未查看: 加入集合 (如果尚未存在)。
           nextJustEnded.add(instance.instanceId);
           changed = true;
         }
@@ -155,7 +219,7 @@ export function AgentConversationList() {
     }
     previousRunningRef.current = snapshot;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversations, conversationRunIndex]);
+  }, [conversations, conversationDetailOpen, conversationRunIndex, selectedInstanceId]);
 
   // 按当前笔记本圈定对话列表 —— 与中间列 MemoList 同口径。归属当前笔记本的对话
   // 全部展示；没有笔记本归属 (source.notebookId 为空，例如从独立对话面板发起，或
@@ -365,7 +429,7 @@ export function AgentConversationList() {
           <div className="flex flex-col gap-1">
             {conversationGroups.map((group, index) => (
               <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
-                <h3 className="px-2 text-xs font-medium text-[var(--muted-foreground)]">
+                <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
                   {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
                 </h3>
                 {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
@@ -397,7 +461,7 @@ export function AgentConversationList() {
                         {instance.title?.trim() || t('common.untitled')}
                       </span>
                       <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.createdAt).toISOString()}>
-                        {formatTimeAgo(instance.createdAt, t)}
+                        {formatTimeAgo(instance.createdAt, t, { compact: true })}
                       </time>
                       {running ? (
                         // 绿色: agent 正在运行
@@ -405,7 +469,8 @@ export function AgentConversationList() {
                           aria-hidden="true"
                           className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]"
                         />
-                      ) : justEndedIds.has(instance.instanceId) ? (
+                      ) : justEndedIds.has(instance.instanceId)
+                        && !(conversationDetailOpen && selectedInstanceId === instance.instanceId) ? (
                         // 灰色: 刚跑完、本次会话内用户还没点进去过
                         <span
                           aria-hidden="true"

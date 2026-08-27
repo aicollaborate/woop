@@ -101,9 +101,13 @@ export function applyToolCallChunk(
 
 /**
  * tool_result chunk ── 找到对应 tool_call 行, 收尾 (isLoading=false) +
- * 注入 result 内容与摘要。 摘要来自 summarizeToolResult, 对 command-style
+ * 注入 result 内容与摘要。摘要来自 summarizeToolResult, 对 command-style
  * 结果做字段裁剪 (command / exit_code / status / output preview), 其他
  * 类型直接 stringify。所有展示文本超限截断 + 标 truncation。
+ *
+ * Result is also a hard assistant boundary. The started event can be missing
+ * or arrive late; retaining pendingAssistantId here would make the assistant
+ * response after this tool append to the assistant message before the tool.
  */
 export function applyToolResultChunk(
   st: LiveMessageState,
@@ -149,7 +153,7 @@ export function applyToolResultChunk(
       });
   return {
     messages,
-    pendingAssistantId: st.pendingAssistantId,
+    pendingAssistantId: null,
     pendingReasoningId: st.pendingReasoningId,
   };
 }

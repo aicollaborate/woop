@@ -293,7 +293,7 @@ fn workspace_context_lists_only_existing_additional_roots() {
 
     let prompt = append_workspace_context("Question", &cwd, &paths);
 
-    assert!(prompt.starts_with("Question\n\n[Flowix workspace context]"));
+    assert!(prompt.starts_with("Question\n\n<## CONTEXT PROMPT ##>"));
     assert_eq!(
         prompt
             .matches(&reference.to_string_lossy().to_string())

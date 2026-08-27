@@ -8,6 +8,7 @@ pub(crate) enum Projection {
     Boundary {
         buffered: Vec<(AgentChunk, AgentChunkMetadata)>,
         chunk: AgentChunk,
+        metadata: AgentChunkMetadata,
     },
     Completed {
         buffered: Vec<(AgentChunk, AgentChunkMetadata)>,
@@ -57,7 +58,14 @@ impl RunEventProjector {
                 if matches!(chunk, AgentChunk::ToolCall { .. }) {
                     self.assistant_segment = self.assistant_segment.saturating_add(1);
                 }
-                Projection::Boundary { buffered, chunk }
+                Projection::Boundary {
+                    buffered,
+                    metadata: AgentChunkMetadata {
+                        reasoning_boundary: matches!(chunk, AgentChunk::ToolCall { .. }),
+                        ..AgentChunkMetadata::default()
+                    },
+                    chunk,
+                }
             }
             AdaptedEvent::Completed(reason) => {
                 append_thinking_segments(

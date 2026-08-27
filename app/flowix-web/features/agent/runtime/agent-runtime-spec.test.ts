@@ -18,9 +18,13 @@ vi.mock("@features/memo/components/notebook-icon", () => ({
 }));
 
 describe("workspace capabilities", () => {
-  it("only DeepSeek Harness supports switching between runs", () => {
+  it("Codex and DeepSeek Harness support switching between runs", () => {
+    const codex = getAgentRuntimeSpec("codex").workspace;
+    expect(codex.switchBetweenRuns).toBe(true);
+    expect(codex.switchRequiresRuntimeRestart).toBe(false);
+    expect(codex.preservesConversationSession).toBe(true);
     expect(getAgentRuntimeSpec("deepseek-harness").workspace.switchBetweenRuns).toBe(true);
-    for (const type of ["codex", "claude", "opencode"] as const) {
+    for (const type of ["claude", "opencode"] as const) {
       expect(getAgentRuntimeSpec(type).workspace.switchBetweenRuns).toBe(false);
     }
   });
@@ -149,7 +153,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       },
     });
     expect(result.codex?.model).toBe("gpt-5.5");
-    expect(result.codex?.permissionMode).toBe("yolo");
+    expect(result.codex?.permissionMode).toBe("danger-full-access");
     expect(result.codex?.reasoningEffort).toBe("high");
   });
 
@@ -206,16 +210,18 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(supportsAgentRuntimeSetting("deepseek-harness", "permission")).toBe(true);
   });
 
-  it("exposes yolo on Codex and Claude access options", () => {
-    expect(getAgentAccessOptions("codex").map((option) => option.id)).toContain(
-      "yolo",
-    );
+  it("omits yolo from Codex App Server access options", () => {
+    expect(getAgentAccessOptions("codex").map((option) => option.id)).toEqual([
+      "danger-full-access",
+      "workspace-write",
+      "read-only",
+    ]);
     expect(getAgentAccessOptions("claude").map((option) => option.id)).toContain(
       "yolo",
     );
   });
 
-  it("passes yolo through Codex runtime config normalization", () => {
+  it("migrates legacy Codex yolo selection to full access", () => {
     const result = buildAgentRuntimeConfig({
       typeKey: "codex",
       notebookPath: "/tmp/project",
@@ -224,8 +230,8 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       codexReasoningEffort: "medium",
     });
 
-    expect(normalizeCodexPermissionMode("yolo")).toBe("yolo");
-    expect(result.codex?.permissionMode).toBe("yolo");
+    expect(normalizeCodexPermissionMode("yolo")).toBe("danger-full-access");
+    expect(result.codex?.permissionMode).toBe("danger-full-access");
   });
 
   it("passes yolo through Claude runtime config", () => {

@@ -336,9 +336,34 @@
 .agent-conversation-detail .agent-thread-card__body {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: scroll;
   scrollbar-gutter: stable both-edges;
   padding-inline: 0;
+}
+
+/* 独立对话的消息区不允许长 URL / token / 代码行把整个 surface 撑出
+ * 横向滚动。仅限第三列 AgentConversationDetail, 不影响文档内嵌卡片及其
+ * fullscreen 模式。 */
+.markdown-editor.agent-conversation-detail .agent-thread-card__messages,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content pre,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content code,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content table {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content pre {
+  white-space: pre-wrap;
 }
 
 .markdown-editor.agent-conversation-detail .agent-thread-card__messages,

@@ -82,7 +82,11 @@ const errorEvent = (message: string): AgentEvent =>
     message,
   });
 
-const toolCall = (id: string, name: string): AgentEvent =>
+const toolCall = (
+  id: string,
+  name: string,
+  reasoningBoundary = false,
+): AgentEvent =>
   event("tool_call", {
     agentType: "deepseek-harness",
     threadId: "t1",
@@ -96,6 +100,7 @@ const toolCall = (id: string, name: string): AgentEvent =>
     sourceTimestamp: 4000,
     sourceSequence: 4,
     sourceSubsequence: 0,
+    reasoningBoundary,
   });
 
 const toolResult = (id: string, name: string): AgentEvent =>
@@ -211,6 +216,43 @@ describe("reduceProjection / text streaming lifecycle", () => {
     expect(assistant).toMatchObject({ content: "answer" });
     expect(p.pending.reasoningId).toBeNull();
     expect(p.pending.assistantId).toBe("assistant-r1");
+  });
+
+  it("closes an explicit reasoning segment at a declared tool boundary", () => {
+    let p = emptyProjection();
+    p = reduceProjection(p, streamStart("r1"));
+    p = reduceProjection(p, reasoningDelta("before tool"));
+    p = reduceProjection(p, toolCall("call-1", "read", true));
+
+    expect(p.messages.find((message) => message.role === "reasoning")).toMatchObject({
+      content: "before tool",
+      isCompleted: true,
+    });
+    expect(p.pending.reasoningId).toBeNull();
+
+    p = reduceProjection(
+      p,
+      event("reasoning_delta", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "r1",
+        timestamp: 6000,
+        text: "after tool",
+        messageId: "reasoning-r1-block-1",
+        messagePhase: "updated",
+        contentMode: "delta",
+        sourceTimestamp: 6000,
+        sourceSequence: 6,
+        sourceSubsequence: 0,
+      }),
+    );
+
+    expect(p.messages.filter((message) => message.role === "reasoning")).toHaveLength(2);
+    expect(p.messages[p.messages.length - 1]).toMatchObject({
+      role: "reasoning",
+      content: "after tool",
+      isCompleted: false,
+    });
   });
 
   it("stream_end completes the reasoning row and clears pending", () => {

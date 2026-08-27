@@ -196,12 +196,19 @@ function applyToolCallToProjection(
   );
   // tool_call 是流中断点 ── 清 pendingAssistantId, 记录当前 tool 名到 run.
   const runsNext = applyRunToolState(projectionToRuns(p), event, event.name);
+  const messages = event.reasoningBoundary && p.pending.reasoningId
+    ? next.messages.map((message) =>
+        message.id === p.pending.reasoningId
+          ? { ...message, isCompleted: true }
+          : message,
+      )
+    : next.messages;
   return {
     ...p,
-    messages: next.messages,
+    messages,
     pending: {
       assistantId: next.pendingAssistantId,
-      reasoningId: p.pending.reasoningId,
+      reasoningId: event.reasoningBoundary ? null : p.pending.reasoningId,
     },
     runs: runsToProjectionRuns(runsNext),
   };

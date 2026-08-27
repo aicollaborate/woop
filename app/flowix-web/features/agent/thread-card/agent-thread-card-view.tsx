@@ -347,6 +347,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     if (composerModelButton) {
       domParts.composerActions.append(composerModelButton);
     }
+    const composerPermissionButton = this.externalAgentSettings.createComposerPermissionButton();
+    if (composerPermissionButton) {
+      domParts.composerActions.append(composerPermissionButton);
+    }
     const composerWorkspaceButton = this.externalAgentSettings.createComposerWorkspaceButton();
     if (composerWorkspaceButton) {
       domParts.composerActions.append(composerWorkspaceButton);

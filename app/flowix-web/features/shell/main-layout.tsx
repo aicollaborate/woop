@@ -931,6 +931,7 @@ export function MainLayout() {
             {/* Fixed top navigation bar */}
             {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar
+                instanceId={thirdColumnSurface.instanceId}
                 isSidebarCollapsed={isMemoListHidden}
                 onExpandSidebar={handleToggleMemoList}
                 onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}

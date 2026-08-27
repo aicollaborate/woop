@@ -49,7 +49,15 @@ function formatDeepSeekHarnessFailureMessage(content: string): string {
   // Desktop protocol prefixes runtime errors with their machine-readable
   // code, e.g. "[HARNESS_RUN_FAILED] JSON-RPC input closed". The code is
   // useful for diagnostics but is not part of the user-facing message.
-  const message = firstMessageLine.replace(/^\[[^\]]+\]\s*/, "");
+  const messageWithoutCode = firstMessageLine.replace(/^\[[^\]]+\]\s*/, "");
+
+  // Provider failures can be forwarded as `402: {"message":"...","code":"..."}`.
+  // The HTTP status and provider code are diagnostic details; only expose the
+  // human-readable upstream message in the conversation.
+  const upstreamMessage = extractJsonErrorMessage(
+    messageWithoutCode.replace(/^\d{3}:\s*/, ""),
+  );
+  const message = upstreamMessage || messageWithoutCode;
   return truncateErrorMessage(message);
 }
 

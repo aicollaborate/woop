@@ -334,6 +334,7 @@ export interface AgentChunkToolCall {
   source_timestamp?: number;
   source_sequence?: number;
   source_subsequence?: number;
+  reasoning_boundary?: boolean;
 }
 
 export interface AgentChunkToolResult {
@@ -523,6 +524,7 @@ interface AgentEventBase {
   sourceTimestamp?: number;
   sourceSequence?: number;
   sourceSubsequence?: number;
+  reasoningBoundary?: boolean;
 }
 
 export type AgentEvent =
@@ -546,6 +548,7 @@ export type AgentEvent =
       toolCallId: string;
       name: string;
       input: unknown;
+      reasoningBoundary?: boolean;
     })
   | (AgentEventBase & {
       kind: "tool_result";

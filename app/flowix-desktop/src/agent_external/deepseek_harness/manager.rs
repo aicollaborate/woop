@@ -23,7 +23,7 @@ use super::transport::DshClient;
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
-    append_workspace_context, emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
+    emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
     persist_external_chunk_for_thread_with_metadata, AgentChunkMetadata, StreamingEmitBuffer,
     STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
@@ -238,7 +238,11 @@ impl DeepSeekHarnessManager {
         self.sessions.commit(thread_id, &session_id, &cwd).await?;
         let mut events = host.subscribe(thread_id, run_id).await;
         let prompt_text = message.llm_content.as_deref().unwrap_or(&message.content);
-        let prompt = append_workspace_context(prompt_text, &cwd, &workspace_paths);
+        // Workspace roots are already passed through runtime.ensure and
+        // DSH_WORKSPACE_ROOTS. Do not append a human-readable workspace block
+        // to the user prompt: it becomes part of the persisted user message
+        // and leaks internal Flowix context into the transcript.
+        let prompt = prompt_text.to_string();
         let client_message_id = format!("flowix:{thread_id}:{run_id}");
         let start = protocol::run_start_request(
             host.next_request_id(),
@@ -263,9 +267,14 @@ impl DeepSeekHarnessManager {
                     self.runs.touch(thread_id, run_id).await;
                     match projector.accept(protocol::adapt_event(&value, thread_id)) {
                         Projection::Buffered => {}
-                        Projection::Boundary { buffered, chunk } => {
+                        Projection::Boundary { buffered, chunk, metadata } => {
                             self.emit_buffered(buffered, app_handle, run_id).await;
-                            self.emit_and_persist_lifecycle_chunk(app_handle, &chunk, run_id).await;
+                            self.emit_and_persist_boundary_chunk(
+                                app_handle,
+                                &chunk,
+                                &metadata,
+                                run_id,
+                            ).await;
                         }
                         Projection::Completed { buffered, reason } => {
                             self.emit_buffered(buffered, app_handle, run_id).await;
@@ -309,6 +318,26 @@ impl DeepSeekHarnessManager {
             .await;
             emit_chunk_with_run_id_and_metadata(app, &chunk, AGENT_TYPE, run_id, &metadata);
         }
+    }
+
+    async fn emit_and_persist_boundary_chunk(
+        &self,
+        app: &tauri::AppHandle,
+        chunk: &AgentChunk,
+        metadata: &AgentChunkMetadata,
+        run_id: &str,
+    ) {
+        persist_external_chunk_for_thread_with_metadata(
+            &self.thread_manager,
+            AGENT_TYPE,
+            chunk.thread_id(),
+            chunk,
+            run_id,
+            None,
+            metadata,
+        )
+        .await;
+        emit_chunk_with_run_id_and_metadata(app, chunk, AGENT_TYPE, run_id, metadata);
     }
 
     pub(crate) async fn ensure_host(

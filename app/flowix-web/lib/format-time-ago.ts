@@ -9,7 +9,9 @@ import type { I18nKey, I18nParams } from '@/lib/i18n';
 export function formatTimeAgo(
   timestamp: number,
   t: (key: I18nKey, params?: I18nParams) => string,
+  options?: { compact?: boolean },
 ): string {
+  const compact = options?.compact ?? false;
   const now = Date.now();
   const diff = now - timestamp;
   const seconds = Math.floor(diff / 1000);
@@ -19,11 +21,11 @@ export function formatTimeAgo(
 
   if (days > 30) {
     const months = Math.floor(days / 30);
-    return t('memo.time.monthsAgo', { m: months } satisfies I18nParams);
+    return t(compact ? 'agent.time.months' : 'memo.time.monthsAgo', { m: months } satisfies I18nParams);
   }
-  if (days > 0) return t('memo.time.daysAgo', { d: days } satisfies I18nParams);
-  if (hours > 0) return t('memo.time.hoursAgo', { h: hours } satisfies I18nParams);
-  if (minutes > 0) return t('memo.time.minutesAgo', { m: minutes } satisfies I18nParams);
-  if (seconds > 0) return t('memo.time.secondsAgo', { s: seconds } satisfies I18nParams);
-  return t('memo.time.justNow');
+  if (days > 0) return t(compact ? 'agent.time.days' : 'memo.time.daysAgo', { d: days } satisfies I18nParams);
+  if (hours > 0) return t(compact ? 'agent.time.hours' : 'memo.time.hoursAgo', { h: hours } satisfies I18nParams);
+  if (minutes > 0) return t(compact ? 'agent.time.minutes' : 'memo.time.minutesAgo', { m: minutes } satisfies I18nParams);
+  if (seconds > 0) return t(compact ? 'agent.time.seconds' : 'memo.time.secondsAgo', { s: seconds } satisfies I18nParams);
+  return t(compact ? 'agent.time.justNow' : 'memo.time.justNow');
 }

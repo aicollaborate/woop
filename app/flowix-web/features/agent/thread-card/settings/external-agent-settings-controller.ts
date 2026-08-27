@@ -40,7 +40,6 @@ import {
   updateExternalAgentEmptyControl,
   type ExternalAgentEmptyControlKind,
 } from "@features/agent/thread-card/settings/external-agent-settings";
-import { createModelSwitchIcon } from "@features/agent/thread-card/agent-thread-card-icons";
 import {
   createInitialWorkspaceState,
   normalizeConversationWorkspaceState,
@@ -122,6 +121,7 @@ export class ExternalAgentSettingsController {
 
   private modelButton: HTMLButtonElement | null = null;
   private composerModelButton: HTMLButtonElement | null = null;
+  private composerPermissionButton: HTMLButtonElement | null = null;
   private composerWorkspaceButton: HTMLButtonElement | null = null;
   private reasoningButton: HTMLButtonElement | null = null;
   private modeButton: HTMLButtonElement | null = null;
@@ -501,17 +501,22 @@ export class ExternalAgentSettingsController {
   /** Compact model switch trigger used by the expanded composer footer. */
   createComposerModelButton(): HTMLButtonElement | null {
     if (!this.supportsRuntimeSetting("model")) return null;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "agent-thread-card__composer-model";
-    button.setAttribute("aria-haspopup", "menu");
-    button.setAttribute("aria-expanded", "false");
-    button.append(createModelSwitchIcon());
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.toggleSettingsPopover("model", button);
-    });
-    button.addEventListener("mousedown", (event) => event.stopPropagation());
+    const button = createExternalAgentWorkspaceControl(
+      this.t("agent.model.title"),
+      this.getCurrentExternalModelLabel(),
+      (anchor) => this.toggleSettingsPopover("model", anchor),
+    );
+    button.classList.replace(
+      "agent-thread-card__composer-workspace",
+      "agent-thread-card__composer-model",
+    );
+    const value = button.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-workspace-value",
+    );
+    value?.classList.replace(
+      "agent-thread-card__composer-workspace-value",
+      "agent-thread-card__composer-model-value",
+    );
     this.composerModelButton = button;
     this.refreshComposerModelButton();
     return button;
@@ -528,9 +533,38 @@ export class ExternalAgentSettingsController {
     return button;
   }
 
+  /** Compact permission switcher placed beside the workspace control. */
+  createComposerPermissionButton(): HTMLButtonElement | null {
+    if (!this.supportsRuntimeSetting("permission")) return null;
+    const label = this.t("agent.permission.title");
+    const button = createExternalAgentWorkspaceControl(
+      label,
+      this.getCurrentPermissionLabel(),
+      (anchor) => this.toggleSettingsPopover("permission", anchor),
+    );
+    button.classList.replace(
+      "agent-thread-card__composer-workspace",
+      "agent-thread-card__composer-permission",
+    );
+    const value = button.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-workspace-value",
+    );
+    value?.classList.replace(
+      "agent-thread-card__composer-workspace-value",
+      "agent-thread-card__composer-permission-value",
+    );
+    this.composerPermissionButton = button;
+    this.refreshComposerPermissionButton();
+    return button;
+  }
+
   refreshComposerModelButton(): void {
     if (!this.composerModelButton) return;
     const label = this.getCurrentExternalModelLabel();
+    const valueEl = this.composerModelButton.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-model-value",
+    );
+    if (valueEl) valueEl.textContent = label;
     this.composerModelButton.title = `${this.t("agent.model.title")}: ${label}`;
     this.composerModelButton.setAttribute(
       "aria-label",
@@ -556,13 +590,35 @@ export class ExternalAgentSettingsController {
     const workspaceState = normalizeConversationWorkspaceState(instance?.runtimeConfig);
     const hasStarted = Boolean(instance?.threadId) || Boolean(workspaceState?.appliedRevision);
     const capability = getAgentRuntimeSpec(this.getTypeKey()).workspace;
-    const disabled = this.isRunning() || (hasStarted && !capability.switchBetweenRuns);
+    // For Codex, workspace selection only changes the desired revision. The
+    // already-started turn owns the runtime config it was sent with, so a
+    // selection made while it runs can safely be queued for the next turn.
+    // Keep the existing in-flight restriction for runtimes that do not make
+    // that App Server guarantee.
+    const allowsInFlightSelection = this.getTypeKey() === "codex";
+    const disabled =
+      (!allowsInFlightSelection && this.isRunning()) ||
+      (hasStarted && !capability.switchBetweenRuns);
     this.composerWorkspaceButton.disabled = disabled;
     this.composerWorkspaceButton.setAttribute("aria-disabled", disabled ? "true" : "false");
   }
 
+  private refreshComposerPermissionButton(): void {
+    if (!this.composerPermissionButton) return;
+    const value = this.getCurrentPermissionLabel();
+    const valueEl = this.composerPermissionButton.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-permission-value",
+    );
+    if (valueEl) valueEl.textContent = value;
+    const label = this.t("agent.permission.title");
+    this.composerPermissionButton.title = `${label}: ${value}`;
+    this.composerPermissionButton.setAttribute("aria-label", `${label}: ${value}`);
+    this.refreshCodexPermissionFrozenState();
+  }
+
   refreshEmptySettings(): void {
     this.refreshComposerModelButton();
+    this.refreshComposerPermissionButton();
     this.refreshComposerWorkspaceButton();
     if (this.workspaceDisplay) {
       const value = this.workspaceDisplay.querySelector<HTMLElement>(
@@ -588,6 +644,7 @@ export class ExternalAgentSettingsController {
         this.getCurrentPermissionLabel(),
       );
     }
+    this.refreshCodexPermissionFrozenState();
     if (this.modeButton) {
       updateExternalAgentEmptyControl(
         this.modeButton,
@@ -652,6 +709,28 @@ export class ExternalAgentSettingsController {
     const primary = resolvePrimaryWorkspace({ defaultFiles, notebookPath });
     const path = snapshotPath || (primary.kind === "empty" ? "" : primary.path);
     return path;
+  }
+
+  /**
+   * Codex App Server receives the legacy sandbox setting only on thread/start.
+   * A resumed thread therefore cannot apply a changed permission mode, so make
+   * that immutable once the product conversation has a Codex thread.
+   */
+  private refreshCodexPermissionFrozenState(): void {
+    const instance = this.getInstanceId()
+      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
+      : undefined;
+    const disabled =
+      this.getTypeKey() === "codex" &&
+      (this.isRunning() || Boolean(instance?.threadId));
+    for (const button of [this.permissionButton, this.composerPermissionButton]) {
+      if (!button) continue;
+      button.disabled = disabled;
+      button.setAttribute("aria-disabled", disabled ? "true" : "false");
+    }
+    if (disabled && this.open && this.kind === "permission") {
+      this.setSettingsPopoverOpen(false);
+    }
   }
 
   toggleSettingsPopover(
@@ -947,6 +1026,14 @@ export class ExternalAgentSettingsController {
     this.composerModelButton?.classList.toggle(
       "agent-thread-card__composer-model--open",
       modelExpanded,
+    );
+    this.composerPermissionButton?.setAttribute(
+      "aria-expanded",
+      open && kind === "permission" ? "true" : "false",
+    );
+    this.composerPermissionButton?.classList.toggle(
+      "agent-thread-card__composer-permission--open",
+      open && kind === "permission",
     );
     this.composerWorkspaceButton?.setAttribute(
       "aria-expanded",

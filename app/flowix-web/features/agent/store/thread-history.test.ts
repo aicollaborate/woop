@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { ChatMessage } from "@/types";
 import {
+  areMessagesEquivalent,
+  filterRenderableHistoryMessages,
   mergeLiveMessagesIntoRenderableMessages,
   mergeMessagesForThreadRender,
   replaceCompletedRunWithHistory,
@@ -22,6 +24,32 @@ function message(
 }
 
 describe("mergeMessagesForThreadRender", () => {
+  it("removes the system context from historical user messages", () => {
+    expect(filterRenderableHistoryMessages([
+      message(
+        "u1",
+        "user",
+        "question\n<## CONTEXT PROMPT ##>\nhidden context",
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ])).toEqual([
+      message("u1", "user", "question", "2026-01-01T00:00:00.000Z"),
+    ]);
+  });
+
+  it("removes the Flowix workspace context from historical user messages", () => {
+    expect(filterRenderableHistoryMessages([
+      message(
+        "u2",
+        "user",
+        "你好\n\n[Flowix workspace context]\ninternal workspace details",
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ])).toEqual([
+      message("u2", "user", "你好", "2026-01-01T00:00:00.000Z"),
+    ]);
+  });
+
   it("keeps a later live user message with the same visible content", () => {
     const history = [
       message("history-user-1", "user", "same", "2026-01-01T00:00:00.000Z"),
@@ -72,6 +100,17 @@ describe("mergeLiveMessagesIntoRenderableMessages", () => {
 });
 
 describe("replaceCompletedRunWithHistory", () => {
+  it("treats separately allocated but identical history messages as equivalent", () => {
+    const existing = [
+      message("m1", "assistant", "done", "2026-01-01T00:00:01.000Z"),
+    ];
+    const history = [
+      message("m1", "assistant", "done", "2026-01-01T00:00:01.000Z"),
+    ];
+
+    expect(areMessagesEquivalent(existing, history)).toBe(true);
+  });
+
   it("replaces a partial live run while preserving older loaded messages", () => {
     const existing = [
       message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),
@@ -86,6 +125,44 @@ describe("replaceCompletedRunWithHistory", () => {
     expect(
       replaceCompletedRunWithHistory(existing, history, "run-1").map((m) => m.id),
     ).toEqual(["older-user", "user-run-1", "assistant-final"]);
+  });
+
+  it("keeps a live tool in place when the completion snapshot is missing it", () => {
+    const existing = [
+      message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),
+      message(
+        "msg:codex:run-1:user:user-run-1",
+        "user",
+        "ask",
+        "2026-01-01T00:00:01.000Z",
+      ),
+      {
+        ...message("live-tool", "tool", "tool output", "2026-01-01T00:00:02.000Z"),
+        toolCallId: "msg:codex:run-1:tool-call:call-1",
+        toolName: "command_execution",
+      },
+      message("assistant-live", "assistant", "part", "2026-01-01T00:00:03.000Z"),
+    ];
+    const history = [
+      message(
+        "msg:codex:run-1:user:user-run-1",
+        "user",
+        "ask",
+        "2026-01-01T00:00:01.000Z",
+      ),
+      message("assistant-final", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
+    ];
+
+    expect(
+      replaceCompletedRunWithHistory(existing, history, "run-1", "codex").map(
+        (m) => m.id,
+      ),
+    ).toEqual([
+      "older-user",
+      "msg:codex:run-1:user:user-run-1",
+      "live-tool",
+      "assistant-final",
+    ]);
   });
 });
 

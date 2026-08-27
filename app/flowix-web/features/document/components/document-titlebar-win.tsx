@@ -8,11 +8,11 @@ import {
   type DocumentState,
   ExternalTitlebarBadge,
   MemoActions,
+  DOCUMENT_TITLEBAR_ICON_BUTTON_WIN,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
 
-const ICON_BTN =
-  'w-8 h-8 flex enabled:!cursor-pointer disabled:!cursor-not-allowed items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-colors';
+const ICON_BTN = DOCUMENT_TITLEBAR_ICON_BUTTON_WIN;
 
 export function DocumentTitlebarWin({
   document: { currentMemo, externalFilePath = null },
@@ -116,7 +116,7 @@ export function DocumentTitlebarWin({
 
       <div
         data-tauri-drag-region
-        className={`${windowTabs ? '' : 'ml-auto'} flex shrink-0 items-center gap-2 pr-5`}
+        className={`${windowTabs ? '' : 'ml-auto'} flex shrink-0 items-center gap-2 pr-4`}
       >
         {documentState === 'external' && (
           <ExternalTitlebarBadge />

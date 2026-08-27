@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, writeFileSync as writeFile } from 'node:fs'
+import { accessSync, constants, existsSync, writeFileSync as writeFile } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -94,7 +94,29 @@ function readdirSafe(path) {
 // package link as the readiness marker. This keeps incremental builds fast
 // without assuming that every workspace package is hoisted to the top level.
 const vendorStore = resolve(vendor, 'node_modules/.pnpm')
+// The Host bundle resolves pi-ai through esbuild's nodePaths, but the child
+// development DSH CLI is an unbundled ESM entry.  It therefore also needs the
+// workspace links created under apps/cli/node_modules; checking only pi-ai
+// allowed a partially installed checkout to build a Host whose child runtime
+// immediately failed with ERR_MODULE_NOT_FOUND for dsh-app-boot.
 const vendorReady = existsSync(resolve(vendorStore, 'node_modules/@earendil-works/pi-ai'))
+  && existsSync(resolve(vendor, 'apps/cli/node_modules/@deepseek-ai/dsh-app-boot/package.json'))
+  && existsSync(resolve(vendor, 'packages/sdk/server/node_modules/@deepseek-ai/dsh-session/package.json'))
+
+function executable(path) {
+  if (process.platform === 'win32') return existsSync(path)
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const devPnpm = resolve(root, 'scripts/tooling/pnpm')
+if (existsSync(devPnpm) && !executable(devPnpm)) {
+  throw new Error(`development pnpm wrapper is not executable: ${devPnpm}; run chmod +x scripts/tooling/pnpm`)
+}
 if (!vendorReady) {
   process.stdout.write('vendored harness workspace is missing; running corepack pnpm install...' + '\n')
   await new Promise((done, fail) => {

@@ -52,7 +52,10 @@ export class SessionPool {
       return { sessionId: existing.spec.sessionId, generation: existing.generation }
     }
     const generation = (existing?.generation ?? 0) + 1
-    if (existing !== undefined) await this.closeSlot(existing)
+    // A changed model/workspace is a runtime reconfiguration, not a
+    // conversation deletion.  Stop only the old transport so the durable
+    // Harness session can be resumed by the new runtime below.
+    if (existing !== undefined) await this.stopRuntime(existing)
     const launch = runtimeLaunch(spec)
     const harness = new DeepSeekHarness({
       launch: {
@@ -77,7 +80,9 @@ export class SessionPool {
     ;(harness.client as unknown as { start(): void }).start()
     // This is the same minting path used by the official SDK. Flowix only
     // supplies an id when resuming a previously mapped Harness session.
-    const sessionId = spec.sessionId ?? harness.session().id
+    // Callers normally provide the persisted id, but retaining the old id here
+    // makes reconfiguration safe even when an older caller omits it.
+    const sessionId = spec.sessionId ?? existing?.spec.sessionId ?? harness.session().id
     const resolvedSpec: ResolvedRuntimeSpec = { ...spec, sessionId }
     this.slots.set(spec.threadId, {
       spec: resolvedSpec,
@@ -184,7 +189,14 @@ export class SessionPool {
     const client = harness.client as unknown as { start(): void }
     client.start()
     try {
-      const snapshot = await bridge.history(sessionId)
+      // History is the first operation after an application restart. Unlike
+      // the normal run path there is no runtime.ensure/initialize handshake
+      // before this method, so the SDK may still be mounting the profile
+      // plugins when the bridge request arrives. Wait for the bridge and its
+      // persistence provider instead of treating that startup race as an
+      // empty conversation in the UI.
+      await bridge.capabilities()
+      const snapshot = await readHistoryWhenReady(bridge, sessionId)
       const snapshotSeq = requestedSnapshot === undefined
         ? snapshot.snapshotSeq
         : Math.min(requestedSnapshot, snapshot.snapshotSeq)
@@ -228,7 +240,7 @@ export class SessionPool {
       }
       if (slot.currentRun === marker) {
         slot.currentRun = undefined
-        await this.closeSlot(slot)
+        await this.stopRuntime(slot)
       }
     }
   }
@@ -309,7 +321,7 @@ export class SessionPool {
       if (slot.currentRun === marker) {
         slot.currentRun = undefined
         if (slot.reusable) await this.retainIdle(slot)
-        else await this.closeSlot(slot)
+        else await this.stopRuntime(slot)
       }
     }
   }
@@ -352,11 +364,11 @@ export class SessionPool {
     slot.lastUsedAt = Date.now()
     this.clearIdleTimer(slot)
     if (this.options.idleTtlMs === 0) {
-      await this.closeSlot(slot)
+      await this.stopRuntime(slot)
       return
     }
     slot.idleTimer = setTimeout(() => {
-      if (slot.currentRun === undefined) void this.closeSlot(slot)
+      if (slot.currentRun === undefined) void this.stopRuntime(slot)
     }, this.options.idleTtlMs)
     slot.idleTimer.unref()
 
@@ -365,7 +377,7 @@ export class SessionPool {
       .sort((left, right) => left.lastUsedAt - right.lastUsedAt)
     const excess = idle.length - this.options.maxIdleRuntimes
     if (excess > 0) {
-      await Promise.allSettled(idle.slice(0, excess).map(async candidate => await this.closeSlot(candidate)))
+      await Promise.allSettled(idle.slice(0, excess).map(async candidate => await this.stopRuntime(candidate)))
     }
   }
 
@@ -380,6 +392,13 @@ export class SessionPool {
         // gone away or the session was disposed by DSH itself.
       }
     }
+    await slot.harness.close()
+  }
+
+  /** Stop a runtime transport while deliberately preserving its session. */
+  private async stopRuntime(slot: RuntimeSlot): Promise<void> {
+    if (this.slots.get(slot.spec.threadId) === slot) this.slots.delete(slot.spec.threadId)
+    this.clearIdleTimer(slot)
     await slot.harness.close()
   }
 
@@ -398,6 +417,23 @@ export class SessionPool {
       generation: slot.generation,
       event,
     })
+  }
+}
+
+async function readHistoryWhenReady(
+  bridge: FlowixDshBridgeClient,
+  sessionId: string,
+): Promise<Awaited<ReturnType<FlowixDshBridgeClient['history']>>> {
+  const attempts = 100
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await bridge.history(sessionId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const retryable = /session persistence is unavailable|bridge is not attached|unknown DeepSeek Harness SDK runtime method/i.test(message)
+      if (!retryable || attempt >= attempts - 1) throw error
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
   }
 }
 

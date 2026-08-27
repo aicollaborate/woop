@@ -179,11 +179,7 @@ pub async fn agent_conversation_delete_for_thread(
 
 #[tauri::command]
 pub async fn codex_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = &state.thread_manager;
-    manager
-        .list_codex_event_threads()
-        .await
-        .map_err(|e| e.to_string())
+    state.codex_app_server.list_threads().await
 }
 
 #[tauri::command]
@@ -192,40 +188,15 @@ pub async fn codex_thread_get(
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
     let manager = &state.thread_manager;
-    if let Some(mut page) = manager
-        .get_codex_event_messages_page(&thread_id, None, 50)
+    let session_id = manager
+        .get_external_session(&thread_id, "codex")
         .await
         .map_err(|e| e.to_string())?
-    {
-        let mut messages = page.messages;
-        while page.has_more {
-            page = manager
-                .get_codex_event_messages_page(&thread_id, page.oldest_sequence, 50)
-                .await
-                .map_err(|e| e.to_string())?
-                .unwrap_or(ThreadMessagesPage {
-                    messages: Vec::new(),
-                    oldest_sequence: None,
-                    has_more: false,
-                    snapshot_sequence: None,
-                });
-            let mut combined = page.messages;
-            combined.extend(messages);
-            messages = combined;
-        }
-        return Ok(GetThreadResponse { messages });
-    }
-
-    let session_id = if crate::agent_external::codex::is_codex_session_id(&thread_id) {
-        thread_id
-    } else {
-        manager
-            .get_external_session(&thread_id, "codex")
-            .await
-            .map_err(|e| e.to_string())?
-            .unwrap_or(thread_id)
-    };
-    let messages = crate::agent_external::codex::get_session(&session_id).await?;
+        .unwrap_or(thread_id);
+    let messages = state
+        .codex_app_server
+        .get_thread_messages(&session_id)
+        .await?;
     Ok(GetThreadResponse { messages })
 }
 
@@ -237,24 +208,15 @@ pub async fn codex_thread_get_page(
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
     let manager = &state.thread_manager;
-    if let Some(page) = manager
-        .get_codex_event_messages_page(&thread_id, before_sequence, limit)
+    let session_id = manager
+        .get_external_session(&thread_id, "codex")
         .await
         .map_err(|e| e.to_string())?
-    {
-        return Ok(page);
-    }
-
-    let session_id = if crate::agent_external::codex::is_codex_session_id(&thread_id) {
-        thread_id
-    } else {
-        manager
-            .get_external_session(&thread_id, "codex")
-            .await
-            .map_err(|e| e.to_string())?
-            .unwrap_or(thread_id)
-    };
-    crate::agent_external::codex::get_session_page(&session_id, before_sequence, limit).await
+        .unwrap_or(thread_id);
+    state
+        .codex_app_server
+        .get_thread_messages_page(&session_id, before_sequence, limit)
+        .await
 }
 
 #[tauri::command]
@@ -262,15 +224,12 @@ pub async fn codex_thread_session_id(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    if crate::agent_external::codex::is_codex_session_id(&thread_id) {
-        return Ok(Some(thread_id));
-    }
-
     let manager = &state.thread_manager;
-    manager
+    let session = manager
         .get_external_session(&thread_id, "codex")
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(session.or(Some(thread_id)))
 }
 
 #[tauri::command]

@@ -9,6 +9,7 @@ import {
   getHistoryPage,
   getInitialThreadHistory,
   HISTORY_PAGE_SIZE,
+  areMessagesEquivalent,
   mergeHistoricalMessages,
   mergeLiveMessagesIntoRenderableMessages,
   prependHistoricalMessages,
@@ -210,23 +211,43 @@ export function createThreadHistorySlice(
           HISTORY_PAGE_SIZE,
         );
         if (!isRequestCurrent(threadId, requestEpoch)) return;
-        const messages = filterRenderableHistoryMessages(page.messages);
-        get().setThreadProjection(threadId, (projection) => ({
-          ...projection,
-          messages: replaceCompletedRunWithHistory(
+        const historicalMessages = filterRenderableHistoryMessages(page.messages);
+        get().setThreadProjection(threadId, (projection) => {
+          const messages = replaceCompletedRunWithHistory(
             projection.messages,
-            messages,
+            historicalMessages,
             runId,
             agentType,
-          ),
-          pagination: {
-            initialStatus: "ready",
+          );
+          const nextPagination = {
+            initialStatus: "ready" as const,
             oldestSequence: page.oldestSequence,
             hasMoreHistory: page.hasMore,
             loadingInitial: false,
             loadingMore: false,
-          },
-        }));
+          };
+          const messagesUnchanged = areMessagesEquivalent(
+            projection.messages,
+            messages,
+          );
+          const paginationUnchanged =
+            projection.pagination.initialStatus === nextPagination.initialStatus &&
+            projection.pagination.oldestSequence === nextPagination.oldestSequence &&
+            projection.pagination.hasMoreHistory === nextPagination.hasMoreHistory &&
+            projection.pagination.loadingInitial === nextPagination.loadingInitial &&
+            projection.pagination.loadingMore === nextPagination.loadingMore;
+          if (messagesUnchanged && paginationUnchanged) return projection;
+          return {
+            ...projection,
+            // History adapters allocate fresh objects. Preserve the existing
+            // array when the persisted view is already identical, avoiding a
+            // needless NodeView/conversation render after every run.
+            messages: messagesUnchanged
+              ? projection.messages
+              : messages,
+            pagination: nextPagination,
+          };
+        });
       } catch (error) {
         console.error("[AgentSession] Failed to reconcile completed run:", error);
       }

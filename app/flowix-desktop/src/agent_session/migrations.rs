@@ -274,11 +274,47 @@ impl super::store::ThreadManager {
         };
 
         if !columns.iter().any(|column| column == "title") && has_thread_foreign_key {
-            conn.execute_batch(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_conversation_thread_unique
-                 ON agent_conversation_instances(thread_id)
-                 WHERE thread_id IS NOT NULL;",
+            let tx = conn.transaction()?;
+            tx.execute_batch(
+                "
+                -- The unique index was added after some releases had already
+                -- written more than one instance for the same product thread.
+                -- Pick one canonical row before creating the constraint. Prefer
+                -- the newest row; on a timestamp tie, retain the row with the
+                -- richer source linkage, then use instance_id for determinism.
+                DELETE FROM agent_conversation_instances
+                WHERE thread_id IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM agent_conversation_instances newer
+                    WHERE newer.thread_id = agent_conversation_instances.thread_id
+                      AND (
+                        newer.updated_at > agent_conversation_instances.updated_at
+                        OR (
+                            newer.updated_at = agent_conversation_instances.updated_at
+                            AND (
+                                (newer.source_memo_id IS NOT NULL AND agent_conversation_instances.source_memo_id IS NULL)
+                                OR (
+                                    (newer.source_memo_id IS NOT NULL) = (agent_conversation_instances.source_memo_id IS NOT NULL)
+                                    AND newer.source_document_path IS NOT NULL
+                                    AND agent_conversation_instances.source_document_path IS NULL
+                                )
+                                OR (
+                                    (newer.source_memo_id IS NOT NULL) = (agent_conversation_instances.source_memo_id IS NOT NULL)
+                                    AND (newer.source_document_path IS NOT NULL) = (agent_conversation_instances.source_document_path IS NOT NULL)
+                                    AND newer.instance_id > agent_conversation_instances.instance_id
+                                )
+                            )
+                        )
+                      )
+                  );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_conversation_thread_unique
+                    ON agent_conversation_instances(thread_id)
+                    WHERE thread_id IS NOT NULL;
+                ",
             )?;
+            tx.commit()?;
             return Ok(());
         }
 

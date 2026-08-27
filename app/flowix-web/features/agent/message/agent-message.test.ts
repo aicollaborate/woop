@@ -61,6 +61,20 @@ describe("DeepSeek Harness reconnect error display", () => {
     ).toBe("DeepSeek Harness 重连失败\n\n失败原因：JSON-RPC input closed");
   });
 
+  it("shows only the upstream message from a status-prefixed JSON error", () => {
+    const content =
+      '402: {"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}';
+
+    expect(
+      getAgentMessageVisibleContent(errorMessage({ content }), "zh-CN"),
+    ).toBe("DeepSeek Harness 重连失败\n\n失败原因：Insufficient Balance");
+    expect(
+      getAgentMessageVisibleContent(errorMessage({ content }), "en-US"),
+    ).toBe(
+      "DeepSeek Harness reconnect failed\n\nFailure reason: Insufficient Balance",
+    );
+  });
+
   it("shows the upstream provider message before diagnostic metadata", () => {
     expect(
       getAgentMessageVisibleContent(

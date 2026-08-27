@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 
 use super::claude::{ClaudeCliManager, AGENT_TYPE as CLAUDE_AGENT_TYPE};
-use super::codex::{CodexCliManager, AGENT_TYPE as CODEX_AGENT_TYPE};
+use super::codex::{CodexAppServerManager, AGENT_TYPE as CODEX_AGENT_TYPE};
 use super::deepseek_harness::{DeepSeekHarnessManager, AGENT_TYPE as DSH_AGENT_TYPE};
 use super::hermes::HermesCliManager;
 use super::opencode::{OpenCodeAcpManager, AGENT_TYPE as OPENCODE_AGENT_TYPE};
@@ -93,7 +93,7 @@ macro_rules! impl_external_runtime {
     };
 }
 
-impl_external_runtime!(CodexCliManager, CODEX_AGENT_TYPE);
+impl_external_runtime!(CodexAppServerManager, CODEX_AGENT_TYPE);
 impl_external_runtime!(ClaudeCliManager, CLAUDE_AGENT_TYPE);
 impl_external_runtime!(DeepSeekHarnessManager, DSH_AGENT_TYPE);
 impl_external_runtime!(HermesCliManager, HERMES_AGENT_TYPE);
@@ -105,7 +105,7 @@ pub struct ExternalRuntimeRegistry {
 
 impl ExternalRuntimeRegistry {
     pub fn new(
-        codex: Arc<CodexCliManager>,
+        codex: Arc<CodexAppServerManager>,
         claude: Arc<ClaudeCliManager>,
         hermes: Arc<HermesCliManager>,
         opencode: Arc<OpenCodeAcpManager>,
@@ -197,7 +197,7 @@ mod tests {
         let user_config = Arc::new(UserConfigStore::new(temp.path().to_path_buf()));
         let dsh_sessions = user_config.dsh_sessions_dir();
         let registry = ExternalRuntimeRegistry::new(
-            Arc::new(CodexCliManager::new(threads.clone())),
+            Arc::new(CodexAppServerManager::new(threads.clone())),
             Arc::new(ClaudeCliManager::new(threads.clone())),
             Arc::new(HermesCliManager::new(threads.clone())),
             Arc::new(OpenCodeAcpManager::new(threads.clone())),

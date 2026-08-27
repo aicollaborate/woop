@@ -68,7 +68,7 @@ pub async fn agent_runtime_status(
     let cfg = &state.agent_external_config;
     let mut codex = external_availability(cfg.get_entry("codex"), "Codex CLI");
     if codex.available {
-        codex.reason = crate::agent_external::codex::cli::preflight_codex().err();
+        codex.reason = crate::agent_external::codex::preflight_codex().err();
     }
     let claude = external_availability(cfg.get_entry("claude"), "Claude Code CLI");
     let hermes = external_availability(cfg.get_entry("hermes"), "Hermes Agent CLI");

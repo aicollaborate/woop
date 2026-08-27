@@ -6,7 +6,10 @@
 //! child process of Flowix; this keeps the existing stdio protocol and avoids
 //! exposing a local TCP service.
 
-use futures::{future::{AbortHandle, Abortable}, StreamExt};
+use futures::{
+    future::{AbortHandle, Abortable},
+    StreamExt,
+};
 use reqwest::{blocking::Client as BlockingClient, Client};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -583,7 +586,9 @@ fn download_artifact(
 
     match result {
         Ok(result) => result,
-        Err(_) => Err("DSH download cancelled; the partial download was kept for resume".to_string()),
+        Err(_) => {
+            Err("DSH download cancelled; the partial download was kept for resume".to_string())
+        }
     }
 }
 

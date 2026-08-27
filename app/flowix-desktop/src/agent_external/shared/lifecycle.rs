@@ -11,6 +11,10 @@ pub struct AgentChunkMetadata {
     pub source_timestamp: Option<i64>,
     pub source_sequence: Option<u64>,
     pub source_subsequence: Option<u32>,
+    /// The event marks a boundary after which the current reasoning segment
+    /// cannot continue. This is intentionally semantic rather than runtime
+    /// specific so the frontend does not need to inspect `agentType`.
+    pub reasoning_boundary: bool,
 }
 
 impl AgentChunkMetadata {
@@ -53,6 +57,9 @@ impl AgentChunkMetadata {
                 "source_subsequence".to_string(),
                 Value::Number(source_subsequence.into()),
             );
+        }
+        if self.reasoning_boundary {
+            object.insert("reasoning_boundary".to_string(), Value::Bool(true));
         }
     }
 }

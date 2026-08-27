@@ -128,6 +128,35 @@ describe("tool chunk idempotency", () => {
     });
   });
 
+  it("starts a new assistant row after a result-only tool event", () => {
+    const beforeTool = applyTextChunk(emptyState(), "before", {
+      id: "assistant-before-tool",
+      phase: "updated",
+      contentMode: "delta",
+    });
+    const toolResult = applyToolResultChunk(
+      beforeTool,
+      "future-result-only",
+      "future_connector",
+      { content: "tool output" },
+      "codex",
+    );
+    const afterTool = applyTextChunk(toolResult, "after", {
+      contentMode: "delta",
+    });
+
+    expect(afterTool.messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(afterTool.messages.map((message) => message.content)).toEqual([
+      "before",
+      "tool output",
+      "after",
+    ]);
+  });
+
   it("inserts a reconciled tool before a later assistant by source time", () => {
     const assistant = applyTextChunk(emptyState(), "final answer", {
       id: "assistant-item-2",

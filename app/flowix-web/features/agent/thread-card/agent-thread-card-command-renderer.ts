@@ -54,7 +54,8 @@ function createAgentThreadCardCommandLine(
     argText.className = "agent-thread-card__command-args-inline";
     const argsText = inlineArgs.join(" ");
     argText.textContent = truncateToolMessageForDisplay(argsText);
-    argText.title = argText.textContent;
+    // CSS 在第三列只展示末尾约 10em；title 保留完整参数，方便检查历史命令。
+    argText.title = argsText;
     line.append(argText);
   }
 

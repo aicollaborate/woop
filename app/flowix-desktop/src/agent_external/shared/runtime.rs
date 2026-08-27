@@ -22,7 +22,7 @@ pub fn append_workspace_context(prompt: &str, cwd: &Path, workspace_paths: &[Str
     }
 
     format!(
-        "{prompt}\n\n[Flowix workspace context]\nThe user has selected these additional local workspace directories. Read and search them when relevant to the request; whether changes are allowed is controlled by the active runtime permission mode:\n{}",
+        "{prompt}\n\n<## CONTEXT PROMPT ##>\nThe user has selected these additional local workspace directories. Read and search them when relevant to the request; whether changes are allowed is controlled by the active runtime permission mode:\n{}",
         additional
             .iter()
             .map(|path| format!("- {path}"))

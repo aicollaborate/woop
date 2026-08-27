@@ -49,7 +49,14 @@ export async function getInitialThreadHistory(
 export function filterRenderableHistoryMessages(
   messages: ChatMessage[],
 ): ChatMessage[] {
-  return messages.filter((m) => !isEmptyAssistantMessage(m));
+  return messages
+    .filter((m) => !isEmptyAssistantMessage(m))
+    .map((message) => {
+      if (message.role !== "user") return message;
+      const content = stripSystemBlock(message.content || "");
+      return content === message.content ? message : { ...message, content };
+    })
+    .filter((message) => message.role !== "user" || message.content.trim() !== "");
 }
 
 // Cheap content fingerprint used as a Map key for dedup. Two independent
@@ -301,6 +308,73 @@ function messageTime(message: ChatMessage): number {
 }
 
 /**
+ * Compare the render-relevant message shape while ignoring object identity.
+ * History adapters return fresh objects, so replacing an equivalent message
+ * array would otherwise cause a needless conversation re-render after every
+ * completed run.
+ */
+export function areMessagesEquivalent(
+  left: ChatMessage[],
+  right: ChatMessage[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+
+  return left.every((message, index) => {
+    const other = right[index];
+    return JSON.stringify({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      notice: message.notice,
+      errorDetails: message.errorDetails,
+      llmContent: message.llmContent,
+      systemReminderDirectory: message.systemReminderDirectory,
+      systemReminderDocumentPath: message.systemReminderDocumentPath,
+      timestamp: message.timestamp,
+      sourceTimestamp: message.sourceTimestamp,
+      sourceSequence: message.sourceSequence,
+      sourceSubsequence: message.sourceSubsequence,
+      isLoading: message.isLoading ?? false,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      toolAgentType: message.toolAgentType,
+      toolData: message.toolData,
+      toolInput: message.toolInput,
+      toolDisplay: message.toolDisplay,
+      toolCalls: message.toolCalls,
+      reasoning: message.reasoning,
+      isCompleted: message.isCompleted ?? false,
+      isCollapsed: message.isCollapsed ?? false,
+    }) === JSON.stringify({
+      id: other.id,
+      role: other.role,
+      content: other.content,
+      notice: other.notice,
+      errorDetails: other.errorDetails,
+      llmContent: other.llmContent,
+      systemReminderDirectory: other.systemReminderDirectory,
+      systemReminderDocumentPath: other.systemReminderDocumentPath,
+      timestamp: other.timestamp,
+      sourceTimestamp: other.sourceTimestamp,
+      sourceSequence: other.sourceSequence,
+      sourceSubsequence: other.sourceSubsequence,
+      isLoading: other.isLoading ?? false,
+      toolCallId: other.toolCallId,
+      toolName: other.toolName,
+      toolAgentType: other.toolAgentType,
+      toolData: other.toolData,
+      toolInput: other.toolInput,
+      toolDisplay: other.toolDisplay,
+      toolCalls: other.toolCalls,
+      reasoning: other.reasoning,
+      isCompleted: other.isCompleted ?? false,
+      isCollapsed: other.isCollapsed ?? false,
+    });
+  });
+}
+
+/**
  * Replace the just-completed live run with its persisted representation.
  * The stable user id is the run boundary, so older pages already loaded by the
  * user stay intact while partial assistant/tool rows from the live stream are
@@ -318,7 +392,75 @@ export function replaceCompletedRunWithHistory(
   const existingAnchor = existing.findIndex((message) => message.id === anchorId);
   const historyAnchor = history.findIndex((message) => message.id === anchorId);
   if (existingAnchor >= 0 && historyAnchor >= 0) {
-    return [...existing.slice(0, existingAnchor), ...history.slice(historyAnchor)];
+    const runHistory = history.slice(historyAnchor);
+    // `turn/completed` can race the App Server's history materialization. In
+    // that window thread/turns/list may already contain the user/assistant
+    // items but not the just-completed tool item. Do not let that partial
+    // snapshot erase a tool row that was already received live. The next
+    // history load will merge the authoritative item by call id.
+    const historyToolIds = new Set(
+      runHistory
+        .filter((message) => message.role === "tool" && message.toolCallId)
+        .map((message) => toolCallIdentityKey(message.toolCallId!)),
+    );
+    const missingLiveTools = existing
+      .slice(existingAnchor)
+      .filter(
+        (message) =>
+          message.role === "tool" &&
+          message.toolCallId &&
+          !historyToolIds.has(toolCallIdentityKey(message.toolCallId)),
+      );
+    // Reinsert live-only tools at their original position in the run.  The
+    // completion snapshot can race rollout persistence, but appending these
+    // rows made a tool that was between two assistant items jump to the end
+    // of the conversation on the next render/re-entry.
+    const historyIndexById = new Map(
+      runHistory.map((message, index) => [message.id, index]),
+    );
+    const runExisting = existing.slice(existingAnchor);
+    const toolPosition = new Map(
+      missingLiveTools.map((tool) => [
+        tool.id,
+        runExisting.findIndex((message) => message.id === tool.id),
+      ]),
+    );
+    const reconciledRun = [...runHistory];
+    for (const tool of missingLiveTools) {
+      const existingPosition = toolPosition.get(tool.id) ?? -1;
+      let insertAt = reconciledRun.length;
+      if (existingPosition >= 0) {
+        // Find the next existing message that is present in the persisted
+        // snapshot and insert immediately before it.
+        for (let i = existingPosition + 1; i < runExisting.length; i += 1) {
+          const nextExisting = runExisting[i];
+          let nextIndex = historyIndexById.get(nextExisting.id);
+          // A streaming assistant is commonly replaced by a new persisted
+          // assistant id at completion. Align it by role in that case; the
+          // run order is already known, so this does not make equal-content
+          // messages from different turns collide.
+          if (nextIndex === undefined) {
+            let roleOrdinal = 0;
+            for (let j = 0; j <= i; j += 1) {
+              if (runExisting[j].role === nextExisting.role) roleOrdinal += 1;
+            }
+            const matching = reconciledRun
+              .map((message, index) => ({ message, index }))
+              .filter(({ message }) => message.role === nextExisting.role);
+            nextIndex = matching[roleOrdinal - 1]?.index;
+          }
+          if (nextIndex !== undefined) {
+            insertAt = nextIndex;
+            break;
+          }
+        }
+      }
+      reconciledRun.splice(insertAt, 0, tool);
+      for (const [id, index] of historyIndexById) {
+        if (index >= insertAt) historyIndexById.set(id, index + 1);
+      }
+    }
+    return [...existing.slice(0, existingAnchor), ...reconciledRun];
   }
 
   // Other runtimes may not yet expose run-scoped user ids. An exact overlap

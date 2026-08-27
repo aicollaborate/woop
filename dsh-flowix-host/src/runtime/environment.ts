@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { RuntimeSpec } from "../protocol/v1.ts";
 import { disabledPluginKeys } from "./plugin-directory.ts";
@@ -57,6 +57,15 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   for (const key of PASSTHROUGH) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
+  }
+  // The source-tree DSH CLI forwards `dsh plugin` to pnpm. A GUI-launched
+  // development process often has Corepack but no pnpm shim on PATH, while
+  // the checkout already ships a pinned wrapper for that exact case.
+  const toolingDir = join(hostRoot(), "scripts/tooling");
+  const toolingPnpm = join(toolingDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+  if (existsSync(toolingPnpm)) {
+    const pathKey = process.platform === "win32" && env.Path !== undefined ? "Path" : "PATH";
+    env[pathKey] = `${toolingDir}${delimiter}${env[pathKey] ?? process.env.PATH ?? ""}`;
   }
   for (const key of [
     "DSH_HOME",

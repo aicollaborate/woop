@@ -111,8 +111,7 @@ function createDeepSeekHarnessHistoryAdapter(): AgentHistoryAdapter {
 }
 
 const historyAdapters: Partial<Record<AgentTypeKey, AgentHistoryAdapter>> = {
-  // Codex history is materialized by the backend from compact DB snapshots.
-  // The rollout transcript is a display-only fallback when DB events are empty.
+  // Codex history is projected by the backend from Codex App Server threads.
   codex: createCodexHistoryAdapter(),
   claude: createClaudeHistoryAdapter(),
   hermes: createHermesHistoryAdapter(),

@@ -1,5 +1,5 @@
 use crate::agent_external::claude::ClaudeCliManager;
-use crate::agent_external::codex::CodexCliManager;
+use crate::agent_external::codex::CodexAppServerManager;
 use crate::agent_external::deepseek_harness::DeepSeekHarnessManager;
 use crate::agent_external::hermes::HermesCliManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
@@ -165,7 +165,7 @@ pub fn run() {
     // impl Clone ── 直接 move �?setup �?��, 那里
     // move 杩?AppState銆?
     let search_init = RwLock::new(MemoIndex::new(Arc::new(BigramTokenizer)));
-    let codex_cli_manager = Arc::new(CodexCliManager::new(thread_manager_arc.clone()));
+    let codex_app_server = Arc::new(CodexAppServerManager::new(thread_manager_arc.clone()));
     let claude_cli_manager = Arc::new(ClaudeCliManager::new(thread_manager_arc.clone()));
     let hermes_cli_manager = Arc::new(HermesCliManager::new(thread_manager_arc.clone()));
     let opencode_acp_manager = Arc::new(OpenCodeAcpManager::new(thread_manager_arc.clone()));
@@ -175,7 +175,7 @@ pub fn run() {
         user_config.dsh_sessions_dir(),
     ));
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
-        codex_cli_manager,
+        codex_app_server.clone(),
         claude_cli_manager,
         hermes_cli_manager,
         opencode_acp_manager,
@@ -225,6 +225,7 @@ pub fn run() {
                 search: search_init,
                 search_rebuild: Default::default(),
                 external_runtimes: external_runtimes.clone(),
+                codex_app_server: codex_app_server.clone(),
                 deepseek_harness: deepseek_harness_manager.clone(),
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),

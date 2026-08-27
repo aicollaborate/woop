@@ -165,6 +165,105 @@
   border-bottom-color: var(--brand);
 }
 
+/* 独立对话中的工具命令不是普通 message-content, 其命令参数默认是
+ * nowrap 单行摘要。长命令 (例如 zsh/git 命令) 会因此把消息区撑出横向
+ * 溢出；仅在第三列 AgentConversationDetail 中改为可断行。 */
+.markdown-editor.agent-conversation-detail .agent-thread-card__message--tool,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message--tool-command,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-head,
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-line,
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-list,
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-line {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-name,
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-args-inline,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 命令名保持可读；工具名称按内容包裹，过长时再限制最大宽度，避免撑开消息区。 */
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-name {
+  flex: 0 1 auto;
+  max-width: 45%;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: fit-content;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-args-inline {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__command-args-inline,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-summary {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* 第三列中的历史正文必须在自己的内容轨道内收缩。尤其是列表、引用、
+ * 链接和媒体，它们不能因为某个不可断开的 token 把 body 撑出横向滚动。 */
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content > *,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content li,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content blockquote,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content a,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content img,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content video,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content iframe {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content img,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content video,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content iframe {
+  height: auto;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content table {
+  table-layout: fixed;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content th,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-content td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* 引用块 ── 颜色对齐编辑器内的 quote (tiptap blockquote border-left:
  * 0.1875rem solid #ddd), 用 var(--border) token 做三主题自适应
  * (与右栏面板 markdown-renderer 同源, 不硬编码 #ddd)。卡片

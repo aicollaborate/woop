@@ -49,6 +49,7 @@
   .agent-thread-card__composer-image-remove,
   .agent-thread-card__composer-role-icon,
   .agent-thread-card__composer-model,
+  .agent-thread-card__composer-permission,
   .agent-thread-card__composer-workspace
 ) {
   cursor: pointer;
@@ -79,13 +80,29 @@
   display: none;
 }
 
+.markdown-editor .agent-thread-card__composer-permission {
+  display: none;
+}
+
 .markdown-editor .agent-thread-card__composer-workspace:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: auto;
 }
 
+.markdown-editor .agent-thread-card__composer-permission:disabled,
+.markdown-editor .agent-thread-card__empty-control[data-kind='permission']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
 .markdown-editor .agent-thread-card__composer-workspace:disabled:hover {
+  background: transparent;
+}
+
+.markdown-editor .agent-thread-card__composer-permission:disabled:hover,
+.markdown-editor .agent-thread-card__empty-control[data-kind='permission']:disabled:hover {
   background: transparent;
 }
 
@@ -102,7 +119,8 @@
   grid-template-rows: auto minmax(1.6rem, auto) auto;
   align-items: end;
   row-gap: 0.35rem;
-  padding: 0.55rem 0.6rem 0.55rem 0.8rem;
+  /* 上方留白移入 textarea，避免滚动文案时占据不可滚动的固定区域。 */
+  padding: 0 0.6rem 0.55rem 0.8rem;
 }
 
 .markdown-editor
@@ -151,16 +169,20 @@
 .markdown-editor .agent-composer--expanded .agent-thread-card__composer-model {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 12rem;
   height: 24px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  padding: 0 0.45rem;
   border: 0;
   border-radius: 6px;
-  padding: 0;
-  background: var(--muted);
-  color: var(--secondary-foreground);
+  background: transparent;
+  color: var(--muted-foreground);
   cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1;
   transition:
     background-color 150ms ease,
     color 150ms ease;
@@ -186,15 +208,8 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
-  .agent-thread-card__composer-model-icon,
-.markdown-editor
-  .agent-composer--expanded
-  .agent-thread-card__composer-model-icon {
-  width: 16px;
-  height: 16px;
-  pointer-events: none;
-}
-
+  .agent-thread-card__composer-permission,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-permission,
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
@@ -225,6 +240,16 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
+  .agent-thread-card__composer-permission:hover,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-permission--open,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-permission:hover,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-permission--open,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
   .agent-thread-card__composer-workspace:hover,
 .markdown-editor
   .agent-thread-card--fullscreen
@@ -245,7 +270,37 @@
   line-height: 1.6;
 }
 
+.markdown-editor .agent-thread-card__composer-permission-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.markdown-editor .agent-thread-card__composer-model-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
 .markdown-editor .agent-thread-card__composer-workspace .agent-thread-card__empty-control-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.markdown-editor .agent-thread-card__composer-permission .agent-thread-card__empty-control-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.markdown-editor .agent-thread-card__composer-model .agent-thread-card__empty-control-chevron {
   width: 12px;
   height: 12px;
   flex: 0 0 auto;
@@ -479,4 +534,5 @@
   flex: none;
   field-sizing: content;
   align-self: center;
+  padding-top: 0.55rem;
 }

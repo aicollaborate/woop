@@ -489,7 +489,7 @@ mod tests {
     async fn agent_external_events_store_payloads_and_page_by_thread_id() {
         let manager = ThreadManager::for_tests();
         let first = NewAgentExternalEvent {
-            runtime: "codex".to_string(),
+            runtime: "test-runtime".to_string(),
             thread_id: "thread-1".to_string(),
             normalized_json: r#"{"kind":"text","text":"hello"}"#.to_string(),
             raw_json: Some(r#"{"type":"event_msg"}"#.to_string()),
@@ -665,144 +665,6 @@ mod tests {
         assert_eq!(details.request_id.as_deref(), Some("req-1"));
         assert_eq!(details.retry_after.as_deref(), Some("60"));
         assert!(details.retryable);
-    }
-
-    #[tokio::test]
-    async fn codex_compact_events_use_product_owner_and_read_legacy_aliases() {
-        let manager = ThreadManager::for_tests();
-        let thread_id = "codex-local-card-page";
-        let session_id = "019f0000-0000-7000-8000-000000000123";
-        manager
-            .upsert_external_session(thread_id, "codex", session_id, None)
-            .await
-            .unwrap();
-        let payloads = [
-            r#"{"kind":"user_message","id":"user-1","text":"question 1","run_id":"run-1"}"#,
-            r#"{"kind":"text","message_id":"assistant-1","message_phase":"completed","content_mode":"snapshot","text":"answer 1","run_id":"run-1"}"#,
-            r#"{"kind":"stream_end","run_id":"run-1"}"#,
-            r#"{"kind":"user_message","id":"user-2","text":"question 2","run_id":"run-2"}"#,
-            r#"{"kind":"text","message_id":"assistant-2","message_phase":"completed","content_mode":"snapshot","text":"answer 2","run_id":"run-2"}"#,
-            r#"{"kind":"stream_end","run_id":"run-2"}"#,
-        ];
-        for (index, payload) in payloads.iter().enumerate() {
-            manager
-                .insert_agent_external_event(NewAgentExternalEvent {
-                    runtime: "codex".to_string(),
-                    // Reproduce data written before storage ownership was fixed.
-                    thread_id: if index < 3 { thread_id } else { session_id }.to_string(),
-                    normalized_json: payload.to_string(),
-                    raw_json: None,
-                    created_at: Some(400 + index as i64),
-                })
-                .await
-                .unwrap();
-        }
-
-        let latest = manager
-            .get_codex_event_messages_page(thread_id, None, 1)
-            .await
-            .unwrap()
-            .expect("non-empty database events must win");
-        assert_eq!(
-            latest
-                .messages
-                .iter()
-                .map(|message| message.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["question 2", "answer 2"]
-        );
-        assert!(latest.has_more);
-
-        let older = manager
-            .get_codex_event_messages_page(session_id, latest.oldest_sequence, 1)
-            .await
-            .unwrap()
-            .expect("alias lookup must share the same database history");
-        assert_eq!(
-            older
-                .messages
-                .iter()
-                .map(|message| message.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["question 1", "answer 1"]
-        );
-        assert!(!older.has_more);
-
-        let listed = manager.list_codex_event_threads().await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].thread_id, thread_id);
-
-        let empty = ThreadManager::for_tests()
-            .get_codex_event_messages_page("missing-codex-session", None, 10)
-            .await
-            .unwrap();
-        assert!(empty.is_none(), "empty events must select rollout fallback");
-    }
-
-    #[tokio::test]
-    async fn codex_event_history_scopes_reused_item_ids_by_run() {
-        let manager = ThreadManager::for_tests();
-        let thread_id = "codex-reused-item-ids";
-        let payloads = [
-            r#"{"kind":"user_message","id":"user-run-1","text":"question 1","run_id":"run-1"}"#,
-            r#"{"kind":"text","message_id":"assistant-item_0","message_phase":"completed","content_mode":"snapshot","text":"answer 1","run_id":"run-1"}"#,
-            r#"{"kind":"tool_call","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","input":{"command":"pwd"},"run_id":"run-1"}"#,
-            r#"{"kind":"tool_result","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","result":"result 1","run_id":"run-1"}"#,
-            r#"{"kind":"stream_end","run_id":"run-1"}"#,
-            r#"{"kind":"user_message","id":"user-run-2","text":"question 2","run_id":"run-2"}"#,
-            r#"{"kind":"text","message_id":"assistant-item_0","message_phase":"completed","content_mode":"snapshot","text":"answer 2","run_id":"run-2"}"#,
-            r#"{"kind":"tool_call","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","input":{"command":"pwd"},"run_id":"run-2"}"#,
-            r#"{"kind":"tool_result","id":"tool-item_1","message_id":"tool-tool-item_1","name":"command_execution","result":"result 2","run_id":"run-2"}"#,
-            r#"{"kind":"stream_end","run_id":"run-2"}"#,
-        ];
-        for (index, payload) in payloads.iter().enumerate() {
-            manager
-                .insert_agent_external_event(NewAgentExternalEvent {
-                    runtime: "codex".to_string(),
-                    thread_id: thread_id.to_string(),
-                    normalized_json: payload.to_string(),
-                    raw_json: None,
-                    created_at: Some(500 + index as i64),
-                })
-                .await
-                .unwrap();
-        }
-
-        let page = manager
-            .get_codex_event_messages_page(thread_id, None, 2)
-            .await
-            .unwrap()
-            .expect("database events should materialize");
-        assert_eq!(
-            page.messages
-                .iter()
-                .map(|message| (message.role.as_str(), message.content.as_str()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("user", "question 1"),
-                ("assistant", "answer 1"),
-                ("tool", "result 1"),
-                ("user", "question 2"),
-                ("assistant", "answer 2"),
-                ("tool", "result 2"),
-            ]
-        );
-        assert_eq!(
-            page.messages[1].id,
-            "msg:codex:run-1:assistant:assistant-item_0"
-        );
-        assert_eq!(
-            page.messages[4].id,
-            "msg:codex:run-2:assistant:assistant-item_0"
-        );
-        assert_eq!(
-            page.messages[2].tool_call_id.as_deref(),
-            Some("msg:codex:run-1:tool-call:tool-item_1")
-        );
-        assert_eq!(
-            page.messages[5].tool_call_id.as_deref(),
-            Some("msg:codex:run-2:tool-call:tool-item_1")
-        );
     }
 
     #[tokio::test]
@@ -1289,8 +1151,8 @@ mod tests {
         let manager = ThreadManager::for_tests();
         manager
             .insert_agent_external_event(NewAgentExternalEvent {
-                runtime: "codex".to_string(),
-                thread_id: "codex-event-first".to_string(),
+                runtime: "test-runtime".to_string(),
+                thread_id: "external-event-first".to_string(),
                 normalized_json: r#"{"kind":"text"}"#.to_string(),
                 raw_json: None,
                 created_at: Some(1),
@@ -1299,11 +1161,11 @@ mod tests {
             .unwrap();
 
         let thread = manager
-            .get_thread_info("codex-event-first")
+            .get_thread_info("external-event-first")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(thread.agent_id.0, "codex");
+        assert_eq!(thread.agent_id.0, "test-runtime");
     }
 
     #[tokio::test]
@@ -1314,7 +1176,7 @@ mod tests {
             let tx = conn.transaction().expect("start seed transaction");
             tx.execute(
                 "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
-                 VALUES ('codex-pruned-events', 'codex', 'Codex thread', 0, 0)",
+                 VALUES ('external-pruned-events', 'test-runtime', 'External thread', 0, 0)",
                 [],
             )
             .expect("seed thread");
@@ -1323,7 +1185,7 @@ mod tests {
                     .prepare(
                         "INSERT INTO agent_external_events (
                             runtime, thread_id, normalized_json, raw_json, created_at
-                         ) VALUES ('codex', 'codex-pruned-events', ?1, NULL, ?2)",
+                         ) VALUES ('test-runtime', 'external-pruned-events', ?1, NULL, ?2)",
                     )
                     .expect("prepare event insert");
                 for i in 0..10_000_i64 {
@@ -1338,8 +1200,8 @@ mod tests {
         for i in 10_000..10_005 {
             manager
                 .insert_agent_external_event(NewAgentExternalEvent {
-                    runtime: "codex".to_string(),
-                    thread_id: "codex-pruned-events".to_string(),
+                    runtime: "test-runtime".to_string(),
+                    thread_id: "external-pruned-events".to_string(),
                     normalized_json: format!(r#"{{"kind":"text","i":{i}}}"#),
                     raw_json: None,
                     created_at: Some(i),
@@ -1354,7 +1216,7 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*), MIN(created_at), MAX(created_at)
                  FROM agent_external_events
-                 WHERE thread_id = 'codex-pruned-events'
+                 WHERE thread_id = 'external-pruned-events'
                    AND normalized_json <> ?1",
                 params![r#"{"kind":"history_truncated","version":1}"#],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1578,7 +1440,7 @@ mod tests {
             .unwrap();
         manager
             .insert_agent_external_event(NewAgentExternalEvent {
-                runtime: "codex".to_string(),
+                runtime: "test-runtime".to_string(),
                 thread_id: "codex-local-delete".to_string(),
                 normalized_json: r#"{"kind":"text"}"#.to_string(),
                 raw_json: None,

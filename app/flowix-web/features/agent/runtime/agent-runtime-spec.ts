@@ -9,7 +9,10 @@ import type {
   WorkspaceSnapshot,
 } from "@/types/agent";
 import type { I18nKey } from "@/lib/i18n";
-import { CODEX_ACCESS_OPTIONS } from "@features/agent/config/codex-options";
+import {
+  CODEX_ACCESS_OPTIONS,
+  CODEX_APP_SERVER_ACCESS_OPTIONS,
+} from "@features/agent/config/codex-options";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 
@@ -99,8 +102,7 @@ export function normalizeCodexPermissionMode(
 ): AgentPermissionMode {
   return mode === "read-only" ||
     mode === "workspace-write" ||
-    mode === "danger-full-access" ||
-    mode === "yolo"
+    mode === "danger-full-access"
     ? mode
     : "danger-full-access";
 }
@@ -125,8 +127,10 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
   codex: {
     typeKey: "codex",
     emptySettings: ["model", "reasoning", "permission"],
-    accessOptions: CODEX_ACCESS_OPTIONS,
-    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: false },
+    accessOptions: CODEX_APP_SERVER_ACCESS_OPTIONS,
+    // App Server accepts `cwd` on each turn/start. A selected workspace is
+    // therefore queued for the next turn while preserving the Codex thread.
+    workspace: { selectBeforeFirstRun: true, switchBetweenRuns: true, switchRequiresRuntimeRestart: false, preservesConversationSession: true },
     buildRuntimeConfig: ({
       cwd,
       workspacePaths,

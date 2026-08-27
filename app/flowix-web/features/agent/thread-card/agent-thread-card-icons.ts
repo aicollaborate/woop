@@ -22,11 +22,6 @@ const ICON_PLUS_PATH = "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z";
 const ICON_ALERT_PATH =
   "M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z";
 const ICON_LOADER_PATH = "M21 12a9 9 0 1 1-6.219-8.56";
-// Phosphor FadersHorizontalIcon (regular weight), copied from the locally
-// installed @phosphor-icons/react SVG definition. Keep this inline so the
-// non-React composer can use the same icon without pulling in React.
-const ICON_MODEL_PATH =
-  "M176,80a8,8,0,0,1,8-8h32a8,8,0,0,1,0,16H184A8,8,0,0,1,176,80ZM40,88H144v16a8,8,0,0,0,16,0V56a8,8,0,0,0-16,0V72H40a8,8,0,0,0,0,16Zm176,80H120a8,8,0,0,0,0,16h96a8,8,0,0,0,0-16ZM88,144a8,8,0,0,0-8,8v16H40a8,8,0,0,0,0,16H80v16a8,8,0,0,0,16,0V152A8,8,0,0,0,88,144Z";
 
 function createSvg(viewBox: string, className: string): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -130,13 +125,6 @@ export function createComposerRoleEmptyIcon(): SVGSVGElement {
     "agent-thread-card__composer-role-icon-empty",
   );
   return appendFillPath(svg, ICON_PLUS_PATH);
-}
-
-export function createModelSwitchIcon(): SVGSVGElement {
-  return appendFillPath(
-    createSvg("0 0 256 256", "agent-thread-card__composer-model-icon"),
-    ICON_MODEL_PATH,
-  );
 }
 
 export function createAlertIcon(): SVGSVGElement {

@@ -13,13 +13,23 @@ export const CODEX_MODEL_OPTIONS: Array<{
   { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
 ];
 
-export const CODEX_PERMISSION_IDS: AgentPermissionMode[] = [
-  "yolo",
+/** App Server exposes only its three supported sandbox levels. */
+export const CODEX_APP_SERVER_PERMISSION_IDS: AgentPermissionMode[] = [
   "danger-full-access",
   "workspace-write",
   "read-only",
 ];
 
+export const CODEX_APP_SERVER_ACCESS_OPTIONS: Array<{
+  id: AgentPermissionMode;
+  label: string;
+}> = [
+  { id: "danger-full-access", label: "Full Access" },
+  { id: "workspace-write", label: "Workspace Write" },
+  { id: "read-only", label: "Read Only" },
+];
+
+/** Legacy CLI-shaped options retained for runtimes such as OpenCode. */
 export const CODEX_ACCESS_OPTIONS: Array<{ id: AgentPermissionMode; label: string }> = [
   { id: "yolo", label: "YOLO" },
   { id: "danger-full-access", label: "Full Access" },

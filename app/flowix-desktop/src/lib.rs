@@ -1,12 +1,12 @@
 // `deepseek_harness_e2e` 集成测试需要真实 Wry AppHandle（主线程）+ 仓内类型,
 // 因此这几个模块对外可见。app crate 无外部消费者, 可见性放宽无成本。
 pub mod agent_external;
-mod app_update;
 mod agent_external_config;
 pub mod agent_session;
 mod agent_types;
 pub mod agent_wire;
 mod app;
+mod app_update;
 mod apple_sign_in;
 mod cli_link;
 mod commands;

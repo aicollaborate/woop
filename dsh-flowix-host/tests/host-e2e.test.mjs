@@ -109,9 +109,20 @@ test('host drives the official SDK client across a runtime process', async () =>
       threadId: 'thread-1', sessionId: 'session-1', generation: 1,
     }])
 
-    // A follow-up must reuse the live runtime/session. Previously the pool
-    // checked a nonexistent SDK property (`isRuntimeRunning`), closed this
-    // slot after the first turn, and recreated the same persisted session id.
+    // A changed runtime config must restart only the transport. The persisted
+    // session id remains the conversation identity across model/workspace
+    // changes, while the generation records the new runtime instance.
+    const reconfigureId = request('runtime.ensure', {
+      threadId: 'thread-1', sessionId: 'session-1', cwd: root,
+      workspacePaths: [root], provider: 'openai', providerName: 'fixture',
+      apiProtocol: 'openai-completions', baseUrl: 'http://fixture.test/v1',
+      model: 'fixture-model-next', permissionMode: 'read-only',
+    })
+    assert.deepEqual(await waitFor(frame => frame.id === reconfigureId), {
+      jsonrpc: '2.0', id: reconfigureId,
+      result: { sessionId: 'session-1', generation: 2 },
+    })
+
     const secondRunId = request('run.start', {
       threadId: 'thread-1', runId: 'run-2', prompt: { modelText: 'follow-up', displayText: 'follow-up', clientMessageId: 'run-2' },
     })
@@ -123,7 +134,7 @@ test('host drives the official SDK client across a runtime process', async () =>
     const secondStatusId = request('runtime.status')
     const secondStatus = await waitFor(frame => frame.id === secondStatusId)
     assert.deepEqual(secondStatus.result.runtimes, [{
-      threadId: 'thread-1', sessionId: 'session-1', generation: 1,
+      threadId: 'thread-1', sessionId: 'session-1', generation: 2,
     }])
 
     const shutdownId = request('host.shutdown')

@@ -238,7 +238,7 @@ impl AgentExternalConfig {
 /// 会回退�?env / PATH / 候�?/ shell 探测。返回可执�?�?���?`None`�?
 fn detect_external_binary(agent_key: &str) -> Option<PathBuf> {
     let path = match agent_key {
-        "codex" => codex::cli::resolve_codex_binary(),
+        "codex" => codex::resolve_codex_binary(),
         "claude" => claude::cli::resolve_claude_binary(),
         "hermes" => hermes::cli::resolve_hermes_binary(),
         "opencode" => opencode::resolve_opencode_binary(),
