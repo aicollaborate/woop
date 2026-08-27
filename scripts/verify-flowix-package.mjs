@@ -4,8 +4,9 @@
 // the separately downloadable DSH runtime or DSH UI packages.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { basename, resolve } from 'node:path'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const artifact = process.argv[2]
 if (!artifact || !existsSync(artifact)) {
@@ -41,8 +42,41 @@ function listArchive(file) {
     console.error('ERROR: AppImage is not an updater archive; verify its extracted staging directory instead.')
     process.exit(2)
   }
+  if (/\.dmg$/iu.test(file)) return listDmg(file)
   console.error(`ERROR: unsupported Flowix artifact format: ${file}`)
   process.exit(2)
+}
+
+function listDmg(file) {
+  const mountPoint = mkdtempSync(join(tmpdir(), 'flowix-dmg-'))
+  const attached = spawnSync('hdiutil', ['attach', '-readonly', '-nobrowse', '-mountpoint', mountPoint, file], {
+    encoding: 'utf8',
+  })
+  if (attached.error || attached.status !== 0) {
+    rmSync(mountPoint, { recursive: true, force: true })
+    console.error(`ERROR: failed to mount DMG: ${attached.stderr || attached.error || attached.status}`)
+    process.exit(1)
+  }
+  try {
+    return walk(mountPoint).map((entry) => entry.slice(mountPoint.length + 1))
+  } finally {
+    const detached = spawnSync('hdiutil', ['detach', mountPoint], { encoding: 'utf8' })
+    rmSync(mountPoint, { recursive: true, force: true })
+    if (detached.error || detached.status !== 0) {
+      console.error(`ERROR: failed to detach DMG: ${detached.stderr || detached.error || detached.status}`)
+      process.exit(1)
+    }
+  }
+}
+
+function walk(directory) {
+  const entries = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    entries.push(path)
+    if (entry.isDirectory()) entries.push(...walk(path))
+  }
+  return entries
 }
 
 function run(command, args) {
