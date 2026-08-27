@@ -127,6 +127,37 @@ describe("replaceCompletedRunWithHistory", () => {
     ).toEqual(["older-user", "user-run-1", "assistant-final"]);
   });
 
+  it("keeps live references when Codex history only changes persistence metadata", () => {
+    const user = message(
+      "msg:codex:run-1:user:user-run-1",
+      "user",
+      "ask",
+      "2026-01-01T00:00:01.000Z",
+    );
+    const assistant = message(
+      "msg:codex:run-1:assistant:item-1",
+      "assistant",
+      "complete",
+      "2026-01-01T00:00:02.000Z",
+    );
+    const existing = [user, assistant];
+    const history = [
+      message(user.id, "user", "ask", "2026-01-01T00:00:10.000Z"),
+      message(assistant.id, "assistant", "complete", "2026-01-01T00:00:11.000Z"),
+    ];
+
+    const reconciled = replaceCompletedRunWithHistory(
+      existing,
+      history,
+      "run-1",
+      "codex",
+    );
+
+    expect(reconciled).toBe(existing);
+    expect(reconciled[0]).toBe(user);
+    expect(reconciled[1]).toBe(assistant);
+  });
+
   it("keeps a live tool in place when the completion snapshot is missing it", () => {
     const existing = [
       message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),

@@ -111,4 +111,8 @@ export async function submitAgentThreadCardConversation(
   });
 
   await sendPromise;
+  // `sendMessageToThread` returns after the chat_stream request has been
+  // accepted. Keep the conversation workspace state in sync for every turn,
+  // including workspace changes made after the first message.
+  markConversationWorkspaceStarted(nextInstanceId);
 }

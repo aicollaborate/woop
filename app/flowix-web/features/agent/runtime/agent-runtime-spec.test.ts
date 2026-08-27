@@ -18,12 +18,12 @@ vi.mock("@features/memo/components/notebook-icon", () => ({
 }));
 
 describe("workspace capabilities", () => {
-  it("Codex and DeepSeek Harness support switching between runs", () => {
+  it("only runtimes with a resume workspace guarantee allow switching", () => {
     const codex = getAgentRuntimeSpec("codex").workspace;
     expect(codex.switchBetweenRuns).toBe(true);
     expect(codex.switchRequiresRuntimeRestart).toBe(false);
     expect(codex.preservesConversationSession).toBe(true);
-    expect(getAgentRuntimeSpec("deepseek-harness").workspace.switchBetweenRuns).toBe(true);
+    expect(getAgentRuntimeSpec("deepseek-harness").workspace.switchBetweenRuns).toBe(false);
     for (const type of ["claude", "opencode"] as const) {
       expect(getAgentRuntimeSpec(type).workspace.switchBetweenRuns).toBe(false);
     }

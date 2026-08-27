@@ -308,6 +308,90 @@ function messageTime(message: ChatMessage): number {
 }
 
 /**
+ * Completion reconciliation receives freshly allocated history objects.  A
+ * persisted event's timestamp/source metadata may legitimately differ from
+ * the optimistic live row even when its rendered representation is identical.
+ * Reusing that live object is important: the message renderer treats a new
+ * reference outside the final row as a structural list change and otherwise
+ * rebuilds the whole conversation.
+ *
+ * Keep this deliberately narrower than `areMessagesEquivalent`: it compares
+ * only values consumed by the message item renderer.  The one exception is an
+ * `end` row without explicit content, whose timestamp is its visible text.
+ */
+function areMessagesRenderEquivalent(
+  left: ChatMessage,
+  right: ChatMessage,
+): boolean {
+  if (left === right) return true;
+  if (left.id !== right.id || left.role !== right.role) return false;
+
+  return JSON.stringify({
+    content: left.content,
+    notice: left.notice,
+    errorDetails: left.errorDetails,
+    isLoading: left.isLoading ?? false,
+    toolCallId: left.toolCallId,
+    toolName: left.toolName,
+    toolAgentType: left.toolAgentType,
+    toolData: left.toolData,
+    toolInput: left.toolInput,
+    toolDisplay: left.toolDisplay,
+    toolCalls: left.toolCalls,
+    reasoning: left.reasoning,
+    isCompleted: left.isCompleted ?? false,
+    isCollapsed: left.isCollapsed ?? false,
+    endTimestamp:
+      left.role === "end" && !left.content ? left.timestamp : undefined,
+  }) === JSON.stringify({
+    content: right.content,
+    notice: right.notice,
+    errorDetails: right.errorDetails,
+    isLoading: right.isLoading ?? false,
+    toolCallId: right.toolCallId,
+    toolName: right.toolName,
+    toolAgentType: right.toolAgentType,
+    toolData: right.toolData,
+    toolInput: right.toolInput,
+    toolDisplay: right.toolDisplay,
+    toolCalls: right.toolCalls,
+    reasoning: right.reasoning,
+    isCompleted: right.isCompleted ?? false,
+    isCollapsed: right.isCollapsed ?? false,
+    endTimestamp:
+      right.role === "end" && !right.content ? right.timestamp : undefined,
+  });
+}
+
+/**
+ * Reconcile the persisted representation without invalidating DOM for rows
+ * whose visible form did not change.  Canonical external message ids make the
+ * lookup exact for Codex and the other external runtimes.
+ */
+function reuseRenderEquivalentMessageReferences(
+  existing: ChatMessage[],
+  next: ChatMessage[],
+): ChatMessage[] {
+  const existingByIdentity = new Map(
+    existing.map((message) => [`${message.role}\u0000${message.id}`, message]),
+  );
+  const reconciled = next.map((message) => {
+    const current = existingByIdentity.get(`${message.role}\u0000${message.id}`);
+    return current && areMessagesRenderEquivalent(current, message)
+      ? current
+      : message;
+  });
+
+  // Preserve the array too when the complete rendered sequence is unchanged.
+  // This suppresses the Zustand subscriber notification for harmless history
+  // metadata convergence after a completed turn.
+  return reconciled.length === existing.length &&
+    reconciled.every((message, index) => message === existing[index])
+    ? existing
+    : reconciled;
+}
+
+/**
  * Compare the render-relevant message shape while ignoring object identity.
  * History adapters return fresh objects, so replacing an equivalent message
  * array would otherwise cause a needless conversation re-render after every
@@ -460,7 +544,10 @@ export function replaceCompletedRunWithHistory(
         if (index >= insertAt) historyIndexById.set(id, index + 1);
       }
     }
-    return [...existing.slice(0, existingAnchor), ...reconciledRun];
+    return reuseRenderEquivalentMessageReferences(
+      existing,
+      [...existing.slice(0, existingAnchor), ...reconciledRun],
+    );
   }
 
   // Other runtimes may not yet expose run-scoped user ids. An exact overlap
@@ -471,9 +558,15 @@ export function replaceCompletedRunWithHistory(
   );
   if (existingOverlap >= 0) {
     const historyOverlap = historyIndexById.get(existing[existingOverlap].id) ?? 0;
-    return [...existing.slice(0, existingOverlap), ...history.slice(historyOverlap)];
+    return reuseRenderEquivalentMessageReferences(
+      existing,
+      [...existing.slice(0, existingOverlap), ...history.slice(historyOverlap)],
+    );
   }
-  return mergeHistoricalMessages(existing, history, agentType);
+  return reuseRenderEquivalentMessageReferences(
+    existing,
+    mergeHistoricalMessages(existing, history, agentType),
+  );
 }
 
 /**

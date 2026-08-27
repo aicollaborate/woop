@@ -648,7 +648,7 @@ async fn read_rollout_custom_tool_messages(
         .await
         .map_err(|error| error.to_string())?;
     let mut messages = Vec::new();
-    let mut indexes = HashMap::<String, usize>::new();
+    let mut indexes = HashMap::<String, Vec<usize>>::new();
     let turn_indexes = turn_ids
         .iter()
         .enumerate()
@@ -669,6 +669,27 @@ async fn read_rollout_custom_tool_messages(
                     .and_then(Value::as_str)
                     .and_then(|id| turn_indexes.get(id).copied());
                 assistant_before = 0;
+            }
+            // MCP calls are not ThreadItems in several Codex App Server
+            // versions. They are recorded as rollout event messages, so a
+            // history reload previously lost rows that were visible during the
+            // live stream as soon as completion reconciliation ran.
+            if record.pointer("/payload/type").and_then(Value::as_str) == Some("mcp_tool_call_end")
+            {
+                if let Some(message) = rollout_mcp_tool_message(
+                    record.get("payload").unwrap_or(&Value::Null),
+                    record
+                        .get("timestamp")
+                        .and_then(Value::as_str)
+                        .unwrap_or("1970-01-01T00:00:00Z"),
+                ) {
+                    messages.push(RolloutCustomToolMessage {
+                        turn_index: current_turn_index,
+                        assistant_before,
+                        line_index,
+                        message,
+                    });
+                }
             }
             continue;
         }
@@ -703,34 +724,56 @@ async fn read_rollout_custom_tool_messages(
         let message_id = format!("codex-custom-tool-{call_id}");
 
         if kind == "custom_tool_call" {
-            let mut message = app_server_base_message(message_id, timestamp);
-            message.role = "tool".to_string();
-            message.tool_call_id = Some(call_id.to_string());
-            message.tool_name = payload
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            message.tool_input = payload.get("input").map(parse_custom_tool_input);
-            message.tool_data = serde_json::to_string(payload).ok();
-            message.is_completed = payload
-                .get("status")
-                .and_then(Value::as_str)
-                .map(|status| status != "in_progress");
-            indexes.insert(call_id.to_string(), messages.len());
-            messages.push(RolloutCustomToolMessage {
-                turn_index: current_turn_index,
-                assistant_before,
-                line_index,
-                message,
-            });
+            let presentations = custom_tool_history_presentations(payload);
+            let multi_command = presentations.len() > 1;
+            let message_indexes = presentations
+                .into_iter()
+                .enumerate()
+                .map(|(index, (tool_name, tool_input))| {
+                    let suffix = multi_command.then(|| format!("-{index}"));
+                    let mut message = app_server_base_message(
+                        format!("{message_id}{}", suffix.as_deref().unwrap_or("")),
+                        timestamp,
+                    );
+                    message.role = "tool".to_string();
+                    message.tool_call_id = Some(match suffix {
+                        Some(suffix) => format!("{call_id}{suffix}"),
+                        None => call_id.to_string(),
+                    });
+                    message.tool_name = tool_name;
+                    message.tool_input = tool_input;
+                    message.tool_data = serde_json::to_string(payload).ok();
+                    message.is_completed = payload
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .map(|status| status != "in_progress");
+                    let message_index = messages.len();
+                    messages.push(RolloutCustomToolMessage {
+                        turn_index: current_turn_index,
+                        assistant_before,
+                        line_index: line_index + index,
+                        message,
+                    });
+                    message_index
+                })
+                .collect();
+            indexes.insert(call_id.to_string(), message_indexes);
         } else {
             let output = payload.get("output").cloned().unwrap_or(Value::Null);
             let output_text = app_server_custom_tool_output(&output);
-            if let Some(index) = indexes.get(call_id).copied() {
-                let message = &mut messages[index].message;
-                message.content = output_text.clone();
-                message.tool_data = Some(output_text);
-                message.is_completed = Some(true);
+            if let Some(message_indexes) = indexes.get(call_id) {
+                // A custom `exec` wrapper can invoke several command actions
+                // (typically through Promise.all). The rollout keeps only one
+                // aggregate wrapper output, so use it once while marking every
+                // reconstructed command complete.
+                for (position, index) in message_indexes.iter().enumerate() {
+                    let message = &mut messages[*index].message;
+                    if position + 1 == message_indexes.len() {
+                        message.content = output_text.clone();
+                        message.tool_data = Some(output_text.clone());
+                    }
+                    message.is_completed = Some(true);
+                }
             } else {
                 let mut message = app_server_base_message(message_id, timestamp);
                 message.role = "tool".to_string();
@@ -739,7 +782,7 @@ async fn read_rollout_custom_tool_messages(
                 message.tool_call_id = Some(call_id.to_string());
                 message.tool_name = Some("unknown_tool".to_string());
                 message.is_completed = Some(true);
-                indexes.insert(call_id.to_string(), messages.len());
+                indexes.insert(call_id.to_string(), vec![messages.len()]);
                 messages.push(RolloutCustomToolMessage {
                     turn_index: current_turn_index,
                     assistant_before,
@@ -752,11 +795,140 @@ async fn read_rollout_custom_tool_messages(
     Ok(messages)
 }
 
+fn rollout_mcp_tool_message(payload: &Value, timestamp: &str) -> Option<ChatMessage> {
+    let call_id = payload
+        .get("call_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())?;
+    let invocation = payload.get("invocation")?;
+    let tool = invocation
+        .get("tool")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())?;
+
+    let result = payload.get("result").cloned().unwrap_or(Value::Null);
+    let mut message = app_server_base_message(format!("codex-mcp-tool-{call_id}"), timestamp);
+    message.role = "tool".to_string();
+    message.content = app_server_custom_tool_output(&result);
+    message.tool_call_id = Some(call_id.to_string());
+    message.tool_name = Some("mcp_tool_call".to_string());
+    message.tool_input = Some(invocation.clone());
+    message.tool_data = serde_json::to_string(&result).ok();
+    message.is_completed = Some(true);
+
+    // Keep the provider's concrete tool name in the input payload; the web
+    // formatter uses it together with `server` for the compact MCP label.
+    debug_assert!(!tool.is_empty());
+    Some(message)
+}
+
 fn parse_custom_tool_input(value: &Value) -> Value {
     value
         .as_str()
         .and_then(|text| serde_json::from_str(text).ok())
         .unwrap_or_else(|| value.clone())
+}
+
+/// Codex records the host `exec` capability as a custom tool whose input is
+/// JavaScript source (`tools.exec_command({ cmd: ... })`). During the live run
+/// App Server exposes the nested action as `commandExecution`, so projecting
+/// the wrapper verbatim made the same tool render differently after history
+/// reconciliation. Recover the concrete command for the historical view.
+fn custom_tool_history_presentations(payload: &Value) -> Vec<(Option<String>, Option<Value>)> {
+    let name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let input = payload.get("input");
+
+    if name.as_deref() == Some("exec") {
+        let commands = input
+            .and_then(Value::as_str)
+            .map(extract_exec_commands)
+            .unwrap_or_default();
+        if !commands.is_empty() {
+            return commands
+                .into_iter()
+                .map(|command| {
+                    (
+                        Some("command_execution".to_string()),
+                        Some(serde_json::json!({ "command": command })),
+                    )
+                })
+                .collect();
+        }
+    }
+
+    vec![(name, input.map(parse_custom_tool_input))]
+}
+
+fn extract_exec_commands(source: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let mut remaining = source;
+    while let Some(start) = remaining.find("tools.exec_command") {
+        let call = &remaining[start..];
+        if let Some(command) = extract_first_exec_command(call) {
+            commands.push(command);
+        }
+        remaining = &call["tools.exec_command".len()..];
+    }
+    commands
+}
+
+fn extract_first_exec_command(source: &str) -> Option<String> {
+    let start = source.find("tools.exec_command")?;
+    // Search within the call arguments. Looking from the function name itself
+    // accidentally found the `cmd` characters inside `exec_command`.
+    let source = &source[start + "tools.exec_command".len()..];
+    let opening_paren = source.find('(')?;
+    let source = &source[opening_paren + 1..];
+    let rest = source.match_indices("cmd").find_map(|(index, _)| {
+        let before = &source[..index];
+        let after = &source[index + "cmd".len()..];
+        let before = before.trim_end();
+
+        // The property may be written as `cmd: ...`, `"cmd": ...`, or
+        // `'cmd': ...`; accept it only at an object-property boundary.
+        let value_after_key = match before.chars().last() {
+            Some('{' | ',') => Some(after),
+            Some(quote @ ('\'' | '"')) if after.starts_with(quote) => {
+                let before_quote = &before[..before.len() - quote.len_utf8()];
+                matches!(before_quote.trim_end().chars().last(), Some('{' | ','))
+                    .then_some(&after[quote.len_utf8()..])
+            }
+            _ => None,
+        }?;
+
+        value_after_key.trim_start().strip_prefix(':')
+    })?;
+    let mut chars = rest.chars().peekable();
+    while matches!(chars.peek(), Some(ch) if ch.is_whitespace()) {
+        chars.next();
+    }
+    let quote = match chars.next()? {
+        quote @ ('\'' | '"') => quote,
+        _ => return None,
+    };
+    let mut escaped = false;
+    let mut value = String::new();
+    for ch in chars {
+        if escaped {
+            value.push(match ch {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                other => other,
+            });
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            return Some(value);
+        } else {
+            value.push(ch);
+        }
+    }
+    None
 }
 
 fn app_server_custom_tool_output(value: &Value) -> String {
@@ -852,7 +1024,8 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         let requires_exact_turn = turn_scoped_notification(method);
         let found = (thread_id.is_some() || turn_id.is_some())
             && (!requires_exact_turn || (thread_id.is_some() && turn_id.is_some()));
-        let found = found.then(|| {
+        let found = found
+            .then(|| {
                 turns.values_mut().find(|active| {
                     thread_id
                         .map(|id| id == active.codex_thread_id)
@@ -910,7 +1083,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         "item/started" => {
             if let Some(item) = params.get("item") {
                 if let Some((id, name)) = tool_identity(item) {
-                    emit_notification_chunk(
+                    emit_notification_chunk_with_metadata(
                         inner,
                         &flowix_thread_id,
                         &run_id,
@@ -921,6 +1094,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                             name,
                             input: item.clone(),
                         },
+                        item_metadata(item),
                     )
                     .await;
                 }
@@ -929,7 +1103,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         "item/completed" => {
             if let Some(item) = params.get("item") {
                 if let Some((id, name)) = tool_identity(item) {
-                    emit_notification_chunk(
+                    emit_notification_chunk_with_metadata(
                         inner,
                         &flowix_thread_id,
                         &run_id,
@@ -940,6 +1114,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                             name,
                             result: item.clone(),
                         },
+                        item_metadata(item),
                     )
                     .await;
                 }
@@ -1039,6 +1214,19 @@ fn item_delta_metadata(params: &Value) -> AgentChunkMetadata {
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
+    item_metadata_from_id(item_id)
+}
+
+fn item_metadata(item: &Value) -> AgentChunkMetadata {
+    let item_id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string);
+    item_metadata_from_id(item_id)
+}
+
+fn item_metadata_from_id(item_id: Option<String>) -> AgentChunkMetadata {
     AgentChunkMetadata {
         message_id: item_id.clone(),
         source_message_id: item_id,
@@ -1322,10 +1510,7 @@ mod tests {
 
         assert_eq!(
             tool_identity(&collab),
-            Some((
-                "item-c".to_string(),
-                "collab_agent_tool_call".to_string()
-            ))
+            Some(("item-c".to_string(), "collab_agent_tool_call".to_string()))
         );
         assert_eq!(
             tool_identity(&image),
@@ -1349,6 +1534,109 @@ mod tests {
         assert_eq!(
             tool_identity(&json!({ "id": "message-1", "type": "agentMessage" })),
             None
+        );
+    }
+
+    #[test]
+    fn gives_tool_lifecycle_events_the_provider_item_identity() {
+        let metadata = item_metadata(&json!({
+            "id": "call-1",
+            "type": "commandExecution"
+        }));
+        assert_eq!(metadata.message_id.as_deref(), Some("call-1"));
+        assert_eq!(metadata.source_message_id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn projects_rollout_mcp_events_that_are_absent_from_thread_items() {
+        let payload = json!({
+            "type": "mcp_tool_call_end",
+            "call_id": "mcp-call-1",
+            "invocation": {
+                "server": "flowix",
+                "tool": "search",
+                "arguments": { "query": "hello" }
+            },
+            "result": { "Ok": { "content": [{ "type": "text", "text": "done" }] } }
+        });
+
+        let message = rollout_mcp_tool_message(&payload, "2026-01-01T00:00:00Z")
+            .expect("MCP end event should project to a history row");
+        assert_eq!(message.id, "codex-mcp-tool-mcp-call-1");
+        assert_eq!(message.role, "tool");
+        assert_eq!(message.tool_call_id.as_deref(), Some("mcp-call-1"));
+        assert_eq!(message.tool_name.as_deref(), Some("mcp_tool_call"));
+        assert_eq!(
+            message
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("tool")),
+            Some(&json!("search")),
+        );
+    }
+
+    #[test]
+    fn projects_rollout_exec_as_the_same_command_tool_used_live() {
+        let payload = json!({
+            "name": "exec",
+            "input": "const r = await tools.exec_command({cmd:\"flowix notebooks --json\",workdir:\"/tmp\"});"
+        });
+
+        let presentations = custom_tool_history_presentations(&payload);
+        assert_eq!(presentations.len(), 1);
+        let (name, input) = &presentations[0];
+        assert_eq!(name.as_deref(), Some("command_execution"));
+        assert_eq!(
+            input.as_ref().and_then(|input| input.get("command")),
+            Some(&json!("flowix notebooks --json")),
+        );
+    }
+
+    #[test]
+    fn extracts_quoted_exec_command_keys_without_matching_the_function_name() {
+        assert_eq!(
+            extract_first_exec_command(
+                "const r = await tools.exec_command({\"cmd\":\"flowix notebooks --json\", \"workdir\":\"/tmp\"});"
+            ),
+            Some("flowix notebooks --json".to_string()),
+        );
+        assert_eq!(
+            extract_first_exec_command(
+                "const r = await tools.exec_command({'cmd': 'flowix list work --json'});"
+            ),
+            Some("flowix list work --json".to_string()),
+        );
+    }
+
+    #[test]
+    fn projects_each_command_inside_a_parallel_exec_wrapper() {
+        let payload = json!({
+            "name": "exec",
+            "input": "const results = await Promise.all([tools.exec_command({cmd: \"git status --short\"}), tools.exec_command({cmd: \"rg --files\"}), tools.exec_command({cmd: \"flowix --help\"})]);"
+        });
+
+        let presentations = custom_tool_history_presentations(&payload);
+        assert_eq!(presentations.len(), 3);
+        assert_eq!(
+            presentations[0]
+                .1
+                .as_ref()
+                .and_then(|input| input.get("command")),
+            Some(&json!("git status --short")),
+        );
+        assert_eq!(
+            presentations[1]
+                .1
+                .as_ref()
+                .and_then(|input| input.get("command")),
+            Some(&json!("rg --files")),
+        );
+        assert_eq!(
+            presentations[2]
+                .1
+                .as_ref()
+                .and_then(|input| input.get("command")),
+            Some(&json!("flowix --help")),
         );
     }
 

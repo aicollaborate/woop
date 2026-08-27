@@ -27,6 +27,7 @@ import { ExternalAgentSettingsController } from '@features/agent/thread-card/set
 import { AgentConversationSurfaceController } from '@features/agent/thread-card/surface/agent-conversation-surface-controller';
 import { createExternalAgentRuntimeHandle } from '@features/agent/services/external-agent-runtime-service';
 import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
+import { markConversationWorkspaceStarted } from '@features/agent/runtime/workspace-snapshot';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -171,7 +172,7 @@ export function AgentConversationDetail({
       composerControllerRef.current?.clearDraft();
       composerControllerRef.current?.updateMultiLineState();
       composerImagesControllerRef.current?.clearAfterSubmit();
-      void useAgentSessionStore.getState().sendMessageToThread(
+      await useAgentSessionStore.getState().sendMessageToThread(
         targetThreadId,
         content || 'Analyze the attached image(s).',
         currentInstance.agentType,
@@ -183,6 +184,10 @@ export function AgentConversationDetail({
           imagePaths,
         },
       );
+      // Keep desired/applied revision bookkeeping correct on follow-up turns.
+      // The send action has accepted the request at this point; runtime errors
+      // are still represented by the normal stream error event.
+      markConversationWorkspaceStarted(currentInstance.instanceId);
     } catch (err) {
       // 仅线程创建/绑定失败会走到这里; 输入与草稿保持原样以便重试。
       logger.error('Failed to create conversation thread', { error: String(err) });

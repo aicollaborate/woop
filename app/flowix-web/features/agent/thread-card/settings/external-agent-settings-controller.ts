@@ -590,12 +590,11 @@ export class ExternalAgentSettingsController {
     const workspaceState = normalizeConversationWorkspaceState(instance?.runtimeConfig);
     const hasStarted = Boolean(instance?.threadId) || Boolean(workspaceState?.appliedRevision);
     const capability = getAgentRuntimeSpec(this.getTypeKey()).workspace;
-    // For Codex, workspace selection only changes the desired revision. The
-    // already-started turn owns the runtime config it was sent with, so a
-    // selection made while it runs can safely be queued for the next turn.
-    // Keep the existing in-flight restriction for runtimes that do not make
-    // that App Server guarantee.
-    const allowsInFlightSelection = this.getTypeKey() === "codex";
+    // The current turn owns the runtime config it was sent with. Only runtimes
+    // with an explicit resume-with-workspace guarantee may queue a change while
+    // running; DSH currently resumes the old session cwd and must stay locked
+    // after its first run.
+    const allowsInFlightSelection = capability.switchWhileRunning;
     const disabled =
       (!allowsInFlightSelection && this.isRunning()) ||
       (hasStarted && !capability.switchBetweenRuns);
