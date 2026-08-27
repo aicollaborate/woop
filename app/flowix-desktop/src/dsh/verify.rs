@@ -1,7 +1,8 @@
 //! DSH package verification.
 //!
 //! Runtime integrity protection relies on the SHA-256 pinned in the trusted
-//! manifest at `download.flowix-memo.com/dsh/latest.json`, plus HTTPS transport.
+//! platform manifest at `download.flowix-memo.com/dsh/{platform}/latest.json`,
+//! plus HTTPS transport.
 
 use super::manifest::DshArtifact;
 use sha2::{Digest, Sha256};

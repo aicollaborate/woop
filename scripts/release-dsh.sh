@@ -3,9 +3,9 @@
 #
 # Local build:
 #   bash scripts/release-dsh.sh
-# Publish a complete four-platform set already built on native runners:
+# Publish one or more prebuilt platform targets:
 #   DSH_PUBLISH=1 FLOWIX_DSH_SKIP_BUILD=1 \
-#   FLOWIX_DSH_TARGETS=node24-macos-arm64,node24-macos-x64,node24-linux-x64,node24-windows-x64 \
+#   FLOWIX_DSH_TARGETS=node24-windows-x64 \
 #   bash scripts/release-dsh.sh
 
 set -euo pipefail
@@ -26,18 +26,6 @@ fi
 if [[ -z "${FLOWIX_DSH_TARGETS:-}" ]]; then
   FLOWIX_DSH_TARGETS="$(node -p "'node24-' + (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform) + '-' + (process.arch === 'arm64' ? 'arm64' : 'x64')")"
 fi
-if [[ "${DSH_PUBLISH:-0}" == "1" ]]; then
-  for required in node24-macos-arm64 node24-macos-x64 node24-linux-x64 node24-windows-x64; do
-    case ",$FLOWIX_DSH_TARGETS," in
-      *",$required,"*) ;;
-      *)
-        echo "release-dsh.sh: stable manifest is missing required target $required" >&2
-        exit 1
-        ;;
-    esac
-  done
-fi
-
 if [[ "${FLOWIX_DSH_SKIP_BUILD:-0}" != "1" ]]; then
   if [[ "$FLOWIX_DSH_TARGETS" == *,* ]]; then
     echo "release-dsh.sh: one native Node architecture can build one managed runtime target; build each target under its matching Node and rerun with FLOWIX_DSH_SKIP_BUILD=1 to package prebuilt targets" >&2
@@ -66,11 +54,23 @@ done < <(find "$OUT_DIR" -maxdepth 1 -type f -name 'Flowix-DSH_*' -print)
 "$WRANGLER" r2 object put "$BUCKET/$PREFIX/dsh-latest.json" \
   --file "$OUT_DIR/dsh-latest.json" --remote
 
-# Stable channel consumed by the standalone DSH client. Keep the versioned
-# copy above for auditability and rollback, while this pointer is updated only
-# after the versioned archive has been uploaded.
-"$WRANGLER" r2 object put "$BUCKET/dsh/latest.json" \
-  --file "$OUT_DIR/dsh-latest.json" --remote
+# Stable channels are platform-specific, matching Flowix's updater layout.
+# A partial release updates only the covered platform channels.
+for target in ${FLOWIX_DSH_TARGETS//,/ }; do
+  case "$target" in
+    node24-macos-*) group="macos" ;;
+    node24-windows-*) group="windows" ;;
+    node24-linux-*) group="linux" ;;
+    *) echo "release-dsh.sh: unsupported target $target" >&2; exit 1 ;;
+  esac
+  manifest="$OUT_DIR/platforms/$group/latest.json"
+  if [[ ! -f "$manifest" ]]; then
+    echo "release-dsh.sh: platform manifest is missing: $manifest" >&2
+    exit 1
+  fi
+  "$WRANGLER" r2 object put "$BUCKET/dsh/$group/latest.json" \
+    --file "$manifest" --remote
+  echo "    manifest: https://download.flowix-memo.com/dsh/$group/latest.json"
+done
 
 echo "published DSH ${VERSION}"
-echo "    manifest: https://download.flowix-memo.com/dsh/latest.json"

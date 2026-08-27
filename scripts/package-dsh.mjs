@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { resolve, join, relative } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -59,8 +59,11 @@ for (const target of targets) {
   const extension = '.tar.gz'
   const filename = `Flowix-DSH_${version}_${target}${extension}`
   const archive = resolve(releaseRoot, filename)
-  run('tar', ['-czf', archive, '-C', packageDir, '.'])
-  run(process.execPath, [resolve(repo, 'scripts/verify-dsh-package.mjs'), archive, packageDir])
+  // Git Bash's tar treats a Windows drive-letter path as a remote target.
+  // Keep the archive path relative to the repository so the same packaging
+  // flow works from PowerShell and Git Bash on Windows.
+  run('tar', ['-czf', relative(repo, archive), '-C', packageDir, '.'])
+  run(process.execPath, [resolve(repo, 'scripts/verify-dsh-package.mjs'), relative(repo, archive), packageDir])
   const bytes = await readFile(archive)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const row = {
@@ -89,6 +92,21 @@ const manifest = {
 }
 await writeFile(resolve(releaseRoot, 'dsh-latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(`created ${resolve(releaseRoot, 'dsh-latest.json')}`)
+
+for (const [platform, artifact] of Object.entries(platforms)) {
+  const group = platform.startsWith('darwin-')
+    ? 'macos'
+    : platform.startsWith('windows-')
+      ? 'windows'
+      : platform.startsWith('linux-')
+        ? 'linux'
+        : platform
+  const platformManifest = { ...manifest, platforms: { [platform]: artifact } }
+  const output = resolve(releaseRoot, 'platforms', group, 'latest.json')
+  await mkdir(resolve(releaseRoot, 'platforms', group), { recursive: true })
+  await writeFile(output, `${JSON.stringify(platformManifest, null, 2)}\n`)
+  console.log(`created ${output}`)
+}
 
 function targetInfo(target) {
   const match = /^node24-(macos|linux|windows)-(x64|arm64)$/u.exec(target)

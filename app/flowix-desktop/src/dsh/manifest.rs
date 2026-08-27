@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 const MANIFEST_ENV: &str = "FLOWIX_DSH_MANIFEST_URL";
-const DEFAULT_MANIFEST_URL: &str = "https://download.flowix-memo.com/dsh/latest.json";
+const DEFAULT_MANIFEST_BASE: &str = "https://download.flowix-memo.com/dsh";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +29,21 @@ pub(super) struct DshArtifact {
 }
 
 pub(super) fn manifest_url() -> String {
-    std::env::var(MANIFEST_ENV).unwrap_or_else(|_| DEFAULT_MANIFEST_URL.into())
+    std::env::var(MANIFEST_ENV).unwrap_or_else(|_| {
+        format!("{DEFAULT_MANIFEST_BASE}/{}/latest.json", platform_group())
+    })
+}
+
+fn platform_group() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
 }
 pub(super) fn fetch_manifest() -> Result<DshManifest, String> {
     let manifest: DshManifest = Client::builder()
@@ -78,5 +92,11 @@ mod tests {
         assert!(validate_manifest_version("1.2.3").is_ok());
         assert!(validate_manifest_version(" 1.2.3").is_err());
         assert!(validate_manifest_version("latest").is_err());
+    }
+
+    #[test]
+    fn uses_platform_specific_default_manifest() {
+        let url = manifest_url();
+        assert!(url.ends_with("/windows/latest.json") || url.ends_with("/macos/latest.json") || url.ends_with("/linux/latest.json") || url.ends_with("/unknown/latest.json"));
     }
 }

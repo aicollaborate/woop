@@ -51,31 +51,31 @@ This performs the following fixed sequence:
    Flowix profile, bridge, and memory plugin.
 3. Remove only non-target `node-pty` ARM64 files and PDB debug symbols.
 4. Create and health-check the archive.
-5. Write its SHA-256, byte size, build ID, and URL into `dsh-latest.json`.
+5. Write its SHA-256, byte size, build ID, and URL into the Windows platform
+   manifest.
 
 Outputs:
 
 ```text
 .build/releases/dsh/Flowix-DSH_<version>_node24-windows-x64.tar.gz
 .build/releases/dsh/dsh-latest.json
+.build/releases/dsh/platforms/windows/latest.json
 ```
 
-The Windows-only workflow may upload this versioned archive, but it must not
-replace either the versioned or stable DSH manifest. Stable publication is
-performed only by the full four-platform release matrix. To publish manually,
-prebuild every target on its native Node 24 runner, collect the bundle
-directories, then use:
+The Windows workflow may publish its versioned archive and update only the
+Windows DSH updater channel. Other platform channels remain unchanged. To
+publish manually, use:
 
 ```bash
 DSH_PUBLISH=1 FLOWIX_DSH_SKIP_BUILD=1 \
-FLOWIX_DSH_TARGETS=node24-macos-arm64,node24-macos-x64,node24-linux-x64,node24-windows-x64 \
+FLOWIX_DSH_TARGETS=node24-windows-x64 \
 bash scripts/release-dsh.sh
 ```
 
 Publishing requires `FLOWIX_DSH_SIGNING_PRIVATE_KEY` or
-`FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH`, plus Wrangler/R2 credentials. CI merges
-the Windows manifest with the macOS and Linux manifests before updating the
-stable `dsh/latest.json` pointer.
+`FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH`, plus Wrangler/R2 credentials. Each
+platform release updates only its stable
+`dsh/{macos|windows|linux}/latest.json` pointer.
 
 ## 3. Flowix Windows installer
 
@@ -122,8 +122,7 @@ powershell -File scripts/verify-windows-release.ps1 -Artifact <Flowix-NSIS-updat
 - Flowix must contain `flowix-cli` but must never contain DSH host/runtime/UI
   files.
 - DSH must report `includesUi: false` and pass the package health check.
-- Do not publish a platform-only DSH manifest as the stable manifest; merge all
-  required platform manifests first.
+- DSH stable manifests are platform-specific under `dsh/{macos|windows|linux}/latest.json`.
 - Do not reuse old files under `app/flowix-desktop/binaries` when validating a
   clean release. The CLI build step must recreate the target-specific sidecar.
 
