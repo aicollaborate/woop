@@ -126,3 +126,9 @@ powershell -File scripts/verify-windows-release.ps1 -Artifact <Flowix-NSIS-updat
   required platform manifests first.
 - Do not reuse old files under `app/flowix-desktop/binaries` when validating a
   clean release. The CLI build step must recreate the target-specific sidecar.
+
+## Updater release flow
+
+See [`docs/UPDATER-RELEASE.md`](UPDATER-RELEASE.md) for the per-platform
+updater manifest layout, partial vs. full release semantics, and the env
+variables that `scripts/release.sh` consumes.

@@ -146,5 +146,22 @@ if (targetPlatform === "win32") {
   }
 }
 
+// Updater endpoint: 按 release platform 单独注入 ── 这样 mac/win/linux 各自指向
+// 独立的 manifest, 允许 latest 版本号在不同平台间不同步。默认值与 release.sh 发布路径对齐。
+const updaterEndpointEnv = {
+  darwin: "FLOWIX_UPDATER_ENDPOINT_MACOS",
+  win32: "FLOWIX_UPDATER_ENDPOINT_WINDOWS",
+  linux: "FLOWIX_UPDATER_ENDPOINT_LINUX",
+}[targetPlatform];
+const updaterEndpointDefault = {
+  darwin: "https://download.flowix-memo.com/updater/macos/latest.json",
+  win32: "https://download.flowix-memo.com/updater/windows/latest.json",
+  linux: "https://download.flowix-memo.com/updater/linux/latest.json",
+}[targetPlatform];
+const updaterEndpoint = process.env[updaterEndpointEnv]?.trim() || updaterEndpointDefault;
+production.plugins ??= {};
+production.plugins.updater ??= {};
+production.plugins.updater.endpoints = [updaterEndpoint];
+
 fs.writeFileSync(outputPath, `${JSON.stringify(production, null, 2)}\n`);
 console.log(path.relative(repoRoot, outputPath));

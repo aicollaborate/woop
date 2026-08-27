@@ -24,9 +24,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgRUEyNzZBMzYyMDQyNEI1MApSV1JRUzBJZ05tb242a1lBZDlLYnZJYkVXNm84VFIvTWZ2ODhLS29kM2lFaGVWSzBwejF2TEQyWgo=",
-      "endpoints": [
-        "https://flowix-memo.com/latest.json"
-      ],
+      "_comment_endpoints": "每个 release platform 单独注入 ── scripts/prepare-tauri-production-config.mjs 根据 FLOWIX_UPDATER_ENDPOINT_{MACOS,WINDOWS,LINUX} 写入 plugins.updater.endpoints。拆 platform 是为了让 mac/win 的 latest 版本可以独立发布, 避免 combined manifest 把别的平台版本号塞给客户端。",
       "dangerousInsecureTransportProtocol": false
     }
   }
