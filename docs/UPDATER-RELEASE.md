@@ -1,12 +1,10 @@
 # Flowix updater release
 
-Flowix ships three updater surfaces that work together:
+Flowix ships per-platform updater manifests and static website downloads:
 
 - **Per-platform updater manifests** under stable R2 paths, served directly to
   the in-app Tauri updater. Each one advertises exactly one release platform
   group's binaries and pins its own top-level `version`.
-- **A combined site manifest** at `flowix-memo.com/latest.json`, consumed by the
-  flowix-home Pages site for the download buttons.
 - **Version-prefixed R2 artifacts** (`v<version>/...`) that the manifests point
   at. These are immutable per release.
 
@@ -18,10 +16,9 @@ either client into a self-install loop.
 
 | Manifest                          | Consumer             | Stable URL                                       |
 | --------------------------------- | -------------------- | ------------------------------------------------ |
-| `updater/macos/latest.json`       | macOS Tauri updater  | `https://download.flowix-memo.com/updater/macos/latest.json`      |
-| `updater/windows/latest.json`     | Windows Tauri updater| `https://download.flowix-memo.com/updater/windows/latest.json`    |
-| `updater/linux/latest.json`       | Linux Tauri updater  | `https://download.flowix-memo.com/updater/linux/latest.json`      |
-| `flowix-memo.com/latest.json`     | flowix-home Pages    | (deployed via Wrangler Pages, not R2)            |
+| `updater/macos/latest.json`       | macOS Tauri updater  | `https://download.flowix.cc/updater/macos/latest.json`      |
+| `updater/windows/latest.json`     | Windows Tauri updater| `https://download.flowix.cc/updater/windows/latest.json`    |
+| `updater/linux/latest.json`       | Linux Tauri updater  | `https://download.flowix.cc/updater/linux/latest.json`      |
 
 Each per-platform manifest's `platforms` block contains only its own group:
 
@@ -39,30 +36,20 @@ group manifest will fail `check()` rather than silently offering nothing.
 
 `scripts/release.sh` infers the release scope from `FLOWIX_TARGETS`:
 
-- **Full release** — `FLOWIX_TARGETS` covers all three groups (macos, windows,
-  linux). The script writes per-group manifests, uploads them to R2, **and**
-  regenerates the combined `site-latest.json` so flowix-home is rebuilt and
-  redeployed.
-- **Partial release** — `FLOWIX_TARGETS` covers only one or two groups. The
-  script writes the covered per-group manifests and uploads them to R2, but
-  skips the combined site manifest step. flowix-home is left alone, so the
-  download buttons keep pointing at the laggard group's previous release.
-
-This keeps the website honest: when only mac is published, the Windows download
-button still serves the last full Windows release instead of a stale URL.
+- **Full or partial release** — the script writes and uploads only the covered
+  per-platform manifests, then rebuilds the website's static download links.
 
 ## Environment overrides
 
 | Variable                            | Default                                              | Notes |
 | ----------------------------------- | ---------------------------------------------------- | ----- |
-| `FLOWIX_UPDATER_ENDPOINT_MACOS`     | `https://download.flowix-memo.com/updater/macos/latest.json`          | Injected into `plugins.updater.endpoints` for darwin builds |
-| `FLOWIX_UPDATER_ENDPOINT_WINDOWS`   | `https://download.flowix-memo.com/updater/windows/latest.json`        | Injected for win32 builds |
-| `FLOWIX_UPDATER_ENDPOINT_LINUX`     | `https://download.flowix-memo.com/updater/linux/latest.json`          | Injected for linux builds |
-| `FLOWIX_UPDATER_ENDPOINT`           | `https://flowix-memo.com/latest.json`                | Legacy combined manifest URL (only published on full releases) |
+| `FLOWIX_UPDATER_ENDPOINT_MACOS`     | `https://download.flowix.cc/updater/macos/latest.json`          | Injected into `plugins.updater.endpoints` for darwin builds |
+| `FLOWIX_UPDATER_ENDPOINT_WINDOWS`   | `https://download.flowix.cc/updater/windows/latest.json`        | Injected for win32 builds |
+| `FLOWIX_UPDATER_ENDPOINT_LINUX`     | `https://download.flowix.cc/updater/linux/latest.json`          | Injected for linux builds |
 | `FLOWIX_R2_UPDATER_PREFIX`          | `updater`                                            | R2 key prefix for per-platform manifests |
 | `FLOWIX_R2_PREFIX`                  | `v${VERSION}`                                        | R2 key prefix for versioned artifacts (unchanged) |
 | `FLOWIX_R2_BUCKET`                  | `flowix-downloads`                                   | R2 bucket (unchanged) |
-| `FLOWIX_R2_PUBLIC_BASE`             | `https://download.flowix-memo.com`                   | Public origin for artifact URLs (unchanged) |
+| `FLOWIX_R2_PUBLIC_BASE`             | `https://download.flowix.cc`                   | Public origin for artifact URLs (unchanged) |
 
 ## Publish flow
 
@@ -83,8 +70,8 @@ bash scripts/release.sh
 ```
 
 Both flows upload the per-group manifest to the matching stable R2 path so the
-in-app updater picks up the new version immediately. Only the full release
-also deploys the combined site manifest to flowix-home.
+in-app updater picks up the new version immediately. The website's download
+links are maintained in its templates and deployed with flowix-home.
 
 ## Verifying a manifest locally
 

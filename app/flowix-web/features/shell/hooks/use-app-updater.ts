@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   checkAppUpdate,
   installAppUpdate,
+  cancelAppUpdate,
   type AppUpdate,
   type AppUpdateDownloadProgress,
 } from '@platform/tauri/client/updater';
@@ -15,6 +16,7 @@ export interface AppUpdaterState {
   error: unknown;
   checkNow: () => Promise<AppUpdate | null>;
   installNow: () => Promise<void>;
+  cancelNow: () => Promise<void>;
 }
 
 interface UseAppUpdaterOptions {
@@ -26,7 +28,7 @@ interface UseAppUpdaterOptions {
 export function useAppUpdater({
   autoCheck = false,
   enabled = true,
-  delayMs = 7_000,
+  delayMs = 3_600,
 }: UseAppUpdaterOptions = {}): AppUpdaterState {
   const [status, setStatus] = useState<AppUpdaterStatus>('idle');
   const [update, setUpdate] = useState<AppUpdate | null>(null);
@@ -60,12 +62,18 @@ export function useAppUpdater({
     setError(null);
     setProgress(null);
     try {
-      await installAppUpdate(current, setProgress);
+      await installAppUpdate(setProgress);
     } catch (installError) {
       setStatus('available');
-      setError(installError);
+      if (!isCancellationError(installError)) setError(installError);
       throw installError;
     }
+  }, []);
+
+  const cancelNow = useCallback(async () => {
+    await cancelAppUpdate();
+    setProgress(null);
+    setStatus('available');
   }, []);
 
   useEffect(() => {
@@ -79,5 +87,11 @@ export function useAppUpdater({
     return () => window.clearTimeout(timer);
   }, [autoCheck, enabled, delayMs, checkNow]);
 
-  return { status, update, progress, error, checkNow, installNow };
+  return { status, update, progress, error, checkNow, installNow, cancelNow };
+}
+
+function isCancellationError(error: unknown): boolean {
+  return error instanceof Error
+    ? error.message.includes('cancelled')
+    : String(error).includes('cancelled');
 }

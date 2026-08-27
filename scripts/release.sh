@@ -16,17 +16,11 @@
 #                            (default: updater) ── written to
 #                            ${BUCKET}/${PREFIX}/{macos,windows,linux}/latest.json
 #   FLOWIX_R2_PUBLIC_BASE    public package origin
-#   FLOWIX_UPDATER_ENDPOINT          legacy combined-manifest URL (only published on full releases)
-#   FLOWIX_UPDATER_ENDPOINT_MACOS    macOS per-platform updater URL (default: https://download.flowix-memo.com/updater/macos/latest.json)
-#   FLOWIX_UPDATER_ENDPOINT_WINDOWS  Windows per-platform updater URL (default: https://download.flowix-memo.com/updater/windows/latest.json)
-#   FLOWIX_UPDATER_ENDPOINT_LINUX    Linux per-platform updater URL (default: https://download.flowix-memo.com/updater/linux/latest.json)
+#   FLOWIX_UPDATER_ENDPOINT_MACOS    macOS per-platform updater URL (default: https://download.flowix.cc/updater/macos/latest.json)
+#   FLOWIX_UPDATER_ENDPOINT_WINDOWS  Windows per-platform updater URL (default: https://download.flowix.cc/updater/windows/latest.json)
+#   FLOWIX_UPDATER_ENDPOINT_LINUX    Linux per-platform updater URL (default: https://download.flowix.cc/updater/linux/latest.json)
 #   FLOWIX_SKIP_BUILD=1       collect artifacts already present in CARGO_TARGET_DIR
 #   FLOWIX_PUBLISH=1          upload R2 + deploy flowix-home (works for both full and partial releases)
-#   FLOWIX_MIGRATE_LEGACY=1   (partial releases) also advance the legacy root
-#                             /latest.json to this release — the one-shot bridge
-#                             that moves pre-endpoint-split clients onto the
-#                             per-platform manifests. Set it on the first build
-#                             that carries the per-platform endpoint, then stop.
 #
 # This is the only production publication path for the Flowix updater. The
 # GitHub release workflow creates draft artifacts but does not update the
@@ -55,11 +49,10 @@ FLOWIX_HOME_DIR="${FLOWIX_HOME_DIR:-$REPO_ROOT/../flowix-home}"
 FLOWIX_R2_BUCKET="${FLOWIX_R2_BUCKET:-flowix-downloads}"
 FLOWIX_R2_PREFIX="${FLOWIX_R2_PREFIX:-v${VERSION}}"
 FLOWIX_R2_UPDATER_PREFIX="${FLOWIX_R2_UPDATER_PREFIX:-updater}"
-FLOWIX_R2_PUBLIC_BASE="${FLOWIX_R2_PUBLIC_BASE:-https://download.flowix-memo.com}"
-FLOWIX_UPDATER_ENDPOINT="${FLOWIX_UPDATER_ENDPOINT:-https://flowix-memo.com/latest.json}"
-FLOWIX_UPDATER_ENDPOINT_MACOS="${FLOWIX_UPDATER_ENDPOINT_MACOS:-https://download.flowix-memo.com/updater/macos/latest.json}"
-FLOWIX_UPDATER_ENDPOINT_WINDOWS="${FLOWIX_UPDATER_ENDPOINT_WINDOWS:-https://download.flowix-memo.com/updater/windows/latest.json}"
-FLOWIX_UPDATER_ENDPOINT_LINUX="${FLOWIX_UPDATER_ENDPOINT_LINUX:-https://download.flowix-memo.com/updater/linux/latest.json}"
+FLOWIX_R2_PUBLIC_BASE="${FLOWIX_R2_PUBLIC_BASE:-https://download.flowix.cc}"
+FLOWIX_UPDATER_ENDPOINT_MACOS="${FLOWIX_UPDATER_ENDPOINT_MACOS:-https://download.flowix.cc/updater/macos/latest.json}"
+FLOWIX_UPDATER_ENDPOINT_WINDOWS="${FLOWIX_UPDATER_ENDPOINT_WINDOWS:-https://download.flowix.cc/updater/windows/latest.json}"
+FLOWIX_UPDATER_ENDPOINT_LINUX="${FLOWIX_UPDATER_ENDPOINT_LINUX:-https://download.flowix.cc/updater/linux/latest.json}"
 FLOWIX_HOME_PROJECT="${FLOWIX_HOME_PROJECT:-flowix-home}"
 FLOWIX_HOME_BRANCH="${FLOWIX_HOME_BRANCH:-main}"
 RELEASE_OUT="${RELEASE_OUT:-$CARGO_TARGET_DIR/release/updater}"
@@ -175,8 +168,7 @@ updater_endpoint_for_group() {
 }
 
 # 写出单个 manifest (per-group 或 combined)。rows 是 "platform|name" 字符串数组。
-# with_laggards=1 时会从 $FLOWIX_HOME_DIR/src/latest.json 结转 x-flowix-installers,
-# 仅 combined manifest 需要这个行为 (per-group manifest 不结转)。
+# with_laggards 参数已废弃; 官网使用模板中的静态下载链接。
 write_manifest() {
   local output="$1"
   local with_laggards="$2"
@@ -320,20 +312,6 @@ for group in "${ACTIVE_GROUPS[@]}"; do
   verify_manifest "$group_out" "${group_required[@]}"
 done
 
-# Combined site manifest: 仅全平台发布时生成并部署。partial release 跳过 ──
-# 此时 combined manifest 里的 `version` 与 `platforms` 不能准确反映所有平台,
-# 让 flowix-home 留着上一版就好, 滞后平台继续指向它们上次发布的产物。
-COMBINED_MANIFEST=""
-if [[ $IS_FULL_RELEASE -eq 1 ]]; then
-  COMBINED_MANIFEST="$RELEASE_OUT/site-latest.json"
-  write_manifest "$COMBINED_MANIFEST" 1 "${MANIFEST_ROWS[@]}"
-  declare -a ALL_PLATFORMS=()
-  for target in $FLOWIX_TARGETS; do
-    ALL_PLATFORMS+=("$(platform_for_target "$target")")
-  done
-  verify_manifest "$COMBINED_MANIFEST" "${ALL_PLATFORMS[@]}"
-fi
-
 if [[ "${FLOWIX_PUBLISH:-0}" != "1" ]]; then
   echo "==> publish skipped (set FLOWIX_PUBLISH=1 to upload R2 and deploy flowix-home)"
   exit 0
@@ -366,59 +344,14 @@ for target in $FLOWIX_TARGETS; do
     --file "$RELEASE_OUT/$name.sig" --remote
 done
 
-# flowix-home (官网下载页) 部署。
-# * full release: 用 combined manifest 整体覆盖 (存量客户端的 legacy updater
-#   语义 + 官网 x-flowix-installers 一起刷新)。
-# * partial release: 只把本次发布的 group 的 x-flowix-installers 条目合并进
-#   官网 manifest ── version/platforms 一字不动 (那是存量客户端的 updater
-#   语义, 只能在 full release 重生成), 但官网弹窗立即显示新版本与下载链接。
-home_manifest="$FLOWIX_HOME_DIR/src/latest.json"
-home_manifest_backup="$(mktemp)"
-home_manifest_existed=0
-if [[ -f "$home_manifest" ]]; then
-  cp "$home_manifest" "$home_manifest_backup"
-  home_manifest_existed=1
-fi
-# 仅在部署未能完成时回滚工作区。成功部署后保留新 manifest: 后续任何手动
-# Pages 部署都必须能构建出与线上一致的 manifest, 否则会把旧内容重新部署上去
-# (踩过一次: release 成功 → trap 回滚 → 下一次手动 deploy 用回滚后的文件
-# 把线上 1.2.4 覆盖回了 1.2.3)。
-HOME_MANIFEST_DEPLOYED=0
-restore_home_manifest() {
-  if [[ "$HOME_MANIFEST_DEPLOYED" == "1" ]]; then
-    rm -f "$home_manifest_backup"
-    return 0
-  fi
-  if [[ "$home_manifest_existed" == "1" ]]; then
-    cp "$home_manifest_backup" "$home_manifest"
-  else
-    rm -f "$home_manifest"
-  fi
-  rm -f "$home_manifest_backup"
-}
-trap restore_home_manifest EXIT
-
-if [[ $IS_FULL_RELEASE -eq 1 ]]; then
-  echo "==> flowix-home: full release (combined site manifest)"
-  cp "$COMBINED_MANIFEST" "$home_manifest"
-else
-  echo "==> flowix-home: merging shipped installer entries into site manifest"
-  ACTIVE_GROUPS_STR="${ACTIVE_GROUPS[*]}" \
-  FLOWIX_HOME_MANIFEST="$home_manifest" \
-  FLOWIX_RELEASE_OUT="$RELEASE_OUT" \
-  node "$REPO_ROOT/scripts/merge-site-installers.mjs"
-fi
+# flowix-home 使用模板中的静态下载链接, 发布时只需重新构建并部署站点。
 npm --prefix "$FLOWIX_HOME_DIR" run build
 echo "==> deploying flowix-home"
 "$WRANGLER" pages deploy "$FLOWIX_HOME_DIR/_site" \
   --project-name "$FLOWIX_HOME_PROJECT" --branch "$FLOWIX_HOME_BRANCH"
-HOME_MANIFEST_DEPLOYED=1
 
 echo "==> published Flowix ${VERSION}"
 for group in "${ACTIVE_GROUPS[@]}"; do
   echo "    updater[$group]: $(updater_endpoint_for_group "$group")"
 done
-if [[ $IS_FULL_RELEASE -eq 1 ]]; then
-  echo "    site manifest: $FLOWIX_UPDATER_ENDPOINT"
-fi
 echo "    artifacts: $FLOWIX_R2_PUBLIC_BASE/$FLOWIX_R2_PREFIX/"

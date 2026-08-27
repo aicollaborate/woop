@@ -40,7 +40,7 @@ once_cell = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
 thiserror = { workspace = true }
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
 async-trait = "0.1"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

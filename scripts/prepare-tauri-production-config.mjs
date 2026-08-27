@@ -154,9 +154,9 @@ const updaterEndpointEnv = {
   linux: "FLOWIX_UPDATER_ENDPOINT_LINUX",
 }[targetPlatform];
 const updaterEndpointDefault = {
-  darwin: "https://download.flowix-memo.com/updater/macos/latest.json",
-  win32: "https://download.flowix-memo.com/updater/windows/latest.json",
-  linux: "https://download.flowix-memo.com/updater/linux/latest.json",
+  darwin: "https://download.flowix.cc/updater/macos/latest.json",
+  win32: "https://download.flowix.cc/updater/windows/latest.json",
+  linux: "https://download.flowix.cc/updater/linux/latest.json",
 }[targetPlatform];
 const updaterEndpoint = process.env[updaterEndpointEnv]?.trim() || updaterEndpointDefault;
 production.plugins ??= {};

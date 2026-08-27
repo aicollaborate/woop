@@ -1004,6 +1004,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
   const { t } = useI18n();
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
   const [installError, setInstallError] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const update = updater.update;
   const isInstalling = updater.status === 'installing';
 
@@ -1026,12 +1027,23 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
     }
   };
 
+  const handleCancel = async () => {
+    if (isCancelling) return;
+    setIsCancelling(true);
+    try {
+      if (isInstalling) await updater.cancelNow();
+      setDismissedVersion(update.version);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const downloadPercent = updater.progress?.phase === 'progress' && updater.progress.contentLength
     ? Math.min(100, Math.round((updater.progress.downloadedBytes / updater.progress.contentLength) * 100))
     : null;
 
   return (
-    <FloatingPrompt open onClose={() => setDismissedVersion(update.version)} className="p-0">
+    <FloatingPrompt open onClose={() => void handleCancel()} className="p-0">
         <div className="px-5 py-5 text-left">
           <DialogHeader className="mb-0">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
@@ -1062,7 +1074,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
           {installError && <p className="mt-3 text-xs text-[var(--destructive)]">{t('appUpdates.installFailed')}</p>}
 
           <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setDismissedVersion(update.version)}>
+            <Button type="button" variant="outline" onClick={() => void handleCancel()} disabled={isCancelling}>
               {t('dialog.cancel')}
             </Button>
             <Button type="button" onClick={() => void handleInstall()} disabled={isInstalling}>

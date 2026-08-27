@@ -298,6 +298,18 @@ export function MemoNavigationDropdown({
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem
+          onClick={() => handleNavigate('todos')}
+          className={cn(
+            'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
+            isActive('todos') && 'bg-[var(--muted)]',
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <ListTodo className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{t('memo.list.filterTasks')}</span>
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
           onClick={() => handleNavigate('agents')}
           className={cn(
             'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
@@ -311,18 +323,6 @@ export function MemoNavigationDropdown({
               <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" aria-hidden="true" />
             )}
             <span>{detectedAgentName}</span>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => handleNavigate('todos')}
-          className={cn(
-            'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
-            isActive('todos') && 'bg-[var(--muted)]',
-          )}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <ListTodo className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>{t('memo.list.filterTasks')}</span>
           </span>
         </DropdownMenuItem>
         <MemoNavigationSubmenu

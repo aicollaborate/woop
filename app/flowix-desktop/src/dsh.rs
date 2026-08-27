@@ -6,11 +6,12 @@
 //! child process of Flowix; this keeps the existing stdio protocol and avoids
 //! exposing a local TCP service.
 
-use reqwest::blocking::Client;
+use futures::{future::{AbortHandle, Abortable}, StreamExt};
+use reqwest::{blocking::Client as BlockingClient, Client};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,6 +62,7 @@ const REQUIRED_HOST_CAPABILITIES: &[&str] = &[
     "model-settings-management",
 ];
 static DSH_UPDATE_CANCELLED: AtomicBool = AtomicBool::new(false);
+static DSH_DOWNLOAD_ABORT: OnceLock<Mutex<Option<AbortHandle>>> = OnceLock::new();
 static DSH_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static DSH_DOWNLOAD_PROGRESS: OnceLock<Mutex<Option<DshDownloadProgress>>> = OnceLock::new();
 
@@ -109,6 +111,10 @@ fn try_acquire_operation_lock() -> Result<std::sync::MutexGuard<'static, ()>, St
 
 fn download_progress_state() -> &'static Mutex<Option<DshDownloadProgress>> {
     DSH_DOWNLOAD_PROGRESS.get_or_init(|| Mutex::new(None))
+}
+
+fn download_abort_state() -> &'static Mutex<Option<AbortHandle>> {
+    DSH_DOWNLOAD_ABORT.get_or_init(|| Mutex::new(None))
 }
 
 /// Return the latest DSH download state so newly mounted windows can recover
@@ -302,7 +308,7 @@ fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, 
 /// Best-effort size lookup for the install card. A manifest outage must not
 /// make the DSH preferences page unusable or block installation.
 pub fn latest_archive_size() -> Option<u64> {
-    let client = Client::builder()
+    let client = BlockingClient::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .ok()?;
@@ -350,6 +356,11 @@ pub fn install_runtime_with_progress_before_publish(
 
 pub fn cancel_update() {
     DSH_UPDATE_CANCELLED.store(true, Ordering::Release);
+    if let Ok(active) = download_abort_state().lock() {
+        if let Some(handle) = active.as_ref() {
+            handle.abort();
+        }
+    }
 }
 
 fn is_cancelled_error(error: &str) -> bool {
@@ -556,6 +567,35 @@ fn download_artifact(
     app: Option<&AppHandle>,
     root: &Path,
 ) -> Result<DownloadedArtifact, String> {
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    {
+        let mut active = download_abort_state()
+            .lock()
+            .map_err(|_| "DSH download cancellation state is unavailable".to_string())?;
+        *active = Some(abort_handle);
+    }
+
+    let result = tauri::async_runtime::block_on(Abortable::new(
+        download_artifact_async(url, expected_sha256, app, root),
+        abort_registration,
+    ));
+
+    if let Ok(mut active) = download_abort_state().lock() {
+        *active = None;
+    }
+
+    match result {
+        Ok(result) => result,
+        Err(_) => Err("DSH download cancelled; the partial download was kept for resume".to_string()),
+    }
+}
+
+async fn download_artifact_async(
+    url: &str,
+    expected_sha256: &str,
+    app: Option<&AppHandle>,
+    root: &Path,
+) -> Result<DownloadedArtifact, String> {
     let normalized_hash = normalized_sha256(expected_sha256)?;
     let partial_path = partial_download_path(root, &normalized_hash);
     let mut existing = fs::metadata(&partial_path)
@@ -571,16 +611,16 @@ fn download_artifact(
         .timeout(Duration::from_secs(15 * 60))
         .build()
         .map_err(|e| format!("create DSH download client: {e}"))?;
-    let mut response = request_artifact(&client, url, existing)?;
+    let mut response = request_artifact(&client, url, existing).await?;
     if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && existing > 0 {
         let _ = fs::remove_file(&partial_path);
         existing = 0;
-        response = request_artifact(&client, url, 0)?;
+        response = request_artifact(&client, url, 0).await?;
     }
     let resumed = response_resumes(existing, response.status());
     if existing > 0 && !resumed {
         existing = 0;
-        response = request_artifact(&client, url, 0)?;
+        response = request_artifact(&client, url, 0).await?;
     }
     if !response.status().is_success() {
         return Err(format!("download DSH package: HTTP {}", response.status()));
@@ -590,51 +630,51 @@ fn download_artifact(
         .map(|length| length.saturating_add(existing));
     let mut downloaded = existing;
     let mut file = if existing > 0 {
-        OpenOptions::new()
+        tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&partial_path)
+            .await
     } else {
-        OpenOptions::new()
+        tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&partial_path)
+            .await
     }
     .map_err(|e| format!("open DSH partial download: {e}"))?;
-    let mut buffer = [0u8; 64 * 1024];
     let mut last_emit = Instant::now();
     emit_progress(app, "downloading", downloaded, total_bytes, resumed);
-    loop {
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
         if DSH_UPDATE_CANCELLED.load(Ordering::Acquire) {
             emit_progress(app, "cancelled", downloaded, total_bytes, resumed);
             return Err(
                 "DSH download cancelled; the partial download was kept for resume".to_string(),
             );
         }
-        let count = response
-            .read(&mut buffer)
-            .map_err(|e| format!("read DSH package: {e}"))?;
-        if count == 0 {
-            break;
-        }
-        downloaded = downloaded.saturating_add(count as u64);
+        let chunk = chunk.map_err(|e| format!("read DSH package: {e}"))?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
         if downloaded > MAX_DOWNLOAD_BYTES {
             return Err(format!(
                 "DSH package exceeds {} MiB limit",
                 MAX_DOWNLOAD_BYTES / 1024 / 1024
             ));
         }
-        file.write_all(&buffer[..count])
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
             .map_err(|e| format!("write DSH partial download: {e}"))?;
         if last_emit.elapsed() >= Duration::from_millis(100) {
             emit_progress(app, "downloading", downloaded, total_bytes, resumed);
             last_emit = Instant::now();
         }
     }
-    file.flush()
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
         .map_err(|e| format!("flush DSH partial download: {e}"))?;
     file.sync_all()
+        .await
         .map_err(|e| format!("sync DSH partial download: {e}"))?;
     emit_progress(app, "downloaded", downloaded, total_bytes, resumed);
     let bytes = fs::read(&partial_path).map_err(|e| format!("read completed DSH package: {e}"))?;
@@ -647,17 +687,18 @@ fn download_artifact(
     })
 }
 
-fn request_artifact(
+async fn request_artifact(
     client: &Client,
     url: &str,
     existing: u64,
-) -> Result<reqwest::blocking::Response, String> {
+) -> Result<reqwest::Response, String> {
     let mut request = client.get(url);
     if existing > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={existing}-"));
     }
     request
         .send()
+        .await
         .map_err(|e| format!("download DSH package: {e}"))
 }
 

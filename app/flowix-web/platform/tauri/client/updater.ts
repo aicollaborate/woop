@@ -1,5 +1,7 @@
-import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export interface AppUpdate {
   update: Update;
@@ -53,34 +55,21 @@ export async function checkAppUpdate(): Promise<AppUpdate | null> {
 }
 
 export async function installAppUpdate(
-  appUpdate: AppUpdate,
   onProgress?: (progress: AppUpdateDownloadProgress) => void,
 ): Promise<void> {
   if (installPromise) return installPromise;
   if (checkPromise) throw new Error('An application update check is currently in progress.');
 
   const pending = (async () => {
-    let downloadedBytes = 0;
-    let contentLength: number | undefined;
-
-    await appUpdate.update.download((event: DownloadEvent) => {
-      switch (event.event) {
-        case 'Started':
-          contentLength = event.data.contentLength;
-          onProgress?.({ phase: 'started', contentLength });
-          break;
-        case 'Progress':
-          downloadedBytes += event.data.chunkLength;
-          onProgress?.({ phase: 'progress', downloadedBytes, contentLength });
-          break;
-        case 'Finished':
-          onProgress?.({ phase: 'finished', downloadedBytes });
-          break;
-      }
+    const unlisten = await listen<AppUpdateDownloadProgress>('app-update-progress', (event) => {
+      onProgress?.(event.payload);
     });
-
-    await appUpdate.update.install();
-    await relaunch();
+    try {
+      await invoke('install_app_update');
+      await relaunch();
+    } finally {
+      await unlisten();
+    }
   })();
   installPromise = pending;
   try {
@@ -88,4 +77,8 @@ export async function installAppUpdate(
   } finally {
     if (installPromise === pending) installPromise = null;
   }
+}
+
+export async function cancelAppUpdate(): Promise<boolean> {
+  return await invoke<boolean>('cancel_app_update');
 }

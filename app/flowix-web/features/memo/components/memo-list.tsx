@@ -87,6 +87,10 @@ const HEADER_ICON_BTN_CLASS =
   'h-8 w-8 justify-center rounded-full p-0 border border-[var(--border)] ' +
   'hover:bg-[var(--muted)] hover:text-[var(--primary)] text-[var(--foreground)]';
 
+const DROPDOWN_SECTION_LABEL_CLASS =
+  'flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] ' +
+  'text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]';
+
 function BlockingLoadingOverlay({
   text,
   stacked = false,
@@ -890,7 +894,7 @@ export function MemoList() {
           >
           <div className="space-y-1">
             {/* Group 1: Filter Options */}
-            <DropdownMenuLabel className="flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">{t('memo.list.filterLabel')}</DropdownMenuLabel>
+            <DropdownMenuLabel className={cn(DROPDOWN_SECTION_LABEL_CLASS, 'mt-1')}>{t('memo.list.filterLabel')}</DropdownMenuLabel>
             <MemoNavigationSubmenu
               label={t('memo.list.filterColorOnly')}
               active={activeFilter === 'color'}
@@ -939,7 +943,7 @@ export function MemoList() {
             <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
 
             {/* Group 2: Sort Options */}
-            <DropdownMenuLabel className="flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">{t('memo.list.sortLabel')}</DropdownMenuLabel>
+            <DropdownMenuLabel className={DROPDOWN_SECTION_LABEL_CLASS}>{t('memo.list.sortLabel')}</DropdownMenuLabel>
             <DropdownMenuItem
               onClick={() => handleSortChange('createdAt')}
               className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
