@@ -88,7 +88,10 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   };
 
   return (
-    <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
+    <div
+      data-tauri-drag-region
+      className="relative flex h-full min-w-0 flex-1 items-center gap-2 pl-3 before:absolute before:left-0 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-[var(--divider)]"
+    >
       <span className="agent-thread-card__badge-hover-wrapper shrink-0">
         <BadgeHoverCard
           sessionId={instance.threadId ?? ''}
@@ -229,7 +232,7 @@ export function AgentConversationTitlebar({
           </button>
         </Tooltip>
       </div>
-      <div data-tauri-drag-region className="min-w-0 flex-1">
+      <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch">
         <AgentConversationHeader instanceId={instanceId} />
       </div>
     </div>
