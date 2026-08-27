@@ -876,7 +876,7 @@ export function MemoList() {
   };
 
   return (
-    <div className="memo-list relative flex h-full select-none flex-col bg-[var(--card)]">
+    <div className="memo-list relative flex h-full min-w-0 select-none flex-col bg-[var(--card)]">
       <>
       {/* Memo Tab */}
       <div className="flex items-center justify-between pl-2 pr-3 pb-2 gap-2">
@@ -984,8 +984,8 @@ export function MemoList() {
 
       <div className="relative flex min-h-0 flex-1">
         <OverlayScrollbar
-          className="flex min-h-0 flex-1"
-          scrollerClassName="flex-1 overflow-y-auto px-1 py-2"
+          className="flex min-h-0 min-w-0 w-full flex-1"
+          scrollerClassName="min-w-0 w-full flex-1 overflow-y-auto px-1 py-2"
           scrollerRef={listContainerRef}
           onScroll={handleMemoListScroll}
         >
@@ -994,7 +994,7 @@ export function MemoList() {
             // 由内容撑开, 不再用 transform 定位。 GSAP 入场动画只作用在
             // 命中的 [data-insert-anim] 节点, 不影响周围 row 的流式布局 ──
             // 物理上消除了"上下 row 重叠"的可能性。
-            <div className="flex flex-col">
+            <div className="flex min-w-0 w-full flex-col">
               {renderedMemos.map((memo) => {
                 // 用 closure 缓存让同一 memo 跨 render 拿到稳定 ref, 避免
                 // React 在重渲时反复卸载/挂载 ref (虽然现在没了 virtualizer
@@ -1005,8 +1005,9 @@ export function MemoList() {
                   <div
                     key={memo.id}
                     ref={cardRef}
+                    className="min-w-0 w-full"
                   >
-                    <div data-insert-anim>
+                    <div data-insert-anim className="min-w-0 w-full">
                       <MemoCard
                         memo={memo}
                         variant={memoCardVariant}

@@ -216,7 +216,7 @@ function MemoCardShell({
           onClick={() => onSelect(memo)}
           onDoubleClick={() => onOpenInWindow?.(memo)}
           className={cn(
-            'group memo-card relative cursor-pointer rounded-lg px-2 transition-all',
+            'group memo-card relative min-w-0 w-full cursor-pointer rounded-lg px-2 transition-all',
             variant === 'compact' ? 'py-[9px]' : 'py-3',
             variant === 'compact' && !isSelected && 'hover:bg-[var(--muted)]',
             isSelected && 'bg-[var(--accent)]',
@@ -296,7 +296,7 @@ function DetailedMemoCardBody({
   return (
     <>
       <div className="space-y-2">
-        <h3 className="mr-3 line-clamp-2 text-sm leading-[20px] text-[var(--foreground)]">
+        <h3 className="mr-3 min-w-0 max-w-full overflow-hidden line-clamp-2 text-sm leading-[20px] text-[var(--foreground)]">
           {memo.colors.length > 0 && (
             <span className="mr-1.5 inline-flex items-center align-middle">
               <ColorDots colors={memo.colors} />

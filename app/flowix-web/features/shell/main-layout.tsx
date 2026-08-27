@@ -835,7 +835,7 @@ export function MainLayout() {
             aria-hidden={isMemoListHidden && !memoListPreviewVisible}
           >
             <div
-              className={`flex h-full flex-col ${
+              className={`flex h-full min-w-0 flex-col ${
                 memoListPreviewVisible
                   ? 'overflow-visible'
                   : 'overflow-hidden bg-[var(--card)] border-[var(--divider)] border-r'
@@ -878,7 +878,7 @@ export function MainLayout() {
                       (memoListPreviewPhase === 'open'
                         ? 'flowix-hover-preview-enter'
                         : 'flowix-hover-preview-leave')
-                    : 'flex-1 min-h-0'
+                    : 'flex-1 min-h-0 min-w-0 w-full'
                 }
                 style={memoListPreviewVisible ? {
                   left: noteNavigationColumnWidth + 2,
