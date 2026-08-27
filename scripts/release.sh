@@ -89,7 +89,7 @@ find_artifact() {
       -name '*.dmg' -o \
       -name '*-setup.exe' -o \
       -name '*.AppImage' \
-    \) -print -quit)"
+    \) -name "Flowix_${VERSION}_*" -print | sort | tail -n 1)"
     if [[ -n "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
