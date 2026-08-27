@@ -23,7 +23,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-process = { workspace = true }
-tauri-plugin-updater = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -54,7 +53,6 @@ machine-uid = "0.5"
 sha2 = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
-minisign-verify = { workspace = true }
 semver = { workspace = true }
 
 [dev-dependencies]

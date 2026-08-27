@@ -1,31 +1,16 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "_comment": "Tauri v2 production bundle 签名覆盖层 ── 不修改主 tauri.conf.json。dev build 仍走主 conf (无 signing 字段), release build 由 scripts/prepare-tauri-production-config.mjs 合并配置并把环境变量写入 .local.json。",
-
   "bundle": {
-    "createUpdaterArtifacts": true,
     "macOS": {
-      "_comment_signingIdentity": "Developer ID Application: <name> (<TEAMID>) ── APPLE_SIGNING_IDENTITY env 注入",
       "signingIdentity": "Developer ID Application: REPLACE_WITH_APPLE_SIGNING_IDENTITY",
-      "_comment_providerShortName": "Apple Team ID ── APPLE_TEAM_ID env 注入",
       "providerShortName": "REPLACE_WITH_APPLE_TEAM_ID",
-      "_comment_entitlements": "走 entitlements.plist (本目录)",
       "entitlements": "entitlements.plist",
       "hardenedRuntime": true
     },
     "windows": {
-      "_comment_certificateThumbprint": "PFX 证书 SHA1 thumbprint ── WINDOWS_CERT_THUMBPRINT env 注入",
       "certificateThumbprint": "REPLACE_WITH_WINDOWS_CERT_THUMBPRINT",
       "digestAlgorithm": "sha256",
-      "_comment_timestampUrl": "RFC 3161 timestamp ── 默认 Sectigo 公共端点, 私有 CA 改 WINDOWS_TIMESTAMP_URL",
       "timestampUrl": "http://timestamp.sectigo.com"
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgRUEyNzZBMzYyMDQyNEI1MApSV1JRUzBJZ05tb242a1lBZDlLYnZJYkVXNm84VFIvTWZ2ODhLS29kM2lFaGVWSzBwejF2TEQyWgo=",
-      "_comment_endpoints": "每个 release platform 单独注入 ── scripts/prepare-tauri-production-config.mjs 根据 FLOWIX_UPDATER_ENDPOINT_{MACOS,WINDOWS,LINUX} 写入 plugins.updater.endpoints。拆 platform 是为了让 mac/win 的 latest 版本可以独立发布, 避免 combined manifest 把别的平台版本号塞给客户端。",
-      "dangerousInsecureTransportProtocol": false
     }
   }
 }

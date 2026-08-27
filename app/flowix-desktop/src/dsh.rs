@@ -9,7 +9,6 @@
 use futures::{future::{AbortHandle, Abortable}, StreamExt};
 use reqwest::{blocking::Client as BlockingClient, Client};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -66,9 +65,7 @@ static DSH_DOWNLOAD_ABORT: OnceLock<Mutex<Option<AbortHandle>>> = OnceLock::new(
 static DSH_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static DSH_DOWNLOAD_PROGRESS: OnceLock<Mutex<Option<DshDownloadProgress>>> = OnceLock::new();
 
-/// Set FLOWIX_DSH_UPDATE_PUBLIC_KEY at compile time for production releases.
-/// Development manifests may omit `signature`, but production manifests should
-/// always include the full minisign signature text.
+/// DSH updates trust the HTTPS-served latest.json manifest and its SHA-256.
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1404,7 +1401,6 @@ mod tests {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
             size_bytes: None,
-            signature: None,
             build_id: Some("same-build".to_string()),
         };
 
@@ -1475,7 +1471,6 @@ mod tests {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
             size_bytes: None,
-            signature: None,
             build_id: Some("test-build".to_string()),
         };
 
@@ -1517,7 +1512,6 @@ mod tests {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
             size_bytes: None,
-            signature: None,
             build_id: Some("test-build".to_string()),
         };
 

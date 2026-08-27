@@ -1,12 +1,14 @@
 # Flowix updater release
 
-Flowix ships per-platform updater manifests and static website downloads:
+Flowix ships per-platform update manifests and static website downloads:
 
 - **Per-platform updater manifests** under stable R2 paths, served directly to
-  the in-app Tauri updater. Each one advertises exactly one release platform
+  the in-app updater. Each one advertises exactly one release platform
   group's binaries and pins its own top-level `version`.
 - **Version-prefixed R2 artifacts** (`v<version>/...`) that the manifests point
-  at. These are immutable per release.
+  at. These are immutable per release. The client trusts the HTTPS-served
+  manifest, verifies the downloaded artifact against the manifest's SHA-256
+  value, and does not require minisign/Tauri updater signatures.
 
 Per-platform updater manifests live on R2 (under `${FLOWIX_R2_PUBLIC_BASE}/${FLOWIX_R2_UPDATER_PREFIX}/`) so each release can overwrite the stable URL without rebuilding flowix-home. The split exists so that macOS and Windows can ship on independent cadences —
 macOS can publish `1.3.0` while Windows stays on `1.2.4` without confusing
@@ -16,9 +18,9 @@ either client into a self-install loop.
 
 | Manifest                          | Consumer             | Stable URL                                       |
 | --------------------------------- | -------------------- | ------------------------------------------------ |
-| `updater/macos/latest.json`       | macOS Tauri updater  | `https://download.flowix.cc/updater/macos/latest.json`      |
-| `updater/windows/latest.json`     | Windows Tauri updater| `https://download.flowix.cc/updater/windows/latest.json`    |
-| `updater/linux/latest.json`       | Linux Tauri updater  | `https://download.flowix.cc/updater/linux/latest.json`      |
+| `updater/macos/latest.json`       | Flowix custom updater | `https://download.flowix.cc/updater/macos/latest.json`      |
+| `updater/windows/latest.json`     | Flowix custom updater | `https://download.flowix.cc/updater/windows/latest.json`    |
+| `updater/linux/latest.json`       | Flowix custom updater | `https://download.flowix.cc/updater/linux/latest.json`      |
 
 Each per-platform manifest's `platforms` block contains only its own group:
 
@@ -28,9 +30,9 @@ Each per-platform manifest's `platforms` block contains only its own group:
 | `updater/windows/...`   | `windows-x86_64`                        |
 | `updater/linux/...`     | `linux-x86_64`                          |
 
-The Tauri updater picks the first endpoint that returns a manifest containing
+The updater picks the manifest containing
 its current OS-arch key, so a misconfigured binary that points at the wrong
-group manifest will fail `check()` rather than silently offering nothing.
+group manifest will fail the update check rather than silently offering nothing.
 
 ## Release scope
 
@@ -43,9 +45,6 @@ group manifest will fail `check()` rather than silently offering nothing.
 
 | Variable                            | Default                                              | Notes |
 | ----------------------------------- | ---------------------------------------------------- | ----- |
-| `FLOWIX_UPDATER_ENDPOINT_MACOS`     | `https://download.flowix.cc/updater/macos/latest.json`          | Injected into `plugins.updater.endpoints` for darwin builds |
-| `FLOWIX_UPDATER_ENDPOINT_WINDOWS`   | `https://download.flowix.cc/updater/windows/latest.json`        | Injected for win32 builds |
-| `FLOWIX_UPDATER_ENDPOINT_LINUX`     | `https://download.flowix.cc/updater/linux/latest.json`          | Injected for linux builds |
 | `FLOWIX_R2_UPDATER_PREFIX`          | `updater`                                            | R2 key prefix for per-platform manifests |
 | `FLOWIX_R2_PREFIX`                  | `v${VERSION}`                                        | R2 key prefix for versioned artifacts (unchanged) |
 | `FLOWIX_R2_BUCKET`                  | `flowix-downloads`                                   | R2 bucket (unchanged) |
@@ -72,6 +71,10 @@ bash scripts/release.sh
 Both flows upload the per-group manifest to the matching stable R2 path so the
 in-app updater picks up the new version immediately. The website's download
 links are maintained in its templates and deployed with flowix-home.
+
+For Windows, the artifact is the Tauri NSIS `*-setup.exe`. The client downloads
+that installer, checks its SHA-256, starts it with `/UPDATE`, and exits so the
+installer can replace the running application and relaunch it.
 
 ## Verifying a manifest locally
 

@@ -1,10 +1,8 @@
-import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 export interface AppUpdate {
-  update: Update;
   currentVersion: string;
   version: string;
   date?: string;
@@ -25,7 +23,7 @@ function isTauriDesktopRuntime(): boolean {
 }
 
 /**
- * Check the signed Tauri updater manifest configured in the production bundle.
+ * Check the trusted HTTPS latest.json manifest configured for the platform.
  * Dev/web/mobile surfaces deliberately return null instead of trying to call
  * the desktop updater plugin.
  */
@@ -35,11 +33,10 @@ export async function checkAppUpdate(): Promise<AppUpdate | null> {
   if (checkPromise) return checkPromise;
 
   const pending = (async () => {
-    const update = await check({ timeout: 15_000 });
+    const update = await invoke<AppUpdate | null>('check_app_update');
     if (!update) return null;
 
     return {
-      update,
       currentVersion: update.currentVersion,
       version: update.version,
       date: update.date,

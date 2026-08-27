@@ -14,7 +14,7 @@ if (!archive || !existsSync(archive)) {
   process.exit(2)
 }
 
-const result = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+const result = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 })
 if (result.status !== 0) {
   console.error(`ERROR: cannot inspect DSH archive: ${result.stderr || result.status}`)
   process.exit(1)

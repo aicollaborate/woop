@@ -16,15 +16,7 @@ const cargoManifest = fs.readFileSync(path.join(repoRoot, "app", "Cargo.toml"), 
 const cargoVersion = /^version\s*=\s*"([^"]+)"/mu.exec(cargoManifest)?.[1];
 const packageVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 
-const allowUnsigned = process.env.FLOWIX_ALLOW_UNSIGNED === "1";
-const allowUnsignedWindows = allowUnsigned || process.env.FLOWIX_ALLOW_UNSIGNED_WINDOWS === "1";
-
-if (!allowUnsigned && !process.env.FLOWIX_DSH_UPDATE_PUBLIC_KEY?.trim()) {
-  throw new Error(
-    "FLOWIX_DSH_UPDATE_PUBLIC_KEY is required for a signed production build. " +
-      "Set FLOWIX_ALLOW_UNSIGNED=1 only for local unsigned packages.",
-  );
-}
+const allowUnsignedWindows = process.env.FLOWIX_ALLOW_UNSIGNED_WINDOWS === "1";
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -59,7 +51,7 @@ function mergeConfig(base, override) {
   return merged;
 }
 
-function requiredEnv(name, allowMissing = allowUnsigned) {
+function requiredEnv(name, allowMissing = false) {
   const value = process.env[name];
   if (!value && !allowMissing) {
     throw new Error(`${name} is required for a signed production build. Set FLOWIX_ALLOW_UNSIGNED=1 only for local unsigned packages.`);
@@ -90,11 +82,6 @@ if (targetPlatform === "win32") {
 
 const production = mergeConfig(mergeConfig(base, platformOverride), productionOverride);
 production.bundle ??= {};
-if (allowUnsigned) {
-  // Local package-content verification must not require the production Tauri
-  // updater private key. Signed release builds keep updater artifacts enabled.
-  production.bundle.createUpdaterArtifacts = false;
-}
 
 if (targetPlatform === "win32") {
   production.bundle.targets = ["nsis"];
@@ -145,23 +132,6 @@ if (targetPlatform === "win32") {
     delete production.bundle.macOS.providerShortName;
   }
 }
-
-// Updater endpoint: 按 release platform 单独注入 ── 这样 mac/win/linux 各自指向
-// 独立的 manifest, 允许 latest 版本号在不同平台间不同步。默认值与 release.sh 发布路径对齐。
-const updaterEndpointEnv = {
-  darwin: "FLOWIX_UPDATER_ENDPOINT_MACOS",
-  win32: "FLOWIX_UPDATER_ENDPOINT_WINDOWS",
-  linux: "FLOWIX_UPDATER_ENDPOINT_LINUX",
-}[targetPlatform];
-const updaterEndpointDefault = {
-  darwin: "https://download.flowix.cc/updater/macos/latest.json",
-  win32: "https://download.flowix.cc/updater/windows/latest.json",
-  linux: "https://download.flowix.cc/updater/linux/latest.json",
-}[targetPlatform];
-const updaterEndpoint = process.env[updaterEndpointEnv]?.trim() || updaterEndpointDefault;
-production.plugins ??= {};
-production.plugins.updater ??= {};
-production.plugins.updater.endpoints = [updaterEndpoint];
 
 fs.writeFileSync(outputPath, `${JSON.stringify(production, null, 2)}\n`);
 console.log(path.relative(repoRoot, outputPath));

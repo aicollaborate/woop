@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Build signed Tauri updater artifacts, publish them to R2, and deploy the
+# Build Tauri artifacts, publish them to R2, and deploy the
 # stable updater manifest through the flowix-home Pages site.
-#
-# Required:
-#   TAURI_SIGNING_PRIVATE_KEY           Tauri signer key string (modern key file contents)
-#   TAURI_SIGNING_PRIVATE_KEY_PATH      or a path to the Tauri signer key file
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  optional key password
 #
 # Useful overrides:
 #   FLOWIX_HOME_DIR          local flowix-home checkout
@@ -16,9 +11,6 @@
 #                            (default: updater) ── written to
 #                            ${BUCKET}/${PREFIX}/{macos,windows,linux}/latest.json
 #   FLOWIX_R2_PUBLIC_BASE    public package origin
-#   FLOWIX_UPDATER_ENDPOINT_MACOS    macOS per-platform updater URL (default: https://download.flowix.cc/updater/macos/latest.json)
-#   FLOWIX_UPDATER_ENDPOINT_WINDOWS  Windows per-platform updater URL (default: https://download.flowix.cc/updater/windows/latest.json)
-#   FLOWIX_UPDATER_ENDPOINT_LINUX    Linux per-platform updater URL (default: https://download.flowix.cc/updater/linux/latest.json)
 #   FLOWIX_SKIP_BUILD=1       collect artifacts already present in CARGO_TARGET_DIR
 #   FLOWIX_PUBLISH=1          upload R2 + deploy flowix-home (works for both full and partial releases)
 #
@@ -50,31 +42,10 @@ FLOWIX_R2_BUCKET="${FLOWIX_R2_BUCKET:-flowix-downloads}"
 FLOWIX_R2_PREFIX="${FLOWIX_R2_PREFIX:-v${VERSION}}"
 FLOWIX_R2_UPDATER_PREFIX="${FLOWIX_R2_UPDATER_PREFIX:-updater}"
 FLOWIX_R2_PUBLIC_BASE="${FLOWIX_R2_PUBLIC_BASE:-https://download.flowix.cc}"
-FLOWIX_UPDATER_ENDPOINT_MACOS="${FLOWIX_UPDATER_ENDPOINT_MACOS:-https://download.flowix.cc/updater/macos/latest.json}"
-FLOWIX_UPDATER_ENDPOINT_WINDOWS="${FLOWIX_UPDATER_ENDPOINT_WINDOWS:-https://download.flowix.cc/updater/windows/latest.json}"
-FLOWIX_UPDATER_ENDPOINT_LINUX="${FLOWIX_UPDATER_ENDPOINT_LINUX:-https://download.flowix.cc/updater/linux/latest.json}"
 FLOWIX_HOME_PROJECT="${FLOWIX_HOME_PROJECT:-flowix-home}"
 FLOWIX_HOME_BRANCH="${FLOWIX_HOME_BRANCH:-main}"
 RELEASE_OUT="${RELEASE_OUT:-$CARGO_TARGET_DIR/release/updater}"
 
-if [[ "${FLOWIX_SKIP_BUILD:-0}" != "1" && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
-  echo "release.sh: TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required" >&2
-  exit 1
-fi
-if [[ "${FLOWIX_PUBLISH:-0}" == "1" && -z "${FLOWIX_DSH_UPDATE_PUBLIC_KEY:-}" ]]; then
-  echo "release.sh: FLOWIX_PUBLISH=1 requires FLOWIX_DSH_UPDATE_PUBLIC_KEY so signed DSH packages can be verified" >&2
-  exit 1
-fi
-if [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  if [[ ! -f "$TAURI_SIGNING_PRIVATE_KEY_PATH" ]]; then
-    echo "release.sh: signing key path does not exist: $TAURI_SIGNING_PRIVATE_KEY_PATH" >&2
-    exit 1
-  fi
-  # `tauri build` consumes Base64-encoded minisign text. A standard encrypted
-  # key file has a human-readable comment plus its payload, so encode the
-  # complete file as one line for the CLI.
-  export TAURI_SIGNING_PRIVATE_KEY="$(base64 < "$TAURI_SIGNING_PRIVATE_KEY_PATH" | tr -d '\n')"
-fi
 if [[ ! -d "$FLOWIX_HOME_DIR" ]]; then
   echo "release.sh: flowix-home checkout not found at $FLOWIX_HOME_DIR" >&2
   exit 1
@@ -115,10 +86,10 @@ find_artifact() {
     "$CARGO_TARGET_DIR/release/bundle"; do
     [[ -d "$search_root" ]] || continue
     candidate="$(find "$search_root" -type f \( \
-      -name '*.app.tar.gz' -o \
+      -name '*.dmg' -o \
       -name '*-setup.exe' -o \
-      -name '*.AppImage.tar.gz' \
-    \) ! -name '*.sig' -print -quit)"
+      -name '*.AppImage' \
+    \) -print -quit)"
     if [[ -n "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -138,9 +109,9 @@ platform_for_target() {
 
 artifact_suffix_for_target() {
   case "$1" in
-    *apple-darwin) echo "app.tar.gz" ;;
+    *apple-darwin) echo "dmg" ;;
     *windows-msvc) echo "nsis.exe" ;;
-    *linux-gnu) echo "AppImage.tar.gz" ;;
+    *linux-gnu) echo "AppImage" ;;
     *) echo "" ;;
   esac
 }
@@ -158,15 +129,6 @@ platform_group_for_target() {
 
 # Default updater endpoint per group ── 用 FLOWIX_UPDATER_ENDPOINT_<GROUP>
 # 可覆盖。返回空字符串表示该 group 没有 manifest (没产出)。
-updater_endpoint_for_group() {
-  case "$1" in
-    macos)   echo "${FLOWIX_UPDATER_ENDPOINT_MACOS:-}" ;;
-    windows) echo "${FLOWIX_UPDATER_ENDPOINT_WINDOWS:-}" ;;
-    linux)   echo "${FLOWIX_UPDATER_ENDPOINT_LINUX:-}" ;;
-    *)       echo "" ;;
-  esac
-}
-
 # 写出单个 manifest (per-group 或 combined)。rows 是 "platform|name" 字符串数组。
 # with_laggards 参数已废弃; 官网使用模板中的静态下载链接。
 write_manifest() {
@@ -256,15 +218,8 @@ for target in $FLOWIX_TARGETS; do
     echo "release.sh: no updater artifact found for $target" >&2
     exit 1
   fi
-  signature_path="${source_path}.sig"
-  if [[ ! -f "$signature_path" ]]; then
-    echo "release.sh: missing updater signature $signature_path" >&2
-    exit 1
-  fi
-
   output_name="Flowix_${VERSION}_${platform}.${suffix}"
   cp "$source_path" "$RELEASE_OUT/$output_name"
-  cp "$signature_path" "$RELEASE_OUT/$output_name.sig"
   node "$REPO_ROOT/scripts/verify-flowix-package.mjs" "$RELEASE_OUT/$output_name"
   echo "==> collected $platform: $output_name"
 
@@ -340,8 +295,6 @@ for target in $FLOWIX_TARGETS; do
   echo "==> uploading $name to R2"
   "$WRANGLER" r2 object put "$FLOWIX_R2_BUCKET/$FLOWIX_R2_PREFIX/$name" \
     --file "$RELEASE_OUT/$name" --remote
-  "$WRANGLER" r2 object put "$FLOWIX_R2_BUCKET/$FLOWIX_R2_PREFIX/$name.sig" \
-    --file "$RELEASE_OUT/$name.sig" --remote
 done
 
 # flowix-home 使用模板中的静态下载链接, 发布时只需重新构建并部署站点。
@@ -352,6 +305,6 @@ echo "==> deploying flowix-home"
 
 echo "==> published Flowix ${VERSION}"
 for group in "${ACTIVE_GROUPS[@]}"; do
-  echo "    updater[$group]: $(updater_endpoint_for_group "$group")"
+  echo "    updater[$group]: $FLOWIX_R2_PUBLIC_BASE/$FLOWIX_R2_UPDATER_PREFIX/$group/latest.json"
 done
 echo "    artifacts: $FLOWIX_R2_PUBLIC_BASE/$FLOWIX_R2_PREFIX/"

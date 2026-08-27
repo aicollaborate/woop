@@ -5,8 +5,7 @@
 //   FLOWIX_VERSION            Flowix version this release advertises
 //   FLOWIX_R2_PUBLIC_BASE     public origin for artifact URLs (no trailing slash)
 //   FLOWIX_R2_PREFIX          R2 key prefix under which artifacts were uploaded
-//   FLOWIX_RELEASE_OUT        artifact staging directory (rows' `.sig` files
-//                             are read from here)
+//   FLOWIX_RELEASE_OUT        artifact staging directory
 //
 // Inputs (positional argv):
 //   <platform>|<artifact-name>   one per built target. Multiple rows may share
@@ -18,6 +17,7 @@
 // level `version` matches the artifact's actual version, so Tauri never
 // advertises a newer version than the binary the user will actually download.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -38,10 +38,14 @@ for (const row of rows) {
   if (separator < 0) continue;
   const platform = row.slice(0, separator);
   const name = row.slice(separator + 1);
-  const signature = fs.readFileSync(path.join(releaseOut, `${name}.sig`), 'utf8').trim();
+  const artifact = path.join(releaseOut, name);
+  if (!fs.existsSync(artifact)) {
+    throw new Error(`build-updater-manifest: artifact is missing: ${artifact}`);
+  }
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(artifact)).digest('hex');
   platforms[platform] = {
-    signature,
     url: `${publicBase}/${prefix}/${name}`,
+    sha256,
   };
 }
 

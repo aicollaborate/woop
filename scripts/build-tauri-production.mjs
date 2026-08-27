@@ -57,14 +57,6 @@ function npmRun(script) {
   run(process.execPath, [npmEntrypoint, 'run', script])
 }
 
-if (!process.env.FLOWIX_DSH_UPDATE_PUBLIC_KEY?.trim()) {
-  process.env.FLOWIX_DSH_UPDATE_PUBLIC_KEY = run(
-    process.execPath,
-    ['scripts/derive-dsh-public-key.mjs'],
-    { capture: true },
-  )
-}
-
 if (targetPlatform === 'darwin') npmRun('cli:build:prod:macos')
 else npmRun('cli:build:prod')
 
@@ -86,18 +78,17 @@ for (const target of tauriTargets) {
 const freshArtifacts = collectFiles(cargoTargetDir)
   .filter(file => statSync(file).mtimeMs >= buildStartedAt - 2_000)
 if (targetPlatform === 'win32') {
-  const updater = requireArtifact(
+  requireArtifact(
     freshArtifacts,
     file => file.endsWith('-setup.exe') && file.includes(`${path.sep}bundle${path.sep}nsis${path.sep}`),
-    'NSIS installer/updater',
+    'NSIS installer',
   )
-  requireArtifact(freshArtifacts, file => file === `${updater}.sig`, 'NSIS updater signature')
 } else if (targetPlatform === 'darwin') {
   for (const target of MACOS_TARGETS) {
     const targetFiles = freshArtifacts.filter(file => file.includes(`${path.sep}${target}${path.sep}`))
     requireArtifact(targetFiles, file => file.endsWith('.dmg'), `${target} DMG`)
-    const updater = requireArtifact(targetFiles, file => file.endsWith('.app.tar.gz'), `${target} updater archive`)
-    requireArtifact(targetFiles, file => file === `${updater}.sig`, `${target} updater signature`)
+    // Unsigned builds publish the installer itself; the desktop client trusts
+    // the selected URL from latest.json and installs this artifact directly.
   }
 }
 

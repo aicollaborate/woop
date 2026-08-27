@@ -46,7 +46,6 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
     "@tiptap/extension-color": "^3.23.4",
     "@tiptap/extension-highlight": "^3.23.4",
     "@tiptap/extension-link": "^3.23.4",

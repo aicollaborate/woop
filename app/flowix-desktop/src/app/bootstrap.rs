@@ -195,7 +195,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(crate::app_update::AppUpdateState::default())
         .manage(memo_watcher.clone())
         .manage(commands::tab_window::TabWindowCoordinator::default())
@@ -474,6 +473,7 @@ pub fn run() {
             commands::dsh::dsh_uninstall,
             commands::dsh::dsh_manage_profile_plugin,
             crate::app_update::install_app_update,
+            crate::app_update::check_app_update,
             crate::app_update::cancel_app_update,
             commands::settings::get_watcher_config,
             commands::settings::update_watcher_config,

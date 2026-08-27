@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -16,7 +15,6 @@ const targets = (requested ? requested.split(',') : [hostTarget()]).filter(Boole
 const version = process.env.FLOWIX_DSH_VERSION?.trim() || dshPackage.version
 const publicBase = (process.env.FLOWIX_DSH_PUBLIC_BASE || 'https://download.flowix-memo.com').replace(/\/$/u, '')
 const prefix = (process.env.FLOWIX_DSH_R2_PREFIX || `dsh/v${version}`).replace(/^\/+|\/+$/gu, '')
-const requireSignature = process.env.FLOWIX_DSH_REQUIRE_SIGNATURE === '1' || process.env.DSH_PUBLISH === '1'
 
 await rm(stageRoot, { recursive: true, force: true })
 await rm(releaseRoot, { recursive: true, force: true })
@@ -74,17 +72,6 @@ for (const target of targets) {
     sizeBytes: bytes.length,
     buildId,
   }
-  let signaturePath = process.env.FLOWIX_DSH_SIGNATURE_DIR
-    ? resolve(process.env.FLOWIX_DSH_SIGNATURE_DIR, `${filename}.minisig`)
-    : null
-  if (process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY || process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH) {
-    signaturePath = resolve(releaseRoot, `${filename}.minisig`)
-    await signArchive(archive, signaturePath)
-  }
-  if (signaturePath && existsSync(signaturePath)) row.signature = await readFile(signaturePath, 'utf8')
-  if (requireSignature && !row.signature) {
-    throw new Error(`missing minisign signature for ${filename}; provide FLOWIX_DSH_SIGNING_PRIVATE_KEY(_PATH) or FLOWIX_DSH_SIGNATURE_DIR`)
-  }
   platforms[manifestPlatform(target)] = row
   console.log(`created ${archive}`)
 }
@@ -128,65 +115,8 @@ function hostTarget() {
   return `node24-${platform}-${arch}`
 }
 
-async function signArchive(archive, signaturePath) {
-  let keyPath = process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH
-    ? resolve(process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH)
-    : null
-  const password = process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY_PASSWORD
-    || process.env.MINISIGN_PASSWORD
-  let temporaryDir = null
-  try {
-    if (!keyPath) {
-      temporaryDir = await mkdtemp(join(tmpdir(), 'flowix-dsh-signing-'))
-      keyPath = join(temporaryDir, 'minisign.key')
-      await writeFile(keyPath, `${process.env.FLOWIX_DSH_SIGNING_PRIVATE_KEY}\n`, { mode: 0o600 })
-    }
-    const args = ['-S', '-s', keyPath, '-m', archive, '-x', signaturePath]
-    if (password) {
-      const expectScript = `
-        set timeout -1
-        set command [list $env(FLOWIX_MINISIGN_BIN) -S -s $env(FLOWIX_MINISIGN_KEY) -m $env(FLOWIX_MINISIGN_MESSAGE) -x $env(FLOWIX_MINISIGN_SIGNATURE)]
-        spawn {*}$command
-        expect {
-          -re {Password:} {
-            send -- "$env(FLOWIX_MINISIGN_PASSWORD)\\r"
-            exp_continue
-          }
-          eof {}
-        }
-        set result [wait]
-        exit [lindex $result 3]
-      `
-      const result = spawnSync('expect', ['-c', expectScript], {
-        cwd: repo,
-        stdio: 'inherit',
-        env: {
-          ...process.env,
-          FLOWIX_MINISIGN_BIN: process.env.MINISIGN_BIN || 'minisign',
-          FLOWIX_MINISIGN_KEY: keyPath,
-          FLOWIX_MINISIGN_MESSAGE: archive,
-          FLOWIX_MINISIGN_SIGNATURE: signaturePath,
-          FLOWIX_MINISIGN_PASSWORD: password,
-        },
-      })
-      if (result.error) throw result.error
-      if (result.status !== 0) throw new Error(`minisign exited with ${result.status}`)
-    } else {
-      run(process.env.MINISIGN_BIN || 'minisign', args)
-    }
-  } finally {
-    if (temporaryDir) await rm(temporaryDir, { recursive: true, force: true })
-  }
-}
-
 async function copyTree(source, destination) {
-  await mkdir(destination, { recursive: true })
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    const from = join(source, entry.name)
-    const to = join(destination, entry.name)
-    if (entry.isDirectory()) await copyTree(from, to)
-    else if (entry.isFile()) await copyFile(from, to)
-  }
+  await cp(source, destination, { recursive: true, force: true, dereference: true })
 }
 
 function run(command, args, options = {}) {

@@ -112,13 +112,6 @@ async function optimizeMacosBundle(bundleRoot, runtimeTarget, nodeExecutable) {
   await run('lipo', ['-thin', nodeArch, nodeExecutable, '-output', temporaryNode], bundleRoot)
   await rename(temporaryNode, nodeExecutable)
 
-  const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
-  const entitlements = resolve(hostRoot, 'node-entitlements.plist')
-  const signArgs = ['--force', '--options', 'runtime', '--entitlements', entitlements]
-  if (identity !== '-') signArgs.push('--timestamp')
-  signArgs.push('--sign', identity, nodeExecutable)
-  await run('codesign', signArgs, bundleRoot)
-
   const nodePty = join(bundleRoot, 'runtime/node_modules/node-pty')
   const keepPrebuild = runtimeTarget.endsWith('-arm64') ? 'darwin-arm64' : 'darwin-x64'
   const prebuilds = join(nodePty, 'prebuilds')

@@ -25,8 +25,6 @@ pub(super) struct DshArtifact {
     #[serde(default)]
     pub(super) size_bytes: Option<u64>,
     #[serde(default)]
-    pub(super) signature: Option<String>,
-    #[serde(default)]
     pub(super) build_id: Option<String>,
 }
 

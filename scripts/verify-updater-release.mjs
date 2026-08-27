@@ -44,9 +44,6 @@ for (const platform of requiredPlatforms) {
   if (!entry || typeof entry !== 'object') {
     throw new Error(`manifest is missing required platform ${platform}`);
   }
-  if (typeof entry.signature !== 'string' || !entry.signature.trim()) {
-    throw new Error(`manifest signature is missing for ${platform}`);
-  }
   if (typeof entry.url !== 'string' || !entry.url.trim()) {
     throw new Error(`manifest URL is missing for ${platform}`);
   }
@@ -62,14 +59,10 @@ for (const platform of requiredPlatforms) {
   if (!artifactName || path.basename(artifactName) !== artifactName) {
     throw new Error(`manifest URL for ${platform} has an invalid artifact name`);
   }
-  for (const fileName of [artifactName, `${artifactName}.sig`]) {
+  for (const fileName of [artifactName]) {
     if (!fs.statSync(path.join(releaseDir, fileName), { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`release file is missing for ${platform}: ${fileName}`);
     }
-  }
-  const signatureFile = fs.readFileSync(path.join(releaseDir, `${artifactName}.sig`), 'utf8').trim();
-  if (entry.signature.trim() !== signatureFile) {
-    throw new Error(`manifest signature does not match ${artifactName}.sig for ${platform}`);
   }
 }
 

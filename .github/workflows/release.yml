@@ -12,17 +12,11 @@ name: Release
 # release:updater` flow remains the only production updater publication path.
 #
 # Required secrets (set in repo Settings → Secrets and variables):
-#   TAURI_SIGNING_PRIVATE_KEY         - minisign private key contents
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD - optional, only if your key has one
 #   GITHUB_TOKEN                      - provided automatically by Actions
 #   CLOUDFLARE_API_TOKEN              - R2 upload token for DSH publishing
 #   CLOUDFLARE_ACCOUNT_ID             - Cloudflare account used by R2
 #
-# Flowix updater and DSH archives intentionally share TAURI_SIGNING_PRIVATE_KEY.
-# The DSH public-key text is derived from tauri.conf.production.json.
-#
-# Required for notarized macOS release artifacts (separate from the
-# tauri-plugin-updater minisign signature):
+# Required for notarized macOS release artifacts:
 #   APPLE_SIGNING_IDENTITY, APPLE_TEAM_ID
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD
 #   APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_PRIVATE_KEY
@@ -114,15 +108,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Derive shared DSH public key
-        shell: bash
-        run: |
-          {
-            echo 'FLOWIX_DSH_UPDATE_PUBLIC_KEY<<FLOWIX_DSH_PUBLIC_KEY_EOF'
-            node scripts/derive-dsh-public-key.mjs
-            echo 'FLOWIX_DSH_PUBLIC_KEY_EOF'
-          } >> "$GITHUB_ENV"
 
       - name: Import Apple Developer ID certificate
         if: contains(matrix.target, 'apple-darwin')
@@ -217,10 +202,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # minisign (tauri-plugin-updater). Required.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
           # macOS Developer ID signing; notarization credentials are exported
           # through GITHUB_ENV by the API-key preparation step.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -289,13 +270,6 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Setup Rust (minisign CLI)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install minisign
-        shell: bash
-        run: cargo install minisign --locked
-
       - name: Install dependencies
         run: npm ci
 
@@ -314,8 +288,6 @@ jobs:
       - name: Package signed DSH archive
         shell: bash
         env:
-          FLOWIX_DSH_REQUIRE_SIGNATURE: "1"
-          FLOWIX_DSH_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run dsh:package -- --targets=${{ matrix.target }}
 
       - name: Upload DSH artifacts

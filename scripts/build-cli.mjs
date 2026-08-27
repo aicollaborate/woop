@@ -26,21 +26,6 @@ function executable(name) {
   return existsSync(candidate) ? candidate : name
 }
 
-function bashExecutable() {
-  if (process.env.BASH) return process.env.BASH
-  if (process.platform !== 'win32') return 'bash'
-  const candidates = [
-    'C:/Program Files/Git/bin/bash.exe',
-    'C:/Program Files/Git/usr/bin/bash.exe',
-    process.env.LOCALAPPDATA
-      ? resolve(process.env.LOCALAPPDATA, 'Programs/Git/bin/bash.exe')
-      : null,
-  ].filter(Boolean)
-  const found = candidates.find(existsSync)
-  if (!found) throw new Error('Git Bash is required to sign a production Windows CLI')
-  return found
-}
-
 function run(command, args, capture = false) {
   const result = spawnSync(command, args, {
     cwd: repo,
@@ -97,7 +82,4 @@ for (const target of targets) {
     process.stdout.write(`staged ${development}\n`)
   }
 
-  if (!debug) {
-    run(bashExecutable(), [resolve(repo, 'scripts/sign-cli.sh'), `--host=${target}`])
-  }
 }

@@ -7,8 +7,6 @@
 #   DSH_PUBLISH=1 FLOWIX_DSH_SKIP_BUILD=1 \
 #   FLOWIX_DSH_TARGETS=node24-macos-arm64,node24-macos-x64,node24-linux-x64,node24-windows-x64 \
 #   bash scripts/release-dsh.sh
-# Required for publishing:
-#   FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH=/secure/path/dsh.key
 
 set -euo pipefail
 
@@ -20,11 +18,6 @@ PREFIX="${FLOWIX_DSH_R2_PREFIX:-dsh/v${VERSION}}"
 
 cd "$REPO_ROOT"
 if [[ "${DSH_PUBLISH:-0}" == "1" ]]; then
-  if [[ -z "${FLOWIX_DSH_SIGNING_PRIVATE_KEY:-}" && -z "${FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
-    echo "release-dsh.sh: DSH_PUBLISH=1 requires FLOWIX_DSH_SIGNING_PRIVATE_KEY or FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH" >&2
-    exit 1
-  fi
-  export FLOWIX_DSH_REQUIRE_SIGNATURE=1
   if [[ "${FLOWIX_DSH_SKIP_BUILD:-0}" != "1" ]]; then
     echo "release-dsh.sh: production publishing requires FLOWIX_DSH_SKIP_BUILD=1 and all prebuilt targets" >&2
     exit 1
