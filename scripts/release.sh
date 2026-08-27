@@ -379,7 +379,16 @@ if [[ -f "$home_manifest" ]]; then
   cp "$home_manifest" "$home_manifest_backup"
   home_manifest_existed=1
 fi
+# 仅在部署未能完成时回滚工作区。成功部署后保留新 manifest: 后续任何手动
+# Pages 部署都必须能构建出与线上一致的 manifest, 否则会把旧内容重新部署上去
+# (踩过一次: release 成功 → trap 回滚 → 下一次手动 deploy 用回滚后的文件
+# 把线上 1.2.4 覆盖回了 1.2.3)。
+HOME_MANIFEST_DEPLOYED=0
 restore_home_manifest() {
+  if [[ "$HOME_MANIFEST_DEPLOYED" == "1" ]]; then
+    rm -f "$home_manifest_backup"
+    return 0
+  fi
   if [[ "$home_manifest_existed" == "1" ]]; then
     cp "$home_manifest_backup" "$home_manifest"
   else
@@ -403,6 +412,7 @@ npm --prefix "$FLOWIX_HOME_DIR" run build
 echo "==> deploying flowix-home"
 "$WRANGLER" pages deploy "$FLOWIX_HOME_DIR/_site" \
   --project-name "$FLOWIX_HOME_PROJECT" --branch "$FLOWIX_HOME_BRANCH"
+HOME_MANIFEST_DEPLOYED=1
 
 echo "==> published Flowix ${VERSION}"
 for group in "${ACTIVE_GROUPS[@]}"; do
