@@ -168,6 +168,7 @@ function EmptyState() {
 export function MemoList() {
   const { request } = useTauriRpc();
   const { t } = useI18n();
+  const [showScrollTopHint, setShowScrollTopHint] = useState(false);
   const { registerCard, prepareForInsert, onListRendered } =
     useMemoInsertAnimation();
   // 滚动容器 ── 普通文档流, 内部 flex-col 让 row 高度由内容撑开。
@@ -991,7 +992,10 @@ export function MemoList() {
           className="flex min-h-0 min-w-0 w-full flex-1"
           scrollerClassName="min-w-0 w-full flex-1 overflow-y-auto px-1 py-2"
           scrollerRef={listContainerRef}
-          onScroll={handleMemoListScroll}
+          onScroll={(event) => {
+            setShowScrollTopHint(event.currentTarget.scrollTop > 0);
+            handleMemoListScroll(event);
+          }}
         >
           {memos.length > 0 ? (
             // 普通列渲染: 父容器是 flex-col, 每张卡在文档流里自然堆叠, 高度
@@ -1036,6 +1040,14 @@ export function MemoList() {
             <EmptyState />
           )}
         </OverlayScrollbar>
+
+        <div
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent transition-opacity duration-200',
+            showScrollTopHint ? 'opacity-100' : 'opacity-0',
+          )}
+        />
 
         {visibleLoadingText && (
           <BlockingLoadingOverlay

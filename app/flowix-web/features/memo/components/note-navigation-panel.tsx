@@ -119,7 +119,7 @@ export function NoteNavigationPanel({
         <div
           aria-hidden="true"
           className={cn(
-            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-4 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_4%,transparent)] to-transparent transition-opacity duration-200',
+            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent transition-opacity duration-200',
             showScrollTopHint ? 'opacity-100' : 'opacity-0',
           )}
         />

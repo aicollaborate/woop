@@ -117,6 +117,7 @@ export function AgentConversationList() {
   const [persistedInstances, setPersistedInstances] = useState<Record<string, AgentConversationInstance>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [filterType, setFilterType] = useState<AgentTypeKey | null>(null);
+  const [showScrollTopHint, setShowScrollTopHint] = useState(false);
   // 对话刚结束但用户还没点进去看过的 instanceId 集合 ── 用本地 Set 记录,
   // 是会话级瞬态状态, 刷新即丢失 (需求里"前端状态"对应)。
   // 灰色小圆点显示条件: !running && justEndedIds.has(instanceId)。
@@ -345,7 +346,7 @@ export function AgentConversationList() {
   );
 
   return (
-    <section className="flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('memo.navigation.conversations')}>
+    <section className="relative flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('memo.navigation.conversations')}>
       {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
           左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
@@ -420,71 +421,78 @@ export function AgentConversationList() {
             </DropdownMenu>
           </div>
       </div>
-      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2">
-        {isLoading ? null : scopedConversations.length === 0 ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-[var(--muted-foreground)]">
-            {t('status.agent.noConversations')}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {conversationGroups.map((group, index) => (
-              <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
-                <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
-                  {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
-                </h3>
-                {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
-                <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
-                {group.items.map((instance) => {
-                  const agent = getAgentType(instance.agentType);
-                  const selected = instance.instanceId === selectedInstanceId;
-                  const running = isAgentConversationRunning(instance, conversationRunIndex);
-                  return (
-                    <button
-                      key={instance.instanceId}
-                      type="button"
-                      onClick={() => void revealConversation(instance)}
-                      title={t('status.agent.openConversation')}
-                      className={cn(
-                        'flex h-9 w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors',
-                        selected
-                          ? 'bg-[var(--muted)] text-[var(--foreground)]'
-                          : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
-                      )}
-                    >
-                      <span className={cn(
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
-                        running && 'agent-conversation-list__icon--running',
-                      )}>
-                        <AgentIcon typeKey={agent.key} alt="" className="h-3 w-3 object-contain" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm font-normal">
-                        {instance.title?.trim() || t('common.untitled')}
-                      </span>
-                      <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.createdAt).toISOString()}>
-                        {formatTimeAgo(instance.createdAt, t, { compact: true })}
-                      </time>
-                      {running ? (
-                        // 绿色: agent 正在运行
-                        <span
-                          aria-hidden="true"
-                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]"
-                        />
-                      ) : justEndedIds.has(instance.instanceId)
-                        && !(conversationDetailOpen && selectedInstanceId === instance.instanceId) ? (
-                        // 灰色: 刚跑完、本次会话内用户还没点进去过
-                        <span
-                          aria-hidden="true"
-                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]"
-                        />
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        )}
-      </OverlayScrollbar>
+      <div className="relative min-h-0 flex-1">
+        <OverlayScrollbar
+          className="h-full"
+          scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2"
+          onScroll={(event) => setShowScrollTopHint(event.currentTarget.scrollTop > 0)}
+        >
+          {isLoading ? null : scopedConversations.length === 0 ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-[var(--muted-foreground)]">
+              {t('status.agent.noConversations')}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {conversationGroups.map((group, index) => (
+                <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
+                  <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
+                    {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
+                  </h3>
+                  {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
+                  <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+                  {group.items.map((instance) => {
+                    const agent = getAgentType(instance.agentType);
+                    const selected = instance.instanceId === selectedInstanceId;
+                    const running = isAgentConversationRunning(instance, conversationRunIndex);
+                    return (
+                      <button
+                        key={instance.instanceId}
+                        type="button"
+                        onClick={() => void revealConversation(instance)}
+                        title={t('status.agent.openConversation')}
+                        className={cn(
+                          'flex h-9 w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors',
+                          selected
+                            ? 'bg-[var(--muted)] text-[var(--foreground)]'
+                            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+                        )}
+                      >
+                        <span className={cn(
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
+                          running && 'agent-conversation-list__icon--running',
+                        )}>
+                          <AgentIcon typeKey={agent.key} alt="" className="h-3 w-3 object-contain" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-normal">
+                          {instance.title?.trim() || t('common.untitled')}
+                        </span>
+                        <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.createdAt).toISOString()}>
+                          {formatTimeAgo(instance.createdAt, t, { compact: true })}
+                        </time>
+                        {running ? (
+                          // 绿色: agent 正在运行
+                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]" />
+                        ) : justEndedIds.has(instance.instanceId)
+                          && !(conversationDetailOpen && selectedInstanceId === instance.instanceId) ? (
+                          // 灰色: 刚跑完、本次会话内用户还没点进去过
+                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </OverlayScrollbar>
+        <div
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent transition-opacity duration-200',
+            showScrollTopHint ? 'opacity-100' : 'opacity-0',
+          )}
+        />
+      </div>
     </section>
   );
 }

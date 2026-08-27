@@ -78,6 +78,7 @@ export function FolderFileTree({
 }) {
   const { t } = useI18n();
   const tree = useFolderTree(folderPath);
+  const [showScrollTopHint, setShowScrollTopHint] = useState(false);
   // 新建/重命名行的受控输入态: null = 无进行中的行内编辑。
   const [draftRow, setDraftRow] = useState<{ parentPath: string; kind: 'file' | 'folder'; value: string } | null>(null);
   const [renaming, setRenaming] = useState<{ item: DocTreeItem; value: string } | null>(null);
@@ -499,7 +500,7 @@ export function FolderFileTree({
   });
 
   return (
-    <div className="flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]">
+    <div className="relative flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]">
       {/* 标题行 ── 标题右侧下拉菜单用于在访达中显示当前资料文件夹。 */}
       <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
         <div className="min-w-0 flex-1">
@@ -575,47 +576,60 @@ export function FolderFileTree({
       </div>
       {/* 与 AgentConversationList 同款分割线, 落在 root 文件夹标题与子级列表之间 */}
       <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
-      <OverlayScrollbar className="min-h-0 flex-1" scrollerClassName="h-full overflow-y-auto">
-        {visibleNodes.length === 0 && !tree.loading && (
-          <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">
-            {tree.error ? t('memo.fileTree.unreadableHint') : t('memo.fileTree.empty')}
-          </div>
-        )}
-        <div className="folder-file-tree__items">
-          {renderTreeItems(tree.rootChildren, 0)}
-          {/* 新建行 ── 跟在目标 folder 的子级之后。简化: 渲染在列表末尾,
-              首版可接受 (VSCode 是原地插入)。 */}
-          {draftRow && (
-            <div
-              className="folder-file-tree__item flex h-7 items-center pr-2"
-              style={{
-                marginLeft: TREE_EDGE_GUTTER + (findDepth(visibleNodes, draftRow.parentPath) + 1) * INDENT_PER_LEVEL,
-              }}
-            >
-              {draftRow.kind === 'folder' ? (
-                <FolderSimpleIcon className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
-              ) : (
-                <FileTypeIcon
-                  path={draftRow.value}
-                  className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]"
-                />
-              )}
-              <input
-                autoFocus
-                value={draftRow.value}
-                placeholder={draftRow.kind === 'file' ? t('memo.fileTree.newNote') : t('memo.fileTree.newFolder')}
-                onChange={(event) => setDraftRow({ ...draftRow, value: event.target.value })}
-                onBlur={() => void handleCreate(draftRow.parentPath, draftRow.kind, draftRow.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void handleCreate(draftRow.parentPath, draftRow.kind, draftRow.value);
-                  if (event.key === 'Escape') setDraftRow(null);
-                }}
-                className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-sm font-normal text-[var(--foreground)] outline-none"
-              />
+      <div className="relative min-h-0 flex-1">
+        <OverlayScrollbar
+          className="h-full"
+          scrollerClassName="h-full overflow-y-auto"
+          onScroll={(event) => setShowScrollTopHint(event.currentTarget.scrollTop > 0)}
+        >
+          {visibleNodes.length === 0 && !tree.loading && (
+            <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">
+              {tree.error ? t('memo.fileTree.unreadableHint') : t('memo.fileTree.empty')}
             </div>
           )}
-        </div>
-      </OverlayScrollbar>
+          <div className="folder-file-tree__items">
+            {renderTreeItems(tree.rootChildren, 0)}
+            {/* 新建行 ── 跟在目标 folder 的子级之后。简化: 渲染在列表末尾,
+                首版可接受 (VSCode 是原地插入)。 */}
+            {draftRow && (
+              <div
+                className="folder-file-tree__item flex h-7 items-center pr-2"
+                style={{
+                  marginLeft: TREE_EDGE_GUTTER + (findDepth(visibleNodes, draftRow.parentPath) + 1) * INDENT_PER_LEVEL,
+                }}
+              >
+                {draftRow.kind === 'folder' ? (
+                  <FolderSimpleIcon className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+                ) : (
+                  <FileTypeIcon
+                    path={draftRow.value}
+                    className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]"
+                  />
+                )}
+                <input
+                  autoFocus
+                  value={draftRow.value}
+                  placeholder={draftRow.kind === 'file' ? t('memo.fileTree.newNote') : t('memo.fileTree.newFolder')}
+                  onChange={(event) => setDraftRow({ ...draftRow, value: event.target.value })}
+                  onBlur={() => void handleCreate(draftRow.parentPath, draftRow.kind, draftRow.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void handleCreate(draftRow.parentPath, draftRow.kind, draftRow.value);
+                    if (event.key === 'Escape') setDraftRow(null);
+                  }}
+                  className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-sm font-normal text-[var(--foreground)] outline-none"
+                />
+              </div>
+            )}
+          </div>
+        </OverlayScrollbar>
+        <div
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3 bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent transition-opacity duration-200',
+            showScrollTopHint ? 'opacity-100' : 'opacity-0',
+          )}
+        />
+      </div>
     </div>
   );
 }
