@@ -22,6 +22,11 @@
 #   FLOWIX_UPDATER_ENDPOINT_LINUX    Linux per-platform updater URL (default: https://download.flowix-memo.com/updater/linux/latest.json)
 #   FLOWIX_SKIP_BUILD=1       collect artifacts already present in CARGO_TARGET_DIR
 #   FLOWIX_PUBLISH=1          upload R2 + deploy flowix-home (works for both full and partial releases)
+#   FLOWIX_MIGRATE_LEGACY=1   (partial releases) also advance the legacy root
+#                             /latest.json to this release — the one-shot bridge
+#                             that moves pre-endpoint-split clients onto the
+#                             per-platform manifests. Set it on the first build
+#                             that carries the per-platform endpoint, then stop.
 #
 # This is the only production publication path for the Flowix updater. The
 # GitHub release workflow creates draft artifacts but does not update the
