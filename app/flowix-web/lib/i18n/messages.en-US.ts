@@ -608,7 +608,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "document.agent.noSourceNote": "No source note",
     "status.agent.history.title": "Agent conversations",
     "status.agent.history.all": "All",
-    "status.agent.toggleView": "Conversations",
+    "status.agent.toggleView": "AI & Workspace",
     "status.notebook": "Notebook",
     "status.switchNotebook": "Switch notebook",
     "status.notebookList": "Notebook list",

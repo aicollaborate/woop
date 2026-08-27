@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, FileText, Hash, Layers, ListTodo } from 'lucide-react';
-import { Folder, StarFourIcon } from '@phosphor-icons/react';
+import { ChevronDown, ChevronRight, Folder, Hash, Layers, ListTodo } from 'lucide-react';
+import { StarFourIcon } from '@phosphor-icons/react';
 
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -344,8 +344,8 @@ export function MemoNavigationDropdown({
         />
         <MemoNavigationSubmenu
           label={t('memo.navigation.referenceMaterials')}
-          icon={<FileText className="h-4 w-4 shrink-0" aria-hidden="true" />}
-          itemIcon={<Folder className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" weight="fill" aria-hidden="true" />}
+          icon={<Folder className="h-4 w-4 shrink-0" aria-hidden="true" />}
+          itemIcon={<Folder className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" aria-hidden="true" />}
           itemKind="reference"
           open={openSubmenu === 'references'}
           active={activeFileBrowserPath !== null}

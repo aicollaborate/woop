@@ -585,7 +585,7 @@ const zhCN = {
     "document.agent.noSourceNote": "无关联笔记",
     "status.agent.history.title": "Agent 对话记录",
     "status.agent.history.all": "全部",
-    "status.agent.toggleView": "对话列表",
+    "status.agent.toggleView": "AI & 工作空间",
     "status.notebook": "笔记本",
     "status.switchNotebook": "切换笔记本",
     "status.notebookList": "笔记本列表",

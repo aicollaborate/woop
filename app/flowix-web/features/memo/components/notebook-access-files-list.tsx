@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback } from 'react';
-import { Folder } from '@phosphor-icons/react';
-import { Plus, Star } from 'lucide-react';
+import { Folder, StarFourIcon } from '@phosphor-icons/react';
+import { Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
@@ -287,7 +287,7 @@ export function NotebookAccessFilesList({
                   </span>
                 </div>
                 {isWorkspace && (
-                  <Star
+                  <StarFourIcon
                     aria-label={t('agent.access.workspaceBadge')}
                     className={cn(
                       'agent-thread-card__access-workspace-star h-3 w-3 shrink-0',
@@ -295,7 +295,7 @@ export function NotebookAccessFilesList({
                         ? 'text-[var(--primary-foreground)]'
                         : 'text-[var(--primary)]',
                     )}
-                    fill="currentColor"
+                    weight="fill"
                   />
                 )}
               </div>
