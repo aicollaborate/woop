@@ -229,6 +229,27 @@ pub fn status() -> DshStatus {
         };
     }
 
+    // The Windows/macOS/Linux dev launcher builds a source-backed host at
+    // `.build/flowix-dsh-host/dsh-host.cjs` without creating a production
+    // `current.json`. Keep the preferences UI aligned with the host resolver
+    // instead of falling through to a stale managed DSH installation.
+    if cfg!(debug_assertions) {
+        let dev_host = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(".build/flowix-dsh-host/dsh-host.cjs");
+        if dev_host.is_file() {
+            return DshStatus {
+                installed: true,
+                executable_path: Some(dev_host.display().to_string()),
+                version: Some("dev".to_string()),
+                source: Some("flowix-dev-bundle".to_string()),
+                profile: DEFAULT_PROFILE.to_string(),
+                message: None,
+                archive_size: None,
+            };
+        }
+    }
+
     match current_installation() {
         Some(installation) => DshStatus {
             installed: true,
@@ -456,6 +477,15 @@ fn install_runtime_inner(
     before_publish: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<DshStatus, String> {
     emit_progress(app, "checking", 0, None, false);
+    if cfg!(debug_assertions) {
+        let dev_host = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(".build/flowix-dsh-host/dsh-host.cjs");
+        if dev_host.is_file() {
+            emit_progress(app, "up-to-date", 0, None, false);
+            return Ok(status());
+        }
+    }
     let manifest = fetch_manifest()?;
     check_cancelled()?;
     if !matches!(manifest.schema_version, 1 | 2) {
