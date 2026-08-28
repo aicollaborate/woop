@@ -18,6 +18,10 @@ pub struct AppUpdateState {
 #[derive(Debug, Deserialize)]
 struct Manifest {
     version: String,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    pub_date: Option<String>,
     platforms: std::collections::HashMap<String, PlatformRelease>,
 }
 
@@ -37,10 +41,16 @@ pub struct AppUpdateInfo {
     pub body: Option<String>,
 }
 
+#[derive(Debug)]
+struct ResolvedUpdate<'a> {
+    version: semver::Version,
+    release: &'a PlatformRelease,
+}
+
 #[tauri::command]
 pub async fn check_app_update() -> Result<Option<AppUpdateInfo>, String> {
-    let platform = updater_platform();
-    let target = updater_target();
+    let platform = updater_platform()?;
+    let target = updater_target()?;
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -55,21 +65,15 @@ pub async fn check_app_update() -> Result<Option<AppUpdateInfo>, String> {
         .json()
         .await
         .map_err(|e| format!("parse update manifest: {e}"))?;
-    if manifest.platforms.get(target).is_none() {
-        return Err(format!("update manifest has no target {target}"));
-    }
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())?;
-    let available = semver::Version::parse(manifest.version.trim())
-        .map_err(|e| format!("invalid update version: {e}"))?;
-    if available <= current {
-        return Ok(None);
-    }
-    Ok(Some(AppUpdateInfo {
-        current_version: current.to_string(),
-        version: available.to_string(),
-        date: None,
-        body: None,
-    }))
+    Ok(
+        resolve_update(&manifest, &current, target)?.map(|update| AppUpdateInfo {
+            current_version: current.to_string(),
+            version: update.version.to_string(),
+            date: manifest.pub_date.clone(),
+            body: manifest.notes.clone(),
+        }),
+    )
 }
 
 #[tauri::command]
@@ -109,8 +113,8 @@ pub fn cancel_app_update(state: State<'_, AppUpdateState>) -> Result<bool, Strin
 }
 
 async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<(), String> {
-    let platform = updater_platform();
-    let target = updater_target();
+    let platform = updater_platform()?;
+    let target = updater_target()?;
     let client = Client::builder()
         .timeout(Duration::from_secs(15 * 60))
         .build()
@@ -125,12 +129,11 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
         .json()
         .await
         .map_err(|e| format!("parse update manifest: {e}"))?;
-    let release = manifest
-        .platforms
-        .get(target)
-        .ok_or_else(|| format!("update manifest has no target {target}"))?;
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())?;
+    let update = resolve_update(&manifest, &current, target)?
+        .ok_or_else(|| "no application update is available".to_string())?;
     let response = client
-        .get(&release.url)
+        .get(&update.release.url)
         .send()
         .await
         .map_err(|e| format!("download application update: {e}"))?
@@ -144,7 +147,7 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
     if cancelled.load(Ordering::Acquire) {
         return Err("application update cancelled".into());
     }
-    if let Some(expected) = &release.sha256 {
+    if let Some(expected) = &update.release.sha256 {
         let actual = format!("{:x}", Sha256::digest(&bytes));
         if !actual.eq_ignore_ascii_case(expected.trim()) {
             return Err(format!(
@@ -167,7 +170,7 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
     };
     let path = root.join(format!(
         "Flowix-{}-{}.{}",
-        manifest.version,
+        update.version,
         std::process::id(),
         suffix
     ));
@@ -175,24 +178,53 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
     launch_installer(&path)
 }
 
-fn updater_platform() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "linux"
+fn resolve_update<'a>(
+    manifest: &'a Manifest,
+    current: &semver::Version,
+    target: &str,
+) -> Result<Option<ResolvedUpdate<'a>>, String> {
+    let available = semver::Version::parse(manifest.version.trim())
+        .map_err(|e| format!("invalid update version: {e}"))?;
+    if available <= *current {
+        return Ok(None);
+    }
+
+    let release = manifest
+        .platforms
+        .get(target)
+        .ok_or_else(|| format!("update manifest has no target {target}"))?;
+    Ok(Some(ResolvedUpdate {
+        version: available,
+        release,
+    }))
+}
+
+fn updater_platform() -> Result<&'static str, String> {
+    updater_platform_for(std::env::consts::OS)
+}
+
+fn updater_platform_for(os: &str) -> Result<&'static str, String> {
+    match os {
+        "macos" => Ok("macos"),
+        "windows" => Ok("windows"),
+        "linux" => Ok("linux"),
+        _ => Err(format!("application updates are unsupported on {os}")),
     }
 }
-fn updater_target() -> &'static str {
-    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "darwin-aarch64"
-    } else if cfg!(target_os = "macos") {
-        "darwin-x86_64"
-    } else if cfg!(target_os = "windows") {
-        "windows-x86_64"
-    } else {
-        "linux-x86_64"
+
+fn updater_target() -> Result<&'static str, String> {
+    updater_target_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn updater_target_for(os: &str, arch: &str) -> Result<&'static str, String> {
+    match (os, arch) {
+        ("macos", "aarch64") => Ok("darwin-aarch64"),
+        ("macos", "x86_64") => Ok("darwin-x86_64"),
+        ("windows", "x86_64") => Ok("windows-x86_64"),
+        ("linux", "x86_64") => Ok("linux-x86_64"),
+        _ => Err(format!(
+            "application updates are unsupported on {os} {arch}"
+        )),
     }
 }
 
@@ -228,4 +260,90 @@ fn launch_installer(path: &std::path::Path) -> Result<(), String> {
             .map_err(|e| format!("launch Linux update: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn manifest(version: &str, targets: &[&str]) -> Manifest {
+        Manifest {
+            version: version.to_string(),
+            notes: Some(format!("Flowix {version}")),
+            pub_date: Some("2026-08-28T00:00:00Z".to_string()),
+            platforms: targets
+                .iter()
+                .map(|target| {
+                    (
+                        (*target).to_string(),
+                        PlatformRelease {
+                            url: format!("https://download.flowix.cc/{target}"),
+                            sha256: Some("checksum".to_string()),
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
+        }
+    }
+
+    #[test]
+    fn no_update_does_not_require_a_platform_artifact() {
+        let current = semver::Version::parse("1.2.6").unwrap();
+
+        assert!(
+            resolve_update(&manifest("1.2.6", &[]), &current, "windows-x86_64")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            resolve_update(&manifest("1.2.5", &[]), &current, "darwin-aarch64")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn newer_update_requires_the_current_platform_artifact() {
+        let current = semver::Version::parse("1.2.6").unwrap();
+        let error =
+            resolve_update(&manifest("1.2.7", &[]), &current, "windows-x86_64").unwrap_err();
+
+        assert_eq!(error, "update manifest has no target windows-x86_64");
+    }
+
+    #[test]
+    fn resolves_newer_updates_for_macos_and_windows_targets() {
+        let current = semver::Version::parse("1.2.6").unwrap();
+        let manifest = manifest(
+            "1.2.7",
+            &["darwin-aarch64", "darwin-x86_64", "windows-x86_64"],
+        );
+
+        for target in ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"] {
+            let update = resolve_update(&manifest, &current, target)
+                .unwrap()
+                .unwrap();
+            assert_eq!(update.version, semver::Version::parse("1.2.7").unwrap());
+            assert!(update.release.url.ends_with(target));
+        }
+    }
+
+    #[test]
+    fn maps_supported_macos_and_windows_build_targets() {
+        assert_eq!(updater_platform_for("macos").unwrap(), "macos");
+        assert_eq!(updater_platform_for("windows").unwrap(), "windows");
+        assert_eq!(
+            updater_target_for("macos", "aarch64").unwrap(),
+            "darwin-aarch64"
+        );
+        assert_eq!(
+            updater_target_for("macos", "x86_64").unwrap(),
+            "darwin-x86_64"
+        );
+        assert_eq!(
+            updater_target_for("windows", "x86_64").unwrap(),
+            "windows-x86_64"
+        );
+    }
 }
