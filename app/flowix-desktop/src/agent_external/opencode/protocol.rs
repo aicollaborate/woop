@@ -64,6 +64,24 @@ pub fn load_session_request(
     })
 }
 
+pub fn session_list_request() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": SESSION_ID,
+        "method": "session/list",
+        "params": {}
+    })
+}
+
+pub fn close_session_request(session_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": PROMPT_ID,
+        "method": "session/close",
+        "params": { "sessionId": session_id }
+    })
+}
+
 pub fn prompt_request(session_id: &str, prompt: &str, image_paths: &[String]) -> Value {
     let mut blocks = vec![json!({ "type": "text", "text": prompt })];
     blocks.extend(image_paths.iter().map(|path| {
@@ -158,7 +176,7 @@ pub fn unsupported_request_response(request: &Value) -> Option<Value> {
     }))
 }
 
-pub fn response_result<'a>(message: &'a Value, id: u64) -> Option<Result<&'a Value, String>> {
+pub fn response_result(message: &Value, id: u64) -> Option<Result<&Value, String>> {
     if message.get("id").and_then(Value::as_u64) != Some(id) {
         return None;
     }
@@ -241,7 +259,22 @@ pub fn chunks_from_message(
     let Some(update) = message.pointer("/params/update") else {
         return Vec::new();
     };
+    let provider_message_id = message
+        .pointer("/params/messageId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     match update.get("sessionUpdate").and_then(Value::as_str) {
+        Some("user_message_chunk") => content_text(update)
+            .map(|text| AgentChunk::UserMessage {
+                thread_id: thread_id.to_string(),
+                id: provider_message_id
+                    .or_else(|| string_at(update, &["messageId", "id"]))
+                    .unwrap_or_else(|| "user-message".to_string()),
+                text,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            })
+            .into_iter()
+            .collect(),
         Some("agent_message_chunk") => content_text(update)
             .map(|text| AgentChunk::Text {
                 thread_id: thread_id.to_string(),
@@ -353,6 +386,12 @@ fn is_terminal_tool_status(update: &Value) -> bool {
         update.get("status").and_then(Value::as_str),
         Some("completed" | "failed" | "error")
     )
+}
+
+pub fn is_terminal_tool_update(message: &Value) -> bool {
+    message
+        .pointer("/params/update")
+        .is_some_and(is_terminal_tool_status)
 }
 
 fn path_to_file_uri(path: &str) -> String {

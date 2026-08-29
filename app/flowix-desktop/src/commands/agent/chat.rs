@@ -10,7 +10,10 @@ use crate::app::state::AppState;
 use super::image_cache::{
     resolve_cached_agent_image, MAX_AGENT_IMAGE_BYTES, MAX_AGENT_IMAGE_COUNT,
 };
-use super::runtime::{runtime_handle, stop_any_runtime_chat, AgentRuntime, ChatRuntime};
+use super::runtime::{
+    runtime_from_agent_type, runtime_from_message, runtime_handle, stop_any_runtime_chat,
+    AgentRuntime,
+};
 
 #[tauri::command]
 #[allow(non_snake_case)]
@@ -20,7 +23,7 @@ pub async fn chat_with_agent_stream(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<AgentChatResponse, String> {
-    let runtime = AgentRuntime::from_message(&message)?;
+    let runtime = runtime_from_message(&message)?;
     if message.image_paths.len() > MAX_AGENT_IMAGE_COUNT {
         return Err(format!(
             "A message can attach at most {MAX_AGENT_IMAGE_COUNT} images"
@@ -133,7 +136,7 @@ pub async fn stop_agent_stream(
     app_handle: tauri::AppHandle,
 ) -> Result<bool, String> {
     let runtime = match agentType.as_deref() {
-        Some(agent_type) => Some(AgentRuntime::from_agent_type(Some(agent_type))?),
+        Some(agent_type) => Some(runtime_from_agent_type(Some(agent_type))?),
         None => None,
     };
     tracing::info!(
@@ -223,4 +226,41 @@ pub async fn agent_external_events(
         .list_agent_external_events_by_thread(&product_thread_id, afterId, page_limit)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Respond to a Codex app-server server request (command/file approval).
+/// `requestId` is the exact JSON-RPC id serialized as text by the backend.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn codex_approval_respond(
+    requestId: String,
+    result: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .codex_app_server
+        .respond_to_server_request(&requestId, result)
+        .await
+}
+
+/// Update the Codex App Server settings for the next turn of an existing
+/// conversation without creating a transcript item.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn codex_thread_settings_update(
+    threadId: String,
+    model: Option<String>,
+    reasoningEffort: Option<String>,
+    permissionMode: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .codex_app_server
+        .update_thread_settings(
+            &threadId,
+            model.as_deref(),
+            reasoningEffort.as_deref(),
+            permissionMode.as_deref(),
+        )
+        .await
 }

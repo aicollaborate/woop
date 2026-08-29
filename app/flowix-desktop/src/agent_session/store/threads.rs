@@ -1,5 +1,6 @@
 //! Thread CRUD and title management.
 
+use super::external::find_product_thread_in_conn;
 use super::ThreadManager;
 use crate::agent_session::error::ThreadError;
 use crate::agent_session::types::{Thread, ThreadInfo};
@@ -15,10 +16,11 @@ impl ThreadManager {
     fn list_threads_inner(&self) -> Result<Vec<ThreadInfo>, ThreadError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT thread_id, agent_id, title, created_at, updated_at
-             FROM threads
-             WHERE agent_id = 'default'
-             ORDER BY updated_at DESC",
+            "SELECT ti.id, i.agent, ti.title, ti.created_at, ti.updated_at
+             FROM threads_index ti
+             JOIN agent_instances i ON i.id = ti.instance_id
+             WHERE i.agent = 'default'
+             ORDER BY ti.updated_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_thread_info)?;
 
@@ -37,10 +39,11 @@ impl ThreadManager {
     fn list_threads_by_agent_inner(&self, agent_id: &str) -> Result<Vec<ThreadInfo>, ThreadError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT thread_id, agent_id, title, created_at, updated_at
-             FROM threads
-             WHERE agent_id = ?1
-             ORDER BY updated_at DESC",
+            "SELECT ti.id, i.agent, ti.title, ti.created_at, ti.updated_at
+             FROM threads_index ti
+             JOIN agent_instances i ON i.id = ti.instance_id
+             WHERE i.agent = ?1
+             ORDER BY ti.updated_at DESC",
         )?;
         let rows = stmt.query_map([agent_id], Self::row_to_thread_info)?;
 
@@ -59,10 +62,11 @@ impl ThreadManager {
     fn list_external_threads_inner(&self, runtime: &str) -> Result<Vec<ThreadInfo>, ThreadError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT t.thread_id, t.agent_id, t.title, t.created_at, t.updated_at
-             FROM threads t
-             WHERE t.agent_id = ?1
-             ORDER BY t.updated_at DESC",
+            "SELECT ti.id, i.agent, ti.title, ti.created_at, ti.updated_at
+             FROM threads_index ti
+             JOIN agent_instances i ON i.id = ti.instance_id
+             WHERE i.agent = ?1
+             ORDER BY ti.updated_at DESC",
         )?;
         let rows = stmt.query_map([runtime], Self::row_to_thread_info)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -105,6 +109,7 @@ impl ThreadManager {
                 info.updated_at
             ],
         )?;
+        self.ensure_simplified_thread_index(&conn, &info.thread_id)?;
 
         Ok(info)
     }
@@ -129,6 +134,8 @@ impl ThreadManager {
         // Internal call redirected to the sync `_inner` (the async wrapper would
         // require `&Arc<Self>`, unavailable here where `self: &ThreadManager`).
         if let Some(thread) = self.get_thread_info_inner(thread_id)? {
+            let conn = self.lock_conn();
+            self.ensure_simplified_thread_index(&conn, thread_id)?;
             return Ok(thread);
         }
 
@@ -153,6 +160,7 @@ impl ThreadManager {
                 info.updated_at
             ],
         )?;
+        self.ensure_simplified_thread_index(&conn, thread_id)?;
 
         Ok(self
             .get_thread_info_with_conn(&conn, thread_id)?
@@ -240,16 +248,7 @@ impl ThreadManager {
         let now = chrono::Utc::now().timestamp_millis();
         let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
-        let target_thread_id = tx
-            .query_row(
-                "SELECT thread_id
-                 FROM thread_external_sessions
-                 WHERE external_session_id = ?1
-                 ORDER BY updated_at DESC LIMIT 1",
-                [thread_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+        let target_thread_id = find_product_thread_in_conn(&tx, agent_id.0.as_str(), thread_id)?
             .unwrap_or_else(|| thread_id.to_string());
         tx.execute(
             "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
@@ -262,6 +261,7 @@ impl ThreadManager {
              WHERE thread_id = ?2",
             params![now, target_thread_id],
         )?;
+        self.ensure_simplified_thread_index(&tx, &target_thread_id)?;
         // Keep SELECT inside the same std::sync::MutexGuard. ThreadManager uses
         // synchronous rusqlite calls internally; async signatures are kept for
         // upper-layer API consistency.

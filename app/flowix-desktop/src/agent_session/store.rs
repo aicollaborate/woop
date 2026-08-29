@@ -6,10 +6,14 @@
 
 mod conversations;
 mod external;
+mod legacy_external_sessions;
 mod messages;
+mod provider;
 mod threads;
 
-use rusqlite::{params, Connection};
+pub(crate) use external::materialize_external_messages;
+
+use rusqlite::{params, Connection, OptionalExtension};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -24,6 +28,7 @@ fn external_default_title(runtime: &str) -> &'static str {
     match runtime {
         "claude" => "Claude Code session",
         "hermes" => "Hermes session",
+        "opencode" => "OpenCode session",
         _ => "Codex session",
     }
 }
@@ -88,6 +93,65 @@ impl ThreadManager {
         conn.execute(
             "UPDATE threads SET updated_at = ?1 WHERE thread_id = ?2",
             params![updated_at, thread_id],
+        )?;
+        conn.execute(
+            "UPDATE threads_index SET updated_at = ?1 WHERE id = ?2",
+            params![updated_at, thread_id],
+        )?;
+        Ok(())
+    }
+
+    /// Keep the simplified product index available while legacy thread
+    /// callers are being migrated. This is intentionally idempotent and does
+    /// not copy provider-owned state.
+    pub(crate) fn ensure_simplified_thread_index(
+        &self,
+        conn: &Connection,
+        thread_id: &str,
+    ) -> Result<(), ThreadError> {
+        let Some((agent, title, created_at, updated_at)) = conn
+            .query_row(
+                "SELECT agent_id, title, created_at, updated_at
+                 FROM threads WHERE thread_id = ?1",
+                [thread_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Ok(());
+        };
+
+        let instance_id = conn
+            .query_row(
+                "SELECT instance_id FROM agent_conversation_instances
+                 WHERE thread_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| format!("legacy-{thread_id}"));
+
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_instances (
+                id, agent, source, created_at, updated_at
+             ) VALUES (?1, ?2, 'dedicated', ?3, ?4)",
+            params![instance_id, agent, created_at, updated_at],
+        )?;
+        conn.execute(
+            "INSERT INTO threads_index (id, instance_id, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                instance_id = excluded.instance_id,
+                title = excluded.title,
+                updated_at = excluded.updated_at",
+            params![thread_id, instance_id, title, created_at, updated_at],
         )?;
         Ok(())
     }

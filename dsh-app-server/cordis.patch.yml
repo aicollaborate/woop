@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-app-server-extension
+      name: './src/cordis-plugin.js'

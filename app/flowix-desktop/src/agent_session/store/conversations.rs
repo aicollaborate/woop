@@ -33,17 +33,48 @@ impl ThreadManager {
             .await
     }
 
+    pub async fn list_agent_conversation_instances_page(
+        self: &Arc<Self>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<AgentConversationInstance>, ThreadError> {
+        self.run_blocking(move |tm| tm.list_agent_conversation_instances_page_inner(offset, limit))
+            .await
+    }
+
+    fn list_agent_conversation_instances_page_inner(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<AgentConversationInstance>, ThreadError> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT
+                i.id, i.agent, ti.title, ti.id, i.config_json,
+                legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+             FROM agent_instances i
+             LEFT JOIN threads_index ti ON ti.instance_id = i.id
+             LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             ORDER BY i.updated_at DESC, i.id DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(params![limit as i64, offset as i64], Self::row_to_agent_conversation_instance)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     fn list_agent_conversation_instances_inner(
         &self,
     ) -> Result<Vec<AgentConversationInstance>, ThreadError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT
-                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
-                i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
-             FROM agent_conversation_instances i
-             LEFT JOIN threads t ON t.thread_id = i.thread_id
+                i.id, i.agent, ti.title, ti.id, i.config_json,
+                legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+             FROM agent_instances i
+             LEFT JOIN threads_index ti ON ti.instance_id = i.id
+             LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
              ORDER BY i.updated_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_agent_conversation_instance)?;
@@ -70,8 +101,8 @@ impl ThreadManager {
     ) -> Result<usize, ThreadError> {
         let conn = self.lock_conn();
         let count = conn.query_row(
-            "SELECT COUNT(*) FROM agent_conversation_instances
-             WHERE ?1 IS NULL OR source_notebook_id = ?1",
+            "SELECT COUNT(*) FROM agent_instances
+             WHERE ?1 IS NULL OR notebook_id = ?1",
             params![notebook_id],
             |row| row.get::<_, i64>(0),
         )?;
@@ -94,12 +125,13 @@ impl ThreadManager {
         let conn = self.lock_conn();
         conn.query_row(
             "SELECT
-                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
-                i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
-             FROM agent_conversation_instances i
-             LEFT JOIN threads t ON t.thread_id = i.thread_id
-             WHERE i.instance_id = ?1",
+                i.id, i.agent, ti.title, ti.id, i.config_json,
+                legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+             FROM agent_instances i
+             LEFT JOIN threads_index ti ON ti.instance_id = i.id
+             LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             WHERE i.id = ?1",
             [instance_id],
             Self::row_to_agent_conversation_instance,
         )
@@ -123,12 +155,13 @@ impl ThreadManager {
         let conn = self.lock_conn();
         conn.query_row(
             "SELECT
-                i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
-                i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
-             FROM agent_conversation_instances i
-             LEFT JOIN threads t ON t.thread_id = i.thread_id
-             WHERE i.thread_id = ?1
+                i.id, i.agent, ti.title, ti.id, i.config_json,
+                legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+             FROM agent_instances i
+             JOIN threads_index ti ON ti.instance_id = i.id
+             LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             WHERE ti.id = ?1
              ORDER BY i.updated_at DESC
              LIMIT 1",
             [thread_id],
@@ -164,6 +197,13 @@ impl ThreadManager {
         let role_name = input.role.as_ref().and_then(|role| role.name.clone());
         let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
+        let previous_thread_id = tx
+            .query_row(
+                "SELECT id FROM threads_index WHERE instance_id = ?1",
+                [input.instance_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
         if let Some(thread_id) = input.thread_id.as_deref() {
             let existing_owner = tx
                 .query_row(
@@ -230,15 +270,103 @@ impl ThreadManager {
                 updated_at,
             ],
         )?;
+
+        // Phase 2 compatibility write: the simplified instance/index tables
+        // mirror only product-owned fields. Keep this transaction aligned with
+        // the legacy representation until all callers have moved to the new
+        // repository methods.
+        tx.execute(
+            "INSERT INTO agent_instances (
+                id, agent, config_json, source, document_path, memo_id,
+                notebook_id, role_memo_id, role_name, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                agent = excluded.agent,
+                config_json = excluded.config_json,
+                source = excluded.source,
+                document_path = excluded.document_path,
+                memo_id = excluded.memo_id,
+                notebook_id = excluded.notebook_id,
+                role_memo_id = excluded.role_memo_id,
+                role_name = excluded.role_name,
+                updated_at = excluded.updated_at
+              WHERE excluded.updated_at >= agent_instances.updated_at",
+            params![
+                input.instance_id,
+                input.agent_type.as_str(),
+                runtime_config,
+                source_kind,
+                input.source.document_path,
+                input.source.memo_id,
+                input.source.notebook_id,
+                role_memo_id,
+                role_name,
+                created_at,
+                updated_at,
+            ],
+        )?;
+        if let Some(previous_thread_id) = previous_thread_id.as_deref() {
+            if input.thread_id.as_deref() != Some(previous_thread_id) {
+                let legacy_instance_id = format!("legacy-{previous_thread_id}");
+                tx.execute(
+                    "INSERT OR IGNORE INTO agent_instances (
+                        id, agent, source, created_at, updated_at
+                     )
+                     SELECT ?1, agent_id, 'dedicated', created_at, updated_at
+                     FROM threads WHERE thread_id = ?2",
+                    params![legacy_instance_id, previous_thread_id],
+                )?;
+                tx.execute(
+                    "UPDATE threads_index SET instance_id = ?1 WHERE id = ?2",
+                    params![legacy_instance_id, previous_thread_id],
+                )?;
+            }
+        }
+        if let Some(thread_id) = input.thread_id.as_deref() {
+            let index_owner = tx
+                .query_row(
+                    "SELECT instance_id FROM threads_index WHERE id = ?1",
+                    [thread_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if let Some(index_owner) = index_owner {
+                if index_owner != input.instance_id && index_owner != format!("legacy-{thread_id}")
+                {
+                    return Err(ThreadError::ConversationThreadConflict {
+                        thread_id: thread_id.to_string(),
+                        instance_id: input.instance_id,
+                    });
+                }
+            }
+            tx.execute(
+                "UPDATE threads_index SET instance_id = ?1 WHERE id = ?2",
+                params![input.instance_id, thread_id],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO threads_index (id, instance_id, title, created_at, updated_at)
+                 SELECT thread_id, ?1, title, created_at, updated_at
+                 FROM threads WHERE thread_id = ?2",
+                params![input.instance_id, thread_id],
+            )?;
+            let legacy_instance_id = format!("legacy-{thread_id}");
+            if legacy_instance_id != input.instance_id {
+                tx.execute(
+                    "DELETE FROM agent_instances WHERE id = ?1",
+                    [legacy_instance_id],
+                )?;
+            }
+        }
         let instance = tx
             .query_row(
                 "SELECT
-                    i.instance_id, i.agent_type, t.title, i.thread_id, i.runtime_config,
-                    i.frozen_cwd, i.source_kind, i.source_document_path, i.source_memo_id,
-                    i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.source_notebook_id
-                 FROM agent_conversation_instances i
-                 LEFT JOIN threads t ON t.thread_id = i.thread_id
-                 WHERE i.instance_id = ?1",
+                    i.id, i.agent, ti.title, ti.id, i.config_json,
+                    legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
+                    i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                 FROM agent_instances i
+                 LEFT JOIN threads_index ti ON ti.instance_id = i.id
+                 LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+                 WHERE i.id = ?1",
                 [instance_id.as_str()],
                 Self::row_to_agent_conversation_instance,
             )
@@ -274,6 +402,28 @@ impl ThreadManager {
                     OR i.thread_id IN (
                         SELECT s.external_session_id FROM thread_external_sessions s
                         WHERE s.thread_id = ?1
+                    )
+                    OR i.thread_id IN (
+                        SELECT c.external_id FROM threads_codex c WHERE c.thread_id = ?1
+                        UNION ALL
+                        SELECT d.external_id FROM threads_dsh d WHERE d.thread_id = ?1
+                        UNION ALL
+                       SELECT o.external_id FROM threads_opencode o WHERE o.thread_id = ?1
+                       UNION ALL
+                       SELECT h.external_id FROM threads_hermes h WHERE h.thread_id = ?1
+                       UNION ALL
+                       SELECT cl.external_id FROM threads_claude cl WHERE cl.thread_id = ?1
+                    )
+                    OR i.thread_id IN (
+                        SELECT c.thread_id FROM threads_codex c WHERE c.external_id = ?1
+                        UNION ALL
+                        SELECT d.thread_id FROM threads_dsh d WHERE d.external_id = ?1
+                        UNION ALL
+                       SELECT o.thread_id FROM threads_opencode o WHERE o.external_id = ?1
+                       UNION ALL
+                       SELECT h.thread_id FROM threads_hermes h WHERE h.external_id = ?1
+                       UNION ALL
+                       SELECT cl.thread_id FROM threads_claude cl WHERE cl.external_id = ?1
                     )
                  ORDER BY CASE WHEN i.thread_id = ?1 THEN 0 ELSE 1 END,
                           i.updated_at DESC
@@ -324,6 +474,28 @@ impl ThreadManager {
                         SELECT s.external_session_id FROM thread_external_sessions s
                         WHERE s.thread_id = ?3
                     )
+                    OR i.thread_id IN (
+                        SELECT c.external_id FROM threads_codex c WHERE c.thread_id = ?3
+                        UNION ALL
+                        SELECT d.external_id FROM threads_dsh d WHERE d.thread_id = ?3
+                        UNION ALL
+                 SELECT o.external_id FROM threads_opencode o WHERE o.thread_id = ?3
+                 UNION ALL
+                 SELECT h.external_id FROM threads_hermes h WHERE h.thread_id = ?3
+                 UNION ALL
+                 SELECT cl.external_id FROM threads_claude cl WHERE cl.thread_id = ?3
+                    )
+                    OR i.thread_id IN (
+                        SELECT c.thread_id FROM threads_codex c WHERE c.external_id = ?3
+                        UNION ALL
+                        SELECT d.thread_id FROM threads_dsh d WHERE d.external_id = ?3
+                        UNION ALL
+                 SELECT o.thread_id FROM threads_opencode o WHERE o.external_id = ?3
+                 UNION ALL
+                 SELECT h.thread_id FROM threads_hermes h WHERE h.external_id = ?3
+                 UNION ALL
+                 SELECT cl.thread_id FROM threads_claude cl WHERE cl.external_id = ?3
+                    )
                  ORDER BY CASE WHEN i.thread_id = ?3 THEN 0 ELSE 1 END,
                           i.updated_at DESC
                  LIMIT 1
@@ -349,11 +521,36 @@ impl ThreadManager {
         &self,
         instance_id: &str,
     ) -> Result<bool, ThreadError> {
-        let conn = self.lock_conn();
-        let deleted = conn.execute(
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction()?;
+        let thread_id = tx
+            .query_row(
+                "SELECT id FROM threads_index WHERE instance_id = ?1",
+                [instance_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(thread_id) = thread_id.as_deref() {
+            let legacy_instance_id = format!("legacy-{thread_id}");
+            tx.execute(
+                "INSERT OR IGNORE INTO agent_instances (
+                    id, agent, source, created_at, updated_at
+                 )
+                 SELECT ?1, agent_id, 'dedicated', created_at, updated_at
+                 FROM threads WHERE thread_id = ?2",
+                params![legacy_instance_id, thread_id],
+            )?;
+            tx.execute(
+                "UPDATE threads_index SET instance_id = ?1 WHERE id = ?2",
+                params![legacy_instance_id, thread_id],
+            )?;
+        }
+        let deleted = tx.execute(
             "DELETE FROM agent_conversation_instances WHERE instance_id = ?1",
             [instance_id],
         )?;
+        tx.execute("DELETE FROM agent_instances WHERE id = ?1", [instance_id])?;
+        tx.commit()?;
         Ok(deleted > 0)
     }
 
@@ -372,11 +569,38 @@ impl ThreadManager {
         &self,
         thread_id: &str,
     ) -> Result<u64, ThreadError> {
-        let conn = self.lock_conn();
-        let deleted = conn.execute(
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction()?;
+        let instance_id = tx
+            .query_row(
+                "SELECT instance_id FROM threads_index WHERE id = ?1",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let legacy_instance_id = format!("legacy-{thread_id}");
+        tx.execute(
+            "INSERT OR IGNORE INTO agent_instances (
+                id, agent, source, created_at, updated_at
+             )
+             SELECT ?1, agent_id, 'dedicated', created_at, updated_at
+             FROM threads WHERE thread_id = ?2",
+            params![legacy_instance_id, thread_id],
+        )?;
+        tx.execute(
+            "UPDATE threads_index SET instance_id = ?1 WHERE id = ?2",
+            params![legacy_instance_id, thread_id],
+        )?;
+        let deleted = tx.execute(
             "DELETE FROM agent_conversation_instances WHERE thread_id = ?1",
             [thread_id],
         )?;
+        if let Some(instance_id) = instance_id {
+            if instance_id != legacy_instance_id {
+                tx.execute("DELETE FROM agent_instances WHERE id = ?1", [instance_id])?;
+            }
+        }
+        tx.commit()?;
         Ok(deleted as u64)
     }
 
@@ -413,6 +637,19 @@ impl ThreadManager {
         )?;
         tx.execute(
             "INSERT OR IGNORE INTO thread_delete_ids (thread_id)
+             SELECT thread_id FROM threads_codex WHERE external_id = ?1
+             UNION ALL
+             SELECT thread_id FROM threads_dsh WHERE external_id = ?1
+             UNION ALL
+             SELECT thread_id FROM threads_opencode WHERE external_id = ?1
+             UNION ALL
+             SELECT thread_id FROM threads_hermes WHERE external_id = ?1
+             UNION ALL
+             SELECT thread_id FROM threads_claude WHERE external_id = ?1",
+            [thread_id],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO thread_delete_ids (thread_id)
              SELECT s2.thread_id
              FROM thread_external_sessions s1
              JOIN thread_external_sessions s2
@@ -429,6 +666,22 @@ impl ThreadManager {
         tx.execute(
             "DELETE FROM agent_external_events
              WHERE thread_id IN (SELECT thread_id FROM thread_delete_ids)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM agent_instances
+             WHERE id IN (
+                 SELECT instance_id FROM threads_index
+                 WHERE id IN (SELECT thread_id FROM thread_delete_ids)
+             )",
+            [],
+        )?;
+        // Provider branches and the product index have independent ownership.
+        // Delete the index explicitly for rows not covered by the instance
+        // cascade; branch rows then follow their foreign-key cascades.
+        tx.execute(
+            "DELETE FROM threads_index
+             WHERE id IN (SELECT thread_id FROM thread_delete_ids)",
             [],
         )?;
         let deleted = tx.execute(

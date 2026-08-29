@@ -28,6 +28,7 @@ import { useMemoStore } from "@features/memo/store/memo-store";
 import { resolvePrimaryWorkspace } from "@features/agent/runtime/primary-workspace";
 import { normalizeWorkspacePath } from "@features/agent/runtime/workspace-path";
 import { agent } from "@platform/tauri/client";
+import { subscribe, type UnlistenFn } from "@platform/tauri/event-bus";
 import {
   applyPopoverPosition,
   calculateAnchoredPopoverPosition,
@@ -138,6 +139,7 @@ export class ExternalAgentSettingsController {
   private dshDefaultProviderId: string | undefined;
   private localSupportedModelsTypeKey: AgentTypeKey | null = null;
   private localSupportedModels: AgentModelOption[] = [];
+  private readonly unlistenCodexSettings: UnlistenFn;
 
   readonly boundPosition = (): void => {
     this.schedulePosition();
@@ -152,6 +154,36 @@ export class ExternalAgentSettingsController {
     this.isDestroyed = options.isDestroyed;
     this.isRunning = options.isRunning ?? (() => false);
     this.consumeOutsidePointer = options.consumeOutsidePointer;
+    this.unlistenCodexSettings = subscribe<Record<string, unknown>>(
+      "codex-thread-settings-updated",
+      (payload) => { void this.applyCodexSettingsNotification(payload); },
+    );
+  }
+
+  private async applyCodexSettingsNotification(
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (this.getTypeKey() !== "codex") return;
+    const instanceId = this.getInstanceId();
+    const codexThreadId = typeof payload.threadId === "string" ? payload.threadId : "";
+    if (!instanceId || !codexThreadId) return;
+    const instance = useAgentSessionStore.getState().getInstance(instanceId);
+    if (!instance?.threadId) return;
+    const mapped = await agent.getCodexSessionId(instance.threadId);
+    if (mapped !== codexThreadId) return;
+    const settings = (payload.threadSettings ?? payload.settings) as Record<string, unknown> | undefined;
+    if (!settings) return;
+    const patch: Record<string, unknown> = {};
+    if (typeof settings.model === "string") patch.model = { key: settings.model };
+    if (typeof settings.reasoningEffort === "string") patch.reasoningEffort = settings.reasoningEffort;
+    const sandbox = settings.sandboxPolicy;
+    if (sandbox === "read-only" || sandbox === "workspace-write" || sandbox === "danger-full-access") {
+      patch.access = { sandbox };
+    }
+    if (Object.keys(patch).length) {
+      useAgentSessionStore.getState().setRuntimeConfig(instanceId, patch as never);
+      this.refreshEmptySettings();
+    }
   }
 
   /**
@@ -247,6 +279,7 @@ export class ExternalAgentSettingsController {
               ...(providerId?.trim() ? { providerId: providerId.trim() } : {}),
             },
           });
+        this.syncCodexThreadSetting(instanceId, kind, value);
         return;
       }
       if (kind === "permission") {
@@ -256,6 +289,7 @@ export class ExternalAgentSettingsController {
         void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
           access: { sandbox: value as AgentPermissionMode },
         });
+        this.syncCodexThreadSetting(instanceId, kind, value);
         return;
       }
       if (kind === "mode") {
@@ -274,6 +308,7 @@ export class ExternalAgentSettingsController {
       void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
         reasoningEffort: value as AgentCodexReasoningEffort,
       });
+      this.syncCodexThreadSetting(instanceId, kind, value);
       return;
     }
     // 无 instanceId (编辑器临时态) ── 退化到全局, 保留兼容。
@@ -324,6 +359,27 @@ export class ExternalAgentSettingsController {
     }));
     void useAgentAccessStore.getState().setDefaultRuntime(typeKey, {
       reasoningEffort: value as AgentCodexReasoningEffort,
+    });
+  }
+
+  private syncCodexThreadSetting(
+    instanceId: string,
+    kind: "model" | "permission" | "reasoning" | "mode",
+    value: string,
+  ): void {
+    if (this.getTypeKey() !== "codex") return;
+    const instance = useAgentSessionStore.getState().getInstance(instanceId);
+    const threadId = instance?.threadId;
+    if (!threadId) return;
+    void agent.updateCodexThreadSettings({
+      threadId,
+      ...(kind === "model" ? { model: value } : {}),
+      ...(kind === "permission"
+        ? { permissionMode: value as AgentPermissionMode }
+        : {}),
+      ...(kind === "reasoning" ? { reasoningEffort: value } : {}),
+    }).catch((error) => {
+      console.warn("Failed to update Codex App Server thread settings", error);
     });
   }
 
@@ -716,12 +772,13 @@ export class ExternalAgentSettingsController {
    * that immutable once the product conversation has a Codex thread.
    */
   private refreshCodexPermissionFrozenState(): void {
-    const instance = this.getInstanceId()
-      ? useAgentSessionStore.getState().getInstance(this.getInstanceId()!)
-      : undefined;
+    // App Server settings updates are queued for the next turn, so an
+    // existing Codex thread remains editable. Only disable while a turn is
+    // active if the control cannot safely queue a change.
     const disabled =
       this.getTypeKey() === "codex" &&
-      (this.isRunning() || Boolean(instance?.threadId));
+      this.isRunning() &&
+      !getAgentRuntimeSpec(this.getTypeKey()).workspace.switchWhileRunning;
     for (const button of [this.permissionButton, this.composerPermissionButton]) {
       if (!button) continue;
       button.disabled = disabled;
@@ -977,6 +1034,7 @@ export class ExternalAgentSettingsController {
   }
 
   dispose(): void {
+    this.unlistenCodexSettings();
     this.setSettingsPopoverOpen(false);
     this.stopPositionTracking();
     document.removeEventListener("pointerdown", this.handleOutsidePointer, true);

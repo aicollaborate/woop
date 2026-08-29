@@ -251,6 +251,22 @@ describe("DeepSeek Harness (DSH) tool displays", () => {
 });
 
 describe("parseAgentCommandInput", () => {
+  it("uses the streaming command parser for Codex history argv", () => {
+    const parsed = parseAgentCommandInput({
+      command: ["zsh", "-lc", "rg --files -g '!node_modules'"],
+      cwd: "file:///Users/rop/Desktop/vibe/flowix-main",
+    });
+
+    expect(parsed?.items[0]).toMatchObject({
+      command: "zsh",
+      args: ["-lc", "rg --files -g '!node_modules'"],
+    });
+    expect(parsed?.items[0]?.wrapper?.payload.items[0]).toMatchObject({
+      command: "rg",
+      args: ["--files", "-g", "!node_modules"],
+    });
+  });
+
   it("splits command chains into display items without losing operators", () => {
     const r = parseAgentCommandInput({
       command: 'cd app && npm run build || echo "build failed"',

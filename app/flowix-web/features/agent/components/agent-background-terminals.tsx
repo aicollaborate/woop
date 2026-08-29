@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { agentClient } from '@features/agent/store/agent-client';
+import {
+  agent,
+  listenToCodexApprovalRequests,
+  type CodexApprovalRequest,
+} from '@platform/tauri/client';
 
 interface BackgroundTerminal {
   id: string;
@@ -31,6 +36,29 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
   const [terminals, setTerminals] = useState<BackgroundTerminal[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [approval, setApproval] = useState<CodexApprovalRequest | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (agentType !== 'codex') return;
+    return listenToCodexApprovalRequests((request) => {
+      setApproval((current) => current ?? request);
+    });
+  }, [agentType]);
+
+  const respondToApproval = async (decision: 'accept' | 'decline') => {
+    if (!approval) return;
+    const request = approval;
+    setApproval(null);
+    setApprovalError(null);
+    try {
+      await agent.codexApprovalRespond(request.requestId, approvalResult(request, decision));
+    } catch (error) {
+      setApproval((current) => current ?? request);
+      setApprovalError(error instanceof Error ? error.message : String(error));
+      console.warn('[AgentBackgroundTerminals] Codex approval response failed:', error);
+    }
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -58,7 +86,31 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
   }, [agentType, enabled, threadId]);
 
   const countLabel = useMemo(() => t('agent.backgroundTerminals.count', { count: terminals.length }), [t, terminals.length]);
-  if (!enabled || failed || terminals.length === 0) return null;
+  if (!enabled || failed || (terminals.length === 0 && !approval)) return null;
+
+  if (approval) {
+    return (
+      <div className="agent-background-terminals agent-background-terminals--approval" role="status" aria-live="assertive">
+        <div className="agent-background-terminals__approval">
+          <span className="agent-background-terminals__approval-dot" aria-hidden="true" />
+          <div className="agent-background-terminals__approval-copy">
+            <strong>Codex 请求确认</strong>
+            <span>
+              {approval.method === 'item/fileChange/requestApproval'
+                ? 'Codex 请求应用文件变更。'
+                : 'Codex 请求执行需要确认的操作。'}
+            </span>
+            <code>{formatApprovalParams(approval.params)}</code>
+            {approvalError && <span className="agent-background-terminals__approval-error">确认失败：{approvalError}</span>}
+          </div>
+          <div className="agent-background-terminals__approval-actions">
+            <button type="button" onClick={() => void respondToApproval('decline')}>取消</button>
+            <button type="button" onClick={() => void respondToApproval('accept')}>确认执行</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="agent-background-terminals" data-expanded={expanded}>
@@ -89,4 +141,32 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
       )}
     </div>
   );
+}
+
+function formatApprovalParams(params: Record<string, unknown>): string {
+  const command = params.command;
+  const cwd = params.cwd;
+  if (Array.isArray(command) || typeof command === 'string') {
+    return [Array.isArray(command) ? command.join(' ') : command, cwd ? `cwd: ${String(cwd)}` : '']
+      .filter(Boolean)
+      .join(' · ');
+  }
+  return JSON.stringify(params, null, 2);
+}
+
+function approvalResult(
+  request: CodexApprovalRequest,
+  decision: 'accept' | 'decline',
+): Record<string, unknown> {
+  if (request.method === 'item/permissions/requestApproval') {
+    return {
+      permissions: decision === 'accept' ? request.params.permissions ?? {} : {},
+      scope: 'turn',
+      strictAutoReview: null,
+    };
+  }
+  // item/commandExecution/requestApproval and item/fileChange/requestApproval
+  // use the current app-server approval wire format, which is different from
+  // the legacy ExecCommandApproval response.
+  return { decision: decision === 'accept' ? 'accept' : 'decline' };
 }

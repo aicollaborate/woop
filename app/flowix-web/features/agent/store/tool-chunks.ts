@@ -133,6 +133,15 @@ export function applyToolResultChunk(
               // external runtimes may use a generic/legacy name (for example
               // `tool`), so never replace a known call name at completion.
               toolName: m.toolName || resultToolName || "",
+              // The started event is the canonical presentation identity.
+              // A result may arrive with a provider-specific/generic name;
+              // keep the live display metadata so completion cannot switch
+              // the row to a different card format.
+              toolDisplay: m.toolDisplay ?? createAgentToolDisplay({
+                agentType: m.toolAgentType ?? agentType,
+                toolName: m.toolName || resultToolName || "",
+                input: m.toolInput,
+              }),
               isLoading: false,
             }
           : m,
@@ -148,6 +157,11 @@ export function applyToolResultChunk(
         toolCallId: id,
         toolName: resultToolName || "unknown_tool",
         toolAgentType: agentType,
+        toolDisplay: createAgentToolDisplay({
+          agentType,
+          toolName: resultToolName || "unknown_tool",
+          input: undefined,
+        }),
         toolData: resultContent,
         isLoading: false,
       });

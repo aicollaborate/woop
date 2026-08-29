@@ -1246,7 +1246,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "editor.threadCard.delete": "Delete",
     "editor.threadCard.expand": "Expand",
     "editor.threadCard.collapse": "Collapse",
-    "editor.threadCard.copySessionId": "Copy Session ID",
+    "editor.threadCard.copySessionId": "Copy Thread ID",
     "editor.threadCard.copyLatex": "Copy LaTeX",
     "editor.threadCard.model": "Model",
     "editor.threadCard.inputTokens": "Input",

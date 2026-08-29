@@ -14,15 +14,59 @@ use futures::future::join_all;
 use super::claude::{ClaudeCliManager, AGENT_TYPE as CLAUDE_AGENT_TYPE};
 use super::codex::{CodexAppServerManager, AGENT_TYPE as CODEX_AGENT_TYPE};
 use super::deepseek_harness::{DeepSeekHarnessManager, AGENT_TYPE as DSH_AGENT_TYPE};
-use super::hermes::HermesCliManager;
+use super::hermes::HermesAcpManager;
 use super::opencode::{OpenCodeAcpManager, AGENT_TYPE as OPENCODE_AGENT_TYPE};
 use crate::agent_wire::{AgentUserMessage, RunInfo};
 
 const HERMES_AGENT_TYPE: &str = "hermes";
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ExternalRuntimeKind {
+    Codex,
+    Claude,
+    Hermes,
+    OpenCode,
+    DeepSeekHarness,
+}
+
+impl ExternalRuntimeKind {
+    pub const ALL: [Self; 5] = [
+        Self::Codex,
+        Self::Claude,
+        Self::Hermes,
+        Self::OpenCode,
+        Self::DeepSeekHarness,
+    ];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Codex => CODEX_AGENT_TYPE,
+            Self::Claude => CLAUDE_AGENT_TYPE,
+            Self::Hermes => HERMES_AGENT_TYPE,
+            Self::OpenCode => OPENCODE_AGENT_TYPE,
+            Self::DeepSeekHarness => DSH_AGENT_TYPE,
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            "hermes" => Ok(Self::Hermes),
+            "opencode" => Ok(Self::OpenCode),
+            "deepseek-harness" | "deepseek_harness" | "dsh" => Ok(Self::DeepSeekHarness),
+            other => Err(format!("unsupported agent type: {other}")),
+        }
+    }
+}
+
 #[async_trait]
 pub trait ExternalCliRuntime: Send + Sync {
-    fn key(&self) -> &'static str;
+    fn kind(&self) -> ExternalRuntimeKind;
+
+    fn key(&self) -> &'static str {
+        self.kind().key()
+    }
 
     async fn chat_stream(
         &self,
@@ -48,12 +92,25 @@ pub trait ExternalCliRuntime: Send + Sync {
     ) -> usize;
 }
 
+#[derive(Clone, Debug)]
+pub struct RuntimeRunSnapshot {
+    pub runtime: ExternalRuntimeKind,
+    pub thread_id: String,
+    pub info: RunInfo,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeOperationCount {
+    pub runtime: ExternalRuntimeKind,
+    pub affected: usize,
+}
+
 macro_rules! impl_external_runtime {
-    ($manager:ty, $key:expr) => {
+    ($manager:ty, $kind:expr) => {
         #[async_trait]
         impl ExternalCliRuntime for Arc<$manager> {
-            fn key(&self) -> &'static str {
-                $key
+            fn kind(&self) -> ExternalRuntimeKind {
+                $kind
             }
 
             async fn chat_stream(
@@ -93,52 +150,56 @@ macro_rules! impl_external_runtime {
     };
 }
 
-impl_external_runtime!(CodexAppServerManager, CODEX_AGENT_TYPE);
-impl_external_runtime!(ClaudeCliManager, CLAUDE_AGENT_TYPE);
-impl_external_runtime!(DeepSeekHarnessManager, DSH_AGENT_TYPE);
-impl_external_runtime!(HermesCliManager, HERMES_AGENT_TYPE);
-impl_external_runtime!(OpenCodeAcpManager, OPENCODE_AGENT_TYPE);
+impl_external_runtime!(CodexAppServerManager, ExternalRuntimeKind::Codex);
+impl_external_runtime!(ClaudeCliManager, ExternalRuntimeKind::Claude);
+impl_external_runtime!(DeepSeekHarnessManager, ExternalRuntimeKind::DeepSeekHarness);
+impl_external_runtime!(HermesAcpManager, ExternalRuntimeKind::Hermes);
+impl_external_runtime!(OpenCodeAcpManager, ExternalRuntimeKind::OpenCode);
 
 pub struct ExternalRuntimeRegistry {
-    runtimes: Vec<Box<dyn ExternalCliRuntime>>,
+    runtimes: HashMap<ExternalRuntimeKind, Box<dyn ExternalCliRuntime>>,
 }
 
 impl ExternalRuntimeRegistry {
     pub fn new(
         codex: Arc<CodexAppServerManager>,
         claude: Arc<ClaudeCliManager>,
-        hermes: Arc<HermesCliManager>,
+        hermes: Arc<HermesAcpManager>,
         opencode: Arc<OpenCodeAcpManager>,
         deepseek_harness: Arc<DeepSeekHarnessManager>,
     ) -> Self {
-        let runtimes: Vec<Box<dyn ExternalCliRuntime>> = vec![
+        Self::try_from_runtimes(vec![
             Box::new(codex),
             Box::new(claude),
             Box::new(hermes),
             Box::new(opencode),
             Box::new(deepseek_harness),
-        ];
-        debug_assert_eq!(
-            runtimes
-                .iter()
-                .map(|runtime| runtime.key())
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            runtimes.len(),
-            "external runtime keys must be unique"
-        );
-        Self { runtimes }
+        ])
+        .expect("built-in external runtimes must have unique kinds")
     }
 
-    pub fn get(&self, key: &str) -> Option<&dyn ExternalCliRuntime> {
-        self.runtimes
-            .iter()
-            .find(|runtime| runtime.key() == key)
-            .map(Box::as_ref)
+    fn try_from_runtimes(runtimes: Vec<Box<dyn ExternalCliRuntime>>) -> Result<Self, String> {
+        let mut registry = HashMap::new();
+        for runtime in runtimes {
+            let kind = runtime.kind();
+            if registry.insert(kind, runtime).is_some() {
+                return Err(format!(
+                    "external runtime is registered more than once for {}",
+                    kind.key()
+                ));
+            }
+        }
+        Ok(Self { runtimes: registry })
+    }
+
+    pub fn get(&self, kind: ExternalRuntimeKind) -> Option<&dyn ExternalCliRuntime> {
+        self.runtimes.get(&kind).map(Box::as_ref)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &dyn ExternalCliRuntime> {
-        self.runtimes.iter().map(Box::as_ref)
+        ExternalRuntimeKind::ALL
+            .into_iter()
+            .filter_map(|kind| self.get(kind))
     }
 
     pub async fn stop_chat_all(&self, thread_id: &str, app_handle: &tauri::AppHandle) -> bool {
@@ -153,8 +214,28 @@ impl ExternalRuntimeRegistry {
 
     pub async fn running_threads(&self) -> HashMap<String, RunInfo> {
         let mut all = HashMap::new();
-        for threads in join_all(self.iter().map(ExternalCliRuntime::running_threads)).await {
-            all.extend(threads);
+        for snapshot in self.running_snapshots().await {
+            merge_run_snapshot(&mut all, snapshot);
+        }
+        all
+    }
+
+    /// Lossless runtime-qualified view. The existing frontend IPC map is
+    /// derived from this collection for backward compatibility.
+    pub async fn running_snapshots(&self) -> Vec<RuntimeRunSnapshot> {
+        let runtimes = self.iter().collect::<Vec<_>>();
+        let snapshots = join_all(runtimes.iter().map(|runtime| runtime.running_threads())).await;
+        let mut all = Vec::new();
+        for (runtime, threads) in runtimes.into_iter().zip(snapshots) {
+            all.extend(
+                threads
+                    .into_iter()
+                    .map(|(thread_id, info)| RuntimeRunSnapshot {
+                        runtime: runtime.kind(),
+                        thread_id,
+                        info,
+                    }),
+            );
         }
         all
     }
@@ -163,24 +244,62 @@ impl ExternalRuntimeRegistry {
         &self,
         app_handle: &tauri::AppHandle,
         idle_timeout_ms: i64,
-    ) -> Vec<(&'static str, usize)> {
+    ) -> Vec<RuntimeOperationCount> {
+        let runtimes = self.iter().collect::<Vec<_>>();
         let counts = join_all(
-            self.iter()
+            runtimes
+                .iter()
                 .map(|runtime| runtime.reap_inactive_runs(app_handle, idle_timeout_ms)),
         )
         .await;
-        self.iter()
-            .map(ExternalCliRuntime::key)
+        runtimes
+            .into_iter()
+            .map(ExternalCliRuntime::kind)
             .zip(counts)
+            .map(|(runtime, affected)| RuntimeOperationCount { runtime, affected })
             .collect()
     }
 
-    pub async fn stop_all(&self) -> Vec<(&'static str, usize)> {
-        let counts = join_all(self.iter().map(ExternalCliRuntime::stop_all)).await;
-        self.iter()
-            .map(ExternalCliRuntime::key)
+    pub async fn stop_all(&self) -> Vec<RuntimeOperationCount> {
+        let runtimes = self.iter().collect::<Vec<_>>();
+        let counts = join_all(runtimes.iter().map(|runtime| runtime.stop_all())).await;
+        runtimes
+            .into_iter()
+            .map(ExternalCliRuntime::kind)
             .zip(counts)
+            .map(|(runtime, affected)| RuntimeOperationCount { runtime, affected })
             .collect()
+    }
+}
+
+fn merge_run_snapshot(target: &mut HashMap<String, RunInfo>, snapshot: RuntimeRunSnapshot) {
+    use std::collections::hash_map::Entry;
+
+    match target.entry(snapshot.thread_id.clone()) {
+        Entry::Vacant(entry) => {
+            entry.insert(snapshot.info);
+        }
+        Entry::Occupied(mut entry) => {
+            let existing = entry.get();
+            // The compatibility IPC map cannot represent two runtimes on one
+            // thread. Keep the newest deterministically and log the conflict.
+            if snapshot.info.started_at > existing.started_at {
+                tracing::warn!(
+                    thread_id = %snapshot.thread_id,
+                    kept_runtime = snapshot.runtime.key(),
+                    dropped_runtime = existing.agent_type.as_deref().unwrap_or("unknown"),
+                    "multiple runtimes reported the same running thread; keeping the newest run"
+                );
+                entry.insert(snapshot.info);
+            } else {
+                tracing::warn!(
+                    thread_id = %snapshot.thread_id,
+                    kept_runtime = existing.agent_type.as_deref().unwrap_or("unknown"),
+                    dropped_runtime = snapshot.runtime.key(),
+                    "multiple runtimes reported the same running thread; keeping the newest run"
+                );
+            }
+        }
     }
 }
 
@@ -191,6 +310,67 @@ mod tests {
     use crate::config::UserConfigStore;
 
     #[test]
+    fn runtime_kind_normalizes_wire_aliases() {
+        assert_eq!(
+            ExternalRuntimeKind::parse(" CODEX ").unwrap(),
+            ExternalRuntimeKind::Codex
+        );
+        assert_eq!(
+            ExternalRuntimeKind::parse("dsh").unwrap(),
+            ExternalRuntimeKind::DeepSeekHarness
+        );
+        assert_eq!(
+            ExternalRuntimeKind::parse("deepseek_harness").unwrap(),
+            ExternalRuntimeKind::DeepSeekHarness
+        );
+        assert!(ExternalRuntimeKind::parse("flowix").is_err());
+    }
+
+    fn run_info(started_at: i64, agent_type: &str) -> RunInfo {
+        RunInfo::active(
+            started_at,
+            None,
+            Some(agent_type),
+            Some(format!("run-{started_at}")),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn compatibility_snapshot_keeps_newest_cross_runtime_run() {
+        let mut running = HashMap::new();
+        merge_run_snapshot(
+            &mut running,
+            RuntimeRunSnapshot {
+                runtime: ExternalRuntimeKind::Claude,
+                thread_id: "shared-thread".to_string(),
+                info: run_info(10, "claude"),
+            },
+        );
+        merge_run_snapshot(
+            &mut running,
+            RuntimeRunSnapshot {
+                runtime: ExternalRuntimeKind::Codex,
+                thread_id: "shared-thread".to_string(),
+                info: run_info(20, "codex"),
+            },
+        );
+        merge_run_snapshot(
+            &mut running,
+            RuntimeRunSnapshot {
+                runtime: ExternalRuntimeKind::Hermes,
+                thread_id: "shared-thread".to_string(),
+                info: run_info(5, "hermes"),
+            },
+        );
+
+        let retained = running.get("shared-thread").unwrap();
+        assert_eq!(retained.started_at, 20);
+        assert_eq!(retained.agent_type.as_deref(), Some("codex"));
+    }
+
+    #[test]
     fn registry_contains_every_external_runtime_once() {
         let threads = ThreadManager::for_tests();
         let temp = tempfile::tempdir().unwrap();
@@ -199,7 +379,7 @@ mod tests {
         let registry = ExternalRuntimeRegistry::new(
             Arc::new(CodexAppServerManager::new(threads.clone())),
             Arc::new(ClaudeCliManager::new(threads.clone())),
-            Arc::new(HermesCliManager::new(threads.clone())),
+            Arc::new(HermesAcpManager::new(threads.clone())),
             Arc::new(OpenCodeAcpManager::new(threads.clone())),
             Arc::new(DeepSeekHarnessManager::new(
                 threads,
@@ -216,8 +396,8 @@ mod tests {
             keys,
             ["codex", "claude", "hermes", "opencode", "deepseek-harness"]
         );
-        for key in &keys {
-            assert_eq!(registry.get(key).map(ExternalCliRuntime::key), Some(*key));
+        for kind in ExternalRuntimeKind::ALL {
+            assert_eq!(registry.get(kind).map(ExternalCliRuntime::kind), Some(kind));
         }
     }
 }

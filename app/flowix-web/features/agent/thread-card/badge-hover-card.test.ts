@@ -57,7 +57,7 @@ describe("BadgeHoverCard", () => {
     await act(async () => {
       root.render(
         createElement(BadgeHoverCard, {
-          sessionId: "session-1",
+          threadId: "thread-1",
           usage: {
             input_tokens: 100,
             cached_input_tokens: 20,
@@ -87,7 +87,7 @@ describe("BadgeHoverCard", () => {
     expect(host.querySelector(".agent-thread-card__context-ring")).not.toBeNull();
 
     await act(async () => {
-      root.render(createElement(BadgeHoverCard, { sessionId: "session-1" }));
+      root.render(createElement(BadgeHoverCard, { threadId: "thread-1" }));
     });
 
     expect(host.textContent).not.toContain("CWD");
@@ -105,6 +105,7 @@ describe("BadgeHoverCard", () => {
     const root = createRoot(host);
     const requestRuntimeInfo = vi.fn().mockResolvedValue({
       model: "deepseek-chat",
+      sessionId: "provider-session-1",
       usage: {
         input_tokens: 200,
         cached_input_tokens: 100,
@@ -117,7 +118,7 @@ describe("BadgeHoverCard", () => {
     await act(async () => {
       root.render(
         createElement(BadgeHoverCard, {
-          sessionId: "session-1",
+          threadId: "thread-1",
           onRequestRuntimeInfo: requestRuntimeInfo,
         }),
       );
@@ -132,6 +133,7 @@ describe("BadgeHoverCard", () => {
       open?.click();
     });
     expect(requestRuntimeInfo).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("provider-session-1");
     expect(host.textContent).toContain("deepseek-chat");
     expect(host.textContent).toContain("45%");
 
@@ -155,7 +157,7 @@ describe("BadgeHoverCard", () => {
     await act(async () => {
       root.render(
         createElement(BadgeHoverCard, {
-          sessionId: "session-1",
+          threadId: "thread-1",
           usage: {},
           onRequestRuntimeInfo: requestRuntimeInfo,
         }),
@@ -183,7 +185,7 @@ describe("BadgeHoverCard", () => {
     await act(async () => {
       root.render(
         createElement(BadgeHoverCard, {
-          sessionId: "session-1",
+          threadId: "thread-1",
           usage: { total_tokens: 49 },
           onRequestRuntimeInfo: requestRuntimeInfo,
         }),

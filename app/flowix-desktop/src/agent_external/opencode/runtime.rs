@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -14,8 +15,7 @@ use super::protocol;
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
-    append_workspace_context, emit_chunk_with_run_id,
-    persist_external_chunk_for_thread_with_metadata, read_capped_line, read_to_string,
+    append_workspace_context, emit_chunk_with_run_id, read_capped_line, read_to_string,
     resolve_and_freeze_runtime_cwd, truncate_for_log, AgentChunkMetadata, ExternalRunRegistry,
     MAX_STDOUT_LINE_BYTES, USER_STOPPED_REASON,
 };
@@ -24,6 +24,7 @@ use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 use crate::runtime_log;
 
 const APP_EXIT_REASON: &str = "app_exit";
+const MODEL_CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct AcpControl {
@@ -185,6 +186,7 @@ pub struct OpenCodeAcpManager {
     thread_manager: Arc<ThreadManager>,
     runs: ExternalRunRegistry,
     controls: Mutex<HashMap<String, AcpControl>>,
+    model_cache: Mutex<Option<(Instant, Vec<String>)>>,
 }
 
 #[async_trait::async_trait]
@@ -199,32 +201,12 @@ impl ExternalLifecycleEmitter for OpenCodeAcpManager {
         chunk: &AgentChunk,
         run_id: &str,
     ) {
-        let storage_thread_id = self.storage_thread_id(chunk.thread_id()).await;
-        persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager,
-            AGENT_TYPE,
-            &storage_thread_id,
-            chunk,
-            run_id,
-            None,
-            &AgentChunkMetadata::default(),
-        )
-        .await;
         emit_chunk_with_run_id(app_handle, chunk, AGENT_TYPE, run_id);
     }
 
-    async fn persist_emitted_stream_end(&self, chunk: &AgentChunk, run_id: &str) {
-        let storage_thread_id = self.storage_thread_id(chunk.thread_id()).await;
-        persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager,
-            AGENT_TYPE,
-            &storage_thread_id,
-            chunk,
-            run_id,
-            None,
-            &AgentChunkMetadata::default(),
-        )
-        .await;
+    async fn persist_emitted_stream_end(&self, _chunk: &AgentChunk, _run_id: &str) {
+        // OpenCode owns the durable transcript; Flowix only consumes ACP
+        // history when the conversation is reopened.
     }
 }
 
@@ -234,16 +216,63 @@ impl OpenCodeAcpManager {
             thread_manager,
             runs: ExternalRunRegistry::new(AGENT_TYPE, "OpenCode ACP"),
             controls: Mutex::new(HashMap::new()),
+            model_cache: Mutex::new(None),
         }
     }
 
-    async fn storage_thread_id(&self, thread_id: &str) -> String {
-        self.thread_manager
-            .find_thread_by_external_session(thread_id, AGENT_TYPE)
+    pub async fn list_threads(&self) -> Result<Vec<crate::agent_session::ThreadInfo>, String> {
+        let sessions = super::history::list_sessions().await?;
+        let bindings = self
+            .thread_manager
+            .list_external_session_bindings(AGENT_TYPE)
             .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| thread_id.to_string())
+            .map_err(|error| error.to_string())?;
+        let mut threads = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            let product_id = bindings
+                .get(&session.thread_id)
+                .cloned()
+                .unwrap_or_else(|| session.thread_id.clone());
+            let product_info = self
+                .thread_manager
+                .ensure_thread(
+                    &product_id,
+                    crate::agent_types::AgentId(AGENT_TYPE.to_string()),
+                    session.title.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            self.thread_manager
+                .upsert_external_session(&product_id, AGENT_TYPE, &session.thread_id, None)
+                .await
+                .map_err(|error| error.to_string())?;
+            threads.push(product_info);
+        }
+        Ok(threads)
+    }
+
+    pub async fn supported_models(&self) -> Result<Vec<String>, String> {
+        {
+            let cache = self.model_cache.lock().await;
+            if let Some((loaded_at, models)) = cache.as_ref() {
+                if loaded_at.elapsed() < MODEL_CACHE_TTL {
+                    return Ok(models.clone());
+                }
+            }
+        }
+        let models = super::history::supported_models().await?;
+        *self.model_cache.lock().await = Some((Instant::now(), models.clone()));
+        Ok(models)
+    }
+
+    pub async fn get_thread_messages_page(
+        &self,
+        thread_id: &str,
+        before_sequence: Option<i64>,
+        limit: i64,
+    ) -> Result<crate::agent_session::ThreadMessagesPage, String> {
+        super::history::get_session_page(&self.thread_manager, thread_id, before_sequence, limit)
+            .await
     }
 
     pub async fn chat_stream(
@@ -367,27 +396,10 @@ impl OpenCodeAcpManager {
 
     pub async fn stop_all(&self) -> usize {
         self.controls.lock().await.clear();
-        let (count, finalized) = self
+        let (count, _finalized) = self
             .runs
             .kill_all_finalized("OpenCode ACP", APP_EXIT_REASON)
             .await;
-        for run in finalized {
-            let run_id = run.run_id.unwrap_or_else(|| run.thread_id.clone());
-            let storage_thread_id = self.storage_thread_id(&run.thread_id).await;
-            persist_external_chunk_for_thread_with_metadata(
-                &self.thread_manager,
-                AGENT_TYPE,
-                &storage_thread_id,
-                &AgentChunk::StreamEnd {
-                    thread_id: run.thread_id,
-                    reason: run.reason,
-                },
-                &run_id,
-                None,
-                &AgentChunkMetadata::default(),
-            )
-            .await;
-        }
         count
     }
 
@@ -639,18 +651,10 @@ impl OpenCodeAcpManager {
         }
         .await;
 
-        for event in turn_events.finish() {
-            persist_external_chunk_for_thread_with_metadata(
-                &self.thread_manager,
-                AGENT_TYPE,
-                product_thread_id,
-                &event.chunk,
-                run_id,
-                None,
-                &event.metadata,
-            )
-            .await;
-        }
+        // Turn events were emitted as ACP notifications arrived. The
+        // accumulator is only retained for in-memory compaction/ordering;
+        // do not replay it here or the UI would receive every event twice.
+        let _ = turn_events.finish();
 
         self.controls.lock().await.remove(thread_id);
         if let Some(mut running) = self.runs.remove_if_run_id(thread_id, Some(run_id)).await {

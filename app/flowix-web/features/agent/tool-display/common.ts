@@ -13,7 +13,19 @@ export function normalizeToolInput(
   input: unknown,
 ): Record<string, unknown> | undefined {
   if (input && typeof input === "object" && !Array.isArray(input)) {
-    return input as Record<string, unknown>;
+    const record = input as Record<string, unknown>;
+    // Codex history stores CommandExecution.command as argv, while the live
+    // tool stream supplies the equivalent shell command as a string. Feed
+    // both through the streaming parser by normalizing argv at the boundary.
+    if (Array.isArray(record.command)) {
+      const command = record.command
+        .filter((part): part is string => typeof part === "string")
+        .map((part) => /[\s"';&|]/.test(part) ? JSON.stringify(part) : part)
+        .join(" ")
+        .trim();
+      return command ? { ...record, command } : record;
+    }
+    return record;
   }
   if (Array.isArray(input)) return { items: input };
   if (typeof input === "string" && input.trim()) {
@@ -40,4 +52,3 @@ export const COMMAND_KEYS = [
   "shell_command",
   "script",
 ] as const;
-

@@ -10,7 +10,7 @@ use rusqlite::{params, Connection};
 
 use super::error::ThreadError;
 
-pub(super) const THREAD_DB_SCHEMA_VERSION: i64 = 4;
+pub(super) const THREAD_DB_SCHEMA_VERSION: i64 = 8;
 
 impl super::store::ThreadManager {
     pub(super) fn run_migrations(conn: &mut Connection) -> Result<(), ThreadError> {
@@ -94,6 +94,10 @@ impl super::store::ThreadManager {
                 runtime TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
                 event_key TEXT,
+                event_kind TEXT,
+                run_id TEXT,
+                source_sequence INTEGER,
+                source_subsequence INTEGER,
                 normalized_json TEXT NOT NULL,
                 raw_json TEXT,
                 created_at INTEGER NOT NULL,
@@ -114,11 +118,17 @@ impl super::store::ThreadManager {
         Self::ensure_agent_conversation_schema(conn)?;
         Self::migrate_agent_external_events_table(conn)?;
         Self::ensure_agent_external_event_key_column(conn)?;
+        Self::ensure_agent_external_event_metadata_columns(conn)?;
         // External CLI sessions used to be persisted under both the temporary
         // Flowix thread id and the provider session id. Reconciliation below
         // removes any colliding instance before the existing unique constraint
         // can reject the canonical-id update.
         Self::migrate_external_thread_identity(conn)?;
+        // Phase 1 of the simplified thread model: create the new product
+        // index and provider-specific bindings, then backfill them while the
+        // legacy tables remain available to the old read/write paths. The
+        // cut-over happens in a later migration once all callers are moved.
+        Self::ensure_simplified_thread_schema(conn)?;
         conn.execute_batch(
             "
             CREATE INDEX IF NOT EXISTS idx_agent_external_events_thread
@@ -126,10 +136,186 @@ impl super::store::ThreadManager {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_external_events_idempotency
                 ON agent_external_events(runtime, thread_id, event_key)
             WHERE event_key IS NOT NULL AND trim(event_key) <> '';
+            CREATE INDEX IF NOT EXISTS idx_agent_external_events_turns
+                ON agent_external_events(runtime, thread_id, event_kind, run_id, id);
             ",
         )?;
         conn.pragma_update(None, "user_version", THREAD_DB_SCHEMA_VERSION)?;
 
+        Ok(())
+    }
+
+    /// Additive first phase of the thread-store migration.
+    ///
+    /// The new tables deliberately contain only product identity and external
+    /// IDs. Codex/DSH history and runtime metadata remain owned by their
+    /// runtimes; the old tables are retained until their callers are cut over.
+    fn ensure_simplified_thread_schema(conn: &mut Connection) -> Result<(), ThreadError> {
+        let tx = conn.transaction()?;
+        tx.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS agent_instances (
+                id TEXT PRIMARY KEY,
+                agent TEXT NOT NULL,
+                config_json TEXT,
+                source TEXT NOT NULL DEFAULT 'thread-card',
+                document_path TEXT,
+                memo_id TEXT,
+                notebook_id TEXT,
+                role_memo_id TEXT,
+                role_name TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS threads_index (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(instance_id) REFERENCES agent_instances(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_threads_index_updated
+                ON threads_index(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS threads_codex (
+                thread_id TEXT PRIMARY KEY,
+                external_id TEXT NOT NULL UNIQUE,
+                FOREIGN KEY(thread_id) REFERENCES threads_index(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS threads_dsh (
+                thread_id TEXT PRIMARY KEY,
+                external_id TEXT NOT NULL UNIQUE,
+                FOREIGN KEY(thread_id) REFERENCES threads_index(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS threads_opencode (
+                thread_id TEXT PRIMARY KEY,
+                external_id TEXT NOT NULL UNIQUE,
+                FOREIGN KEY(thread_id) REFERENCES threads_index(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS threads_hermes (
+                thread_id TEXT PRIMARY KEY,
+                external_id TEXT NOT NULL UNIQUE,
+                FOREIGN KEY(thread_id) REFERENCES threads_index(id) ON DELETE CASCADE
+            );
+
+            -- Claude messages remain product-owned in agent_external_events.
+            -- This branch stores only provider identity and reconciliation
+            -- metadata, leaving room for Claude-specific evolution.
+            CREATE TABLE IF NOT EXISTS threads_claude (
+                thread_id TEXT PRIMARY KEY,
+                external_id TEXT NOT NULL UNIQUE,
+                project_path TEXT,
+                transcript_path TEXT,
+                last_reconciled_at INTEGER,
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(thread_id) REFERENCES threads_index(id) ON DELETE CASCADE
+            );
+            ",
+        )?;
+
+        // Existing conversation instances are the canonical source for the
+        // instance-side metadata during this additive phase. The old title and
+        // thread binding are projected into the product index only.
+        tx.execute_batch(
+            "
+            INSERT OR IGNORE INTO agent_instances (
+                id, agent, config_json, source, document_path, memo_id,
+                notebook_id, role_memo_id, role_name, created_at, updated_at
+            )
+            SELECT
+                instance_id, agent_type, runtime_config, source_kind,
+                source_document_path, source_memo_id, source_notebook_id,
+                role_memo_id, role_name, created_at, updated_at
+            FROM agent_conversation_instances;
+
+            -- Preserve legacy product threads that predate an instance row by
+            -- creating a deterministic dedicated instance. This avoids data
+            -- loss and makes the new index's instance_id NOT NULL invariant
+            -- valid for every existing product thread.
+            INSERT OR IGNORE INTO agent_instances (
+                id, agent, source, created_at, updated_at
+            )
+            SELECT
+                'legacy-' || t.thread_id,
+                t.agent_id,
+                'dedicated',
+                t.created_at,
+                t.updated_at
+            FROM threads t
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent_conversation_instances i
+                WHERE i.thread_id = t.thread_id
+            );
+
+            INSERT OR IGNORE INTO threads_index (
+                id, instance_id, title, created_at, updated_at
+            )
+            SELECT
+                t.thread_id,
+                COALESCE(i.instance_id, 'legacy-' || t.thread_id),
+                t.title,
+                t.created_at,
+                t.updated_at
+            FROM threads t
+            LEFT JOIN agent_conversation_instances i
+                ON i.thread_id = t.thread_id;
+
+            INSERT OR IGNORE INTO threads_codex (thread_id, external_id)
+            SELECT s.thread_id, s.external_session_id
+            FROM thread_external_sessions s
+            JOIN threads_index ti ON ti.id = s.thread_id
+            WHERE s.runtime = 'codex'
+              AND trim(s.external_session_id) <> '';
+
+            INSERT OR IGNORE INTO threads_dsh (thread_id, external_id)
+            SELECT s.thread_id, s.external_session_id
+            FROM thread_external_sessions s
+            JOIN threads_index ti ON ti.id = s.thread_id
+            WHERE s.runtime = 'deepseek-harness'
+              AND trim(s.external_session_id) <> '';
+
+            INSERT OR IGNORE INTO threads_opencode (thread_id, external_id)
+            SELECT s.thread_id, s.external_session_id
+            FROM thread_external_sessions s
+            JOIN threads_index ti ON ti.id = s.thread_id
+            WHERE s.runtime = 'opencode'
+              AND trim(s.external_session_id) <> '';
+
+            INSERT OR IGNORE INTO threads_hermes (thread_id, external_id)
+            SELECT s.thread_id, s.external_session_id
+            FROM thread_external_sessions s
+            JOIN threads_index ti ON ti.id = s.thread_id
+            WHERE s.runtime = 'hermes'
+              AND trim(s.external_session_id) <> '';
+
+            INSERT OR IGNORE INTO threads_claude (
+                thread_id, external_id, project_path, last_reconciled_at
+            )
+            SELECT
+                s.thread_id,
+                s.external_session_id,
+                CASE WHEN json_valid(s.session_metadata_json)
+                    THEN COALESCE(
+                        json_extract(s.session_metadata_json, '$.cwd'),
+                        json_extract(s.session_metadata_json, '$.metadata.cwd'),
+                        json_extract(s.session_metadata_json, '$.message.cwd')
+                    )
+                END,
+                s.updated_at
+            FROM thread_external_sessions s
+            JOIN threads_index ti ON ti.id = s.thread_id
+            WHERE s.runtime = 'claude'
+              AND trim(s.external_session_id) <> '';
+            ",
+        )?;
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -506,6 +692,10 @@ impl super::store::ThreadManager {
                 runtime TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
                 event_key TEXT,
+                event_kind TEXT,
+                run_id TEXT,
+                source_sequence INTEGER,
+                source_subsequence INTEGER,
                 normalized_json TEXT NOT NULL,
                 raw_json TEXT,
                 created_at INTEGER NOT NULL,
@@ -513,12 +703,18 @@ impl super::store::ThreadManager {
             );
 
             INSERT INTO agent_external_events (
-                id, runtime, thread_id, event_key, normalized_json, raw_json, created_at
+                id, runtime, thread_id, event_key, event_kind, run_id,
+                source_sequence, source_subsequence,
+                normalized_json, raw_json, created_at
             )
             SELECT
                 {id_expr},
                 {runtime_expr},
                 {thread_id_expr},
+                NULL,
+                NULL,
+                NULL,
+                NULL,
                 NULL,
                 {normalized_json_expr},
                 {raw_json_expr},
@@ -553,6 +749,44 @@ impl super::store::ThreadManager {
                 [],
             )?;
         }
+        Ok(())
+    }
+
+    fn ensure_agent_external_event_metadata_columns(conn: &Connection) -> Result<(), ThreadError> {
+        for (name, sql_type) in [
+            ("event_kind", "TEXT"),
+            ("run_id", "TEXT"),
+            ("source_sequence", "INTEGER"),
+            ("source_subsequence", "INTEGER"),
+        ] {
+            let exists = conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM pragma_table_info('agent_external_events')
+                    WHERE name = ?1
+                )",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                conn.execute(
+                    &format!("ALTER TABLE agent_external_events ADD COLUMN {name} {sql_type}"),
+                    [],
+                )?;
+            }
+        }
+
+        conn.execute_batch(
+            "UPDATE agent_external_events
+             SET event_kind = CASE WHEN json_valid(normalized_json)
+                    THEN json_extract(normalized_json, '$.kind') END,
+                 run_id = CASE WHEN json_valid(normalized_json)
+                    THEN json_extract(normalized_json, '$.run_id') END,
+                 source_sequence = CASE WHEN json_valid(normalized_json)
+                    THEN json_extract(normalized_json, '$.source_sequence') END,
+                 source_subsequence = CASE WHEN json_valid(normalized_json)
+                    THEN json_extract(normalized_json, '$.source_subsequence') END
+             WHERE event_kind IS NULL;",
+        )?;
         Ok(())
     }
 

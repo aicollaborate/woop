@@ -4,13 +4,14 @@
 //! owns many Codex threads and turns, so Flowix keeps the process connection
 //! separately from the per-thread run registry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::{oneshot, Mutex};
@@ -48,8 +49,16 @@ struct ActiveTurn {
 struct Inner {
     thread_manager: Arc<ThreadManager>,
     connection: Mutex<Option<Connection>>,
+    // Serialize the first connection attempt. `ensure_connection` is called
+    // by thread, history, and model APIs and those calls can arrive
+    // concurrently during startup; checking `connection` alone is not enough
+    // to prevent spawning one app-server per caller.
+    connection_start_lock: Mutex<()>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
+    pending_approvals: Mutex<HashSet<String>>,
+    app_handle: Mutex<Option<tauri::AppHandle>>,
     active_turns: Mutex<HashMap<String, ActiveTurn>>,
+    latest_usage: Mutex<HashMap<String, crate::agent_types::UsageInfo>>,
     next_request_id: AtomicU64,
 }
 
@@ -63,14 +72,25 @@ impl CodexAppServerManager {
             inner: Arc::new(Inner {
                 thread_manager,
                 connection: Mutex::new(None),
+                connection_start_lock: Mutex::new(()),
                 pending: Mutex::new(HashMap::new()),
+                pending_approvals: Mutex::new(HashSet::new()),
+                app_handle: Mutex::new(None),
                 active_turns: Mutex::new(HashMap::new()),
+                latest_usage: Mutex::new(HashMap::new()),
                 next_request_id: AtomicU64::new(1),
             }),
         }
     }
 
     async fn ensure_connection(&self) -> Result<(), String> {
+        if self.inner.connection.lock().await.is_some() {
+            return Ok(());
+        }
+
+        // Re-check after taking the startup lock: another caller may have
+        // completed the connection while this caller was waiting.
+        let _startup = self.inner.connection_start_lock.lock().await;
         if self.inner.connection.lock().await.is_some() {
             return Ok(());
         }
@@ -207,9 +227,9 @@ impl CodexAppServerManager {
         }
 
         let sandbox = app_server_sandbox(message.permission_mode_for_runtime(AGENT_TYPE));
-        // Flowix does not yet expose an approval callback. Unexpected server
-        // requests are still declined below rather than granting access.
-        let approval = "never";
+        // Writable threads use the interactive server-request approval path;
+        // unsupported server requests remain fail-closed in read_loop.
+        let approval = app_server_approval_policy(message.permission_mode_for_runtime(AGENT_TYPE));
         let workspace_roots = message.workspace_paths_for_runtime(AGENT_TYPE);
         let result = self
             .request(
@@ -217,8 +237,15 @@ impl CodexAppServerManager {
                 json!({
                     "cwd": cwd,
                     "model": message.codex_model_for_runtime(),
-                    "sandbox": sandbox,
+                    "sandboxPolicy": sandbox,
                     "approvalPolicy": approval,
+                    "approvalsReviewer": "user",
+                    // Persist the paginated transcript so thread/read and
+                    // thread/turns/list can return command/tool items after
+                    // the live stream has completed. Without this, Codex
+                    // still emits item/* notifications but the legacy
+                    // history view drops those items on reload.
+                    "historyMode": "paginated",
                     "runtimeWorkspaceRoots": workspace_roots,
                     "serviceName": "flowix"
                 }),
@@ -280,6 +307,7 @@ impl CodexAppServerManager {
         message: AgentUserMessage,
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
+        *self.inner.app_handle.lock().await = Some(app_handle.clone());
         self.ensure_connection().await?;
         let flowix_thread_id = flowix_thread_id.to_string();
         let run_id = message
@@ -302,6 +330,8 @@ impl CodexAppServerManager {
 
         let started = async {
             let (codex_thread_id, cwd) = self.resolve_codex_thread(&flowix_thread_id, &message).await?;
+            let approval = app_server_approval_policy(message.permission_mode_for_runtime(AGENT_TYPE));
+            let sandbox = app_server_sandbox(message.permission_mode_for_runtime(AGENT_TYPE));
             let mut input = vec![json!({ "type": "text", "text": message.llm_content.clone().unwrap_or_else(|| message.content.clone()) })];
             input.extend(message.image_paths.iter().filter(|path| std::path::Path::new(path).is_file()).map(|path| json!({ "type": "localImage", "path": path })));
             let result = self.request("turn/start", json!({
@@ -309,7 +339,9 @@ impl CodexAppServerManager {
                 "input": input,
                 "cwd": cwd,
                 "model": message.codex_model_for_runtime(),
-                "effort": message.codex_reasoning_effort_for_runtime()
+                "effort": message.codex_reasoning_effort_for_runtime(),
+                "approvalPolicy": approval,
+                "sandboxPolicy": sandbox
             })).await?;
             let codex_turn_id = result.pointer("/turn/id").and_then(Value::as_str)
                 .filter(|id| !id.trim().is_empty())
@@ -425,6 +457,15 @@ impl CodexAppServerManager {
             )
             .await;
         }
+
+        // The app-server is shared by all Codex threads and is not owned by
+        // any single turn. Explicitly terminate it during application
+        // shutdown; dropping `tokio::process::Child` alone does not guarantee
+        // that the child process exits.
+        if let Some(mut connection) = self.inner.connection.lock().await.take() {
+            let _ = connection._child.kill().await;
+            let _ = connection._child.wait().await;
+        }
         count
     }
 
@@ -473,6 +514,30 @@ impl CodexAppServerManager {
             .filter(|model| seen.insert((*model).to_string()))
             .map(str::to_string)
             .collect())
+    }
+
+    /// Read the account snapshot used by the Codex badge popover. Rate limits
+    /// are deliberately returned as raw JSON because the app-server schema is
+    /// experimental and has added buckets over time.
+    pub async fn runtime_info(&self, thread_id: Option<&str>) -> Result<Value, String> {
+        self.ensure_connection().await?;
+        let account = self
+            .request("account/read", json!({ "refreshToken": false }))
+            .await
+            .unwrap_or(Value::Null);
+        let rate_limits = self
+            .request("account/rateLimits/read", json!({}))
+            .await
+            .unwrap_or(Value::Null);
+        let usage = match thread_id {
+            Some(id) => self.inner.latest_usage.lock().await.get(id).cloned(),
+            None => None,
+        };
+        Ok(json!({
+            "account": account.get("account").cloned().unwrap_or(Value::Null),
+            "rateLimits": rate_limits,
+            "usage": usage,
+        }))
     }
 
     pub async fn list_threads(&self) -> Result<Vec<ThreadInfo>, String> {
@@ -530,10 +595,13 @@ impl CodexAppServerManager {
         limit: i64,
     ) -> Result<ThreadMessagesPage, String> {
         self.ensure_connection().await?;
-        // Codex owns the transcript. Use the paged turns API and explicitly
-        // request full items; the default `summary` view omits tool items (or
-        // leaves the turn's items empty), which makes live tool rows disappear
-        // as soon as the frontend reconciles after stream_end.
+        // `thread/turns/list(itemsView: "full")` is the authoritative
+        // persisted transcript shape: it preserves the server's turn and item
+        // ordering, includes command/tool items, and keeps terminal status on
+        // its owning turn. Do not flatten `thread/items/list` and reconstruct
+        // that relationship from timestamps: every item in a turn commonly
+        // shares `startedAt`, which makes a later history/live merge able to
+        // reorder tool rows.
         let mut cursor: Option<String> = None;
         let mut turns = Vec::new();
         loop {
@@ -565,398 +633,67 @@ impl CodexAppServerManager {
                 break;
             }
         }
-        let turn_ids = turns
-            .iter()
-            .filter_map(|turn| turn.get("id").and_then(Value::as_str).map(str::to_string))
-            .collect::<Vec<_>>();
-        let mut custom_tools = Vec::new();
-        // Some Codex rollouts contain Responses API custom tool records that
-        // the App Server history projection does not expose as ThreadItems.
-        // Ask the server for its authoritative rollout path instead of
-        // guessing/scanning ~/.codex, then use the JSONL only for those
-        // missing custom tool rows.
-        if let Ok(thread) = self
-            .request(
-                "thread/read",
-                json!({ "threadId": thread_id, "includeTurns": false }),
-            )
+        Ok(paginate_app_server_messages(
+            app_server_turn_messages(&turns),
+            before_sequence,
+            limit,
+        ))
+    }
+
+    /// Reply to a server-initiated JSON-RPC request with its original id.
+    /// RequestId is kept as JSON text for compatibility with numeric and
+    /// string ids emitted by different app-server versions.
+    pub async fn respond_to_server_request(
+        &self,
+        request_id: &str,
+        result: Value,
+    ) -> Result<(), String> {
+        if !self.inner.pending_approvals.lock().await.remove(request_id) {
+            return Err("Codex approval request is no longer pending".to_string());
+        }
+        let id = serde_json::from_str::<Value>(request_id)
+            .map_err(|_| "Invalid Codex approval request id".to_string())?;
+        self.write(json!({ "id": id, "result": result })).await
+    }
+
+    /// Apply settings to an existing Codex thread. These settings affect the
+    /// next turn and preserve the conversation history.
+    pub async fn update_thread_settings(
+        &self,
+        flowix_thread_id: &str,
+        model: Option<&str>,
+        reasoning_effort: Option<&str>,
+        permission_mode: Option<&str>,
+    ) -> Result<(), String> {
+        self.ensure_connection().await?;
+        let stored = self
+            .inner
+            .thread_manager
+            .get_external_session(flowix_thread_id, AGENT_TYPE)
             .await
+            .map_err(|error| error.to_string())?;
+        let codex_thread_id = select_external_session_for_runtime(stored, None)
+            .ok_or_else(|| "Codex thread has not been started".to_string())?;
+        let mut settings = serde_json::Map::new();
+        if let Some(model) = model.filter(|value| !value.trim().is_empty() && *value != "inherit") {
+            settings.insert("model".into(), json!(model));
+        }
+        if let Some(effort) =
+            reasoning_effort.filter(|value| !value.trim().is_empty() && *value != "inherit")
         {
-            if let Some(path) = thread
-                .pointer("/thread/path")
-                .and_then(Value::as_str)
-                .filter(|path| !path.trim().is_empty())
-            {
-                match read_rollout_custom_tool_messages(path, &turn_ids).await {
-                    Ok(parsed) => custom_tools = parsed,
-                    Err(error) => tracing::debug!(
-                        "failed to read Codex rollout custom tools from {path}: {error}"
-                    ),
-                }
-            }
+            settings.insert("reasoningEffort".into(), json!(effort));
         }
-        let all = app_server_turn_messages_with_custom_tools(&turns, custom_tools);
-        Ok(paginate_app_server_messages(all, before_sequence, limit))
+        if let Some(permission) = permission_mode {
+            settings.insert("sandboxPolicy".into(), app_server_sandbox(Some(permission)));
+        }
+        if settings.is_empty() {
+            return Ok(());
+        }
+        settings.insert("threadId".into(), json!(codex_thread_id));
+        self.request("thread/settings/update", Value::Object(settings).into())
+            .await?;
+        Ok(())
     }
-}
-
-struct RolloutCustomToolMessage {
-    turn_index: Option<usize>,
-    assistant_before: usize,
-    line_index: usize,
-    message: ChatMessage,
-}
-
-fn app_server_turn_messages_with_custom_tools(
-    turns: &[Value],
-    custom_tools: Vec<RolloutCustomToolMessage>,
-) -> Vec<ChatMessage> {
-    let mut by_turn = HashMap::<usize, Vec<RolloutCustomToolMessage>>::new();
-    let mut unmatched = Vec::new();
-    for tool in custom_tools {
-        if let Some(turn_index) = tool.turn_index {
-            by_turn.entry(turn_index).or_default().push(tool);
-        } else {
-            unmatched.push(tool);
-        }
-    }
-
-    let mut messages = Vec::new();
-    for (turn_index, turn) in turns.iter().enumerate() {
-        // App-server messages are timestamped with the turn start time by
-        // `app_server_turn_messages`, while rollout custom-tool records carry
-        // their actual execution time.  The web store uses timestamps as a
-        // fallback ordering key when it merges a live snapshot with history.
-        // Keep the turn's canonical timestamp here so that the explicit
-        // JSONL/item order below remains authoritative within a turn.
-        let turn_timestamp = app_server_timestamp_string(
-            turn.get("startedAt")
-                .or_else(|| turn.get("createdAt"))
-                .and_then(Value::as_i64),
-        );
-        let mut turn_messages = app_server_turn_messages(std::slice::from_ref(turn));
-        let mut tools = by_turn.remove(&turn_index).unwrap_or_default();
-        tools.sort_by_key(|tool| tool.line_index);
-        let assistant_positions = turn_messages
-            .iter()
-            .enumerate()
-            .filter_map(|(index, message)| (message.role == "assistant").then_some(index))
-            .collect::<Vec<_>>();
-        let mut inserted = 0;
-        for tool in tools {
-            let mut tool = tool;
-            tool.message.timestamp = turn_timestamp.clone();
-            let base_index = assistant_positions
-                .get(tool.assistant_before)
-                .copied()
-                .unwrap_or(turn_messages.len());
-            let insert_at = (base_index + inserted).min(turn_messages.len());
-            turn_messages.insert(insert_at, tool.message);
-            inserted += 1;
-        }
-        messages.extend(turn_messages);
-    }
-    unmatched.sort_by_key(|tool| tool.line_index);
-    messages.extend(unmatched.into_iter().map(|tool| tool.message));
-    messages
-}
-
-async fn read_rollout_custom_tool_messages(
-    path: &str,
-    turn_ids: &[String],
-) -> Result<Vec<RolloutCustomToolMessage>, String> {
-    let contents = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut messages = Vec::new();
-    let mut indexes = HashMap::<String, Vec<usize>>::new();
-    let turn_indexes = turn_ids
-        .iter()
-        .enumerate()
-        .map(|(index, id)| (id.as_str(), index))
-        .collect::<HashMap<_, _>>();
-    let mut current_turn_index = None;
-    let mut assistant_before = 0usize;
-
-    for (line_index, line) in contents.lines().enumerate() {
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        let record_type = record.get("type").and_then(Value::as_str);
-        if record_type == Some("event_msg") {
-            if record.pointer("/payload/type").and_then(Value::as_str) == Some("task_started") {
-                current_turn_index = record
-                    .pointer("/payload/turn_id")
-                    .and_then(Value::as_str)
-                    .and_then(|id| turn_indexes.get(id).copied());
-                assistant_before = 0;
-            }
-            // MCP calls are not ThreadItems in several Codex App Server
-            // versions. They are recorded as rollout event messages, so a
-            // history reload previously lost rows that were visible during the
-            // live stream as soon as completion reconciliation ran.
-            if record.pointer("/payload/type").and_then(Value::as_str) == Some("mcp_tool_call_end")
-            {
-                if let Some(message) = rollout_mcp_tool_message(
-                    record.get("payload").unwrap_or(&Value::Null),
-                    record
-                        .get("timestamp")
-                        .and_then(Value::as_str)
-                        .unwrap_or("1970-01-01T00:00:00Z"),
-                ) {
-                    messages.push(RolloutCustomToolMessage {
-                        turn_index: current_turn_index,
-                        assistant_before,
-                        line_index,
-                        message,
-                    });
-                }
-            }
-            continue;
-        }
-        if record_type != Some("response_item") {
-            continue;
-        }
-        let Some(payload) = record.get("payload") else {
-            continue;
-        };
-        let Some(kind) = payload.get("type").and_then(Value::as_str) else {
-            continue;
-        };
-        if kind == "message" && payload.get("role").and_then(Value::as_str) == Some("assistant") {
-            assistant_before += 1;
-            continue;
-        }
-        let Some(call_id) = payload
-            .get("call_id")
-            .and_then(Value::as_str)
-            .filter(|id| !id.trim().is_empty())
-        else {
-            continue;
-        };
-        if !matches!(kind, "custom_tool_call" | "custom_tool_call_output") {
-            continue;
-        }
-
-        let timestamp = record
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .unwrap_or("1970-01-01T00:00:00Z");
-        let message_id = format!("codex-custom-tool-{call_id}");
-
-        if kind == "custom_tool_call" {
-            let presentations = custom_tool_history_presentations(payload);
-            let multi_command = presentations.len() > 1;
-            let message_indexes = presentations
-                .into_iter()
-                .enumerate()
-                .map(|(index, (tool_name, tool_input))| {
-                    let suffix = multi_command.then(|| format!("-{index}"));
-                    let mut message = app_server_base_message(
-                        format!("{message_id}{}", suffix.as_deref().unwrap_or("")),
-                        timestamp,
-                    );
-                    message.role = "tool".to_string();
-                    message.tool_call_id = Some(match suffix {
-                        Some(suffix) => format!("{call_id}{suffix}"),
-                        None => call_id.to_string(),
-                    });
-                    message.tool_name = tool_name;
-                    message.tool_input = tool_input;
-                    message.tool_data = serde_json::to_string(payload).ok();
-                    message.is_completed = payload
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .map(|status| status != "in_progress");
-                    let message_index = messages.len();
-                    messages.push(RolloutCustomToolMessage {
-                        turn_index: current_turn_index,
-                        assistant_before,
-                        line_index: line_index + index,
-                        message,
-                    });
-                    message_index
-                })
-                .collect();
-            indexes.insert(call_id.to_string(), message_indexes);
-        } else {
-            let output = payload.get("output").cloned().unwrap_or(Value::Null);
-            let output_text = app_server_custom_tool_output(&output);
-            if let Some(message_indexes) = indexes.get(call_id) {
-                // A custom `exec` wrapper can invoke several command actions
-                // (typically through Promise.all). The rollout keeps only one
-                // aggregate wrapper output, so use it once while marking every
-                // reconstructed command complete.
-                for (position, index) in message_indexes.iter().enumerate() {
-                    let message = &mut messages[*index].message;
-                    if position + 1 == message_indexes.len() {
-                        message.content = output_text.clone();
-                        message.tool_data = Some(output_text.clone());
-                    }
-                    message.is_completed = Some(true);
-                }
-            } else {
-                let mut message = app_server_base_message(message_id, timestamp);
-                message.role = "tool".to_string();
-                message.content = output_text.clone();
-                message.tool_data = Some(output_text);
-                message.tool_call_id = Some(call_id.to_string());
-                message.tool_name = Some("unknown_tool".to_string());
-                message.is_completed = Some(true);
-                indexes.insert(call_id.to_string(), vec![messages.len()]);
-                messages.push(RolloutCustomToolMessage {
-                    turn_index: current_turn_index,
-                    assistant_before,
-                    line_index,
-                    message,
-                });
-            }
-        }
-    }
-    Ok(messages)
-}
-
-fn rollout_mcp_tool_message(payload: &Value, timestamp: &str) -> Option<ChatMessage> {
-    let call_id = payload
-        .get("call_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty())?;
-    let invocation = payload.get("invocation")?;
-    let tool = invocation
-        .get("tool")
-        .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())?;
-
-    let result = payload.get("result").cloned().unwrap_or(Value::Null);
-    let mut message = app_server_base_message(format!("codex-mcp-tool-{call_id}"), timestamp);
-    message.role = "tool".to_string();
-    message.content = app_server_custom_tool_output(&result);
-    message.tool_call_id = Some(call_id.to_string());
-    message.tool_name = Some("mcp_tool_call".to_string());
-    message.tool_input = Some(invocation.clone());
-    message.tool_data = serde_json::to_string(&result).ok();
-    message.is_completed = Some(true);
-
-    // Keep the provider's concrete tool name in the input payload; the web
-    // formatter uses it together with `server` for the compact MCP label.
-    debug_assert!(!tool.is_empty());
-    Some(message)
-}
-
-fn parse_custom_tool_input(value: &Value) -> Value {
-    value
-        .as_str()
-        .and_then(|text| serde_json::from_str(text).ok())
-        .unwrap_or_else(|| value.clone())
-}
-
-/// Codex records the host `exec` capability as a custom tool whose input is
-/// JavaScript source (`tools.exec_command({ cmd: ... })`). During the live run
-/// App Server exposes the nested action as `commandExecution`, so projecting
-/// the wrapper verbatim made the same tool render differently after history
-/// reconciliation. Recover the concrete command for the historical view.
-fn custom_tool_history_presentations(payload: &Value) -> Vec<(Option<String>, Option<Value>)> {
-    let name = payload
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let input = payload.get("input");
-
-    if name.as_deref() == Some("exec") {
-        let commands = input
-            .and_then(Value::as_str)
-            .map(extract_exec_commands)
-            .unwrap_or_default();
-        if !commands.is_empty() {
-            return commands
-                .into_iter()
-                .map(|command| {
-                    (
-                        Some("command_execution".to_string()),
-                        Some(serde_json::json!({ "command": command })),
-                    )
-                })
-                .collect();
-        }
-    }
-
-    vec![(name, input.map(parse_custom_tool_input))]
-}
-
-fn extract_exec_commands(source: &str) -> Vec<String> {
-    let mut commands = Vec::new();
-    let mut remaining = source;
-    while let Some(start) = remaining.find("tools.exec_command") {
-        let call = &remaining[start..];
-        if let Some(command) = extract_first_exec_command(call) {
-            commands.push(command);
-        }
-        remaining = &call["tools.exec_command".len()..];
-    }
-    commands
-}
-
-fn extract_first_exec_command(source: &str) -> Option<String> {
-    let start = source.find("tools.exec_command")?;
-    // Search within the call arguments. Looking from the function name itself
-    // accidentally found the `cmd` characters inside `exec_command`.
-    let source = &source[start + "tools.exec_command".len()..];
-    let opening_paren = source.find('(')?;
-    let source = &source[opening_paren + 1..];
-    let rest = source.match_indices("cmd").find_map(|(index, _)| {
-        let before = &source[..index];
-        let after = &source[index + "cmd".len()..];
-        let before = before.trim_end();
-
-        // The property may be written as `cmd: ...`, `"cmd": ...`, or
-        // `'cmd': ...`; accept it only at an object-property boundary.
-        let value_after_key = match before.chars().last() {
-            Some('{' | ',') => Some(after),
-            Some(quote @ ('\'' | '"')) if after.starts_with(quote) => {
-                let before_quote = &before[..before.len() - quote.len_utf8()];
-                matches!(before_quote.trim_end().chars().last(), Some('{' | ','))
-                    .then_some(&after[quote.len_utf8()..])
-            }
-            _ => None,
-        }?;
-
-        value_after_key.trim_start().strip_prefix(':')
-    })?;
-    let mut chars = rest.chars().peekable();
-    while matches!(chars.peek(), Some(ch) if ch.is_whitespace()) {
-        chars.next();
-    }
-    let quote = match chars.next()? {
-        quote @ ('\'' | '"') => quote,
-        _ => return None,
-    };
-    let mut escaped = false;
-    let mut value = String::new();
-    for ch in chars {
-        if escaped {
-            value.push(match ch {
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                other => other,
-            });
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == quote {
-            return Some(value);
-        } else {
-            value.push(ch);
-        }
-    }
-    None
-}
-
-fn app_server_custom_tool_output(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| value.to_string())
 }
 
 #[async_trait::async_trait]
@@ -991,28 +728,57 @@ async fn read_loop(
         let Ok(message) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
-        if let Some(id) = message.get("id").and_then(Value::as_u64) {
-            if let Some(sender) = inner.pending.lock().await.remove(&id) {
-                let result = message
-                    .get("error")
-                    .map(|error| {
-                        Err(error
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Codex app-server request failed")
-                            .to_string())
-                    })
-                    .unwrap_or_else(|| Ok(message.get("result").cloned().unwrap_or(Value::Null)));
-                let _ = sender.send(result);
-                continue;
+        if let Some(id) = message.get("id") {
+            if let Some(id_number) = id.as_u64() {
+                if let Some(sender) = inner.pending.lock().await.remove(&id_number) {
+                    let result = message
+                        .get("error")
+                        .map(|error| {
+                            Err(error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Codex app-server request failed")
+                                .to_string())
+                        })
+                        .unwrap_or_else(|| {
+                            Ok(message.get("result").cloned().unwrap_or(Value::Null))
+                        });
+                    let _ = sender.send(result);
+                    continue;
+                }
             }
-            // Server-initiated approval request. Flowix has no approval UI yet;
-            // decline safely instead of accidentally granting write access.
-            let reply = json!({ "id": id, "result": "decline" });
-            if let Ok(encoded) = serde_json::to_string(&reply) {
-                let mut writer = stdin.lock().await;
-                let _ = writer.write_all(format!("{encoded}\n").as_bytes()).await;
-                let _ = writer.flush().await;
+            if let Some(method) = message.get("method").and_then(Value::as_str) {
+                if is_user_decision_request(method) {
+                    let request_id = id.to_string();
+                    inner
+                        .pending_approvals
+                        .lock()
+                        .await
+                        .insert(request_id.clone());
+                    let params = message.get("params").cloned().unwrap_or(Value::Null);
+                    let request = CodexApprovalRequest {
+                        request_id,
+                        method: method.to_string(),
+                        thread_id: request_context(&params, "threadId"),
+                        turn_id: request_context(&params, "turnId"),
+                        item_id: request_context(&params, "itemId"),
+                        params,
+                    };
+                    if let Some(app) = inner.app_handle.lock().await.clone() {
+                        if let Err(error) = app.emit("codex-approval-request", request) {
+                            tracing::warn!("failed to emit Codex approval request: {error}");
+                        }
+                    } else {
+                        inner
+                            .pending_approvals
+                            .lock()
+                            .await
+                            .remove(&request.request_id);
+                        write_server_response(&stdin, id, server_decline_result(method)).await;
+                    }
+                } else {
+                    write_server_response(&stdin, id, json!("decline")).await;
+                }
             }
             continue;
         }
@@ -1023,11 +789,73 @@ async fn read_loop(
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexApprovalRequest {
+    pub request_id: String,
+    pub method: String,
+    pub thread_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub item_id: Option<String>,
+    pub params: Value,
+}
+
+fn is_user_decision_request(method: &str) -> bool {
+    matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+    )
+}
+
+fn server_decline_result(method: &str) -> Value {
+    if method == "item/permissions/requestApproval" {
+        json!({ "permissions": {}, "scope": "turn", "strictAutoReview": null })
+    } else {
+        json!({ "decision": "decline" })
+    }
+}
+
+fn request_context(params: &Value, key: &str) -> Option<String> {
+    params.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+async fn write_server_response(stdin: &Arc<Mutex<ChildStdin>>, id: &Value, result: Value) {
+    let reply = json!({ "id": id, "result": result });
+    if let Ok(encoded) = serde_json::to_string(&reply) {
+        let mut writer = stdin.lock().await;
+        let _ = writer.write_all(format!("{encoded}\n").as_bytes()).await;
+        let _ = writer.flush().await;
+    }
+}
+
 async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return;
     };
     let params = message.get("params").unwrap_or(&Value::Null);
+    if method == "thread/settings/updated" {
+        // Forward the authoritative App Server settings to the UI. The
+        // notification can arrive outside an active turn, so it must not be
+        // routed through the turn event path below.
+        if let Some(app) = inner.app_handle.lock().await.clone() {
+            let _ = app.emit("codex-thread-settings-updated", params.clone());
+        }
+        return;
+    }
+    if method == "thread/tokenUsage/updated" {
+        if let (Some(thread_id), Some(usage)) = (
+            params.get("threadId").and_then(Value::as_str),
+            codex_usage_info(params.get("tokenUsage").unwrap_or(&Value::Null)),
+        ) {
+            inner
+                .latest_usage
+                .lock()
+                .await
+                .insert(thread_id.to_string(), usage);
+        }
+    }
     let thread_id = params
         .get("threadId")
         .and_then(Value::as_str)
@@ -1069,6 +897,29 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         return;
     };
     match method {
+        "thread/tokenUsage/updated" => {
+            let token_usage = params.get("tokenUsage").unwrap_or(&Value::Null);
+            let last = token_usage
+                .get("last")
+                .or_else(|| token_usage.get("lastTokenUsage"))
+                .and_then(codex_usage_info);
+            if let Some(usage) = last {
+                emit_notification_chunk(
+                    inner,
+                    &flowix_thread_id,
+                    &run_id,
+                    &app,
+                    AgentChunk::Usage {
+                        thread_id: flowix_thread_id.clone(),
+                        model_id: None,
+                        last_run_at: None,
+                        usage: Some(usage),
+                        status_info: None,
+                    },
+                )
+                .await;
+            }
+        }
         "item/agentMessage/delta" => {
             if let Some(delta) = params.get("delta").and_then(Value::as_str) {
                 emit_notification_chunk_with_metadata(
@@ -1086,7 +937,11 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
             }
         }
         "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
-            if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+            if let Some(delta) = params
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| has_visible_text(delta))
+            {
                 emit_notification_chunk_with_metadata(
                     inner,
                     &flowix_thread_id,
@@ -1196,6 +1051,42 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
     }
 }
 
+fn codex_usage_info(value: &Value) -> Option<crate::agent_types::UsageInfo> {
+    let source = value
+        .get("total")
+        .or_else(|| value.get("totalTokenUsage"))
+        .unwrap_or(value);
+    let number = |key: &str| {
+        source
+            .get(key)
+            .and_then(Value::as_u64)
+            .map(|n| n.min(u32::MAX as u64) as u32)
+    };
+    let context = value
+        .get("modelContextWindow")
+        .or_else(|| value.get("model_context_window"))
+        .and_then(Value::as_u64)
+        .map(|n| n.min(u32::MAX as u64) as u32);
+    if number("inputTokens").is_none()
+        && number("input_tokens").is_none()
+        && number("outputTokens").is_none()
+        && number("output_tokens").is_none()
+        && context.is_none()
+    {
+        return None;
+    }
+    Some(crate::agent_types::UsageInfo {
+        input_tokens: number("inputTokens").or_else(|| number("input_tokens")),
+        cached_input_tokens: number("cachedInputTokens").or_else(|| number("cached_input_tokens")),
+        output_tokens: number("outputTokens").or_else(|| number("output_tokens")),
+        reasoning_output_tokens: number("reasoningOutputTokens")
+            .or_else(|| number("reasoning_output_tokens")),
+        total_tokens: number("totalTokens").or_else(|| number("total_tokens")),
+        model_context_window: context,
+        context_used_tokens: None,
+    })
+}
+
 fn turn_scoped_notification(method: &str) -> bool {
     matches!(
         method,
@@ -1257,30 +1148,44 @@ fn item_metadata_from_id(item_id: Option<String>) -> AgentChunkMetadata {
 
 fn tool_identity(item: &Value) -> Option<(String, String)> {
     let kind = item.get("type").and_then(Value::as_str)?;
-    let name = match kind {
-        "commandExecution" => "command_execution",
-        "fileChange" => "file_change",
-        "mcpToolCall" => "mcp_tool_call",
-        "dynamicToolCall" => "dynamic_tool_call",
-        // `collabToolCall` is the current App Server item name. Keep the
-        // legacy spelling as an input alias for older Codex versions.
-        "collabToolCall" | "collabAgentToolCall" => "collab_agent_tool_call",
-        "webSearch" => "web_search",
-        "imageView" | "imageGeneration" => "image_generation",
-        _ => return None,
-    };
+    let name = canonical_codex_tool_name(kind)?;
     let id = item.get("id").and_then(Value::as_str)?.to_string();
     Some((id, name.to_string()))
+}
+
+fn canonical_codex_tool_name(kind: &str) -> Option<&'static str> {
+    match kind {
+        "commandExecution" => Some("command_execution"),
+        "fileChange" => Some("file_change"),
+        "mcpToolCall" => Some("mcp_tool_call"),
+        "dynamicToolCall" => Some("dynamic_tool_call"),
+        // `collabToolCall` is current; retain the older spelling as an alias.
+        "collabToolCall" | "collabAgentToolCall" => Some("collab_agent_tool_call"),
+        "webSearch" => Some("web_search"),
+        "imageView" | "imageGeneration" => Some("image_generation"),
+        _ => None,
+    }
 }
 
 /// The currently installed app-server serializes this legacy `sandbox` field
 /// with kebab-case variants. Keep the wire spelling here, separate from the
 /// App Server v2 `permissions` profile API.
-fn app_server_sandbox(permission: Option<&str>) -> &'static str {
+fn app_server_sandbox(permission: Option<&str>) -> Value {
     match permission.map(str::trim) {
-        Some("read-only") => "read-only",
-        Some("danger-full-access" | "yolo") => "danger-full-access",
-        _ => "workspace-write",
+        Some("read-only") => json!({ "type": "readOnly" }),
+        Some("danger-full-access" | "yolo") => json!({ "type": "dangerFullAccess" }),
+        _ => json!({
+            "type": "workspaceWrite",
+            "writableRoots": [],
+            "networkAccess": false
+        }),
+    }
+}
+
+fn app_server_approval_policy(permission: Option<&str>) -> &'static str {
+    match permission.map(str::trim) {
+        Some("read-only" | "danger-full-access" | "yolo") => "never",
+        _ => "on-request",
     }
 }
 
@@ -1333,8 +1238,48 @@ fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
                 messages.push(message);
             }
         }
+        if let Some(message) = app_server_turn_error_message(turn, &timestamp, turn_index) {
+            messages.push(message);
+        }
     }
     messages
+}
+
+fn app_server_turn_error_message(
+    turn: &Value,
+    timestamp: &str,
+    turn_index: usize,
+) -> Option<ChatMessage> {
+    let status = turn
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let error = turn.get("error");
+    let error_text = error.and_then(|value| {
+        value
+            .as_str()
+            .or_else(|| value.get("message").and_then(Value::as_str))
+    });
+    let text = match (status, error_text) {
+        ("failed", Some(message)) | ("interrupted", Some(message)) => message.to_string(),
+        ("failed", None) => "Codex turn failed".to_string(),
+        ("interrupted", None) => "Codex turn interrupted".to_string(),
+        _ => return None,
+    };
+    let id = turn
+        .get("id")
+        .and_then(Value::as_str)
+        .map(|id| format!("codex-turn-error-{id}"))
+        .unwrap_or_else(|| format!("codex-turn-error-{turn_index}"));
+    let mut message = app_server_base_message(id, timestamp);
+    message.role = "assistant".to_string();
+    message.content = text.clone();
+    message.is_completed = Some(true);
+    message.error_details = Some(crate::agent_external::classify_agent_error(
+        &text,
+        "app-server",
+    ));
+    Some(message)
 }
 
 fn app_server_item_message(
@@ -1372,6 +1317,9 @@ fn app_server_item_message(
             } else {
                 content
             };
+            if !has_visible_text(&message.content) {
+                return None;
+            }
             message.reasoning = Some(message.content.clone());
         }
         "commandExecution"
@@ -1397,6 +1345,10 @@ fn app_server_item_message(
         _ => return None,
     }
     Some(message)
+}
+
+fn has_visible_text(text: &str) -> bool {
+    !text.trim().is_empty()
 }
 
 fn app_server_base_message(id: String, timestamp: &str) -> ChatMessage {
@@ -1438,13 +1390,12 @@ fn app_server_content_text(value: Option<&Value>) -> String {
     }
 }
 
-fn app_server_tool_name(kind: &str, item: &Value) -> String {
-    item.get("tool")
-        .or_else(|| item.get("command"))
-        .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or(kind)
-        .to_string()
+fn app_server_tool_name(kind: &str, _item: &Value) -> String {
+    // Keep history projection in lockstep with `tool_identity`, which is used
+    // by live item/* notifications. The command itself is input data, not the
+    // tool name: using `/bin/zsh -lc pwd` here makes history choose a different
+    // formatter from the live `command_execution` row.
+    canonical_codex_tool_name(kind).unwrap_or(kind).to_string()
 }
 
 fn app_server_tool_content(kind: &str, item: &Value) -> String {
@@ -1551,11 +1502,54 @@ mod tests {
     }
 
     #[test]
+    fn enables_interactive_approval_only_for_writable_threads() {
+        assert_eq!(
+            app_server_approval_policy(Some("workspace-write")),
+            "on-request"
+        );
+        assert_eq!(app_server_approval_policy(None), "on-request");
+        assert_eq!(app_server_approval_policy(Some("read-only")), "never");
+        assert_eq!(
+            app_server_approval_policy(Some("danger-full-access")),
+            "never"
+        );
+    }
+
+    #[test]
+    fn uses_current_codex_review_decision_wire_values() {
+        assert_eq!(
+            server_decline_result("item/commandExecution/requestApproval"),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            server_decline_result("item/permissions/requestApproval"),
+            json!({ "permissions": {}, "scope": "turn", "strictAutoReview": null })
+        );
+    }
+
+    #[test]
     fn ignores_non_tool_items() {
         assert_eq!(
             tool_identity(&json!({ "id": "message-1", "type": "agentMessage" })),
             None
         );
+    }
+
+    #[test]
+    fn ignores_empty_reasoning_items() {
+        let message = app_server_item_message(
+            &json!({
+                "id": "reasoning-empty",
+                "type": "reasoning",
+                "summary": [" ", "\n"]
+            }),
+            "2026-01-01T00:00:00Z",
+            0,
+            0,
+        );
+        assert!(message.is_none());
+        assert!(!has_visible_text(" \n\t"));
+        assert!(has_visible_text("plan"));
     }
 
     #[test]
@@ -1566,99 +1560,6 @@ mod tests {
         }));
         assert_eq!(metadata.message_id.as_deref(), Some("call-1"));
         assert_eq!(metadata.source_message_id.as_deref(), Some("call-1"));
-    }
-
-    #[test]
-    fn projects_rollout_mcp_events_that_are_absent_from_thread_items() {
-        let payload = json!({
-            "type": "mcp_tool_call_end",
-            "call_id": "mcp-call-1",
-            "invocation": {
-                "server": "flowix",
-                "tool": "search",
-                "arguments": { "query": "hello" }
-            },
-            "result": { "Ok": { "content": [{ "type": "text", "text": "done" }] } }
-        });
-
-        let message = rollout_mcp_tool_message(&payload, "2026-01-01T00:00:00Z")
-            .expect("MCP end event should project to a history row");
-        assert_eq!(message.id, "codex-mcp-tool-mcp-call-1");
-        assert_eq!(message.role, "tool");
-        assert_eq!(message.tool_call_id.as_deref(), Some("mcp-call-1"));
-        assert_eq!(message.tool_name.as_deref(), Some("mcp_tool_call"));
-        assert_eq!(
-            message
-                .tool_input
-                .as_ref()
-                .and_then(|input| input.get("tool")),
-            Some(&json!("search")),
-        );
-    }
-
-    #[test]
-    fn projects_rollout_exec_as_the_same_command_tool_used_live() {
-        let payload = json!({
-            "name": "exec",
-            "input": "const r = await tools.exec_command({cmd:\"flowix notebooks --json\",workdir:\"/tmp\"});"
-        });
-
-        let presentations = custom_tool_history_presentations(&payload);
-        assert_eq!(presentations.len(), 1);
-        let (name, input) = &presentations[0];
-        assert_eq!(name.as_deref(), Some("command_execution"));
-        assert_eq!(
-            input.as_ref().and_then(|input| input.get("command")),
-            Some(&json!("flowix notebooks --json")),
-        );
-    }
-
-    #[test]
-    fn extracts_quoted_exec_command_keys_without_matching_the_function_name() {
-        assert_eq!(
-            extract_first_exec_command(
-                "const r = await tools.exec_command({\"cmd\":\"flowix notebooks --json\", \"workdir\":\"/tmp\"});"
-            ),
-            Some("flowix notebooks --json".to_string()),
-        );
-        assert_eq!(
-            extract_first_exec_command(
-                "const r = await tools.exec_command({'cmd': 'flowix list work --json'});"
-            ),
-            Some("flowix list work --json".to_string()),
-        );
-    }
-
-    #[test]
-    fn projects_each_command_inside_a_parallel_exec_wrapper() {
-        let payload = json!({
-            "name": "exec",
-            "input": "const results = await Promise.all([tools.exec_command({cmd: \"git status --short\"}), tools.exec_command({cmd: \"rg --files\"}), tools.exec_command({cmd: \"flowix --help\"})]);"
-        });
-
-        let presentations = custom_tool_history_presentations(&payload);
-        assert_eq!(presentations.len(), 3);
-        assert_eq!(
-            presentations[0]
-                .1
-                .as_ref()
-                .and_then(|input| input.get("command")),
-            Some(&json!("git status --short")),
-        );
-        assert_eq!(
-            presentations[1]
-                .1
-                .as_ref()
-                .and_then(|input| input.get("command")),
-            Some(&json!("rg --files")),
-        );
-        assert_eq!(
-            presentations[2]
-                .1
-                .as_ref()
-                .and_then(|input| input.get("command")),
-            Some(&json!("flowix --help")),
-        );
     }
 
     #[test]
@@ -1705,8 +1606,100 @@ mod tests {
         assert_eq!(messages[0].content, "Hello");
         assert_eq!(messages[1].role, "assistant");
         assert_eq!(messages[2].reasoning.as_deref(), Some("Plan"));
-        assert_eq!(messages[3].tool_name.as_deref(), Some("git status"));
+        assert_eq!(messages[3].tool_name.as_deref(), Some("command_execution"));
+        assert_eq!(
+            messages[3]
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command")),
+            Some(&json!("git status")),
+        );
         assert!(messages[3].tool_data.is_some());
+    }
+
+    #[test]
+    fn preserves_interleaved_app_server_item_order() {
+        let thread = json!({
+            "turns": [{
+                "startedAt": 1_730_910_000,
+                "items": [
+                    { "id": "a1", "type": "agentMessage", "text": "I will inspect this." },
+                    { "id": "c1", "type": "commandExecution", "command": "pwd", "status": "completed" },
+                    { "id": "a2", "type": "agentMessage", "text": "The result is ..." }
+                ]
+            }]
+        });
+
+        let messages = app_server_turn_messages(
+            thread
+                .get("turns")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            ["assistant", "tool", "assistant"],
+        );
+        assert_eq!(messages[1].id, "c1");
+    }
+
+    #[test]
+    fn projects_failed_turn_errors_from_app_server_history() {
+        let turns = vec![json!({
+            "id": "turn-1",
+            "startedAt": 1_730_910_000,
+            "status": "failed",
+            "error": { "message": "rate limit exceeded" },
+            "items": [{ "id": "u1", "type": "userMessage", "content": [{ "type": "text", "text": "Hello" }] }]
+        })];
+
+        let messages = app_server_turn_messages(&turns);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "rate limit exceeded");
+        assert_eq!(messages[1].id, "codex-turn-error-turn-1");
+        assert!(messages[1].error_details.is_some());
+    }
+
+    #[test]
+    fn keeps_tool_items_and_interruption_with_their_own_turn() {
+        let turns = vec![
+            json!({
+                "id": "turn-1",
+                "startedAt": 1_730_910_000,
+                "status": "interrupted",
+                "items": [
+                    { "id": "u1", "type": "userMessage", "content": [{ "type": "text", "text": "Inspect it" }] },
+                    { "id": "a1", "type": "agentMessage", "text": "Checking." },
+                    { "id": "tool-1", "type": "commandExecution", "command": "pwd", "status": "completed", "aggregatedOutput": "/workspace" }
+                ]
+            }),
+            json!({
+                "id": "turn-2",
+                "startedAt": 1_730_911_000,
+                "status": "completed",
+                "items": [
+                    { "id": "u2", "type": "userMessage", "content": [{ "type": "text", "text": "Next" }] },
+                    { "id": "a2", "type": "agentMessage", "text": "Done." }
+                ]
+            }),
+        ];
+
+        let messages = app_server_turn_messages(&turns);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            ["u1", "a1", "tool-1", "codex-turn-error-turn-1", "u2", "a2"],
+        );
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[3].content, "Codex turn interrupted");
     }
 
     #[test]

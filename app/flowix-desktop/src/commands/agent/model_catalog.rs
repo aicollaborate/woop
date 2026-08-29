@@ -30,7 +30,7 @@ pub async fn agent_supported_models(
 ) -> Result<Vec<String>, String> {
     match agent_type.trim().to_ascii_lowercase().as_str() {
         "codex" => state.codex_app_server.supported_models().await,
-        "opencode" => query_opencode_models().await,
+        "opencode" => state.opencode.supported_models().await,
         "deepseek-harness" | "deepseek_harness" | "dsh" => {
             state.deepseek_harness.supported_models().await
         }
@@ -38,29 +38,15 @@ pub async fn agent_supported_models(
     }
 }
 
-/// OpenCode publishes the currently configured provider/model routes through
-/// its `models` command. Keep this discovery separate from the ACP process:
-/// the ACP server itself is long-lived per turn, while the selector needs a
-/// cheap catalog that can be refreshed when the popover opens.
-async fn query_opencode_models() -> Result<Vec<String>, String> {
-    let mut command =
-        tokio::process::Command::new(crate::agent_external::opencode::resolve_opencode_binary());
-    crate::process_window::hide_command_window(&mut command);
-    let output = command
-        .args(["models"])
-        .output()
+/// Snapshot used by the Codex agent badge popover. The app-server owns the
+/// account and rate-limit data; the optional thread id selects cached usage.
+#[tauri::command]
+pub async fn codex_runtime_info(
+    thread_id: Option<String>,
+    state: State<'_, crate::app::state::AppState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .codex_app_server
+        .runtime_info(thread_id.as_deref())
         .await
-        .map_err(|e| format!("failed to query OpenCode models: {e}"))?;
-
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-    let mut seen = std::collections::HashSet::new();
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .filter(|model| seen.insert((*model).to_string()))
-        .map(str::to_string)
-        .collect())
 }

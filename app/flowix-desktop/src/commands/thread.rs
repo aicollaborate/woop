@@ -2,6 +2,7 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::agent_history::ExternalRuntimeKind;
 use crate::agent_session::{
     AgentConversationInstance, ChatMessage, ThreadInfo, ThreadMessagesPage,
     UpsertAgentConversationInstance,
@@ -13,6 +14,13 @@ use crate::app::state::AppState;
 #[derive(Serialize)]
 pub struct GetThreadResponse {
     pub messages: Vec<ChatMessage>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConversationPage {
+    pub items: Vec<AgentConversationInstance>,
+    pub has_more: bool,
 }
 
 #[tauri::command]
@@ -106,6 +114,25 @@ pub async fn agent_conversation_list(
 }
 
 #[tauri::command]
+pub async fn agent_conversation_list_page(
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<AgentConversationPage, String> {
+    let page_size = limit.clamp(1, 100);
+    let manager = &state.thread_manager;
+    let items = manager
+        .list_agent_conversation_instances_page(offset, page_size + 1)
+        .await
+        .map_err(|e| e.to_string())?;
+    let has_more = items.len() > page_size;
+    Ok(AgentConversationPage {
+        items: items.into_iter().take(page_size).collect(),
+        has_more,
+    })
+}
+
+#[tauri::command]
 pub async fn agent_conversation_count_by_notebook(
     notebook_id: Option<String>,
     state: State<'_, AppState>,
@@ -179,7 +206,10 @@ pub async fn agent_conversation_delete_for_thread(
 
 #[tauri::command]
 pub async fn codex_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    state.codex_app_server.list_threads().await
+    state
+        .agent_history
+        .list_threads(ExternalRuntimeKind::Codex)
+        .await
 }
 
 #[tauri::command]
@@ -187,15 +217,9 @@ pub async fn codex_thread_get(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
-    let manager = &state.thread_manager;
-    let session_id = manager
-        .get_external_session(&thread_id, "codex")
-        .await
-        .map_err(|e| e.to_string())?
-        .unwrap_or(thread_id);
     let messages = state
-        .codex_app_server
-        .get_thread_messages(&session_id)
+        .agent_history
+        .read_all(ExternalRuntimeKind::Codex, &thread_id)
         .await?;
     Ok(GetThreadResponse { messages })
 }
@@ -207,15 +231,14 @@ pub async fn codex_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    let manager = &state.thread_manager;
-    let session_id = manager
-        .get_external_session(&thread_id, "codex")
-        .await
-        .map_err(|e| e.to_string())?
-        .unwrap_or(thread_id);
     state
-        .codex_app_server
-        .get_thread_messages_page(&session_id, before_sequence, limit)
+        .agent_history
+        .read_page(
+            ExternalRuntimeKind::Codex,
+            &thread_id,
+            before_sequence,
+            limit,
+        )
         .await
 }
 
@@ -234,16 +257,21 @@ pub async fn codex_thread_session_id(
 
 #[tauri::command]
 pub async fn claude_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = &state.thread_manager;
-    manager
-        .list_external_threads("claude")
+    state
+        .agent_history
+        .list_threads(ExternalRuntimeKind::Claude)
         .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn claude_thread_get(thread_id: String) -> Result<GetThreadResponse, String> {
-    let messages = crate::agent_external::claude::get_session(&thread_id).await?;
+pub async fn claude_thread_get(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> Result<GetThreadResponse, String> {
+    let messages = state
+        .agent_history
+        .read_all(ExternalRuntimeKind::Claude, &thread_id)
+        .await?;
     Ok(GetThreadResponse { messages })
 }
 
@@ -254,17 +282,15 @@ pub async fn claude_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    if let Some(page) = state
-        .thread_manager
-        .get_claude_event_messages_page(&thread_id, before_sequence, limit)
+    state
+        .agent_history
+        .read_page(
+            ExternalRuntimeKind::Claude,
+            &thread_id,
+            before_sequence,
+            limit,
+        )
         .await
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(page);
-    }
-    // Rollout is retained strictly as a fallback for sessions whose database
-    // event source is empty.
-    crate::agent_external::claude::get_session_page(&thread_id, before_sequence, limit).await
 }
 
 #[tauri::command]
@@ -285,11 +311,10 @@ pub async fn claude_thread_session_id(
 
 #[tauri::command]
 pub async fn hermes_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
-    let manager = &state.thread_manager;
-    manager
-        .list_external_threads("hermes")
+    state
+        .agent_history
+        .list_threads(ExternalRuntimeKind::Hermes)
         .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -297,32 +322,10 @@ pub async fn hermes_thread_get(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
-    if let Some(mut page) = state
-        .thread_manager
-        .get_external_event_messages_page("hermes", &thread_id, None, 50)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        let mut messages = page.messages;
-        while page.has_more {
-            page = state
-                .thread_manager
-                .get_external_event_messages_page("hermes", &thread_id, page.oldest_sequence, 50)
-                .await
-                .map_err(|error| error.to_string())?
-                .unwrap_or(ThreadMessagesPage {
-                    messages: Vec::new(),
-                    oldest_sequence: None,
-                    has_more: false,
-                    snapshot_sequence: None,
-                });
-            let mut combined = page.messages;
-            combined.extend(messages);
-            messages = combined;
-        }
-        return Ok(GetThreadResponse { messages });
-    }
-    let messages = crate::agent_external::hermes::get_session(&thread_id).await?;
+    let messages = state
+        .agent_history
+        .read_all(ExternalRuntimeKind::Hermes, &thread_id)
+        .await?;
     Ok(GetThreadResponse { messages })
 }
 
@@ -333,15 +336,15 @@ pub async fn hermes_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    if let Some(page) = state
-        .thread_manager
-        .get_external_event_messages_page("hermes", &thread_id, before_sequence, limit)
+    state
+        .agent_history
+        .read_page(
+            ExternalRuntimeKind::Hermes,
+            &thread_id,
+            before_sequence,
+            limit,
+        )
         .await
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(page);
-    }
-    crate::agent_external::hermes::get_session_page(&thread_id, before_sequence, limit).await
 }
 
 #[tauri::command]
@@ -365,10 +368,9 @@ pub async fn deepseek_harness_thread_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<ThreadInfo>, String> {
     state
-        .thread_manager
-        .list_external_threads("deepseek-harness")
+        .agent_history
+        .list_threads(ExternalRuntimeKind::DeepSeekHarness)
         .await
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -376,22 +378,10 @@ pub async fn deepseek_harness_thread_get(
     thread_id: String,
     state: State<'_, AppState>,
 ) -> Result<GetThreadResponse, String> {
-    let mut page = deepseek_harness_history_page(&state, &thread_id, None, None, 50).await?;
-    let mut messages = page.messages;
-    let snapshot_sequence = page.snapshot_sequence;
-    while page.has_more {
-        page = deepseek_harness_history_page(
-            &state,
-            &thread_id,
-            page.oldest_sequence,
-            snapshot_sequence,
-            50,
-        )
+    let messages = state
+        .agent_history
+        .read_all(ExternalRuntimeKind::DeepSeekHarness, &thread_id)
         .await?;
-        let mut combined = page.messages;
-        combined.extend(messages);
-        messages = combined;
-    }
     Ok(GetThreadResponse { messages })
 }
 
@@ -402,19 +392,14 @@ pub async fn deepseek_harness_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    deepseek_harness_history_page(&state, &thread_id, before_sequence, None, limit).await
-}
-
-async fn deepseek_harness_history_page(
-    state: &AppState,
-    thread_id: &str,
-    before_sequence: Option<i64>,
-    snapshot_sequence: Option<i64>,
-    limit: i64,
-) -> Result<ThreadMessagesPage, String> {
     state
-        .deepseek_harness
-        .session_history_page(thread_id, before_sequence, snapshot_sequence, limit)
+        .agent_history
+        .read_page(
+            ExternalRuntimeKind::DeepSeekHarness,
+            &thread_id,
+            before_sequence,
+            limit,
+        )
         .await
 }
 
@@ -456,10 +441,9 @@ pub async fn opencode_thread_session_id(
 #[tauri::command]
 pub async fn opencode_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
     state
-        .thread_manager
-        .list_opencode_event_threads()
+        .agent_history
+        .list_threads(ExternalRuntimeKind::OpenCode)
         .await
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -469,21 +453,15 @@ pub async fn opencode_thread_get_page(
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
-    if let Some(page) = state
-        .thread_manager
-        .get_opencode_event_messages_page(&thread_id, before_sequence, limit)
+    state
+        .agent_history
+        .read_page(
+            ExternalRuntimeKind::OpenCode,
+            &thread_id,
+            before_sequence,
+            limit,
+        )
         .await
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(page);
-    }
-    let session_id = state
-        .thread_manager
-        .get_external_session(&thread_id, "opencode")
-        .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or(thread_id);
-    crate::agent_external::opencode::get_session_page(&session_id, before_sequence, limit).await
 }
 
 #[tauri::command]

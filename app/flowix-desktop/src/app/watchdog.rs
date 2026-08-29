@@ -32,11 +32,14 @@ pub fn spawn_external_agent_watchdog(
             let finalized = runtimes
                 .reap_inactive_runs(&app_handle, idle_timeout_ms)
                 .await;
-            let total = finalized.iter().map(|(_, count)| count).sum::<usize>();
+            let total = finalized
+                .iter()
+                .map(|result| result.affected)
+                .sum::<usize>();
             if total > 0 {
                 let summary = finalized
                     .iter()
-                    .map(|(key, count)| format!("{key}={count}"))
+                    .map(|result| format!("{}={}", result.runtime.key(), result.affected))
                     .collect::<Vec<_>>()
                     .join(", ");
                 tracing::warn!(

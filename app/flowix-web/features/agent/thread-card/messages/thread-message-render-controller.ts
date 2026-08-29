@@ -62,7 +62,6 @@ export class ThreadMessageRenderController {
   private pendingRenderInput: ThreadMessageRenderInput | null = null;
   private progressiveRenderRafId: number | null = null;
   private progressiveRenderMessages: ThreadState["messages"] | null = null;
-  private wasLoading = false;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
     this.body = options.body;
@@ -118,11 +117,8 @@ export class ThreadMessageRenderController {
 
   private renderNow(input: ThreadMessageRenderInput): void {
     const scrollState = this.messageViewport.captureRenderScrollState();
-    // run 结束下降沿: 流式末条仍是增量缓存的块切分态, 需在引用稳定(canReuse)
-    // 时强制 patch-last 走 forceFinalize 全量 re-parse, 修正 loose list / 多段
-    // blockquote。assistant 无 isCompleted, 这是它唯一的终态修正入口。
-    const loadingJustEnded = this.wasLoading && !input.isLoading;
-    this.wasLoading = input.isLoading;
+    // run 结束下降沿只更新 loading 状态。末条消息已经由流式渲染完成，
+    // 不再强制全量 re-parse，避免 replaceChildren 导致完成瞬间闪烁。
     this.renderLoadingIndicator(input.isLoading);
 
     if (this.shouldRenderProgressively(input)) {
@@ -158,17 +154,6 @@ export class ThreadMessageRenderController {
     this.pruneDisplayExpandedOverrides(input.messages);
 
     if (this.canReuseRenderedMessages(input.messages)) {
-      if (
-        loadingJustEnded &&
-        this.tryPatchLastRenderedMessage(
-          input.messages,
-          { isLoading: input.isLoading, ...scrollState },
-          true,
-        )
-      ) {
-        recordMessageRenderPlan("patch-last", input.messages.length);
-        return;
-      }
       recordMessageRenderPlan("noop", input.messages.length);
       return;
     }

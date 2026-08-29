@@ -1,7 +1,7 @@
 use crate::agent_external::claude::ClaudeCliManager;
 use crate::agent_external::codex::CodexAppServerManager;
 use crate::agent_external::deepseek_harness::DeepSeekHarnessManager;
-use crate::agent_external::hermes::HermesCliManager;
+use crate::agent_external::hermes::HermesAcpManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_external::runtime_registry::ExternalRuntimeRegistry;
 use crate::agent_external_config::AgentExternalConfig;
@@ -167,7 +167,7 @@ pub fn run() {
     let search_init = RwLock::new(MemoIndex::new(Arc::new(BigramTokenizer)));
     let codex_app_server = Arc::new(CodexAppServerManager::new(thread_manager_arc.clone()));
     let claude_cli_manager = Arc::new(ClaudeCliManager::new(thread_manager_arc.clone()));
-    let hermes_cli_manager = Arc::new(HermesCliManager::new(thread_manager_arc.clone()));
+    let hermes_cli_manager = Arc::new(HermesAcpManager::new(thread_manager_arc.clone()));
     let opencode_acp_manager = Arc::new(OpenCodeAcpManager::new(thread_manager_arc.clone()));
     let deepseek_harness_manager = Arc::new(DeepSeekHarnessManager::new(
         thread_manager_arc.clone(),
@@ -178,7 +178,13 @@ pub fn run() {
         codex_app_server.clone(),
         claude_cli_manager,
         hermes_cli_manager,
-        opencode_acp_manager,
+        opencode_acp_manager.clone(),
+        deepseek_harness_manager.clone(),
+    ));
+    let agent_history = Arc::new(crate::agent_history::AgentHistoryService::new(
+        thread_manager_arc.clone(),
+        codex_app_server.clone(),
+        opencode_acp_manager.clone(),
         deepseek_harness_manager.clone(),
     ));
 
@@ -226,7 +232,9 @@ pub fn run() {
                 search_rebuild: Default::default(),
                 external_runtimes: external_runtimes.clone(),
                 codex_app_server: codex_app_server.clone(),
+                opencode: opencode_acp_manager.clone(),
                 deepseek_harness: deepseek_harness_manager.clone(),
+                agent_history: agent_history.clone(),
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),
                 security_bookmarks: security_bookmarks_for_state.clone(),
@@ -597,12 +605,15 @@ pub fn run() {
             commands::agent::chat::agent_background_terminals,
             commands::agent::chat::agent_background_jobs,
             commands::agent::chat::agent_external_events,
+            commands::agent::chat::codex_approval_respond,
+            commands::agent::chat::codex_thread_settings_update,
             // thread
             commands::thread::thread_list,
             commands::thread::thread_create,
             commands::thread::thread_get,
             commands::thread::thread_get_page,
             commands::thread::agent_conversation_list,
+            commands::thread::agent_conversation_list_page,
             commands::thread::agent_conversation_count_by_notebook,
             commands::thread::agent_conversation_get,
             commands::thread::agent_conversation_find_by_thread,
@@ -616,6 +627,7 @@ pub fn run() {
             commands::thread::codex_thread_session_id,
             commands::agent::model_catalog::codex_default_model,
             commands::agent::model_catalog::agent_supported_models,
+            commands::agent::model_catalog::codex_runtime_info,
             commands::thread::claude_thread_list,
             commands::thread::claude_thread_get,
             commands::thread::claude_thread_get_page,
@@ -785,11 +797,11 @@ fn stop_external_agent_children(app: &tauri::AppHandle, phase: &str) {
 
         match stopped {
             Ok(stopped) => {
-                let total = stopped.iter().map(|(_, count)| count).sum::<usize>();
+                let total = stopped.iter().map(|result| result.affected).sum::<usize>();
                 if total > 0 {
                     let summary = stopped
                         .iter()
-                        .map(|(key, count)| format!("{key}={count}"))
+                        .map(|result| format!("{}={}", result.runtime.key(), result.affected))
                         .collect::<Vec<_>>()
                         .join(", ");
                     tracing::info!("stopped external agent children on {phase}: {summary}");

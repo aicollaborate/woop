@@ -29,9 +29,8 @@ pub(super) struct DshArtifact {
 }
 
 pub(super) fn manifest_url() -> String {
-    std::env::var(MANIFEST_ENV).unwrap_or_else(|_| {
-        format!("{DEFAULT_MANIFEST_BASE}/{}/latest.json", platform_group())
-    })
+    std::env::var(MANIFEST_ENV)
+        .unwrap_or_else(|_| format!("{DEFAULT_MANIFEST_BASE}/{}/latest.json", platform_group()))
 }
 
 fn platform_group() -> &'static str {
@@ -97,6 +96,11 @@ mod tests {
     #[test]
     fn uses_platform_specific_default_manifest() {
         let url = manifest_url();
-        assert!(url.ends_with("/windows/latest.json") || url.ends_with("/macos/latest.json") || url.ends_with("/linux/latest.json") || url.ends_with("/unknown/latest.json"));
+        assert!(
+            url.ends_with("/windows/latest.json")
+                || url.ends_with("/macos/latest.json")
+                || url.ends_with("/linux/latest.json")
+                || url.ends_with("/unknown/latest.json")
+        );
     }
 }

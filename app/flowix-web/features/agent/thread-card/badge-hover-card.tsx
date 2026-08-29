@@ -8,16 +8,18 @@ import {
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { UsageInfo } from "@/types/agent";
+import type { CodexRuntimeInfo } from "@platform/tauri/client/agent";
 
 interface BadgeHoverCardProps {
-  /** SESSION ID (agent thread id) */
-  sessionId: string;
+  /** External agent thread id shown in the first row of the popover. */
+  threadId: string;
   /** 当前 run 锁定的 LLM model id(由通用 metadata 协议填入) */
   model?: string;
   /** 当前 run 累计 token 用量(undefined 表示未上报) */
   usage?: UsageInfo;
   /** Loads the runtime snapshot only when this card has no loaded usage yet. */
   onRequestRuntimeInfo?: () => Promise<BadgeHoverCardRuntimeInfo | null>;
+  codex?: boolean;
   cwd?: string;
   onOpenChange?: (open: boolean) => void;
 }
@@ -25,6 +27,9 @@ interface BadgeHoverCardProps {
 export interface BadgeHoverCardRuntimeInfo {
   model?: string;
   usage: UsageInfo;
+  codex?: CodexRuntimeInfo;
+  /** Provider session id, also used as the external thread id when resolved. */
+  sessionId?: string;
 }
 
 function formatTokens(n: number): string {
@@ -64,7 +69,7 @@ function hasUsageContent(usage: UsageInfo | undefined): boolean {
   );
 }
 
-function cacheHitRate(usage: UsageInfo | undefined): number | undefined {
+function cacheHitRate(usage: UsageInfo | undefined, codex: boolean): number | undefined {
   const input = usage?.input_tokens;
   const cached = usage?.cached_input_tokens;
   if (
@@ -75,12 +80,14 @@ function cacheHitRate(usage: UsageInfo | undefined): number | undefined {
   ) {
     return undefined;
   }
-  const totalInput = input + cached;
-  return totalInput > 0 ? cached / totalInput : undefined;
+  const denominator = codex ? input : input + cached;
+  return denominator > 0 ? Math.min(1, cached / denominator) : undefined;
 }
 
 function contextUsageRate(usage: UsageInfo | undefined): number | undefined {
-  const used = usage?.context_used_tokens;
+  // Codex reports the latest request's input as the context currently sent to
+  // the model; Harness may provide its own projected context_used_tokens.
+  const used = usage?.context_used_tokens ?? usage?.input_tokens;
   const window = usage?.model_context_window;
   if (
     typeof used !== "number" ||
@@ -104,16 +111,17 @@ function percentageFromRate(rate: number | undefined): string {
  * 由父级 (agent-thread-card.tsx) 负责从 useChatStore 抽取并定时刷新。
  *
  * 展示会话、模型和 token 明细 + 可选 cwd 行:
- *   1. Session ID + 复制按钮
+ *   1. External Thread ID + 复制按钮
  *   2. Model(可选, 由 run.model 填充)
  *   3. 输入 / 输出 / 缓存命中
  *   4. 空间 (可选, instance.runtimeConfig 解出, 文本溢出走原生 title tooltip)
  */
 export function BadgeHoverCard({
-  sessionId,
+  threadId,
   model,
   usage,
   onRequestRuntimeInfo,
+  codex = false,
   cwd,
   onOpenChange,
 }: BadgeHoverCardProps) {
@@ -121,22 +129,28 @@ export function BadgeHoverCard({
   const [copied, setCopied] = React.useState(false);
   const [displayModel, setDisplayModel] = React.useState(model);
   const [displayUsage, setDisplayUsage] = React.useState(usage);
+  const [displayThreadId, setDisplayThreadId] = React.useState(threadId);
   const runtimeInfoLoadedRef = React.useRef(hasUsageContent(usage));
+  const accountLoadedRef = React.useRef(false);
+  const [codexInfo, setCodexInfo] = React.useState<CodexRuntimeInfo>();
   const runtimeInfoRequestRef = React.useRef<Promise<BadgeHoverCardRuntimeInfo | null> | null>(
     null,
   );
-  const residentSessionIdRef = React.useRef(sessionId);
-  const observedSessionIdRef = React.useRef(sessionId);
+  const residentThreadIdRef = React.useRef(threadId);
+  const observedThreadIdRef = React.useRef(threadId);
   const triggerHoveredRef = React.useRef(false);
   const hoverCardOpenRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (residentSessionIdRef.current !== sessionId) {
-      residentSessionIdRef.current = sessionId;
+    if (residentThreadIdRef.current !== threadId) {
+      residentThreadIdRef.current = threadId;
       runtimeInfoLoadedRef.current = hasUsageContent(usage);
+      accountLoadedRef.current = false;
+      setCodexInfo(undefined);
       runtimeInfoRequestRef.current = null;
       setDisplayModel(model);
       setDisplayUsage(usage);
+      setDisplayThreadId(threadId);
       return;
     }
     // Parent controllers periodically re-render this component. Do not let an
@@ -148,11 +162,11 @@ export function BadgeHoverCard({
     if (hasUsageContent(usage)) {
       runtimeInfoLoadedRef.current = true;
     }
-  }, [model, sessionId, usage]);
+  }, [model, threadId, usage]);
 
   const requestRuntimeInfo = React.useCallback(() => {
     if (
-      runtimeInfoLoadedRef.current ||
+      (runtimeInfoLoadedRef.current && (!codex || accountLoadedRef.current)) ||
       runtimeInfoRequestRef.current !== null ||
       !onRequestRuntimeInfo
     ) {
@@ -166,16 +180,21 @@ export function BadgeHoverCard({
       return;
     }
     runtimeInfoRequestRef.current = request;
-    const requestSessionId = sessionId;
+    const requestThreadId = threadId;
     void request
       .then((info) => {
-        if (residentSessionIdRef.current !== requestSessionId) return;
+        if (residentThreadIdRef.current !== requestThreadId) return;
         if (info === null) return;
         if (hasUsageContent(info.usage)) {
           runtimeInfoLoadedRef.current = true;
         }
         setDisplayModel(info.model ?? model);
         setDisplayUsage(info.usage);
+        if (info.sessionId) setDisplayThreadId(info.sessionId);
+        if (info.codex) {
+          accountLoadedRef.current = true;
+          setCodexInfo(info.codex);
+        }
       })
       .catch(() => {
         // Keep the resident snapshot visible and allow the next hover to retry.
@@ -185,15 +204,15 @@ export function BadgeHoverCard({
           runtimeInfoRequestRef.current = null;
         }
       });
-  }, [model, onRequestRuntimeInfo, sessionId]);
+  }, [model, onRequestRuntimeInfo, threadId]);
 
   React.useEffect(() => {
-    if (observedSessionIdRef.current === sessionId) return;
-    observedSessionIdRef.current = sessionId;
+    if (observedThreadIdRef.current === threadId) return;
+    observedThreadIdRef.current = threadId;
     if (triggerHoveredRef.current || hoverCardOpenRef.current) {
       requestRuntimeInfo();
     }
-  }, [requestRuntimeInfo, sessionId]);
+  }, [requestRuntimeInfo, threadId]);
 
   const handleOpenChange = React.useCallback(
     (open: boolean) => {
@@ -204,20 +223,41 @@ export function BadgeHoverCard({
     [onOpenChange, requestRuntimeInfo],
   );
 
-  const hitRate = cacheHitRate(displayUsage);
+  const hitRate = cacheHitRate(displayUsage, codex);
   const contextRate = contextUsageRate(displayUsage);
   const displayCwd = cwd ? lastPathSegment(cwd) : "";
+  const quotaWindows = codex
+    ? Object.values(codexInfo?.rateLimits?.rateLimitsByLimitId ?? {})
+        .flatMap((limit) => [limit.primary, limit.secondary])
+        .filter((window): window is NonNullable<typeof window> => Boolean(window))
+    : [];
+  const fiveHour = quotaWindows.find((window) => window.windowDurationMins === 300);
+  const weekly = quotaWindows.find((window) => window.windowDurationMins === 10080);
+  const quotaText = (window: typeof fiveHour) => {
+    if (!window) return "-";
+    const remaining = `${Math.max(0, 100 - window.usedPercent)}%`;
+    if (!window.resetsAt) return remaining;
+    const resetAt = new Date(window.resetsAt * 1000);
+    if (window.windowDurationMins === 300) {
+      return `${remaining} ${resetAt.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })}`;
+    }
+    return `${remaining} ${resetAt.getMonth() + 1}月${resetAt.getDate()}日`;
+  };
 
   const handleCopy = React.useCallback(async () => {
-    if (!sessionId) return;
+    if (!displayThreadId) return;
     try {
-      await navigator.clipboard.writeText(sessionId);
+      await navigator.clipboard.writeText(displayThreadId);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {
       // 静默失败
     }
-  }, [sessionId]);
+  }, [displayThreadId]);
 
   return (
     <HoverCard
@@ -245,18 +285,18 @@ export function BadgeHoverCard({
         className="w-[14.4rem] rounded-lg px-3 py-2.5"
       >
         <div className="flex flex-col gap-1.5">
-          {/* Session ID 行: 复制按钮在右 */}
+          {/* External Thread ID 行: 复制按钮在右 */}
           <div className="flex items-center gap-2">
             <span
               className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]"
-              title={sessionId || ""}
+              title={displayThreadId || ""}
             >
-              {sessionId || "-"}
+              {displayThreadId || "-"}
             </span>
             <button
               type="button"
               onClick={handleCopy}
-              disabled={!sessionId}
+              disabled={!displayThreadId}
               aria-label={t("editor.threadCard.copySessionId")}
               className={cn(
                 "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)]",
@@ -347,6 +387,22 @@ export function BadgeHoverCard({
                 {displayCwd}
               </span>
             </div>
+          ) : null}
+          {codex ? (
+            <>
+              <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
+                <span className="text-[var(--muted-foreground)]">Codex 会员</span>
+                <span className="font-mono text-[var(--foreground)]">{codexInfo?.account?.planType ?? "-"}</span>
+              </div>
+              <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
+                <span className="text-[var(--muted-foreground)]">5小时</span>
+                <span className="text-right font-mono tabular-nums text-[var(--foreground)]">{quotaText(fiveHour)}</span>
+              </div>
+              <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
+                <span className="text-[var(--muted-foreground)]">1周</span>
+                <span className="text-right font-mono tabular-nums text-[var(--foreground)]">{quotaText(weekly)}</span>
+              </div>
+            </>
           ) : null}
         </div>
       </HoverCardContent>

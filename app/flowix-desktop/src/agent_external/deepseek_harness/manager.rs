@@ -24,9 +24,8 @@ use super::transport::DshClient;
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
-    emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
-    persist_external_chunk_for_thread_with_metadata, AgentChunkMetadata, StreamingEmitBuffer,
-    STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
+    emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata, AgentChunkMetadata,
+    StreamingEmitBuffer, STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
 use crate::agent_session::{ChatMessage, ThreadManager, ThreadMessagesPage};
 use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
@@ -77,30 +76,11 @@ impl ExternalLifecycleEmitter for DeepSeekHarnessManager {
         chunk: &AgentChunk,
         run_id: &str,
     ) {
-        persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager,
-            AGENT_TYPE,
-            chunk.thread_id(),
-            chunk,
-            run_id,
-            None,
-            &AgentChunkMetadata::default(),
-        )
-        .await;
         emit_chunk_with_run_id(app_handle, chunk, AGENT_TYPE, run_id);
     }
 
-    async fn persist_emitted_stream_end(&self, chunk: &AgentChunk, run_id: &str) {
-        persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager,
-            AGENT_TYPE,
-            chunk.thread_id(),
-            chunk,
-            run_id,
-            None,
-            &AgentChunkMetadata::default(),
-        )
-        .await;
+    async fn persist_emitted_stream_end(&self, _chunk: &AgentChunk, _run_id: &str) {
+        // DeepSeek Harness owns durable history in its host/session store.
     }
 }
 
@@ -304,22 +284,11 @@ impl DeepSeekHarnessManager {
         app: &tauri::AppHandle,
         run_id: &str,
     ) {
-        // DSH assigns a new source message id after every tool boundary.  Do
+        // DSH assigns a new source message id after every tool boundary. Do
         // not use the generic lifecycle path here: it intentionally supplies
         // default metadata and would collapse every assistant segment in the
-        // run back to `assistant:stream` in both the live IPC payload and the
-        // persisted event log.
+        // run back to `assistant:stream` in the live IPC payload.
         for (chunk, metadata) in buffered {
-            persist_external_chunk_for_thread_with_metadata(
-                &self.thread_manager,
-                AGENT_TYPE,
-                chunk.thread_id(),
-                &chunk,
-                run_id,
-                None,
-                &metadata,
-            )
-            .await;
             emit_chunk_with_run_id_and_metadata(app, &chunk, AGENT_TYPE, run_id, &metadata);
         }
     }
@@ -331,16 +300,6 @@ impl DeepSeekHarnessManager {
         metadata: &AgentChunkMetadata,
         run_id: &str,
     ) {
-        persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager,
-            AGENT_TYPE,
-            chunk.thread_id(),
-            chunk,
-            run_id,
-            None,
-            metadata,
-        )
-        .await;
         emit_chunk_with_run_id_and_metadata(app, chunk, AGENT_TYPE, run_id, metadata);
     }
 
@@ -636,7 +595,11 @@ impl DeepSeekHarnessManager {
         // In particular, do not resolve a model config or call runtime.ensure
         // while a turn may still be using this thread's runtime.
         let host = self.model_host().await?;
-        let run_active = self.runs.running_threads(AGENT_TYPE).await.contains_key(thread_id);
+        let run_active = self
+            .runs
+            .running_threads(AGENT_TYPE)
+            .await
+            .contains_key(thread_id);
         let status = host
             .request(protocol::runtime_status_request(host.next_request_id()))
             .await?;

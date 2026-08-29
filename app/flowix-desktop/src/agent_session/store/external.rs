@@ -1,18 +1,52 @@
 //! External runtime session mappings and normalized event log.
 
-use super::{external_default_title, ThreadManager};
+use super::{
+    external_default_title, legacy_external_sessions, provider::ProviderThreadStore, ThreadManager,
+};
 use crate::agent_session::error::ThreadError;
 use crate::agent_session::types::{
     AgentExternalEvent, ChatMessage, NewAgentExternalEvent, ThreadInfo, ThreadMessagesPage,
 };
 use crate::agent_types::AgentId;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const MAX_EXTERNAL_EVENTS_PER_THREAD: i64 = 10_000;
 const EXTERNAL_HISTORY_TRUNCATED_JSON: &str = r#"{"kind":"history_truncated","version":1}"#;
+
+#[derive(Default)]
+struct ExternalEventMetadata {
+    kind: Option<String>,
+    run_id: Option<String>,
+    source_sequence: Option<i64>,
+    source_subsequence: Option<i64>,
+}
+
+impl ExternalEventMetadata {
+    fn from_payload(payload: &str) -> Self {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+            return Self::default();
+        };
+        Self {
+            kind: value
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            run_id: value
+                .get("run_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            source_sequence: value
+                .get("source_sequence")
+                .and_then(|value| value.as_i64()),
+            source_subsequence: value
+                .get("source_subsequence")
+                .and_then(|value| value.as_i64()),
+        }
+    }
+}
 
 fn derive_external_event_key(runtime: &str, payload: &str) -> Option<String> {
     let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
@@ -62,6 +96,30 @@ fn session_metadata_cwd(metadata: Option<&serde_json::Value>) -> Option<String> 
 }
 
 impl ThreadManager {
+    /// Load all provider session bindings in one pass. This is used by
+    /// provider-owned session lists to avoid doing a mapping query per ACP
+    /// session while still supporting databases in the legacy migration phase.
+    pub async fn list_external_session_bindings(
+        self: &Arc<Self>,
+        runtime: &str,
+    ) -> Result<HashMap<String, String>, ThreadError> {
+        let runtime = runtime.to_string();
+        self.run_blocking(move |tm| {
+            let conn = tm.lock_conn();
+            let mut bindings = HashMap::new();
+            if let Some(provider) = ProviderThreadStore::for_runtime(&runtime) {
+                bindings.extend(provider.list_bindings(&conn)?);
+            }
+            for (external_id, thread_id) in
+                legacy_external_sessions::list_bindings(&conn, &runtime)?
+            {
+                bindings.entry(external_id).or_insert(thread_id);
+            }
+            Ok(bindings)
+        })
+        .await
+    }
+
     /// List only product-owned OpenCode threads. Session ids can temporarily
     /// appear in `threads` when an event arrives through a canonical UI id;
     /// those aliases must not become duplicate cards.
@@ -78,6 +136,10 @@ impl ThreadManager {
                        SELECT 1 FROM thread_external_sessions s
                        WHERE s.runtime = 'opencode'
                          AND s.external_session_id = t.thread_id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM threads_opencode s
+                       WHERE s.external_id = t.thread_id
                    )
                  ORDER BY t.updated_at DESC",
             )?;
@@ -112,17 +174,7 @@ impl ThreadManager {
         runtime: &str,
     ) -> Result<Option<String>, ThreadError> {
         let conn = self.lock_conn();
-        let session = conn
-            .query_row(
-                "SELECT external_session_id
-                 FROM thread_external_sessions
-                 WHERE thread_id = ?1 AND runtime = ?2",
-                params![thread_id, runtime],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten();
-        Ok(session)
+        find_external_session_in_conn(&conn, runtime, thread_id)
     }
 
     pub async fn find_thread_by_external_session(
@@ -144,18 +196,7 @@ impl ThreadManager {
         runtime: &str,
     ) -> Result<Option<String>, ThreadError> {
         let conn = self.lock_conn();
-        let thread_id = conn
-            .query_row(
-                "SELECT thread_id
-                 FROM thread_external_sessions
-                 WHERE external_session_id = ?1 AND runtime = ?2
-                 ORDER BY updated_at DESC
-                 LIMIT 1",
-                params![external_session_id, runtime],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        Ok(thread_id)
+        find_product_thread_in_conn(&conn, runtime, external_session_id)
     }
 
     pub async fn upsert_external_session(
@@ -188,23 +229,12 @@ impl ThreadManager {
     ) -> Result<(), ThreadError> {
         let now = chrono::Utc::now().timestamp_millis();
         let session_cwd = session_metadata_cwd(session_metadata.as_ref());
-        let session_metadata_json = session_metadata.map(|v| v.to_string());
         let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         // A resumed process may report the canonical session id as its current
         // thread id. Reuse the existing product thread instead of attempting a
         // conflicting self-mapping for the same external session.
-        let product_thread_id = tx
-            .query_row(
-                "SELECT thread_id
-                 FROM thread_external_sessions
-                 WHERE runtime = ?1 AND external_session_id = ?2
-                 ORDER BY updated_at DESC
-                 LIMIT 1",
-                params![runtime, external_session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+        let product_thread_id = find_product_thread_in_conn(&tx, runtime, external_session_id)?
             .unwrap_or_else(|| thread_id.to_string());
         let default_title = external_default_title(runtime);
         tx.execute(
@@ -213,22 +243,56 @@ impl ThreadManager {
             params![product_thread_id, runtime, default_title, now],
         )?;
 
+        // Legacy callers may create `threads` rows without touching the new
+        // index yet. Keep the additive migration safe by materializing the
+        // corresponding index before inserting a provider binding.
         tx.execute(
-            "INSERT INTO thread_external_sessions (
-                thread_id, runtime, external_session_id, session_metadata_json, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-             ON CONFLICT(thread_id, runtime) DO UPDATE SET
-                external_session_id = excluded.external_session_id,
-                session_metadata_json = excluded.session_metadata_json,
-                updated_at = excluded.updated_at",
-            params![
-                product_thread_id,
-                runtime,
-                external_session_id,
-                session_metadata_json,
-                now
-            ],
+            "INSERT OR IGNORE INTO agent_instances (
+                id, agent, source, created_at, updated_at
+             )
+             SELECT i.instance_id, i.agent_type, i.source_kind, i.created_at, i.updated_at
+             FROM agent_conversation_instances i
+             WHERE i.thread_id = ?1",
+            [product_thread_id.as_str()],
         )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO agent_instances (
+                id, agent, source, created_at, updated_at
+             )
+             SELECT 'legacy-' || t.thread_id, t.agent_id, 'dedicated', t.created_at, t.updated_at
+             FROM threads t
+             WHERE t.thread_id = ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM agent_conversation_instances i
+                   WHERE i.thread_id = t.thread_id
+               )",
+            [product_thread_id.as_str()],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO threads_index (
+                id, instance_id, title, created_at, updated_at
+             )
+             SELECT t.thread_id, COALESCE(i.instance_id, 'legacy-' || t.thread_id),
+                    t.title, t.created_at, t.updated_at
+             FROM threads t
+             LEFT JOIN agent_conversation_instances i ON i.thread_id = t.thread_id
+             WHERE t.thread_id = ?1",
+            [product_thread_id.as_str()],
+        )?;
+
+        if let Some(provider) = ProviderThreadStore::for_runtime(runtime) {
+            provider.upsert(
+                &tx,
+                &product_thread_id,
+                external_session_id,
+                session_cwd.as_deref(),
+                now,
+            )?;
+        } else {
+            return Err(ThreadError::NotFound(format!(
+                "unsupported external runtime binding: {runtime}"
+            )));
+        }
         tx.execute(
             "UPDATE agent_conversation_instances
              SET frozen_cwd = COALESCE(?1, frozen_cwd),
@@ -265,6 +329,7 @@ impl ThreadManager {
         let conn = self.lock_conn();
         let thread_id = event.thread_id.clone();
         let event_key = derive_external_event_key(&event.runtime, &event.normalized_json);
+        let metadata = ExternalEventMetadata::from_payload(&event.normalized_json);
         conn.execute(
             "INSERT OR IGNORE INTO threads (thread_id, agent_id, title, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -275,14 +340,21 @@ impl ThreadManager {
                 now,
             ],
         )?;
+        self.ensure_simplified_thread_index(&conn, &thread_id)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_external_events (
-                runtime, thread_id, event_key, normalized_json, raw_json, created_at
-             ) VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6)",
+                runtime, thread_id, event_key, event_kind, run_id,
+                source_sequence, source_subsequence,
+                normalized_json, raw_json, created_at
+             ) VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 event.runtime.as_str(),
                 event.thread_id.as_str(),
                 event_key.as_deref(),
+                metadata.kind.as_deref(),
+                metadata.run_id.as_deref(),
+                metadata.source_sequence,
+                metadata.source_subsequence,
                 event.normalized_json.as_str(),
                 event.raw_json.as_deref(),
                 now,
@@ -329,9 +401,9 @@ impl ThreadManager {
         if deleted > 0 {
             conn.execute(
                 "INSERT INTO agent_external_events (
-                    runtime, thread_id, normalized_json, raw_json, created_at
+                    runtime, thread_id, event_kind, normalized_json, raw_json, created_at
                  )
-                 SELECT agent_id, ?1, ?2, NULL, ?3
+                 SELECT agent_id, ?1, 'history_truncated', ?2, NULL, ?3
                  FROM threads
                  WHERE thread_id = ?1
                    AND NOT EXISTS (
@@ -475,26 +547,11 @@ impl ThreadManager {
         thread_id: &str,
     ) -> Result<bool, ThreadError> {
         let conn = self.lock_conn();
-        let product_thread_id = conn
-            .query_row(
-                "SELECT thread_id FROM thread_external_sessions
-                 WHERE runtime = ?2 AND external_session_id = ?1
-                 ORDER BY updated_at DESC LIMIT 1",
-                params![thread_id, runtime],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+        let product_thread_id = find_product_thread_in_conn(&conn, runtime, thread_id)?
             .unwrap_or_else(|| thread_id.to_string());
-        let external_session_id = conn
-            .query_row(
-                "SELECT external_session_id FROM thread_external_sessions
-                 WHERE thread_id = ?1 AND runtime = ?2
-                 ORDER BY updated_at DESC LIMIT 1",
-                params![product_thread_id.as_str(), runtime],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .unwrap_or_else(|| product_thread_id.clone());
+        let external_session_id =
+            find_external_session_in_conn(&conn, runtime, &product_thread_id)?
+                .unwrap_or_else(|| product_thread_id.clone());
         Ok(conn.query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM agent_external_events
@@ -514,41 +571,25 @@ impl ThreadManager {
     ) -> Result<ThreadMessagesPage, ThreadError> {
         let turn_limit = turn_limit.clamp(1, 50);
         let conn = self.lock_conn();
-        let product_thread_id = conn
-            .query_row(
-                "SELECT thread_id FROM thread_external_sessions
-                 WHERE runtime = ?2 AND external_session_id = ?1
-                 ORDER BY updated_at DESC LIMIT 1",
-                params![thread_id, runtime],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+        let product_thread_id = find_product_thread_in_conn(&conn, runtime, thread_id)?
             .unwrap_or_else(|| thread_id.to_string());
-        let external_session_id = conn
-            .query_row(
-                "SELECT external_session_id FROM thread_external_sessions
-                 WHERE runtime = ?2 AND thread_id = ?1
-                 ORDER BY updated_at DESC LIMIT 1",
-                params![product_thread_id.as_str(), runtime],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .unwrap_or_else(|| product_thread_id.clone());
+        let external_session_id =
+            find_external_session_in_conn(&conn, runtime, &product_thread_id)?
+                .unwrap_or_else(|| product_thread_id.clone());
         let upper_bound = before_event_id.unwrap_or(i64::MAX);
 
         let mut turn_stmt = conn.prepare(
             "SELECT e.id FROM agent_external_events e
              WHERE e.thread_id IN (?1, ?2) AND e.runtime = ?3 AND e.id < ?4
                AND (
-                   json_extract(e.normalized_json, '$.kind') = 'user_message'
+                   e.event_kind = 'user_message'
                    OR (
-                       json_extract(e.normalized_json, '$.kind') = 'stream_start'
+                       e.event_kind = 'stream_start'
                        AND NOT EXISTS (
                            SELECT 1 FROM agent_external_events u
                            WHERE u.thread_id IN (?1, ?2) AND u.runtime = ?3
-                             AND json_extract(u.normalized_json, '$.kind') = 'user_message'
-                             AND json_extract(u.normalized_json, '$.run_id')
-                                 = json_extract(e.normalized_json, '$.run_id')
+                             AND u.event_kind = 'user_message'
+                             AND u.run_id = e.run_id
                        )
                    )
                )
@@ -599,15 +640,14 @@ impl ThreadManager {
                 SELECT 1 FROM agent_external_events e
                 WHERE e.thread_id IN (?1, ?2) AND e.runtime = ?3 AND e.id < ?4
                   AND (
-                      json_extract(e.normalized_json, '$.kind') = 'user_message'
+                      e.event_kind = 'user_message'
                       OR (
-                          json_extract(e.normalized_json, '$.kind') = 'stream_start'
+                          e.event_kind = 'stream_start'
                           AND NOT EXISTS (
                               SELECT 1 FROM agent_external_events u
                               WHERE u.thread_id IN (?1, ?2) AND u.runtime = ?3
-                                AND json_extract(u.normalized_json, '$.kind') = 'user_message'
-                                AND json_extract(u.normalized_json, '$.run_id')
-                                    = json_extract(e.normalized_json, '$.run_id')
+                                AND u.event_kind = 'user_message'
+                                AND u.run_id = e.run_id
                           )
                       )
                   )
@@ -635,7 +675,36 @@ impl ThreadManager {
     }
 }
 
-fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMessage> {
+/// Resolve a provider session to the product thread. New Codex/DSH bindings
+/// are authoritative; the legacy table remains a read fallback for databases
+/// that have not yet been migrated or for Claude/OpenCode/Hermes.
+pub(super) fn find_product_thread_in_conn(
+    conn: &Connection,
+    runtime: &str,
+    external_session_id: &str,
+) -> Result<Option<String>, ThreadError> {
+    if let Some(provider) = ProviderThreadStore::for_runtime(runtime) {
+        if let Some(thread_id) = provider.find_product_thread(conn, external_session_id)? {
+            return Ok(Some(thread_id));
+        }
+    }
+    legacy_external_sessions::find_product_thread(conn, runtime, external_session_id)
+}
+
+pub(super) fn find_external_session_in_conn(
+    conn: &Connection,
+    runtime: &str,
+    thread_id: &str,
+) -> Result<Option<String>, ThreadError> {
+    if let Some(provider) = ProviderThreadStore::for_runtime(runtime) {
+        if let Some(external_id) = provider.find_external_id(conn, thread_id)? {
+            return Ok(Some(external_id));
+        }
+    }
+    legacy_external_sessions::find_external_id(conn, runtime, thread_id)
+}
+
+pub(crate) fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     let mut tool_indexes = HashMap::<String, usize>::new();
     let mut message_indexes = HashMap::<String, usize>::new();
@@ -773,8 +842,25 @@ fn materialize_external_messages(events: Vec<AgentExternalEvent>) -> Vec<ChatMes
                 message.tool_input = payload.get("input").cloned();
                 message.is_loading = Some(true);
                 message.is_completed = Some(false);
-                tool_indexes.insert(tool_call_id, messages.len());
-                messages.push(message);
+                // OpenCode can persist the initial tool_call and one or more
+                // later tool_call updates (the latter commonly contains the
+                // real input). Keep one history row per call, matching the
+                // live reducer's update-in-place behavior.
+                if let Some(index) = tool_indexes.get(&tool_call_id).copied() {
+                    let existing = &mut messages[index];
+                    if message.tool_name.is_some() {
+                        existing.tool_name = message.tool_name;
+                    }
+                    if message.tool_input.is_some() {
+                        existing.tool_input = message.tool_input;
+                    }
+                    existing.timestamp = message.timestamp;
+                    existing.is_loading = message.is_loading;
+                    existing.is_completed = message.is_completed;
+                } else {
+                    tool_indexes.insert(tool_call_id, messages.len());
+                    messages.push(message);
+                }
             }
             Some("tool_result") => {
                 if event.runtime == "deepseek-harness" {

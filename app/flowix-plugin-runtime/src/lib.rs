@@ -294,12 +294,24 @@ pub fn create_artifact(
     let (parsed, version, note_type, renderer, parser, output_directory, format, extension) =
         match request.plugin_id {
             MINDMAP_PLUGIN_ID => (
-                parse_mindmap_input(request.content)?, MINDMAP_VERSION, MINDMAP_NOTE_TYPE,
-                MINDMAP_RENDERER, MINDMAP_PARSER, MINDMAP_OUTPUT_DIRECTORY, "markdown", "md",
+                parse_mindmap_input(request.content)?,
+                MINDMAP_VERSION,
+                MINDMAP_NOTE_TYPE,
+                MINDMAP_RENDERER,
+                MINDMAP_PARSER,
+                MINDMAP_OUTPUT_DIRECTORY,
+                "markdown",
+                "md",
             ),
             WEBPAGE_PLUGIN_ID => (
-                parse_webpage_input(request.content)?, WEBPAGE_VERSION, WEBPAGE_NOTE_TYPE,
-                WEBPAGE_RENDERER, WEBPAGE_PARSER, WEBPAGE_OUTPUT_DIRECTORY, "html", "html",
+                parse_webpage_input(request.content)?,
+                WEBPAGE_VERSION,
+                WEBPAGE_NOTE_TYPE,
+                WEBPAGE_RENDERER,
+                WEBPAGE_PARSER,
+                WEBPAGE_OUTPUT_DIRECTORY,
+                "html",
+                "html",
             ),
             _ => return Err(format!("plugin tool not found: {}", request.plugin_id)),
         };
@@ -498,9 +510,7 @@ fn pointer_document(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        create_artifact, parse_mindmap_input, parse_webpage_input, CreateArtifactRequest,
-    };
+    use super::{create_artifact, parse_mindmap_input, parse_webpage_input, CreateArtifactRequest};
     use flowix_core::memo_file::{MemoFile, NotebookConfig};
     use std::path::Path;
 
@@ -573,7 +583,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn creates_webpage_artifact_and_pointer_note() {
         let temp = tempfile::tempdir().unwrap();
@@ -607,7 +616,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(created.renderer, "webpage");
-        assert_eq!(std::fs::read_to_string(&created.artifact_path).unwrap(), html);
+        assert_eq!(
+            std::fs::read_to_string(&created.artifact_path).unwrap(),
+            html
+        );
         let pointer = std::fs::read_to_string(&created.note_path).unwrap();
         assert!(pointer.contains("flowix_note_type: webpage"));
         assert!(pointer.contains("renderer: webpage"));

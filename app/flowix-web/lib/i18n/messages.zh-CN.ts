@@ -1216,7 +1216,7 @@ const zhCN = {
     "editor.threadCard.delete": "删除",
     "editor.threadCard.expand": "展开",
     "editor.threadCard.collapse": "收起",
-    "editor.threadCard.copySessionId": "复制 Session ID",
+    "editor.threadCard.copySessionId": "复制 Thread ID",
     "editor.threadCard.copyLatex": "复制 LaTeX",
     "editor.threadCard.model": "模型",
     "editor.threadCard.inputTokens": "输入",

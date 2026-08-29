@@ -491,7 +491,7 @@ mod tests {
         let first = NewAgentExternalEvent {
             runtime: "test-runtime".to_string(),
             thread_id: "thread-1".to_string(),
-            normalized_json: r#"{"kind":"text","text":"hello"}"#.to_string(),
+            normalized_json: r#"{"kind":"text","run_id":"run-1","source_sequence":3,"source_subsequence":1,"text":"hello"}"#.to_string(),
             raw_json: Some(r#"{"type":"event_msg"}"#.to_string()),
             created_at: Some(100),
         };
@@ -530,6 +530,31 @@ mod tests {
             r#"{"kind":"tool_call","id":"call-1"}"#
         );
         assert_eq!(all[0].raw_json.as_deref(), Some(r#"{"type":"event_msg"}"#));
+        let structured = manager
+            .lock_conn()
+            .query_row(
+                "SELECT event_kind, run_id, source_sequence, source_subsequence
+                 FROM agent_external_events WHERE id = ?1",
+                [id1],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .expect("read structured event metadata");
+        assert_eq!(
+            structured,
+            (
+                Some("text".to_string()),
+                Some("run-1".to_string()),
+                Some(3),
+                Some(1),
+            )
+        );
 
         let delta = manager
             .list_agent_external_events_by_thread("thread-1", Some(id1), 10)
@@ -1012,6 +1037,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_metadata_migration_backfills_structured_columns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open legacy db");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE threads (
+                    thread_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE agent_external_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    runtime TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    event_key TEXT,
+                    normalized_json TEXT NOT NULL,
+                    raw_json TEXT,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO threads VALUES ('metadata-thread', 'claude', 'Metadata', 1, 1);
+                INSERT INTO agent_external_events (
+                    runtime, thread_id, normalized_json, created_at
+                ) VALUES (
+                    'claude', 'metadata-thread',
+                    '{"kind":"text","run_id":"run-7","source_sequence":8,"source_subsequence":2}',
+                    10
+                );
+                "#,
+            )
+            .expect("seed pre-structured event schema");
+        }
+
+        let manager = ThreadManager::new(db_path).expect("migrate event metadata");
+        let conn = manager.lock_conn();
+        let metadata = conn
+            .query_row(
+                "SELECT event_kind, run_id, source_sequence, source_subsequence
+                 FROM agent_external_events WHERE thread_id = 'metadata-thread'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .expect("read backfilled event metadata");
+        assert_eq!(
+            metadata,
+            (
+                Some("text".to_string()),
+                Some("run-7".to_string()),
+                Some(8),
+                Some(2),
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn migrations_set_thread_db_user_version() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("thread.db");
@@ -1025,6 +1115,379 @@ mod tests {
         assert_eq!(
             version,
             crate::agent_session::migrations::THREAD_DB_SCHEMA_VERSION
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_claude_binding_is_backfilled_without_moving_events() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        let manager = Arc::new(ThreadManager::new(db_path.clone()).expect("create database"));
+        manager
+            .ensure_thread(
+                "claude-legacy-thread",
+                AgentId("claude".to_string()),
+                "Claude legacy".to_string(),
+            )
+            .await
+            .expect("create Claude product thread");
+        drop(manager);
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open database");
+        conn.execute(
+            "INSERT INTO thread_external_sessions (
+                thread_id, runtime, external_session_id, session_metadata_json,
+                created_at, updated_at
+             ) VALUES (?1, 'claude', ?2, ?3, 1, 2)",
+            rusqlite::params![
+                "claude-legacy-thread",
+                "claude-legacy-session",
+                r#"{"cwd":"/legacy/project"}"#
+            ],
+        )
+        .expect("seed legacy Claude binding");
+        drop(conn);
+
+        let migrated = Arc::new(ThreadManager::new(db_path).expect("rerun migrations"));
+        assert_eq!(
+            migrated
+                .get_external_session("claude-legacy-thread", "claude")
+                .await
+                .expect("read migrated Claude binding")
+                .as_deref(),
+            Some("claude-legacy-session")
+        );
+        let conn = migrated.lock_conn();
+        let provider: (String, Option<String>) = conn
+            .query_row(
+                "SELECT external_id, project_path FROM threads_claude
+                 WHERE thread_id = 'claude-legacy-thread'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read Claude provider branch");
+        assert_eq!(
+            provider,
+            (
+                "claude-legacy-session".to_string(),
+                Some("/legacy/project".to_string())
+            )
+        );
+        let event_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_external_events
+                 WHERE thread_id = 'claude-legacy-thread'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count Claude events");
+        assert_eq!(
+            event_count, 0,
+            "binding migration must not synthesize events"
+        );
+    }
+
+    #[tokio::test]
+    async fn simplified_thread_tables_backfill_and_track_provider_ids() {
+        let manager = ThreadManager::for_tests();
+        manager
+            .ensure_thread(
+                "thread-simplified-index",
+                AgentId("codex".to_string()),
+                "Simplified thread".to_string(),
+            )
+            .await
+            .expect("create product thread");
+
+        manager
+            .upsert_external_session(
+                "thread-simplified-index",
+                "codex",
+                "codex-provider-id",
+                None,
+            )
+            .await
+            .expect("bind codex provider thread");
+        manager
+            .upsert_external_session(
+                "thread-simplified-index",
+                "deepseek-harness",
+                "dsh-provider-id",
+                None,
+            )
+            .await
+            .expect("bind dsh provider session");
+        manager
+            .upsert_external_session(
+                "thread-simplified-index",
+                "opencode",
+                "opencode-provider-id",
+                None,
+            )
+            .await
+            .expect("bind opencode provider session");
+        manager
+            .upsert_external_session(
+                "thread-simplified-index",
+                "hermes",
+                "hermes-provider-id",
+                None,
+            )
+            .await
+            .expect("bind hermes provider session");
+        manager
+            .upsert_external_session(
+                "thread-simplified-index",
+                "claude",
+                "claude-provider-id",
+                Some(serde_json::json!({ "cwd": "/workspace/claude" })),
+            )
+            .await
+            .expect("bind claude provider session");
+        manager
+            .insert_agent_external_event(NewAgentExternalEvent {
+                runtime: "claude".to_string(),
+                thread_id: "thread-simplified-index".to_string(),
+                normalized_json: r#"{"kind":"text","run_id":"claude-run","text":"hello"}"#
+                    .to_string(),
+                raw_json: None,
+                created_at: Some(50),
+            })
+            .await
+            .expect("persist product-owned Claude event");
+
+        let conn = manager.lock_conn();
+        let index: (String, String) = conn
+            .query_row(
+                "SELECT id, title FROM threads_index WHERE id = ?1",
+                ["thread-simplified-index"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read simplified thread index");
+        assert_eq!(
+            index,
+            (
+                "thread-simplified-index".to_string(),
+                "Simplified thread".to_string()
+            )
+        );
+
+        let codex_id: String = conn
+            .query_row(
+                "SELECT external_id FROM threads_codex WHERE thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("read codex binding");
+        assert_eq!(codex_id, "codex-provider-id");
+
+        let dsh_id: String = conn
+            .query_row(
+                "SELECT external_id FROM threads_dsh WHERE thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("read dsh binding");
+        assert_eq!(dsh_id, "dsh-provider-id");
+
+        let opencode_id: String = conn
+            .query_row(
+                "SELECT external_id FROM threads_opencode WHERE thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("read opencode binding");
+        assert_eq!(opencode_id, "opencode-provider-id");
+
+        let hermes_id: String = conn
+            .query_row(
+                "SELECT external_id FROM threads_hermes WHERE thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("read hermes binding");
+        assert_eq!(hermes_id, "hermes-provider-id");
+
+        let claude: (String, Option<String>) = conn
+            .query_row(
+                "SELECT external_id, project_path FROM threads_claude WHERE thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read claude binding");
+        assert_eq!(
+            claude,
+            (
+                "claude-provider-id".to_string(),
+                Some("/workspace/claude".to_string())
+            )
+        );
+        let claude_event_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_external_events
+                 WHERE runtime = 'claude' AND thread_id = ?1",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("count product-owned Claude events");
+        assert_eq!(claude_event_count, 1);
+
+        let legacy_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thread_external_sessions
+                 WHERE thread_id = ?1 AND runtime IN (
+                    'codex', 'deepseek-harness', 'opencode', 'hermes', 'claude'
+                 )",
+                ["thread-simplified-index"],
+                |row| row.get(0),
+            )
+            .expect("count legacy provider bindings");
+        assert_eq!(
+            legacy_count, 0,
+            "provider bindings should no longer be double-written"
+        );
+        drop(conn);
+
+        assert_eq!(
+            manager
+                .find_thread_by_external_session("codex-provider-id", "codex")
+                .await
+                .expect("resolve codex provider id")
+                .as_deref(),
+            Some("thread-simplified-index")
+        );
+        assert_eq!(
+            manager
+                .get_external_session("thread-simplified-index", "claude")
+                .await
+                .expect("resolve claude provider id")
+                .as_deref(),
+            Some("claude-provider-id")
+        );
+        assert_eq!(
+            manager
+                .get_external_session("thread-simplified-index", "deepseek-harness")
+                .await
+                .expect("resolve dsh provider id")
+                .as_deref(),
+            Some("dsh-provider-id")
+        );
+        assert_eq!(
+            manager
+                .find_thread_by_external_session("opencode-provider-id", "opencode")
+                .await
+                .expect("resolve opencode provider id")
+                .as_deref(),
+            Some("thread-simplified-index")
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_a_real_instance_replaces_the_temporary_dedicated_instance() {
+        let manager = ThreadManager::for_tests();
+        manager
+            .ensure_thread(
+                "thread-instance-replacement",
+                AgentId("codex".to_string()),
+                "Instance replacement".to_string(),
+            )
+            .await
+            .expect("create product thread");
+
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "instance-real".to_string(),
+                agent_type: "codex".to_string(),
+                initial_title: "Instance replacement".to_string(),
+                thread_id: Some("thread-instance-replacement".to_string()),
+                runtime_config: None,
+                source: AgentConversationSource {
+                    kind: "thread-card".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                    notebook_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .expect("bind real instance");
+
+        let instances = manager
+            .list_agent_conversation_instances()
+            .await
+            .expect("list instances");
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].instance_id, "instance-real");
+
+        let conn = manager.lock_conn();
+        let indexed_instance: String = conn
+            .query_row(
+                "SELECT instance_id FROM threads_index WHERE id = ?1",
+                ["thread-instance-replacement"],
+                |row| row.get(0),
+            )
+            .expect("read index owner");
+        assert_eq!(indexed_instance, "instance-real");
+        let temporary_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_instances WHERE id = ?1",
+                ["legacy-thread-instance-replacement"],
+                |row| row.get(0),
+            )
+            .expect("count temporary instance");
+        assert_eq!(temporary_count, 0);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_instance_preserves_its_product_thread_and_provider_binding() {
+        let manager = ThreadManager::for_tests();
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "instance-delete".to_string(),
+                agent_type: "codex".to_string(),
+                initial_title: "Delete instance".to_string(),
+                thread_id: Some("thread-delete-instance".to_string()),
+                runtime_config: None,
+                source: AgentConversationSource {
+                    kind: "thread-card".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                    notebook_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .expect("create instance");
+        manager
+            .upsert_external_session(
+                "thread-delete-instance",
+                "codex",
+                "codex-delete-instance",
+                None,
+            )
+            .await
+            .expect("bind provider thread");
+
+        assert!(manager
+            .delete_agent_conversation_instance("instance-delete")
+            .await
+            .expect("delete instance"));
+        assert!(manager
+            .get_thread_info("thread-delete-instance")
+            .await
+            .expect("read product thread")
+            .is_some());
+        assert_eq!(
+            manager
+                .get_external_session("thread-delete-instance", "codex")
+                .await
+                .expect("read provider binding")
+                .as_deref(),
+            Some("codex-delete-instance")
         );
     }
 

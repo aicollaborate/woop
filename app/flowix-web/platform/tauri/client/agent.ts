@@ -10,6 +10,7 @@ import type {
   AgentTypeKey,
   ChatMessage,
   RunInfo,
+  UsageInfo,
 } from '@/types/agent';
 
 export interface AgentConfig {
@@ -120,6 +121,15 @@ export interface AgentExternalEvent {
   createdAt: number;
 }
 
+export interface CodexApprovalRequest {
+  requestId: string;
+  method: string;
+  threadId?: string | null;
+  turnId?: string | null;
+  itemId?: string | null;
+  params: Record<string, unknown>;
+}
+
 export type AgentConversationSource = {
   kind: 'thread-card' | 'dedicated';
   documentPath?: string | null;
@@ -166,6 +176,24 @@ export interface AgentRuntimeStatus {
   openclaw: AgentRuntimeAvailability;
   opencode: AgentRuntimeAvailability;
   'deepseek-harness': AgentRuntimeAvailability;
+}
+
+export interface CodexRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins?: number | null;
+  resetsAt?: number | null;
+}
+
+export interface CodexRuntimeInfo {
+  account?: { type?: string; email?: string | null; planType?: string } | null;
+  rateLimits?: {
+    rateLimitsByLimitId?: Record<string, {
+      limitName?: string | null;
+      primary?: CodexRateLimitWindow | null;
+      secondary?: CodexRateLimitWindow | null;
+    }> | null;
+  } | null;
+  usage?: UsageInfo | null;
 }
 
 export type AgentExternalSource = 'auto' | 'user';
@@ -242,6 +270,8 @@ export const agent = {
     }>('thread_get_page', { threadId, beforeSequence, limit }),
   listConversationInstances: () =>
     invoke<AgentConversationInstance[]>('agent_conversation_list'),
+  listConversationInstancesPage: (offset: number, limit: number) =>
+    invoke<{ items: AgentConversationInstance[]; hasMore: boolean }>('agent_conversation_list_page', { offset, limit }),
   countConversationInstancesByNotebook: (notebookId: string | null) =>
     invoke<number>('agent_conversation_count_by_notebook', { notebookId }),
   getConversationInstance: (instanceId: string) =>
@@ -277,6 +307,19 @@ export const agent = {
     invoke<string | null>('codex_thread_session_id', { threadId }),
   getCodexDefaultModel: () =>
     invoke<string>('codex_default_model'),
+  getCodexRuntimeInfo: (threadId?: string | null) =>
+    invoke<CodexRuntimeInfo>('codex_runtime_info', { threadId: threadId ?? null }),
+  updateCodexThreadSettings: (args: {
+    threadId: string;
+    model?: string;
+    reasoningEffort?: string;
+    permissionMode?: AgentPermissionMode;
+  }) => invoke<void>('codex_thread_settings_update', {
+    threadId: args.threadId,
+    model: args.model,
+    reasoningEffort: args.reasoningEffort,
+    permissionMode: args.permissionMode,
+  }),
   listSupportedModels: (agentType: AgentTypeKey) =>
     invoke<string[]>('agent_supported_models', { agentType }),
   listClaudeThreads: () =>
@@ -347,6 +390,8 @@ export const agent = {
   // 鏃剁殑婕忕綉涔嬮奔(鐐硅繃"鏂板缓瀵硅瘽"鍐嶅彂娑堟伅鐨勫満鏅?銆傝繑鍥?None 琛ㄧず thread 涓嶅瓨鍦ㄣ€?
   updateThreadTitle: (threadId: string, title: string, agentType?: AgentTypeKey) =>
     invoke<ThreadInfo | null>('thread_update_title', { threadId, title, agentType }),
+  codexApprovalRespond: (requestId: string, result: unknown) =>
+    invoke<void>('codex_approval_respond', { requestId, result }),
 };
 
 export interface CachedAgentImage {
@@ -399,6 +444,12 @@ export function listenToAgentStream(
   options?: SubscribeOptions,
 ): UnlistenFn {
   return subscribe<AgentChunk>('agent-chunk', callback, options);
+}
+
+export function listenToCodexApprovalRequests(
+  callback: (request: CodexApprovalRequest) => void,
+): UnlistenFn {
+  return subscribe<CodexApprovalRequest>('codex-approval-request', callback);
 }
 
 // ============================================

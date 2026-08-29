@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChatCircleIcon } from '@phosphor-icons/react';
+import { PlusIcon } from '@phosphor-icons/react';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
@@ -49,6 +49,7 @@ const CONVERSATION_GROUP_LABEL_KEY = {
   earlier: 'document.agent.group.earlier',
 } as const;
 const logger = createLogger('agent-conversation-list');
+const CONVERSATION_PAGE_SIZE = 30;
 
 // A thread can temporarily be represented by two instance records while an
 // old local/external identity is being reconciled.  `instanceId` is the card
@@ -116,6 +117,10 @@ export function AgentConversationList() {
   );
   const [persistedInstances, setPersistedInstances] = useState<Record<string, AgentConversationInstance>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadedCountRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   const [filterType, setFilterType] = useState<AgentTypeKey | null>(null);
   const [showScrollTopHint, setShowScrollTopHint] = useState(false);
   // 对话刚结束但用户还没点进去看过的 instanceId 集合 ── 用本地 Set 记录,
@@ -128,9 +133,11 @@ export function AgentConversationList() {
   // the persisted history into an empty list while the shared store rehydrates.
   useEffect(() => {
     let active = true;
-    void agentClient.listConversationInstances()
-      .then((items) => {
+    void agentClient.listConversationInstancesPage(0, CONVERSATION_PAGE_SIZE)
+      .then(({ items, hasMore: nextHasMore }) => {
         if (!active) return;
+        loadedCountRef.current = items.length;
+        setHasMore(nextHasMore);
         setPersistedInstances(Object.fromEntries(
           items.map((instance) => {
             const normalized = normalizeBackendInstance(instance);
@@ -148,6 +155,33 @@ export function AgentConversationList() {
       active = false;
     };
   }, []);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMore) return;
+    loadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    try {
+      const { items, hasMore: nextHasMore } = await agentClient.listConversationInstancesPage(
+        loadedCountRef.current,
+        CONVERSATION_PAGE_SIZE,
+      );
+      loadedCountRef.current += items.length;
+      setHasMore(nextHasMore);
+      setPersistedInstances((current) => {
+        const next = { ...current };
+        for (const item of items) {
+          const normalized = normalizeBackendInstance(item);
+          next[normalized.instanceId] = normalized;
+        }
+        return next;
+      });
+    } catch (error) {
+      logger.error('failed to load more conversations', { error });
+    } finally {
+      loadingMoreRef.current = false;
+      setIsLoadingMore(false);
+    }
+  }, [hasMore]);
 
   const conversations = useMemo(() => {
     const merged = { ...persistedInstances };
@@ -397,9 +431,12 @@ export function AgentConversationList() {
                   disabled={!currentNotebookId}
                   aria-label={t('agent.chat.newThread')}
                   title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <ChatCircleIcon className="h-4 w-4" aria-hidden="true" />
+                  <PlusIcon
+                    className="h-4 w-4 transition-[filter] duration-150 group-hover:brightness-105"
+                    aria-hidden="true"
+                  />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 px-1 py-1.5">
@@ -425,7 +462,13 @@ export function AgentConversationList() {
         <OverlayScrollbar
           className="h-full"
           scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2"
-          onScroll={(event) => setShowScrollTopHint(event.currentTarget.scrollTop > 0)}
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            setShowScrollTopHint(target.scrollTop > 0);
+            if (hasMore && target.scrollTop + target.clientHeight >= target.scrollHeight - 80) {
+              void loadMoreConversations();
+            }
+          }}
         >
           {isLoading ? null : scopedConversations.length === 0 ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-[var(--muted-foreground)]">
@@ -482,6 +525,11 @@ export function AgentConversationList() {
                   })}
                 </div>
               ))}
+              {isLoadingMore && (
+                <div className="py-2 text-center text-xs text-[var(--muted-foreground)]" aria-live="polite">
+                  {t('memo.list.loadingLibrary')}
+                </div>
+              )}
             </div>
           )}
         </OverlayScrollbar>

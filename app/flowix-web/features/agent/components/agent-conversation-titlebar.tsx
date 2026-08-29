@@ -21,7 +21,8 @@ import { getAgentConversationPresentation } from '@features/agent/conversation-p
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
 import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
-import { deepseekHarness } from '@platform/tauri/client';
+import { getResolvedExternalSessionId } from '@features/agent/services/external-agent-runtime-service';
+import { agent as agentClient, deepseekHarness } from '@platform/tauri/client';
 import { toast } from '@/lib/toast';
 import {
   DropdownMenu,
@@ -56,6 +57,9 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   const agent = getAgentType(instance.agentType);
   const presentation = getAgentConversationPresentation(instance, t('common.untitled'));
   const { source, runtimeCwd, hasSourceDocument } = presentation;
+  const externalThreadId = instance.threadId
+    ? getResolvedExternalSessionId(instance.threadId) ?? instance.threadId
+    : '';
   const actionButtonClass = isWindows
     ? DOCUMENT_TITLEBAR_ICON_BUTTON_WIN
     : DOCUMENT_TITLEBAR_ICON_BUTTON_MAC;
@@ -94,12 +98,24 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
     >
       <span className="agent-thread-card__badge-hover-wrapper shrink-0">
         <BadgeHoverCard
-          sessionId={instance.threadId ?? ''}
+          threadId={externalThreadId}
           model={badgeData.model}
           usage={badgeData.usage}
           onRequestRuntimeInfo={instance.agentType === 'deepseek-harness' && instance.threadId
             ? () => deepseekHarness.sessionUsage(instance.threadId!)
+            : instance.agentType === 'opencode'
+              ? async () => ({
+                  sessionId: (await agentClient.getOpenCodeSessionId(instance.threadId!)) ?? undefined,
+                  usage: {},
+                })
+            : instance.agentType === 'codex'
+              ? async () => {
+                  const sessionId = await agentClient.getCodexSessionId(instance.threadId!);
+                  const info = await agentClient.getCodexRuntimeInfo(sessionId);
+                  return { sessionId: sessionId ?? undefined, usage: info.usage ?? {}, codex: info };
+                }
             : undefined}
+          codex={instance.agentType === 'codex'}
           cwd={runtimeCwd}
         />
         <span className="agent-type-badge" aria-hidden="true" title={agent.desc}>

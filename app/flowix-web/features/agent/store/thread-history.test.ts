@@ -4,6 +4,7 @@ import type { ChatMessage } from "@/types";
 import {
   areMessagesEquivalent,
   filterRenderableHistoryMessages,
+  mergeHistoricalMessages,
   mergeLiveMessagesIntoRenderableMessages,
   mergeMessagesForThreadRender,
   replaceCompletedRunWithHistory,
@@ -79,6 +80,36 @@ describe("mergeMessagesForThreadRender", () => {
       "history-assistant-1",
     ]);
   });
+
+  it("never reorders Codex history by live arrival timestamps", () => {
+    const history = [
+      message("history-user", "user", "run tool", "2026-08-29T10:00:00.000Z"),
+      message("history-commentary", "assistant", "Checking.", "2026-08-29T10:00:00.000Z"),
+      {
+        ...message("history-tool", "tool", "/workspace", "2026-08-29T10:00:00.000Z"),
+        toolCallId: "exec-1",
+        toolName: "command_execution",
+      },
+      message("history-final", "assistant", "Done.", "2026-08-29T10:00:00.000Z"),
+    ];
+    const live = [
+      message("live-user", "user", "run tool", "2026-08-29T10:00:01.000Z"),
+      {
+        ...message("live-tool", "tool", "/workspace", "2026-08-29T09:59:59.000Z"),
+        toolCallId: "msg:codex:run-1:tool-call:exec-1",
+        toolName: "command_execution",
+      },
+    ];
+
+    expect(
+      mergeMessagesForThreadRender(history, live, "codex").map((item) => item.id),
+    ).toEqual([
+      "history-user",
+      "history-commentary",
+      "history-tool",
+      "history-final",
+    ]);
+  });
 });
 
 describe("mergeLiveMessagesIntoRenderableMessages", () => {
@@ -96,6 +127,33 @@ describe("mergeLiveMessagesIntoRenderableMessages", () => {
       id: "assistant-live",
       content: "Hello",
     });
+  });
+});
+
+describe("mergeHistoricalMessages", () => {
+  it("keeps Codex turn item order when optimistic rows have later timestamps", () => {
+    const historical = [
+      message("codex-user", "user", "run tool", "2026-08-29T10:00:00.000Z"),
+      message("codex-commentary", "assistant", "Checking.", "2026-08-29T10:00:00.000Z"),
+      {
+        ...message("codex-tool", "tool", "/workspace", "2026-08-29T10:00:00.000Z"),
+        toolCallId: "exec-1",
+        toolName: "pwd",
+      },
+      message("codex-final", "assistant", "Done.", "2026-08-29T10:00:00.000Z"),
+    ];
+    const existing = [
+      message("local-user", "user", "run tool", "2026-08-29T10:00:01.000Z"),
+      {
+        ...message("live-tool", "tool", "/workspace", "2026-08-29T10:00:02.000Z"),
+        toolCallId: "msg:codex:run-1:tool-call:exec-1",
+        toolName: "pwd",
+      },
+    ];
+
+    expect(
+      mergeHistoricalMessages(existing, historical, "codex").map((item) => item.id),
+    ).toEqual(["codex-user", "codex-commentary", "codex-tool", "codex-final"]);
   });
 });
 
@@ -194,6 +252,90 @@ describe("replaceCompletedRunWithHistory", () => {
       "live-tool",
       "assistant-final",
     ]);
+  });
+
+  it("keeps a live tool when Codex replaces the Flowix user id in history", () => {
+    const existing = [
+      message("msg:codex:run-2:user:user-run-2", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      {
+        ...message("live-tool-2", "tool", "tool output", "2026-01-01T00:00:02.000Z"),
+        toolCallId: "msg:codex:run-2:tool-call:call-2",
+        toolName: "command_execution",
+      },
+      message("assistant-live-2", "assistant", "part", "2026-01-01T00:00:03.000Z"),
+    ];
+    const history = [
+      message("item-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("item-2", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
+    ];
+
+    expect(
+      replaceCompletedRunWithHistory(existing, history, "run-2", "codex").map(
+        (m) => m.id,
+      ),
+    ).toEqual([
+      "item-1",
+      "live-tool-2",
+      "item-2",
+    ]);
+  });
+
+  it("preserves live OpenCode tool display metadata during reconciliation", () => {
+    const liveTool = {
+      ...message(
+        "msg:opencode:run-3:tool:call-3",
+        "tool",
+        "output",
+        "2026-01-01T00:00:02.000Z",
+      ),
+      toolCallId: "msg:opencode:run-3:tool-call:call-3",
+      toolName: "bash",
+      toolInput: { command: "pwd", cwd: "/tmp" },
+      toolAgentType: "opencode" as const,
+      toolDisplay: { summary: "pwd", title: "pwd", kind: "command" as const },
+    };
+    const existing = [
+      message(
+        "msg:opencode:run-3:user:user-run-3",
+        "user",
+        "ask",
+        "2026-01-01T00:00:01.000Z",
+      ),
+      liveTool,
+      message("live-assistant-3", "assistant", "part", "2026-01-01T00:00:03.000Z"),
+    ];
+    const history = [
+      message(
+        "msg:opencode:run-3:user:user-run-3",
+        "user",
+        "ask",
+        "2026-01-01T00:00:01.000Z",
+      ),
+      {
+        ...message(
+          "msg:opencode:run-3:tool:call-3",
+          "tool",
+          "output",
+          "2026-01-01T00:00:02.000Z",
+        ),
+        toolCallId: "msg:opencode:run-3:tool-call:call-3",
+        toolName: "bash",
+      },
+      message("final-assistant-3", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
+    ];
+
+    const reconciled = replaceCompletedRunWithHistory(
+      existing,
+      history,
+      "run-3",
+      "opencode",
+    );
+    const tool = reconciled.find((item) => item.role === "tool");
+    expect(tool).toMatchObject({
+      toolInput: { command: "pwd", cwd: "/tmp" },
+      toolDisplay: { kind: "command", summary: "pwd" },
+      toolAgentType: "opencode",
+    });
   });
 });
 

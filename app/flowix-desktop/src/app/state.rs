@@ -36,7 +36,11 @@ pub struct AppState {
     /// Long-lived Codex App Server. Codex owns its thread history and model
     /// catalog; Flowix stores only the mapping to its local conversation.
     pub codex_app_server: Arc<crate::agent_external::codex::CodexAppServerManager>,
+    pub opencode: Arc<crate::agent_external::opencode::OpenCodeAcpManager>,
     pub deepseek_harness: Arc<crate::agent_external::deepseek_harness::DeepSeekHarnessManager>,
+    /// Product-level history policy and fallback orchestration. Runtime
+    /// adapters remain responsible for their own protocol and transcript.
+    pub agent_history: Arc<crate::agent_history::AgentHistoryService>,
     pub thread_manager: Arc<ThreadManager>,
     /// Agent 可访问目录 (notebook + 用户额外 folder), 持久化在
     /// `~/.flowix/agent-access.json`。驱动 external agent 的

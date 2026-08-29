@@ -20,7 +20,6 @@ import { listenToAgentAccessChanges } from '@platform/tauri/client';
  */
 export function AgentWindowEffects() {
   useAgentEvents();
-
   const refreshAgentRuntime = useAgentRuntimeStore((state) => state.refresh);
   useEffect(() => {
     void refreshAgentRuntime({ force: true });

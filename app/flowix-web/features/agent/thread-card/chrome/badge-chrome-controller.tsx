@@ -2,12 +2,13 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
-import { deepseekHarness } from "@platform/tauri/client";
+import { agent, deepseekHarness } from "@platform/tauri/client";
 import { type ThreadState } from "@features/agent/store/thread-runtime-state";
 import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { BadgeHoverCard } from "@features/agent/thread-card/badge-hover-card";
 import { computeAgentThreadCardBadgeData } from "@features/agent/thread-card/runtime/run-status-presenter";
+import { getResolvedExternalSessionId } from "@features/agent/services/external-agent-runtime-service";
 import { isThemeAdaptiveAgentIcon } from "@features/agent/components/agent-icon";
 
 export interface AgentThreadCardBadgeChromeControllerOptions {
@@ -174,7 +175,9 @@ export class AgentThreadCardBadgeChromeController {
 
   private renderHoverCardContent(): void {
     if (this.disposed) return;
-    const sessionId = this.getThreadId() ?? "";
+    const threadId = this.getThreadId() ?? "";
+    const externalThreadId =
+      getResolvedExternalSessionId(threadId) ?? threadId;
     const typeKey = this.getTypeKey();
     const { model, usage } =
       computeAgentThreadCardBadgeData({
@@ -186,7 +189,7 @@ export class AgentThreadCardBadgeChromeController {
       });
     this.hoverCardRoot.render(
       React.createElement(BadgeHoverCard, {
-        sessionId,
+        threadId: externalThreadId,
         model,
         usage,
         onRequestRuntimeInfo:
@@ -197,7 +200,20 @@ export class AgentThreadCardBadgeChromeController {
                   ? deepseekHarness.sessionUsage(currentSessionId)
                   : Promise.resolve(null);
               }
-            : undefined,
+            : typeKey === "opencode"
+              ? async () => ({
+                  sessionId:
+                    (await agent.getOpenCodeSessionId(threadId)) ?? undefined,
+                  usage: {},
+                })
+            : typeKey === "codex"
+              ? async () => {
+                  const sessionId = await agent.getCodexSessionId(threadId);
+                  const info = await agent.getCodexRuntimeInfo(sessionId);
+                  return { sessionId: sessionId ?? undefined, usage: info.usage ?? {}, codex: info };
+                }
+              : undefined,
+        codex: typeKey === "codex",
         cwd: this.getCwd() ?? undefined,
         onOpenChange: (open: boolean) =>
           this.handleHoverCardOpenChange(open),

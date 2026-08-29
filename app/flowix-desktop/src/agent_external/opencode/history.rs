@@ -1,43 +1,363 @@
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::process::Command;
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin};
 
-use super::binary::resolve_opencode_binary;
-use crate::agent_external::shared::configure_unix_process_group;
-use crate::agent_session::{ChatMessage, ThreadMessagesPage};
+use super::command::build_opencode_acp_command;
+use super::protocol;
+use crate::agent_external::shared::{chunk_payload_value, read_capped_line, MAX_STDOUT_LINE_BYTES};
+use crate::agent_external::AgentChunkMetadata;
+use crate::agent_session::store::materialize_external_messages;
+use crate::agent_session::{
+    AgentExternalEvent, ChatMessage, ThreadInfo, ThreadManager, ThreadMessagesPage,
+};
+use crate::agent_types::AgentId;
+use std::collections::HashMap;
 
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(30);
+const ACP_INITIALIZE_ID: u64 = 1;
+const ACP_REQUEST_ID: u64 = 2;
 
-/// Read OpenCode's own durable transcript for display-only fallback. Nothing
-/// from this path is written back into Flowix storage.
+/// Read OpenCode's durable transcript through ACP `session/load`. The ACP
+/// server replays the session as `session/update` notifications; nothing from
+/// this read path is written into Flowix's event table.
 pub async fn get_session_page(
-    session_id: &str,
+    thread_manager: &std::sync::Arc<ThreadManager>,
+    thread_id: &str,
     before_sequence: Option<i64>,
     limit: i64,
 ) -> Result<ThreadMessagesPage, String> {
-    let mut command = Command::new(resolve_opencode_binary());
-    command.arg("export").arg(session_id).kill_on_drop(true);
-    configure_unix_process_group(&mut command);
-    crate::process_window::hide_command_window(&mut command);
-
-    let output = tokio::time::timeout(EXPORT_TIMEOUT, command.output())
+    let session_id = thread_manager
+        .get_external_session(thread_id, "opencode")
         .await
-        .map_err(|_| "OpenCode history export timed out".to_string())?
-        .map_err(|error| format!("failed to export OpenCode session: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("OpenCode session export failed: {}", stderr.trim()));
-    }
-    let value: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("invalid OpenCode session export: {error}"))?;
-    let mut turns = export_to_turns(&value);
-    for turn in &mut turns {
-        crate::agent_external::canonicalize_imported_messages("opencode", session_id, turn);
-    }
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| thread_id.to_string());
+    let cwd = thread_manager
+        .read_frozen_cwd(thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .or(find_session_cwd(&session_id).await)
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
+    let updates = acp_load_session(&session_id, &cwd).await?;
+    let turns = updates_to_turns(&session_id, updates)?;
     Ok(paginate_turns(turns, before_sequence, limit))
 }
 
+pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let result = acp_request(&cwd, protocol::session_list_request(), false).await?;
+    Ok(result
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|session| {
+            let id = session.get("sessionId")?.as_str()?.to_string();
+            let title = session
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("OpenCode session")
+                .to_string();
+            let updated_at = session
+                .get("updatedAt")
+                .and_then(Value::as_str)
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| value.timestamp_millis())
+                .unwrap_or_default();
+            Some(ThreadInfo {
+                thread_id: id,
+                agent_id: AgentId("opencode".to_string()),
+                title,
+                created_at: updated_at,
+                updated_at,
+            })
+        })
+        .collect())
+}
+
+pub async fn supported_models() -> Result<Vec<String>, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let result = acp_request(&cwd, protocol::new_session_request(".", &[]), true).await?;
+    let models = result
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|option| option.get("id").and_then(Value::as_str) == Some("model"))
+        .and_then(|option| option.get("options"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option.get("value").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    Ok(models)
+}
+
+async fn acp_load_session(session_id: &str, cwd: &std::path::Path) -> Result<Vec<Value>, String> {
+    let request = protocol::load_session_request(session_id, &cwd.to_string_lossy(), &[]);
+    let (_, updates) = acp_exchange(cwd, request, true).await?;
+    Ok(updates)
+}
+
+async fn find_session_cwd(session_id: &str) -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let result = acp_request(&cwd, protocol::session_list_request(), false)
+        .await
+        .ok()?;
+    result
+        .get("sessions")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|session| session.get("sessionId").and_then(Value::as_str) == Some(session_id))
+        .and_then(|session| session.get("cwd").and_then(Value::as_str))
+        .map(std::path::PathBuf::from)
+}
+
+async fn acp_request(
+    cwd: &std::path::Path,
+    mut request: Value,
+    close_session: bool,
+) -> Result<Value, String> {
+    let id = request
+        .get("id")
+        .and_then(Value::as_u64)
+        .unwrap_or(ACP_REQUEST_ID);
+    let (mut child, mut stdin, mut stdout) = acp_process(cwd).await?;
+    let result = async {
+        write_json(&mut stdin, &request).await?;
+        let (result, _) = read_response(&mut stdout, &mut stdin, id, false).await?;
+        if close_session {
+            if let Some(session_id) = result.get("sessionId").and_then(Value::as_str) {
+                request = protocol::close_session_request(session_id);
+                write_json(&mut stdin, &request).await?;
+                let close_id = request.get("id").and_then(Value::as_u64).unwrap_or(3);
+                read_response(&mut stdout, &mut stdin, close_id, false).await?;
+            }
+        }
+        Ok(result)
+    }
+    .await;
+    let _ = child.kill().await;
+    result
+}
+
+async fn acp_exchange(
+    cwd: &std::path::Path,
+    request: Value,
+    collect_updates: bool,
+) -> Result<(Value, Vec<Value>), String> {
+    let id = request
+        .get("id")
+        .and_then(Value::as_u64)
+        .unwrap_or(ACP_REQUEST_ID);
+    let (mut child, mut stdin, mut stdout) = acp_process(cwd).await?;
+    let result = async {
+        write_json(&mut stdin, &request).await?;
+        read_response(&mut stdout, &mut stdin, id, collect_updates).await
+    }
+    .await;
+    let _ = child.kill().await;
+    result
+}
+
+async fn acp_process(
+    cwd: &std::path::Path,
+) -> Result<(Child, ChildStdin, BufReader<tokio::process::ChildStdout>), String> {
+    let mut command = build_opencode_acp_command(cwd, Some("read-only"), None);
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start OpenCode ACP: {error}"))?;
+    let setup = async {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to capture OpenCode ACP stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to capture OpenCode ACP stdout".to_string())?;
+        write_json(&mut stdin, &protocol::initialize_request()).await?;
+        let mut stdout = BufReader::new(stdout);
+        let _ = read_response(&mut stdout, &mut stdin, ACP_INITIALIZE_ID, false).await?;
+        Ok::<_, String>((stdin, stdout))
+    }
+    .await;
+    match setup {
+        Ok((stdin, stdout)) => Ok((child, stdin, stdout)),
+        Err(error) => {
+            let _ = child.kill().await;
+            Err(error)
+        }
+    }
+}
+
+async fn read_response(
+    stdout: &mut BufReader<tokio::process::ChildStdout>,
+    stdin: &mut ChildStdin,
+    id: u64,
+    collect_updates: bool,
+) -> Result<(Value, Vec<Value>), String> {
+    let mut updates = Vec::new();
+    let response = tokio::time::timeout(EXPORT_TIMEOUT, async {
+        loop {
+            let Some((line, truncated)) = read_capped_line(stdout, MAX_STDOUT_LINE_BYTES).await?
+            else {
+                return Err(format!("OpenCode ACP closed before response {id}"));
+            };
+            if truncated {
+                return Err("OpenCode ACP emitted an oversized JSON-RPC message".to_string());
+            }
+            let value: Value = serde_json::from_str(line.trim())
+                .map_err(|error| format!("invalid OpenCode ACP JSON-RPC: {error}"))?;
+            if let Some(server_response) = history_server_request_response(&value) {
+                write_json(stdin, &server_response).await?;
+                continue;
+            }
+            if collect_updates
+                && value.get("method").and_then(Value::as_str) == Some("session/update")
+            {
+                updates.push(value.clone());
+            }
+            if let Some(result) = protocol::response_result(&value, id) {
+                return result.map(|value| (value.clone(), updates));
+            }
+        }
+    })
+    .await
+    .map_err(|_| "OpenCode ACP request timed out".to_string())??;
+    Ok(response)
+}
+
+/// History reads never grant permissions. Still answer ACP server requests so
+/// a provider-side permission prompt cannot deadlock a read-only session.
+fn history_server_request_response(value: &Value) -> Option<Value> {
+    if value.get("method").and_then(Value::as_str) == Some("session/request_permission") {
+        let id = value.get("id")?.clone();
+        let option_id = value
+            .pointer("/params/options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|option| {
+                matches!(
+                    option.get("kind").and_then(Value::as_str),
+                    Some("reject_once" | "reject_always")
+                )
+            })
+            .and_then(|option| option.get("optionId"))
+            .cloned();
+        return Some(match option_id {
+            Some(option_id) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "outcome": { "outcome": "selected", "optionId": option_id } }
+            }),
+            None => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "outcome": { "outcome": "cancelled" } }
+            }),
+        });
+    }
+    protocol::unsupported_request_response(value)
+}
+
+async fn write_json(stdin: &mut ChildStdin, value: &Value) -> Result<(), String> {
+    let mut bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    stdin
+        .write_all(&bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    stdin.flush().await.map_err(|error| error.to_string())
+}
+
+fn updates_to_turns(
+    session_id: &str,
+    updates: Vec<Value>,
+) -> Result<Vec<Vec<ChatMessage>>, String> {
+    let mut tool_inputs = HashMap::new();
+    let mut events = Vec::new();
+    let mut event_id = 1i64;
+    let mut logical_message = 0usize;
+    let mut needs_new_assistant = false;
+    let event_time = chrono::Utc::now().timestamp_millis();
+    for update in updates {
+        let message_id = update.pointer("/params/messageId").and_then(Value::as_str);
+        let session_update = update
+            .pointer("/params/update/sessionUpdate")
+            .and_then(Value::as_str);
+        match session_update {
+            Some("user_message_chunk") | Some("tool_call") => {
+                logical_message += 1;
+                needs_new_assistant = true;
+            }
+            Some("agent_message_chunk") | Some("agent_thought_chunk")
+                if needs_new_assistant || logical_message == 0 =>
+            {
+                logical_message += 1;
+                needs_new_assistant = false;
+            }
+            Some("tool_call_update") if protocol::is_terminal_tool_update(&update) => {
+                needs_new_assistant = true;
+            }
+            _ => {}
+        }
+        let chunks = protocol::chunks_from_message(session_id, &update, &mut tool_inputs);
+        for mut chunk in chunks {
+            if let crate::agent_wire::AgentChunk::UserMessage { text, .. } = &mut chunk {
+                *text = visible_user_text(text);
+            }
+            let logical_source = format!("acp-history-message-{logical_message}");
+            let metadata = AgentChunkMetadata {
+                message_id: message_id.map(str::to_string),
+                source_message_id: match &chunk {
+                    crate::agent_wire::AgentChunk::Text { .. }
+                    | crate::agent_wire::AgentChunk::Reasoning { .. } => Some(logical_source),
+                    _ => None,
+                },
+                message_phase: Some("completed"),
+                ..AgentChunkMetadata::default()
+            };
+            let normalized = chunk_payload_value(&chunk, "opencode", "acp-history", &metadata)
+                .map_err(|error| error.to_string())?;
+            events.push(AgentExternalEvent {
+                id: event_id,
+                runtime: "opencode".to_string(),
+                thread_id: session_id.to_string(),
+                event_key: None,
+                normalized_json: normalized.to_string(),
+                raw_json: None,
+                created_at: event_time + event_id,
+            });
+            event_id += 1;
+        }
+    }
+    let messages = materialize_external_messages(events);
+    let mut turns = Vec::new();
+    for message in messages {
+        if message.role == "user" && !turns.is_empty() {
+            turns.push(Vec::new());
+        }
+        if turns.is_empty() {
+            turns.push(Vec::new());
+        }
+        turns.last_mut().unwrap().push(message);
+    }
+    Ok(turns)
+}
+
+// Kept only as a parser regression fixture while older export snapshots remain
+// useful for compatibility testing. Production history reads use ACP above.
+#[cfg(test)]
 fn export_to_turns(value: &Value) -> Vec<Vec<ChatMessage>> {
     let mut turns: Vec<Vec<ChatMessage>> = Vec::new();
     for message in value
@@ -123,6 +443,7 @@ fn export_to_turns(value: &Value) -> Vec<Vec<ChatMessage>> {
     turns
 }
 
+#[cfg(test)]
 fn tool_message(id: String, part: &Value, timestamp: i64) -> ChatMessage {
     let state = part.get("state").unwrap_or(&Value::Null);
     let status = state
@@ -165,6 +486,7 @@ fn visible_user_text(content: &str) -> String {
     content[..end].trim_end().to_string()
 }
 
+#[cfg(test)]
 fn history_message(id: String, role: &str, content: String, timestamp: i64) -> ChatMessage {
     ChatMessage {
         id,
@@ -209,6 +531,125 @@ fn paginate_turns(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converts_acp_updates_into_flowix_messages() {
+        let updates = vec![
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "messageId": "user-1",
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "hello\n<## CONTEXT PROMPT ##>\nprivate context" }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "messageId": "assistant-1",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "world" }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "messageId": "assistant-1",
+                    "update": {
+                        "sessionUpdate": "agent_thought_chunk",
+                        "content": { "type": "text", "text": "thinking" }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "messageId": "assistant-1",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call-1",
+                        "title": "Read",
+                        "rawInput": { "filePath": "README.md" }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "messageId": "assistant-1",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call-1",
+                        "status": "completed",
+                        "title": "Read",
+                        "rawOutput": "file contents"
+                    }
+                }
+            }),
+        ];
+
+        let turns = updates_to_turns("session-1", updates).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0][0].role, "user");
+        assert_eq!(turns[0][0].content, "hello");
+        assert_eq!(turns[0][1].role, "assistant");
+        assert_eq!(turns[0][1].content, "world");
+        assert_eq!(turns[0][2].role, "reasoning");
+        assert_eq!(turns[0][2].content, "thinking");
+        assert_eq!(turns[0][3].role, "tool");
+        assert!(turns[0][3]
+            .tool_call_id
+            .as_deref()
+            .is_some_and(|id| id.ends_with(":tool-call:call-1")));
+        assert_eq!(
+            turns[0][3].tool_input,
+            Some(serde_json::json!({ "filePath": "README.md" }))
+        );
+        assert_eq!(turns[0][3].content, "file contents");
+        assert_eq!(turns[0][3].is_completed, Some(true));
+    }
+
+    #[test]
+    fn keeps_assistant_messages_separate_across_tool_turns_without_acp_ids() {
+        let update = |extra: serde_json::Value| {
+            serde_json::json!({
+                "method": "session/update",
+                "params": { "messageId": null, "update": extra }
+            })
+        };
+        let updates = vec![
+            update(
+                serde_json::json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "first" } }),
+            ),
+            update(
+                serde_json::json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "first answer" } }),
+            ),
+            update(
+                serde_json::json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "second" } }),
+            ),
+            update(
+                serde_json::json!({ "sessionUpdate": "tool_call", "toolCallId": "call-2", "title": "Read", "rawInput": { "filePath": "README.md" } }),
+            ),
+            update(
+                serde_json::json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "completed", "title": "Read", "rawOutput": "ok" }),
+            ),
+            update(
+                serde_json::json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "second answer" } }),
+            ),
+        ];
+        let turns = updates_to_turns("session-1", updates).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert!(turns[0]
+            .iter()
+            .any(|message| message.content == "first answer"));
+        assert!(turns[1]
+            .iter()
+            .any(|message| message.content == "second answer"));
+    }
 
     #[test]
     fn parses_export_parts_and_strips_injected_user_context() {

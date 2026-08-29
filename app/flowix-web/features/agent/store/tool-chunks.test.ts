@@ -213,6 +213,31 @@ describe("tool chunk idempotency", () => {
     });
   });
 
+  it("keeps the streaming presentation when the result completes the tool", () => {
+    const started = applyToolCallChunk(
+      emptyState(),
+      "exec-1",
+      "exec_command",
+      { command: "pwd", cwd: "/tmp" },
+      "codex",
+    );
+    const startedDisplay = started.messages[0].toolDisplay;
+    const completed = applyToolResultChunk(
+      started,
+      "exec-1",
+      "command_execution",
+      { exit_code: 0, output: "/tmp" },
+      "codex",
+    );
+
+    expect(completed.messages[0]).toMatchObject({
+      toolName: "exec_command",
+      toolDisplay: startedDisplay,
+      content: expect.stringContaining("/tmp"),
+      isLoading: false,
+    });
+  });
+
   it("replaces repeated assistant snapshots with the same Codex message id", () => {
     const updated = applyTextChunk(
       applyTextChunk(emptyState(), "draft", {
