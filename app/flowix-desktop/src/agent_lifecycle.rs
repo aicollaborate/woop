@@ -13,6 +13,8 @@ use async_trait::async_trait;
 
 pub use crate::agent_external::runtime_registry::ExternalRuntimeKind;
 use crate::agent_external::codex::CodexAppServerManager;
+use crate::agent_external::hermes::HermesAcpManager;
+use crate::agent_external::opencode::OpenCodeAcpManager;
 use crate::agent_session::ThreadManager;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,9 +41,23 @@ pub struct AgentLifecycleService {
 }
 
 impl AgentLifecycleService {
-    pub fn new(threads: Arc<ThreadManager>, codex: Arc<CodexAppServerManager>) -> Self {
-        let adapters: [Arc<dyn ThreadLifecycleAdapter>; 1] =
-            [Arc::new(CodexLifecycleAdapter { threads, client: codex })];
+    pub fn new(
+        threads: Arc<ThreadManager>,
+        codex: Arc<CodexAppServerManager>,
+        opencode: Arc<OpenCodeAcpManager>,
+        hermes: Arc<HermesAcpManager>,
+    ) -> Self {
+        let adapters: [Arc<dyn ThreadLifecycleAdapter>; 3] = [
+            Arc::new(CodexLifecycleAdapter { threads: threads.clone(), client: codex }),
+            Arc::new(AcpLifecycleAdapter { threads: threads.clone(), runtime: ExternalRuntimeKind::OpenCode, delete: Arc::new(move |thread_id| {
+                let client = opencode.clone();
+                Box::pin(async move { client.delete_thread(thread_id).await })
+            }) }),
+            Arc::new(AcpLifecycleAdapter { threads, runtime: ExternalRuntimeKind::Hermes, delete: Arc::new(move |thread_id| {
+                let client = hermes.clone();
+                Box::pin(async move { client.delete_thread(thread_id).await })
+            }) }),
+        ];
         Self::try_from_adapters(adapters)
             .expect("built-in lifecycle adapters must have unique runtime keys")
     }
@@ -85,6 +101,32 @@ impl AgentLifecycleService {
 struct CodexLifecycleAdapter {
     threads: Arc<ThreadManager>,
     client: Arc<CodexAppServerManager>,
+}
+
+type DeleteProvider = Arc<dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send>> + Send + Sync>;
+
+struct AcpLifecycleAdapter {
+    threads: Arc<ThreadManager>,
+    runtime: ExternalRuntimeKind,
+    delete: DeleteProvider,
+}
+
+#[async_trait]
+impl ThreadLifecycleAdapter for AcpLifecycleAdapter {
+    fn runtime(&self) -> ExternalRuntimeKind { self.runtime }
+
+    async fn apply(&self, thread_id: &str, action: LifecycleAction) -> Result<bool, String> {
+        if action == LifecycleAction::Archive {
+            return Ok(false);
+        }
+        let session_id = self
+            .threads
+            .get_external_session(thread_id, self.runtime.key())
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| thread_id.to_string());
+        (self.delete)(&session_id).await
+    }
 }
 
 #[async_trait]
@@ -156,6 +198,8 @@ mod tests {
         let service = AgentLifecycleService::new(
             threads.clone(),
             Arc::new(CodexAppServerManager::new(threads)),
+            Arc::new(OpenCodeAcpManager::new(threads.clone())),
+            Arc::new(HermesAcpManager::new(threads)),
         );
 
         // A type without a lifecycle adapter must not fail the delete.

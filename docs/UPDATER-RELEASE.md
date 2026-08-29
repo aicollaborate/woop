@@ -7,8 +7,8 @@ Flowix ships per-platform update manifests and static website downloads:
   group's binaries and pins its own top-level `version`.
 - **Version-prefixed R2 artifacts** (`v<version>/...`) that the manifests point
   at. These are immutable per release. The client trusts the HTTPS-served
-  manifest, verifies the downloaded artifact against the manifest's SHA-256
-  value, and does not require minisign/Tauri updater signatures.
+  manifest and verifies the downloaded artifact against the manifest's
+  SHA-256 value.
 
 Per-platform updater manifests live on R2 (under `${FLOWIX_R2_PUBLIC_BASE}/${FLOWIX_R2_UPDATER_PREFIX}/`) so each release can overwrite the stable URL without rebuilding flowix-home. The split exists so that macOS and Windows can ship on independent cadences —
 macOS can publish `1.3.0` while Windows stays on `1.2.4` without confusing

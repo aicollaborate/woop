@@ -190,6 +190,8 @@ pub fn run() {
     let agent_lifecycle = Arc::new(crate::agent_lifecycle::AgentLifecycleService::new(
         thread_manager_arc.clone(),
         codex_app_server.clone(),
+        opencode_acp_manager.clone(),
+        hermes_acp_manager.clone(),
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook

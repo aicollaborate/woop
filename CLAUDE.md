@@ -197,8 +197,6 @@ CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和
 | `APPLE_ID` | notarytool 备用（仅 keychain-profile 模式不需要） |
 | `APPLE_KEYCHAIN_PROFILE` | notarytool 走 keychain auth（推荐）；可替换为 `APPLE_APP_SPECIFIC_PASSWORD` fallback |
 
-> 注：仓库历史上使用过 minisign 做 updater 签名校验，但 Tauri updater 现已完全关闭（`tauri.conf.json` 的 `plugins` 为空），DSH 运行时只校验 SHA-256 + HTTPS（见 `app/flowix-desktop/src/dsh/verify.rs`）。不再需要 minisign 私钥 / 公钥，文档不再保留相关字段。如果以后重新启用 updater，再恢复这一节。
-
 ### 关键路径与发现
 
 | 知识点 | 详细 |

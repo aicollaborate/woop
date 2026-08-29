@@ -78,6 +78,14 @@ pub async fn list_sessions() -> Result<Vec<ThreadInfo>, String> {
         .collect())
 }
 
+pub async fn delete_session(session_id: &str, cwd: &std::path::Path) -> Result<bool, String> {
+    crate::agent_external::acp_lifecycle::delete_session(
+        build_opencode_acp_command(cwd, Some("read-only"), None),
+        session_id,
+    )
+    .await
+}
+
 pub async fn supported_models() -> Result<Vec<String>, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let result = acp_request(&cwd, protocol::new_session_request(".", &[]), true).await?;

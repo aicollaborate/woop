@@ -71,10 +71,8 @@ FLOWIX_DSH_TARGETS=node24-windows-x64 \
 bash scripts/release-dsh.sh
 ```
 
-Publishing only needs Wrangler/R2 credentials — DSH artifacts are not
-minisign-signed; the in-app updater pins each release by SHA-256. Each
-platform release updates only its stable
-`dsh/{macos|windows|linux}/latest.json` pointer.
+Publishing only needs Wrangler/R2 credentials. Each platform release
+updates only its stable `dsh/{macos|windows|linux}/latest.json` pointer.
 
 ## 3. Flowix Windows installer
 

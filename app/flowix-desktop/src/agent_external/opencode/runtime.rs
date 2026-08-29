@@ -251,6 +251,22 @@ impl OpenCodeAcpManager {
         Ok(threads)
     }
 
+    pub async fn delete_thread(&self, thread_id: &str) -> Result<bool, String> {
+        let session_id = self
+            .thread_manager
+            .get_external_session(thread_id, AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| thread_id.to_string());
+        let cwd = crate::agent_external::acp_lifecycle::cwd_or_current(
+            self.thread_manager
+                .read_frozen_cwd(thread_id)
+                .await
+                .map_err(|error| error.to_string())?,
+        );
+        super::history::delete_session(&session_id, &cwd).await
+    }
+
     pub async fn supported_models(&self) -> Result<Vec<String>, String> {
         {
             let cache = self.model_cache.lock().await;
