@@ -347,9 +347,6 @@ jobs:
           while IFS= read -r archive; do
             name="$(basename "$archive")"
             wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$name" --file "$archive" --remote
-            if [[ -f "${archive}.minisig" ]]; then
-              wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$name.minisig" --file "${archive}.minisig" --remote
-            fi
           done < <(find .build/dsh-artifacts -name 'Flowix-DSH_*' -type f -print)
           wrangler r2 object put "$DSH_R2_BUCKET/$prefix/dsh-latest.json" \
             --file .build/dsh-latest.json --remote

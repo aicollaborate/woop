@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Upload the signed archive and manifest to the configured R2 bucket
+        description: Upload the archive and manifest to the configured R2 bucket
         required: true
         default: false
         type: boolean
@@ -37,11 +37,8 @@ jobs:
           npm --prefix dsh-flowix-host run check
           npm --prefix dsh-flowix-host run test:e2e
 
-      - name: Package signed Windows DSH archive
+      - name: Package Windows DSH archive
         shell: pwsh
-        env:
-          FLOWIX_DSH_REQUIRE_SIGNATURE: '1'
-          FLOWIX_DSH_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run dsh:package -- --targets=node24-windows-x64
 
       - uses: actions/upload-artifact@v4
@@ -81,7 +78,4 @@ jobs:
           archive=$(find dsh-release -type f -name 'Flowix-DSH_*windows-x64*' -print -quit)
           test -n "$archive"
           wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$(basename "$archive")" --file "$archive" --remote
-          if [[ -f "${archive}.minisig" ]]; then
-            wrangler r2 object put "$DSH_R2_BUCKET/$prefix/$(basename "$archive").minisig" --file "${archive}.minisig" --remote
-          fi
           echo "Windows archive published. Stable manifests are published only by the full release matrix."

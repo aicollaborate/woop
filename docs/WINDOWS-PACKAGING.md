@@ -11,7 +11,6 @@ Flowix, DSH, and `flowix-cli` are separate build products. Flowix embeds only
 - Visual Studio C++ Build Tools and Windows SDK
 - Git Bash for the shell-based release helpers
 - `signtool.exe` and the Windows signing certificate for signed releases
-- `minisign` when producing signed DSH archives
 
 Install JavaScript dependencies from a clean checkout with `npm ci`. DSH also
 uses its locked private pnpm installation; its build script prepares this
@@ -72,8 +71,8 @@ FLOWIX_DSH_TARGETS=node24-windows-x64 \
 bash scripts/release-dsh.sh
 ```
 
-Publishing requires `FLOWIX_DSH_SIGNING_PRIVATE_KEY` or
-`FLOWIX_DSH_SIGNING_PRIVATE_KEY_PATH`, plus Wrangler/R2 credentials. Each
+Publishing only needs Wrangler/R2 credentials — DSH artifacts are not
+minisign-signed; the in-app updater pins each release by SHA-256. Each
 platform release updates only its stable
 `dsh/{macos|windows|linux}/latest.json` pointer.
 

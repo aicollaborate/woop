@@ -9,15 +9,13 @@
       "url": "https://download.flowix-memo.com/dsh/v1.0.1/Flowix-DSH_1.0.1_node24-macos-arm64.tar.gz?sha256=4efc554fca3e72957d5322dc6e3e744d71995aeda79004d1893e4cfd54950d0b",
       "sha256": "4efc554fca3e72957d5322dc6e3e744d71995aeda79004d1893e4cfd54950d0b",
       "sizeBytes": 57793710,
-      "buildId": "FL1D30BA",
-      "signature": "untrusted comment: signature from minisign secret key\nRURQS0IgNmon6kdrkOkGiPQKJSUFB0hCSE9ybawb6gF8kStRUk/1dE83XjFd+keQ6cpLEZ/Iy6E35Njte+Wmb26rwSMMNxs0Fg0=\ntrusted comment: timestamp:1787491416\tfile:Flowix-DSH_1.0.1_node24-macos-arm64.tar.gz\thashed\naWCdajnmgfCCL/ikUuAh6C/kS17cvoARxLcjWnrEPd1KST2nclxqH0+48+apjMn4yMsTSsp9WDvtVOwngMqSDg==\n"
+      "buildId": "FL1D30BA"
     },
     "darwin-x86_64": {
       "url": "https://download.flowix-memo.com/dsh/v1.0.1/Flowix-DSH_1.0.1_node24-macos-x64.tar.gz?sha256=df8d5a656ea7581fc1b4a98e291bb9da563bc0d35cafb1fdc97295b0b5ee8aba",
       "sha256": "df8d5a656ea7581fc1b4a98e291bb9da563bc0d35cafb1fdc97295b0b5ee8aba",
       "sizeBytes": 60267240,
-      "buildId": "FL1D30BA",
-      "signature": "untrusted comment: signature from minisign secret key\nRURQS0IgNmon6kklCpEUZbNCHEowobNvMN7GOJAsKlMS9IE6vFIjKwWC5/7V4RgnwiKupOolNevwRbiwVNlRr4obkaPziDud8AE=\ntrusted comment: timestamp:1787491438\tfile:Flowix-DSH_1.0.1_node24-macos-x64.tar.gz\thashed\nUokAatOrxmfzHXM+dU+GBPQKmBuINHnEvfl8NneA0sPdhJwHiCq0qGZhJ1lavd2CFcK6Wyd7fw+3bJSgUX02BA==\n"
+      "buildId": "FL1D30BA"
     }
   }
 }

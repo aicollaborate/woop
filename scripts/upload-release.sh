@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/upload-release.sh — publish a Flowix release's macOS installers
 # to GitHub Releases, with a strict allow-list so accidental files
-# (update.json, app.tar.gz, .minisig, ...) never end up as release assets.
+# (update.json, app.tar.gz, debug logs, ...) never end up as release assets.
 #
 # Usage:
 #   ./scripts/upload-release.sh <tag> [source-dir]
