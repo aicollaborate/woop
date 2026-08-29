@@ -10,7 +10,6 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { RuntimeSpec } from "../protocol/v1.ts";
 import { disabledPluginKeys } from "./plugin-directory.ts";
 import { applyPluginDisables } from "./plugin-composition.ts";
@@ -77,7 +76,8 @@ export function runtimeEnvironment(spec: RuntimeSpec): NodeJS.ProcessEnv {
   }
   env.DSH_CWD = spec.cwd;
   // The Flowix composition is a normal DSH profile overlay. The profile owns
-  // the bridge plugin; the base cordis config owns the DSH runtime roster.
+  // the dsh-appserver bundle (which now hosts the flowix.bridge.* protocol);
+  // the base cordis config owns the DSH runtime roster.
   env.DSH_PROFILE = "flowix";
   env.FLOWIX_DSH_SDK_SERVER = sdkJsonRpcServerEntry();
   // Flowix owns the harness home. Point the harness's own resolver (skills,
@@ -146,18 +146,6 @@ export function ensureFlowixProfile(): void {
     throw new Error("DSH App Server bundle is missing; reinstall the DSH package");
   }
   copyProfilePackage(appServerSourceDir, join(profileDir, "node_modules", "dsh-appserver"));
-  const bridgeSourceDir = join(sourceDir, "node_modules", "@flowix", "dsh-flowix-bridge");
-  if (!existsSync(join(bridgeSourceDir, "package.json"))) {
-    throw new Error("Flowix DSH bridge bundle is missing; reinstall the DSH package");
-  }
-  copyProfilePackage(bridgeSourceDir, join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge"));
-  const installedBridgePatch = join(profileDir, "node_modules", "@flowix", "dsh-flowix-bridge", "cordis.patch.yml");
-  const sdkServerEntry = pathToFileURL(sdkJsonRpcServerEntry()).href;
-  writeFileSync(
-    installedBridgePatch,
-    readFileSync(installedBridgePatch, "utf8").replace("__FLOWIX_DSH_SDK_SERVER__", JSON.stringify(sdkServerEntry)),
-    { encoding: "utf8", mode: 0o600 },
-  );
 
   const manifestPath = join(profileDir, "package.json");
   if (!existsSync(manifestPath)) {
