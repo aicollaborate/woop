@@ -10,14 +10,18 @@ import {
   getInitialThreadHistory,
   HISTORY_PAGE_SIZE,
   areMessagesEquivalent,
-  historyContainsCachedUser,
+  historyCoversLiveTurn,
   mergeHistoricalMessages,
   mergeMessagesForThreadRender,
   mergeLiveMessagesIntoRenderableMessages,
   prependHistoricalMessages,
-  replaceCompletedRunWithHistory,
   trySwapLastLiveMessage,
 } from "@features/agent/store/thread-history";
+import {
+  historyRevision,
+  isOlderHistorySnapshot,
+  reconcileHistorySnapshot,
+} from "@features/agent/store/history-sync";
 
 type SessionSet = (
   updater: (state: HistoryContext) => Partial<HistoryContext> | HistoryContext,
@@ -79,6 +83,7 @@ export function createThreadHistorySlice(
         pendingAssistantId: projection.pending.assistantId,
         pendingReasoningId: projection.pending.reasoningId,
         oldestSequence: projection.pagination.oldestSequence,
+        snapshotSequence: projection.pagination.snapshotSequence,
         hasMoreHistory: projection.pagination.hasMoreHistory,
         loadingInitial: projection.pagination.loadingInitial,
         loadingMore: projection.pagination.loadingMore,
@@ -166,14 +171,21 @@ export function createThreadHistorySlice(
       if (get().threadProjections[threadId]?.pagination.loadingInitial) return;
       if (get().threadTombstones[threadId]) return;
       const requestEpoch = get().threadEpochs[threadId] ?? 0;
-      get().setThreadProjection(threadId, (projection) => ({
-        ...projection,
-        pagination: {
-          ...projection.pagination,
-          initialStatus: "loading",
-          loadingInitial: true,
-        },
-      }));
+      const isInitialLoad =
+        (get().threadProjections[threadId]?.messages.length ?? 0) === 0;
+      // Refresh/reconciliation is stale-while-revalidate: an already rendered
+      // conversation must not enter loading or invalidate its projection just
+      // because a silent snapshot request started.
+      if (isInitialLoad) {
+        get().setThreadProjection(threadId, (projection) => ({
+          ...projection,
+          pagination: {
+            ...projection.pagination,
+            initialStatus: "loading",
+            loadingInitial: true,
+          },
+        }));
+      }
       try {
         const page = await getInitialThreadHistory(
           agentType,
@@ -183,44 +195,89 @@ export function createThreadHistorySlice(
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         const messages = filterRenderableHistoryMessages(page.messages);
         const cached = agentType === "codex" ? get().codexLiveTurns[threadId] : undefined;
-        get().setThreadProjection(threadId, (projection) => ({
-          ...projection,
-          messages: cached
+        get().setThreadProjection(threadId, (projection) => {
+          if (
+            isOlderHistorySnapshot(
+              projection.pagination.snapshotSequence,
+              page.snapshotSequence,
+            )
+          ) {
+            return projection;
+          }
+          const reconciled = cached
             // The persisted page is the history base; the cached run is only
             // a live tail overlay. Passing these in the opposite order makes
             // a new optimistic Codex user row become the list head.
-            ? mergeMessagesForThreadRender({
-                history: messages,
-                live: cached.messages,
+            ? cached.status === "awaiting_snapshot"
+              ? reconcileHistorySnapshot({
+                  agentType,
+                  current: projection.messages,
+                  snapshot: {
+                    messages,
+                    revision: historyRevision(page.snapshotSequence),
+                    oldestCursor: page.oldestSequence,
+                    hasMore: page.hasMore,
+                  },
+                  reason: "run_completed",
+                  runId: cached.runId,
+                }).messages
+              : mergeMessagesForThreadRender({
+                  history: messages,
+                  live: cached.messages,
+                  agentType,
+                })
+            : reconcileHistorySnapshot({
                 agentType,
-              })
-            : mergeHistoricalMessages(projection.messages, messages, agentType),
-          pagination: {
+                current: projection.messages,
+                snapshot: {
+                  messages,
+                  revision: historyRevision(page.snapshotSequence),
+                  oldestCursor: page.oldestSequence,
+                  hasMore: page.hasMore,
+                },
+                reason: "open",
+              }).messages;
+          const pagination = {
             initialStatus: "ready",
             oldestSequence: page.oldestSequence,
+            snapshotSequence: page.snapshotSequence ?? null,
             hasMoreHistory: page.hasMore,
             loadingInitial: false,
             loadingMore: false,
-          },
-        }));
+          } as const;
+          const messagesUnchanged = reconciled === projection.messages;
+          const paginationUnchanged =
+            projection.pagination.initialStatus === pagination.initialStatus &&
+            projection.pagination.oldestSequence === pagination.oldestSequence &&
+            (projection.pagination.snapshotSequence ?? null) ===
+              pagination.snapshotSequence &&
+            projection.pagination.hasMoreHistory === pagination.hasMoreHistory &&
+            projection.pagination.loadingInitial === pagination.loadingInitial &&
+            projection.pagination.loadingMore === pagination.loadingMore;
+          return messagesUnchanged && paginationUnchanged
+            ? projection
+            : { ...projection, messages: reconciled, pagination };
+        });
         if (
           agentType === "codex" &&
           cached?.status === "awaiting_snapshot" &&
-          historyContainsCachedUser(messages, cached.messages)
+          historyCoversLiveTurn(messages, cached.messages)
         ) {
           get().clearCodexLiveTurn(threadId, cached.runId);
         }
       } catch (error) {
         console.error("[AgentSession] Failed to load messages:", error);
         if (!isRequestCurrent(threadId, requestEpoch)) return;
-        get().setThreadProjection(threadId, (projection) => ({
-          ...projection,
-          pagination: {
-            ...projection.pagination,
-            initialStatus: "error",
-            loadingInitial: false,
-          },
-        }));
+        if (isInitialLoad) {
+          get().setThreadProjection(threadId, (projection) => ({
+            ...projection,
+            pagination: {
+              ...projection.pagination,
+              initialStatus: "error",
+              loadingInitial: false,
+            },
+          }));
+        }
       }
     },
     reconcileCompletedRun: async (agentType, threadId, runId) => {
@@ -243,21 +300,37 @@ export function createThreadHistorySlice(
               agentType !== "codex" ||
               !cached ||
               cached.runId !== runId ||
-              historyContainsCachedUser(historicalMessages, cached.messages)
+              !cached.messages.some((message) => message.role === "user") ||
+              historyCoversLiveTurn(historicalMessages, cached.messages)
             ) break;
           }
           if (!page) return;
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         get().setThreadProjection(threadId, (projection) => {
-          const messages = replaceCompletedRunWithHistory(
-            projection.messages,
-            historicalMessages,
-            runId,
+          if (
+            isOlderHistorySnapshot(
+              projection.pagination.snapshotSequence,
+              page.snapshotSequence,
+            )
+          ) {
+            return projection;
+          }
+          const messages = reconcileHistorySnapshot({
             agentType,
-          );
+            current: projection.messages,
+            snapshot: {
+              messages: historicalMessages,
+              revision: historyRevision(page.snapshotSequence),
+              oldestCursor: page.oldestSequence,
+              hasMore: page.hasMore,
+            },
+            reason: "run_completed",
+            runId,
+          }).messages;
           const nextPagination = {
             initialStatus: "ready" as const,
             oldestSequence: page.oldestSequence,
+            snapshotSequence: page.snapshotSequence ?? null,
             hasMoreHistory: page.hasMore,
             loadingInitial: false,
             loadingMore: false,
@@ -287,7 +360,7 @@ export function createThreadHistorySlice(
         if (agentType === "codex") {
           const cached = get().codexLiveTurns[threadId];
           if (cached && cached.runId === runId) {
-            if (historyContainsCachedUser(historicalMessages, cached.messages)) {
+            if (historyCoversLiveTurn(historicalMessages, cached.messages)) {
               get().clearCodexLiveTurn(threadId, runId);
             }
           }
@@ -329,24 +402,40 @@ export function createThreadHistorySlice(
           threadId,
           current.pagination.oldestSequence,
           HISTORY_PAGE_SIZE,
+          current.pagination.snapshotSequence,
         );
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         const messages = filterRenderableHistoryMessages(page.messages);
-        get().setThreadProjection(threadId, (projection) => ({
-          ...projection,
-          messages: prependHistoricalMessages(
-            projection.messages,
-            messages,
-            agentType,
-          ),
-          pagination: {
-            oldestSequence:
-              page.oldestSequence ?? projection.pagination.oldestSequence,
-            hasMoreHistory: page.hasMore,
-            loadingInitial: false,
-            loadingMore: false,
-          },
-        }));
+        get().setThreadProjection(threadId, (projection) => {
+          const currentSnapshot = projection.pagination.snapshotSequence;
+          if (
+            currentSnapshot != null &&
+            page.snapshotSequence != null &&
+            currentSnapshot !== page.snapshotSequence
+          ) {
+            return {
+              ...projection,
+              pagination: { ...projection.pagination, loadingMore: false },
+            };
+          }
+          return {
+            ...projection,
+            messages: prependHistoricalMessages(
+              projection.messages,
+              messages,
+              agentType,
+            ),
+            pagination: {
+              oldestSequence:
+                page.oldestSequence ?? projection.pagination.oldestSequence,
+              snapshotSequence:
+                page.snapshotSequence ?? currentSnapshot ?? null,
+              hasMoreHistory: page.hasMore,
+              loadingInitial: false,
+              loadingMore: false,
+            },
+          };
+        });
       } catch (error) {
         console.error("[AgentSession] Failed to load more messages:", error);
         if (!isRequestCurrent(threadId, requestEpoch)) return;

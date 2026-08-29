@@ -4,6 +4,7 @@ import type { ChatMessage } from "@/types";
 import {
   areMessagesEquivalent,
   filterRenderableHistoryMessages,
+  historyCoversLiveTurn,
   mergeHistoricalMessages,
   mergeLiveMessagesIntoRenderableMessages,
   mergeMessagesForThreadRender,
@@ -25,6 +26,26 @@ function message(
 }
 
 describe("mergeMessagesForThreadRender", () => {
+  it("does not accept a terminal snapshot that still misses a live Codex row", () => {
+    const user = message("user-live", "user", "ask", "2026-01-01T00:00:00Z");
+    const assistant = message("assistant-live", "assistant", "done", "2026-01-01T00:00:01Z");
+    expect(
+      historyCoversLiveTurn(
+        [message("user-provider", "user", "ask", "2026-01-01T00:00:00Z")],
+        [user, assistant],
+      ),
+    ).toBe(false);
+    expect(
+      historyCoversLiveTurn(
+        [
+          message("user-provider", "user", "ask", "2026-01-01T00:00:00Z"),
+          message("assistant-provider", "assistant", "done", "2026-01-01T00:00:01Z"),
+        ],
+        [user, assistant],
+      ),
+    ).toBe(true);
+  });
+
   it("removes the system context from historical user messages", () => {
     expect(filterRenderableHistoryMessages([
       message(

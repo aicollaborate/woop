@@ -6,6 +6,8 @@ export interface ThreadHistoryPage {
   messages: ChatMessage[];
   oldestSequence: number | null;
   hasMore: boolean;
+  /** Pins subsequent pages to the same provider/journal snapshot when supported. */
+  snapshotSequence?: number | null;
 }
 
 export interface AgentHistoryAdapter {
@@ -18,6 +20,7 @@ export interface AgentHistoryAdapter {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence?: number | null,
   ): Promise<ThreadHistoryPage>;
 }
 
@@ -31,8 +34,13 @@ function createCodexHistoryAdapter(): AgentHistoryAdapter {
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getCodexThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getCodexThreadPage(threadId, beforeSequence, limit),
+    getPage: (threadId, beforeSequence, limit, snapshotSequence) =>
+      agentClient.getCodexThreadPage(
+        threadId,
+        beforeSequence,
+        limit,
+        snapshotSequence,
+      ),
   };
 }
 
@@ -46,8 +54,13 @@ function createClaudeHistoryAdapter(): AgentHistoryAdapter {
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getClaudeThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getClaudeThreadPage(threadId, beforeSequence, limit),
+    getPage: (threadId, beforeSequence, limit, snapshotSequence) =>
+      agentClient.getClaudeThreadPage(
+        threadId,
+        beforeSequence,
+        limit,
+        snapshotSequence,
+      ),
   };
 }
 
@@ -61,8 +74,13 @@ function createHermesHistoryAdapter(): AgentHistoryAdapter {
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getHermesThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getHermesThreadPage(threadId, beforeSequence, limit),
+    getPage: (threadId, beforeSequence, limit, snapshotSequence) =>
+      agentClient.getHermesThreadPage(
+        threadId,
+        beforeSequence,
+        limit,
+        snapshotSequence,
+      ),
   };
 }
 
@@ -90,8 +108,13 @@ function createOpenCodeHistoryAdapter(): AgentHistoryAdapter {
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getOpenCodeThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getOpenCodeThreadPage(threadId, beforeSequence, limit),
+    getPage: (threadId, beforeSequence, limit, snapshotSequence) =>
+      agentClient.getOpenCodeThreadPage(
+        threadId,
+        beforeSequence,
+        limit,
+        snapshotSequence,
+      ),
   };
 }
 
@@ -105,8 +128,13 @@ function createDeepSeekHarnessHistoryAdapter(): AgentHistoryAdapter {
     },
     getInitialHistory: (threadId, limit) =>
       agentClient.getDeepSeekHarnessThreadPage(threadId, null, limit),
-    getPage: (threadId, beforeSequence, limit) =>
-      agentClient.getDeepSeekHarnessThreadPage(threadId, beforeSequence, limit),
+    getPage: (threadId, beforeSequence, limit, snapshotSequence) =>
+      agentClient.getDeepSeekHarnessThreadPage(
+        threadId,
+        beforeSequence,
+        limit,
+        snapshotSequence,
+      ),
   };
 }
 

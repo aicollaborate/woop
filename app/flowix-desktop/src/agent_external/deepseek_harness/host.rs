@@ -303,13 +303,22 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
         // Repository development owns its local host/runtime path. It must not
         // depend on the release-only managed installer (whose manifest may not
         // publish an artifact for the current platform yet).
-        // In debug builds the dev bundle is the source of truth. Refuse to
-        // fall through to an installed production bundle.
-        if dev_script.is_file() {
+        // In debug builds prefer the source-backed dev bundle when its
+        // upstream CLI and SDK outputs are both present.
+        if dev_script.is_file() && development_runtime_available(&source_root) {
             return command_for_host_path_with_root(dev_script, Some(source_root.clone()));
         }
+        // A stale `.build/flowix-dsh-host` is possible when the generated
+        // upstream checkout was cleaned independently. In that case use the
+        // installed managed runtime if one is available; otherwise report a
+        // setup error before starting a host that can only fail on reconnect.
+        if let Some(managed) = crate::dsh::managed_launch_spec() {
+            let mut command = Command::new(&managed.executable);
+            command.args(&managed.args);
+            return Ok((command, managed.root));
+        }
         return Err(format!(
-            "dsh-host dev bundle missing at {}; run `npm run dsh:build:dev`",
+            "DSH development runtime is incomplete under {}; run `npm run dsh:build:dev`",
             dev_script.display(),
         ));
     }
@@ -325,6 +334,15 @@ fn resolve_host_command() -> Result<(Command, PathBuf), String> {
         return Ok((command, managed.root));
     }
     Err("DeepSeek Harness runtime is not installed".to_string())
+}
+
+fn development_runtime_available(source_root: &Path) -> bool {
+    source_root
+        .join("vendor/deepseek-harness/apps/cli/lib/bin.js")
+        .is_file()
+        && source_root
+            .join("vendor/deepseek-harness/packages/sdk/server/lib/index.js")
+            .is_file()
 }
 
 /// Resolve the Flowix CLI that the independently installed DSH memory plugin

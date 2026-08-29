@@ -100,13 +100,14 @@ impl AgentHistoryService {
         runtime: ExternalRuntimeKind,
         thread_id: &str,
         before_sequence: Option<i64>,
+        snapshot_sequence: Option<i64>,
         limit: i64,
     ) -> Result<ThreadMessagesPage, String> {
         self.adapter(runtime)?
             .read_page(HistoryPageRequest {
                 thread_id,
                 before_sequence,
-                snapshot_sequence: None,
+                snapshot_sequence,
                 limit,
             })
             .await
@@ -261,7 +262,7 @@ mod tests {
     async fn missing_adapter_fails_explicitly() {
         let service = AgentHistoryService::try_from_adapters([]).unwrap();
         let error = match service
-            .read_page(ExternalRuntimeKind::Hermes, "thread-1", None, 50)
+            .read_page(ExternalRuntimeKind::Hermes, "thread-1", None, None, 50)
             .await
         {
             Ok(_) => panic!("missing adapter should fail"),

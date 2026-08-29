@@ -56,10 +56,19 @@ impl ThreadManager {
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             WHERE NOT (
+                 i.agent = 'opencode'
+                 AND ti.id GLOB 'ses_*'
+                 AND i.id = 'legacy-' || ti.id
+                 AND legacy.instance_id IS NULL
+             )
              ORDER BY i.updated_at DESC, i.id DESC
              LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map(params![limit as i64, offset as i64], Self::row_to_agent_conversation_instance)?;
+        let rows = stmt.query_map(
+            params![limit as i64, offset as i64],
+            Self::row_to_agent_conversation_instance,
+        )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -75,6 +84,12 @@ impl ThreadManager {
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             WHERE NOT (
+                 i.agent = 'opencode'
+                 AND ti.id GLOB 'ses_*'
+                 AND i.id = 'legacy-' || ti.id
+                 AND legacy.instance_id IS NULL
+             )
              ORDER BY i.updated_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_agent_conversation_instance)?;
@@ -101,8 +116,17 @@ impl ThreadManager {
     ) -> Result<usize, ThreadError> {
         let conn = self.lock_conn();
         let count = conn.query_row(
-            "SELECT COUNT(*) FROM agent_instances
-             WHERE ?1 IS NULL OR notebook_id = ?1",
+            "SELECT COUNT(*)
+             FROM agent_instances i
+             LEFT JOIN threads_index ti ON ti.instance_id = i.id
+             LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+             WHERE (?1 IS NULL OR i.notebook_id = ?1)
+               AND NOT (
+                   i.agent = 'opencode'
+                   AND ti.id GLOB 'ses_*'
+                   AND i.id = 'legacy-' || ti.id
+                   AND legacy.instance_id IS NULL
+               )",
             params![notebook_id],
             |row| row.get::<_, i64>(0),
         )?;

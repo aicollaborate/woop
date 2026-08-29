@@ -604,6 +604,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "status.agent.conversationNotFound": "Conversation not found",
     "status.agent.archiveFailed": "Failed to archive conversation",
     "status.agent.deleteFailed": "Failed to delete conversation",
+    "status.agent.archiveSuccess": "Conversation archived",
+    "status.agent.deleteSuccess": "Conversation deleted",
     "document.agent.viewInNote": "View in note",
     "document.agent.moreActions": "More actions",
     "document.agent.archiveConversation": "Archive conversation",

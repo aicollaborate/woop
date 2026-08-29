@@ -227,28 +227,20 @@ impl OpenCodeAcpManager {
             .list_external_session_bindings(AGENT_TYPE)
             .await
             .map_err(|error| error.to_string())?;
-        let mut threads = Vec::with_capacity(sessions.len());
-        for session in sessions {
-            let product_id = bindings
-                .get(&session.thread_id)
-                .cloned()
-                .unwrap_or_else(|| session.thread_id.clone());
-            let product_info = self
-                .thread_manager
-                .ensure_thread(
-                    &product_id,
-                    crate::agent_types::AgentId(AGENT_TYPE.to_string()),
-                    session.title.clone(),
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-            self.thread_manager
-                .upsert_external_session(&product_id, AGENT_TYPE, &session.thread_id, None)
-                .await
-                .map_err(|error| error.to_string())?;
-            threads.push(product_info);
-        }
-        Ok(threads)
+        // Listing provider history must be read-only. Materializing every ACP
+        // session here used to create `legacy-ses_...` agent instances, so a
+        // lifecycle refresh made unrelated OpenCode sessions appear as empty
+        // Flowix conversations. Existing bindings still expose product ids;
+        // unbound provider history keeps its native session id until opened.
+        Ok(sessions
+            .into_iter()
+            .map(|mut session| {
+                if let Some(product_id) = bindings.get(&session.thread_id) {
+                    session.thread_id = product_id.clone();
+                }
+                session
+            })
+            .collect())
     }
 
     pub async fn delete_thread(&self, thread_id: &str) -> Result<bool, String> {

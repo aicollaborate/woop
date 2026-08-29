@@ -68,7 +68,12 @@ impl HistoryAdapter for CodexHistoryAdapter {
             .map_err(|error| error.to_string())?
             .unwrap_or_else(|| request.thread_id.to_string());
         self.client
-            .get_thread_messages_page(&session_id, request.before_sequence, request.limit)
+            .get_thread_messages_page(
+                &session_id,
+                request.before_sequence,
+                request.snapshot_sequence,
+                request.limit,
+            )
             .await
     }
 }

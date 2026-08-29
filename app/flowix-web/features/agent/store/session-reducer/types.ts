@@ -35,6 +35,8 @@ export interface ThreadProjection {
      * projections compatible; production projections are created with `idle`. */
     initialStatus?: "idle" | "loading" | "ready" | "error";
     oldestSequence: number | null;
+    /** Provider/journal revision that owns oldestSequence and all loaded pages. */
+    snapshotSequence?: number | null;
     hasMoreHistory: boolean;
     loadingInitial: boolean;
     loadingMore: boolean;
@@ -60,6 +62,7 @@ export function emptyProjection(): ThreadProjection {
     pagination: {
       initialStatus: "idle",
       oldestSequence: null,
+      snapshotSequence: null,
       hasMoreHistory: false,
       loadingInitial: false,
       loadingMore: false,
@@ -211,6 +214,10 @@ export function mergeThreadProjections(
       ),
       oldestSequence:
         to?.pagination.oldestSequence ?? from?.pagination.oldestSequence ?? null,
+      snapshotSequence:
+        to?.pagination.snapshotSequence ??
+        from?.pagination.snapshotSequence ??
+        null,
       hasMoreHistory:
         (to?.pagination.hasMoreHistory ?? false) ||
         (from?.pagination.hasMoreHistory ?? false),

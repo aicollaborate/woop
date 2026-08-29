@@ -92,6 +92,8 @@ vi.mock("@platform/tauri/client", () => ({
     })),
     externalEvents: vi.fn(async () => []),
     deleteThread: vi.fn(),
+    archiveAgentThread: vi.fn(async () => undefined),
+    deleteAgentThread: vi.fn(async () => undefined),
     updateThreadTitle: vi.fn(),
     listConversationInstances: vi.fn(async () => []),
     getConversationInstance: vi.fn(async () => null),
@@ -266,7 +268,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const codexThreadId = "tab-host-codex-completed";
     useChatStore.getState().bindThreadType(codexThreadId, "codex");
-    useChatStore.getState().setActiveThreadId(codexThreadId);
+    useChatStore.getState().setActiveAgentThread("codex", codexThreadId);
     emitChunk({
       kind: "stream_start",
       thread_id: codexThreadId,
@@ -279,7 +281,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       run_id: "run-codex-completed",
     });
     await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
-    expect(agent.getCodexThreadPage).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(agent.getCodexThreadPage).toHaveBeenCalled());
 
     releaseA();
     expect(unlisten).not.toHaveBeenCalled();
@@ -1954,17 +1956,20 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     const messages =
       useAgentConversationStore.getState().messageStates[threadId].messages;
-    expect(messages.map((message) => message.id)).toEqual([
-      "history-user",
-      "history-tool-call",
-      "history-assistant",
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "tool",
+      "assistant",
     ]);
-    expect(messages.filter((message) => message.toolCallId === "toolu_1"))
+    expect(messages[0]?.id).toBe("history-user");
+    expect(messages[2]?.id).toBe("history-assistant");
+    expect(
+      messages.filter((message) => message.toolCallId?.endsWith("toolu_1")),
+    )
       .toHaveLength(1);
-    expect(messages.find((message) => message.toolCallId === "toolu_1"))
+    expect(messages.find((message) => message.toolCallId?.endsWith("toolu_1")))
       .toMatchObject({
       role: "tool",
-      toolCallId: "toolu_1",
       content: '{\n  "content": "file contents"\n}',
       isLoading: false,
     });

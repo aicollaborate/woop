@@ -9,7 +9,9 @@ import {
 } from "@features/agent/store/agent-history-adapters";
 import { completedRunUserMessageId } from "@features/agent/events/message-identity";
 
-/** Layer 4: 单页大小. 每次加载 10 条, 用户向上翻页时每页同样 10 条. */
+/** Layer 4: 单页大小. Provider may interpret this as complete turns (Codex)
+ * or materialized message/event groups; adapters must never split an atomic
+ * conversation turn when their native history exposes turn boundaries. */
 export const HISTORY_PAGE_SIZE = 10;
 
 export async function listHistoryThreads(
@@ -34,8 +36,14 @@ export async function getHistoryPage(
   threadId: string,
   beforeSequence: number | null,
   limit: number,
+  snapshotSequence?: number | null,
 ): Promise<ThreadHistoryPage> {
-  return getAgentHistoryAdapter(type).getPage(threadId, beforeSequence, limit);
+  return getAgentHistoryAdapter(type).getPage(
+    threadId,
+    beforeSequence,
+    limit,
+    snapshotSequence,
+  );
 }
 
 export async function getInitialThreadHistory(
@@ -111,6 +119,38 @@ export function historyContainsCachedUser(
     !!cachedUser &&
     userMessageVisibleKey(historyUser) === userMessageVisibleKey(cachedUser)
   );
+}
+
+/** True only when the persisted terminal window covers every visible live row. */
+export function historyCoversLiveTurn(
+  history: ChatMessage[],
+  live: ChatMessage[],
+): boolean {
+  if (!historyContainsCachedUser(history, live)) return false;
+  const historyToolIds = new Set(
+    history
+      .filter((message) => message.role === "tool" && message.toolCallId)
+      .map((message) => toolCallIdentityKey(message.toolCallId!)),
+  );
+  const historyVisibleRows = new Map<string, number>();
+  for (const message of history) {
+    if (message.role !== "assistant" && message.role !== "reasoning") continue;
+    const key = messageContentStableKey(message);
+    if (key) historyVisibleRows.set(key, (historyVisibleRows.get(key) ?? 0) + 1);
+  }
+  for (const message of live) {
+    if (message.role === "tool" && message.toolCallId) {
+      if (!historyToolIds.has(toolCallIdentityKey(message.toolCallId))) return false;
+      continue;
+    }
+    if (message.role !== "assistant" && message.role !== "reasoning") continue;
+    const key = messageContentStableKey(message);
+    if (!key) continue;
+    const count = historyVisibleRows.get(key) ?? 0;
+    if (count === 0) return false;
+    historyVisibleRows.set(key, count - 1);
+  }
+  return true;
 }
 
 function messageContentStableKey(message: ChatMessage): string | null {

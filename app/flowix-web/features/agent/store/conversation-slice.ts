@@ -132,10 +132,16 @@ function deletePersistedInstance(instanceId: string): void {
   );
 }
 
-function deletePersistedInstancesForThread(threadId: string): void {
-  void agentClient.deleteConversationInstancesForThread(threadId).catch((error) => {
-    console.error("[AgentSession] Failed to delete thread instances:", error);
-  });
+function deletePersistedInstancesForThread(threadId: string): Promise<void> {
+  return agentClient.deleteConversationInstancesForThread(threadId).then(
+    () => undefined,
+    (error) => {
+      console.error("[AgentSession] Failed to delete thread instances:", error);
+      // Lifecycle cleanup must still complete if the best-effort persistence
+      // request fails; the next list refresh will reconcile with the backend.
+      return undefined;
+    },
+  );
 }
 
 export function normalizeBackendInstance(
@@ -212,6 +218,7 @@ export interface ConversationSlice {
   renameInstance(instanceId: string, title: string): void;
   removeInstance(instanceId: string): void;
   removeInstancesForThread(threadId: string): void;
+  removeInstancesForThreadAndWait(threadId: string): Promise<void>;
   resolveSessionByThreadId(
     localThreadId: string,
     sessionId: string,
@@ -459,6 +466,9 @@ export function createConversationSlice(
       deletePersistedInstance(instanceId);
     },
     removeInstancesForThread: (threadId) => {
+      void get().removeInstancesForThreadAndWait(threadId);
+    },
+    removeInstancesForThreadAndWait: async (threadId) => {
       const removedIds: string[] = [];
       set((state) => ({
         conversationRegistry: {
@@ -480,7 +490,7 @@ export function createConversationSlice(
       for (const instanceId of removedIds) {
         deletePersistedInstance(instanceId);
       }
-      deletePersistedInstancesForThread(threadId);
+      await deletePersistedInstancesForThread(threadId);
     },
     resolveSessionByThreadId: (localThreadId, sessionId, agentType) => {
       const instance = get().findByThreadId(localThreadId);

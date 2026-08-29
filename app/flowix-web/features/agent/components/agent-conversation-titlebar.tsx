@@ -69,7 +69,10 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   const onArchive = useCallback(async () => {
     if (!productThreadId) return;
     try {
-      await useAgentSessionStore.getState().archiveThread(productThreadId);
+      await useAgentSessionStore.getState().archiveThread(
+        productThreadId,
+        () => toast.success(t('status.agent.archiveSuccess')),
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('status.agent.archiveFailed'),
@@ -81,7 +84,10 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
     if (!productThreadId) return;
     if (!window.confirm(t('document.agent.deleteConfirm'))) return;
     try {
-      await useAgentSessionStore.getState().deleteThread(productThreadId);
+      await useAgentSessionStore.getState().deleteThread(
+        productThreadId,
+        () => toast.success(t('status.agent.deleteSuccess')),
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('status.agent.deleteFailed'),

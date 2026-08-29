@@ -1633,7 +1633,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     await flushPromises();
     await flushAnimationFrame();
 
-    expect(agent.getDeepSeekHarnessThreadPage).not.toHaveBeenCalled();
+    expect(agent.getDeepSeekHarnessThreadPage).toHaveBeenCalledWith(
+      threadId,
+      null,
+      10,
+    );
     expect(card?.textContent).toContain("cached answer after finish");
   });
 

@@ -575,11 +575,14 @@ impl CodexAppServerManager {
     }
 
     pub async fn get_thread_messages(&self, thread_id: &str) -> Result<Vec<ChatMessage>, String> {
-        let mut page = self.get_thread_messages_page(thread_id, None, 1000).await?;
+        let mut page = self
+            .get_thread_messages_page(thread_id, None, None, 1000)
+            .await?;
+        let snapshot_sequence = page.snapshot_sequence;
         let mut messages = page.messages;
         while page.has_more {
             page = self
-                .get_thread_messages_page(thread_id, page.oldest_sequence, 1000)
+                .get_thread_messages_page(thread_id, page.oldest_sequence, snapshot_sequence, 1000)
                 .await?;
             let mut older = page.messages;
             older.append(&mut messages);
@@ -592,6 +595,7 @@ impl CodexAppServerManager {
         &self,
         thread_id: &str,
         before_sequence: Option<i64>,
+        snapshot_sequence: Option<i64>,
         limit: i64,
     ) -> Result<ThreadMessagesPage, String> {
         self.ensure_connection().await?;
@@ -633,9 +637,10 @@ impl CodexAppServerManager {
                 break;
             }
         }
-        Ok(paginate_app_server_messages(
-            app_server_turn_messages(&turns),
+        Ok(paginate_app_server_turns(
+            &turns,
             before_sequence,
+            snapshot_sequence,
             limit,
         ))
     }
@@ -1327,9 +1332,8 @@ fn canonical_codex_tool_name(kind: &str) -> Option<&'static str> {
     }
 }
 
-/// The currently installed app-server serializes this legacy `sandbox` field
-/// with kebab-case variants. Keep the wire spelling here, separate from the
-/// App Server v2 `permissions` profile API.
+/// Translate Flowix permission names into the App Server sandbox object.
+/// Keep this separate from the App Server v2 `permissions` profile API.
 fn app_server_sandbox(permission: Option<&str>) -> Value {
     match permission.map(str::trim) {
         Some("read-only") => json!({ "type": "readOnly" }),
@@ -1603,22 +1607,31 @@ fn app_server_timestamp_string(value: Option<i64>) -> String {
         .to_rfc3339()
 }
 
-fn paginate_app_server_messages(
-    messages: Vec<ChatMessage>,
+fn paginate_app_server_turns(
+    turns: &[Value],
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
 ) -> ThreadMessagesPage {
     let limit = limit.clamp(1, 1000) as usize;
+    // A page cursor represents a turn boundary, never a flattened message
+    // offset. This keeps user/reasoning/tool/final rows from one turn atomic.
+    // snapshot_sequence pins later pages to the turn count seen by page one;
+    // newly appended turns cannot shift an older-page cursor.
+    let snapshot_end = snapshot_sequence
+        .map(|sequence| sequence.max(0) as usize)
+        .unwrap_or(turns.len())
+        .min(turns.len());
     let end = before_sequence
         .map(|sequence| sequence.max(0) as usize)
-        .unwrap_or(messages.len())
-        .min(messages.len());
+        .unwrap_or(snapshot_end)
+        .min(snapshot_end);
     let start = end.saturating_sub(limit);
     ThreadMessagesPage {
-        messages: messages[start..end].to_vec(),
+        messages: app_server_turn_messages(&turns[start..end]),
         oldest_sequence: (start > 0).then_some(start as i64),
         has_more: start > 0,
-        snapshot_sequence: Some(messages.len() as i64),
+        snapshot_sequence: Some(snapshot_end as i64),
     }
 }
 
@@ -1655,14 +1668,27 @@ mod tests {
     }
 
     #[test]
-    fn serializes_legacy_app_server_sandbox_variants_with_kebab_case() {
-        assert_eq!(app_server_sandbox(Some("read-only")), "read-only");
+    fn serializes_app_server_sandbox_objects() {
+        assert_eq!(
+            app_server_sandbox(Some("read-only")),
+            json!({ "type": "readOnly" })
+        );
         assert_eq!(
             app_server_sandbox(Some("danger-full-access")),
-            "danger-full-access"
+            json!({ "type": "dangerFullAccess" })
         );
-        assert_eq!(app_server_sandbox(Some("yolo")), "danger-full-access");
-        assert_eq!(app_server_sandbox(None), "workspace-write");
+        assert_eq!(
+            app_server_sandbox(Some("yolo")),
+            json!({ "type": "dangerFullAccess" })
+        );
+        assert_eq!(
+            app_server_sandbox(None),
+            json!({
+                "type": "workspaceWrite",
+                "writableRoots": [],
+                "networkAccess": false
+            })
+        );
     }
 
     #[test]
@@ -1911,19 +1937,48 @@ mod tests {
     }
 
     #[test]
-    fn pages_projected_history_from_the_newest_messages() {
-        let messages = (0..3)
-            .map(|index| {
-                let mut message =
-                    app_server_base_message(index.to_string(), "2026-01-01T00:00:00Z");
-                message.role = "assistant".to_string();
-                message
-            })
-            .collect();
-        let page = paginate_app_server_messages(messages, None, 2);
-        assert_eq!(page.messages.len(), 2);
-        assert_eq!(page.messages[0].id, "1");
+    fn pages_projected_history_on_complete_turn_boundaries() {
+        let turns = (0..3)
+            .map(|index| json!({
+                "id": format!("turn-{index}"),
+                "startedAt": 1_730_911_000 + index,
+                "status": "completed",
+                "items": [
+                    { "id": format!("u{index}"), "type": "userMessage", "content": format!("Q{index}") },
+                    { "id": format!("a{index}"), "type": "agentMessage", "text": format!("A{index}") }
+                ]
+            }))
+            .collect::<Vec<_>>();
+        let page = paginate_app_server_turns(&turns, None, None, 2);
+        assert_eq!(page.messages.len(), 4);
+        assert_eq!(page.messages[0].id, "u1");
         assert_eq!(page.oldest_sequence, Some(1));
+        assert_eq!(page.snapshot_sequence, Some(3));
         assert!(page.has_more);
+
+        let older = paginate_app_server_turns(
+            &[
+                turns,
+                vec![json!({
+                    "id": "turn-3",
+                    "startedAt": 1_730_911_003,
+                    "status": "completed",
+                    "items": [{ "id": "u3", "type": "userMessage", "content": "new" }]
+                })],
+            ]
+            .concat(),
+            page.oldest_sequence,
+            page.snapshot_sequence,
+            2,
+        );
+        assert_eq!(
+            older
+                .messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            ["u0", "a0"]
+        );
+        assert_eq!(older.snapshot_sequence, Some(3));
     }
 }

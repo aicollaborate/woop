@@ -190,7 +190,7 @@ mod tests {
         let threads = ThreadManager::for_tests();
         let service = AgentLifecycleService::new(
             threads.clone(),
-            Arc::new(CodexAppServerManager::new(threads)),
+            Arc::new(CodexAppServerManager::new(threads.clone())),
             Arc::new(OpenCodeAcpManager::new(threads.clone())),
             Arc::new(HermesAcpManager::new(threads)),
         );

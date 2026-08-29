@@ -33,6 +33,7 @@ export interface AgentConversationInstance {
 
 export interface AgentConversationMessageState extends LiveMessageState {
   oldestSequence: number | null;
+  snapshotSequence?: number | null;
   hasMoreHistory: boolean;
   loadingInitial: boolean;
   loadingMore: boolean;

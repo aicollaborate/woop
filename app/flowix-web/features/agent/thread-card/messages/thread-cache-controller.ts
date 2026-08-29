@@ -42,6 +42,7 @@ export class ThreadCacheController {
 
   private loading = false;
   private loadedFor: string | null = null;
+  private loadEligible = false;
   private loadingFor: string | null = null;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -82,9 +83,14 @@ export class ThreadCacheController {
 
   requestIfNeeded(): void {
     if (this.shouldLoad()) {
+      // A collapsed/hidden -> open transition is a consistency boundary.
+      // Keep the rendered cache visible, but allow one silent snapshot check.
+      if (!this.loadEligible) this.loadedFor = null;
+      this.loadEligible = true;
       this.scheduleLoad();
       return;
     }
+    this.loadEligible = false;
     this.cancelScheduledLoad();
   }
 

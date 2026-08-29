@@ -105,9 +105,21 @@ function dedupeConversationInstances(
   return [...byIdentity.values()];
 }
 
+/** OpenCode history listing previously materialized provider-only sessions as
+ * `legacy-ses_...` instances. They have no Flowix-owned conversation and must
+ * not be shown alongside real conversation cards. */
+function isSyntheticOpenCodeHistoryInstance(instance: AgentConversationInstance): boolean {
+  return instance.agentType === 'opencode'
+    && !!instance.threadId
+    && instance.instanceId === `legacy-${instance.threadId}`
+    && instance.threadId.startsWith('ses_');
+}
+
 export function AgentConversationList() {
   const { t } = useI18n();
   const instances = useAgentSessionStore((state) => state.conversationRegistry.instances);
+  const threadTombstones = useAgentSessionStore((state) => state.threadTombstones);
+  const lifecycleVersion = useAgentSessionStore((state) => state.lifecycleVersion);
   const currentNotebookId = useMemoStore((state) => state.selectedNotebook?.id ?? null);
   const selectedInstanceId = useWorkspaceRestoreStore(
     (state) => state.agentConversation.selectedInstanceId,
@@ -154,7 +166,7 @@ export function AgentConversationList() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [lifecycleVersion]);
 
   const loadMoreConversations = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore) return;
@@ -196,8 +208,10 @@ export function AgentConversationList() {
       }
     }
     return dedupeConversationInstances(Object.values(merged))
+      .filter((instance) => !isSyntheticOpenCodeHistoryInstance(instance))
+      .filter((instance) => !instance.threadId || !threadTombstones[instance.threadId])
       .sort((a, b) => b.createdAt - a.createdAt);
-  }, [instances, persistedInstances]);
+  }, [instances, persistedInstances, threadTombstones]);
 
   // 运行态来自 canonical thread projections；使用合并后的列表作为索引输入，
   // 这样后端持久化列表中的对话也能在运行时显示外框 loading。

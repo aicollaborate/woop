@@ -235,6 +235,7 @@ pub async fn codex_thread_get(
 pub async fn codex_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
@@ -244,6 +245,7 @@ pub async fn codex_thread_get_page(
             ExternalRuntimeKind::Codex,
             &thread_id,
             before_sequence,
+            snapshot_sequence,
             limit,
         )
         .await
@@ -318,6 +320,7 @@ pub async fn claude_thread_get(
 pub async fn claude_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
@@ -327,6 +330,7 @@ pub async fn claude_thread_get_page(
             ExternalRuntimeKind::Claude,
             &thread_id,
             before_sequence,
+            snapshot_sequence,
             limit,
         )
         .await
@@ -372,6 +376,7 @@ pub async fn hermes_thread_get(
 pub async fn hermes_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
@@ -381,6 +386,7 @@ pub async fn hermes_thread_get_page(
             ExternalRuntimeKind::Hermes,
             &thread_id,
             before_sequence,
+            snapshot_sequence,
             limit,
         )
         .await
@@ -428,6 +434,7 @@ pub async fn deepseek_harness_thread_get(
 pub async fn deepseek_harness_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
@@ -437,6 +444,7 @@ pub async fn deepseek_harness_thread_get_page(
             ExternalRuntimeKind::DeepSeekHarness,
             &thread_id,
             before_sequence,
+            snapshot_sequence,
             limit,
         )
         .await
@@ -489,6 +497,7 @@ pub async fn opencode_thread_list(state: State<'_, AppState>) -> Result<Vec<Thre
 pub async fn opencode_thread_get_page(
     thread_id: String,
     before_sequence: Option<i64>,
+    snapshot_sequence: Option<i64>,
     limit: i64,
     state: State<'_, AppState>,
 ) -> Result<ThreadMessagesPage, String> {
@@ -498,6 +507,7 @@ pub async fn opencode_thread_get_page(
             ExternalRuntimeKind::OpenCode,
             &thread_id,
             before_sequence,
+            snapshot_sequence,
             limit,
         )
         .await

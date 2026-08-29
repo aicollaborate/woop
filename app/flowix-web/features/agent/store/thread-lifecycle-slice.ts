@@ -33,6 +33,7 @@ type LifecycleContext = ThreadLifecycleSlice &
 type SessionGet = () => LifecycleContext;
 
 export interface ThreadLifecycleSlice {
+  lifecycleVersion: number;
   migrateThreadState(
     fromThreadId: string,
     toThreadId: string,
@@ -50,8 +51,8 @@ export interface ThreadLifecycleSlice {
   loadLocalAgentThreadList(typeKey: AgentTypeKey): Promise<void>;
   loadThreadCache(threadId: string): Promise<void>;
   loadMoreHistory(typeKey: AgentTypeKey, threadId: string): Promise<void>;
-  deleteThread(threadId: string): Promise<void>;
-  archiveThread(threadId: string): Promise<void>;
+  deleteThread(threadId: string, onProviderSuccess?: () => void): Promise<void>;
+  archiveThread(threadId: string, onProviderSuccess?: () => void): Promise<void>;
   renameThread(
     threadId: string,
     title: string,
@@ -218,6 +219,16 @@ function closeConversationIfActive(threadId: string): void {
   useWorkspaceRestoreStore.getState().clearAgentConversation(activeInstanceId);
 }
 
+/** Give React/Sonner a real paint opportunity before lifecycle cleanup
+ * unmounts the active conversation. One rAF is still before the same paint;
+ * two frames guarantee the success toast has become visible to the user. */
+function waitForSuccessToastPaint(): Promise<void> {
+  if (typeof requestAnimationFrame !== "function") return Promise.resolve();
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 export function createThreadLifecycleSlice(
   set: SessionSet,
   get: SessionGet,
@@ -229,30 +240,39 @@ export function createThreadLifecycleSlice(
   const runThreadLifecycle = async (
     threadId: string,
     action: "archive" | "delete",
+    onProviderSuccess?: () => void,
   ): Promise<void> => {
     const typeKey = getAgentType(
       get().sessionMeta.threadTypes[threadId] ??
         get().sessionMeta.activeAgentTypeKey,
     );
     get().invalidateThread(threadId);
-    try {
-      if (action === "archive") {
-        await agentClient.archiveAgentThread(typeKey.key, threadId);
-      } else {
-        await agentClient.deleteAgentThread(typeKey.key, threadId);
-      }
-    } finally {
-      get().invalidateThread(threadId, true);
-      get().removeInstancesForThread(threadId);
-      tearDownLocalThreadState(set, threadId);
-      closeConversationIfActive(threadId);
-      // provider 侧列表 (codex thread/list 等) 不再返回该 thread, 刷新让
-      // 侧栏与后端状态对齐; 失败不阻塞流程。
-      await reloadThreadListForType(get, typeKey.key).catch(() => undefined);
+    // Provider action must succeed before touching local state. Keeping the
+    // cleanup out of `finally` prevents the third-column conversation from
+    // disappearing while archive/delete is still pending or has failed.
+    if (action === "archive") {
+      await agentClient.archiveAgentThread(typeKey.key, threadId);
+    } else {
+      await agentClient.deleteAgentThread(typeKey.key, threadId);
     }
+
+    // Notify the UI as soon as the provider confirms success. Local instance
+    // deletion and list refresh can take longer, but must happen after this
+    // point and before closing the active conversation.
+    onProviderSuccess?.();
+    if (onProviderSuccess) await waitForSuccessToastPaint();
+    get().invalidateThread(threadId, true);
+    await get().removeInstancesForThreadAndWait(threadId);
+    tearDownLocalThreadState(set, threadId);
+    closeConversationIfActive(threadId);
+    // provider 侧列表 (codex thread/list 等) 不再返回该 thread, 刷新让
+    // 侧栏与后端状态对齐; 失败不阻塞流程。
+    await reloadThreadListForType(get, typeKey.key).catch(() => undefined);
+    set((state) => ({ lifecycleVersion: state.lifecycleVersion + 1 }));
   };
 
   return {
+    lifecycleVersion: 0,
     migrateThreadState: (fromThreadId, toThreadId, typeKey) => {
       if (!fromThreadId || !toThreadId || fromThreadId === toThreadId) return;
       get().applySessionResolved({
@@ -289,8 +309,10 @@ export function createThreadLifecycleSlice(
     loadMoreHistory: async (typeKey, threadId) => {
       await get().loadMoreMessages(getAgentType(typeKey).key, threadId);
     },
-    deleteThread: (threadId) => runThreadLifecycle(threadId, "delete"),
-    archiveThread: (threadId) => runThreadLifecycle(threadId, "archive"),
+    deleteThread: (threadId, onProviderSuccess) =>
+      runThreadLifecycle(threadId, "delete", onProviderSuccess),
+    archiveThread: (threadId, onProviderSuccess) =>
+      runThreadLifecycle(threadId, "archive", onProviderSuccess),
     renameThread: async (threadId, title, typeKey) => {
       const nextTitle = normalizeThreadTitle(title);
       if (!threadId || !nextTitle) return;

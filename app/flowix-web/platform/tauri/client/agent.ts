@@ -297,12 +297,19 @@ export const agent = {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence: number | null = null,
   ) =>
     invoke<{
       messages: ChatMessage[];
       oldestSequence: number | null;
       hasMore: boolean;
-    }>('codex_thread_get_page', { threadId, beforeSequence, limit }),
+      snapshotSequence?: number | null;
+    }>('codex_thread_get_page', {
+      threadId,
+      beforeSequence,
+      limit,
+      snapshotSequence,
+    }),
   getCodexSessionId: (threadId: string) =>
     invoke<string | null>('codex_thread_session_id', { threadId }),
   forkCodexThread: (threadId: string, lastTurnId: string) =>
@@ -335,12 +342,19 @@ export const agent = {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence: number | null = null,
   ) =>
     invoke<{
       messages: ChatMessage[];
       oldestSequence: number | null;
       hasMore: boolean;
-    }>('claude_thread_get_page', { threadId, beforeSequence, limit }),
+      snapshotSequence?: number | null;
+    }>('claude_thread_get_page', {
+      threadId,
+      beforeSequence,
+      limit,
+      snapshotSequence,
+    }),
   getClaudeSessionId: (threadId: string) =>
     invoke<string | null>('claude_thread_session_id', { threadId }),
   listHermesThreads: () =>
@@ -351,12 +365,19 @@ export const agent = {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence: number | null = null,
   ) =>
     invoke<{
       messages: ChatMessage[];
       oldestSequence: number | null;
       hasMore: boolean;
-    }>('hermes_thread_get_page', { threadId, beforeSequence, limit }),
+      snapshotSequence?: number | null;
+    }>('hermes_thread_get_page', {
+      threadId,
+      beforeSequence,
+      limit,
+      snapshotSequence,
+    }),
   listDeepSeekHarnessThreads: () =>
     invoke<ThreadInfo[]>('deepseek_harness_thread_list'),
   getDeepSeekHarnessThread: (threadId: string) =>
@@ -365,12 +386,19 @@ export const agent = {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence: number | null = null,
   ) =>
     invoke<{
       messages: ChatMessage[];
       oldestSequence: number | null;
       hasMore: boolean;
-    }>('deepseek_harness_thread_get_page', { threadId, beforeSequence, limit }),
+      snapshotSequence?: number | null;
+    }>('deepseek_harness_thread_get_page', {
+      threadId,
+      beforeSequence,
+      limit,
+      snapshotSequence,
+    }),
   getHermesSessionId: (threadId: string) =>
     invoke<string | null>('hermes_thread_session_id', { threadId }),
   getDeepSeekHarnessSessionId: (threadId: string) =>
@@ -383,12 +411,19 @@ export const agent = {
     threadId: string,
     beforeSequence: number | null,
     limit: number,
+    snapshotSequence: number | null = null,
   ) =>
     invoke<{
       messages: ChatMessage[];
       oldestSequence: number | null;
       hasMore: boolean;
-    }>('opencode_thread_get_page', { threadId, beforeSequence, limit }),
+      snapshotSequence?: number | null;
+    }>('opencode_thread_get_page', {
+      threadId,
+      beforeSequence,
+      limit,
+      snapshotSequence,
+    }),
   deleteThread: (threadId: string) =>
     invoke<void>('thread_delete', { threadId }),
   // 统一的对话生命周期入口: 后端按 agentType 分发到对应 runtime 的 provider

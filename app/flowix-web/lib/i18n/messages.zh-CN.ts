@@ -581,6 +581,8 @@ const zhCN = {
     "status.agent.conversationNotFound": "对话未找到",
     "status.agent.archiveFailed": "归档对话失败",
     "status.agent.deleteFailed": "删除对话失败",
+    "status.agent.archiveSuccess": "归档成功",
+    "status.agent.deleteSuccess": "删除对话成功",
     "document.agent.viewInNote": "查看笔记",
     "document.agent.moreActions": "更多操作",
     "document.agent.archiveConversation": "归档对话",
