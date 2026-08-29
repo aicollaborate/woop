@@ -139,23 +139,28 @@ export function AgentConversationDetail({
   const forkFromMessage = useCallback(async (message: ThreadState['messages'][number]) => {
     const currentInstance = instanceRef.current;
     const sourceThreadId = threadIdRef.current;
-    if (currentInstance?.agentType !== 'codex' || !sourceThreadId || !message.codexTurnId) return;
+    const agentType = currentInstance?.agentType;
+    if (!currentInstance || !sourceThreadId || (agentType !== 'codex' && agentType !== 'deepseek-harness')) return;
+    if (agentType === 'codex' && !message.codexTurnId) return;
+    if (agentType === 'deepseek-harness' && message.sourceSequence === undefined) return;
 
     if (destroyedRef.current) return;
 
     try {
-      const result = await agent.forkCodexThread(sourceThreadId, message.codexTurnId);
+      const result = agentType === 'codex'
+        ? await agent.forkCodexThread(sourceThreadId, message.codexTurnId!)
+        : await agent.forkDeepSeekHarnessThread(sourceThreadId, message.sourceSequence!);
       const fork = useAgentSessionStore.getState().createInstance({
-        agentType: 'codex',
-        title: `${currentInstance.title || defaultThreadTitle('codex')} (fork)`,
+        agentType,
+        title: `${currentInstance.title || defaultThreadTitle(agentType)} (fork)`,
         threadId: result.thread.threadId,
-        runtimeConfig: currentInstance.runtimeConfig ?? buildInitialInstanceRuntimeConfig('codex'),
+        runtimeConfig: currentInstance.runtimeConfig ?? buildInitialInstanceRuntimeConfig(agentType),
         source: { kind: 'dedicated', notebookId: currentInstance.source.notebookId ?? null },
         role: currentInstance.role ?? undefined,
       });
       await selectAndOpenAgentConversation(fork.instanceId);
     } catch (error) {
-      logger.error('Failed to fork Codex conversation', { error });
+      logger.error(`Failed to fork ${agentType} conversation`, { error });
       toast.error(error instanceof Error ? error.message : String(error));
     }
   }, []);
@@ -512,8 +517,8 @@ export function AgentConversationDetail({
           <div
             aria-hidden="true"
             className={[
-              'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3',
-              'bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent',
+              'pointer-events-none absolute inset-x-0 top-0 z-[3] h-2',
+              'bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_1%,transparent)] to-transparent',
               'transition-opacity duration-200',
               showScrollTopHint ? 'opacity-100' : 'opacity-0',
             ].join(' ')}

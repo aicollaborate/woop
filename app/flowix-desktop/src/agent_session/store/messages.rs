@@ -353,6 +353,7 @@ impl ThreadManager {
             error_details: None,
             is_collapsed: int_to_opt_bool(row.get(14)?),
             codex_turn_id: None,
+            source_sequence: None,
         })
     }
     fn row_to_message_with_seq(row: &rusqlite::Row<'_>) -> rusqlite::Result<(ChatMessage, i64)> {

@@ -649,6 +649,7 @@ pub fn run() {
             commands::thread::deepseek_harness_thread_get,
             commands::thread::deepseek_harness_thread_get_page,
             commands::thread::deepseek_harness_thread_session_id,
+            commands::thread::deepseek_harness_thread_fork,
             commands::thread::deepseek_harness_session_usage,
             commands::thread::opencode_thread_session_id,
             commands::thread::opencode_thread_list,

@@ -405,6 +405,11 @@ export const agent = {
     invoke<string | null>('hermes_thread_session_id', { threadId }),
   getDeepSeekHarnessSessionId: (threadId: string) =>
     invoke<string | null>('deepseek_harness_thread_session_id', { threadId }),
+  forkDeepSeekHarnessThread: (threadId: string, boundarySequence: number) =>
+    invoke<{ thread: ThreadInfo; dshThreadId: string }>('deepseek_harness_thread_fork', {
+      threadId,
+      boundarySequence,
+    }),
   getOpenCodeSessionId: (threadId: string) =>
     invoke<string | null>('opencode_thread_session_id', { threadId }),
   listOpenCodeThreads: () =>

@@ -418,6 +418,7 @@ impl HermesCliManager {
                     error_details: None,
                     is_collapsed: None,
                     codex_turn_id: None,
+                    source_sequence: None,
                 },
             )
             .await
@@ -454,6 +455,7 @@ impl HermesCliManager {
                     is_completed: None,
                     is_collapsed: None,
                     codex_turn_id: None,
+                    source_sequence: None,
                 },
             )
             .await

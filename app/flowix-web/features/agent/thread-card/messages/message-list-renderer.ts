@@ -45,7 +45,16 @@ export function isLastAssistantInTurn(
   index: number,
 ): boolean {
   const message = messages[index];
-  if (message.role !== "assistant" || !message.codexTurnId) return false;
+  if (message.role !== "assistant") return false;
+  // DSH and other external agents do not expose Codex turn ids. Their
+  // projected assistant rows are still ordered, so the last assistant row is
+  // the correct completed-message action target.
+  if (!message.codexTurnId) {
+    for (let i = index + 1; i < messages.length; i += 1) {
+      if (messages[i].role === "assistant") return false;
+    }
+    return message.isCompleted !== false;
+  }
   for (let i = index + 1; i < messages.length; i += 1) {
     // A turn can contain reasoning/tool rows which do not carry the Codex
     // turn id in the projected client state. They must not terminate the
@@ -232,6 +241,10 @@ export function appendRenderedAgentMessagesToTail(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
+      showActions: !context.isLoading && isLastAssistantInTurn(
+        messages,
+        messages.indexOf(message),
+      ),
       canFork: isLastAssistantInTurn(messages, messages.indexOf(message)),
       onForkMessage: context.onForkMessage,
     });
@@ -267,6 +280,7 @@ export function createRenderedAgentMessageList(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
+      showActions: !context.isLoading && isLastAssistantInTurn(messages, index),
       canFork: isLastAssistantInTurn(messages, index),
       onForkMessage: context.onForkMessage,
     });

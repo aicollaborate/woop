@@ -265,6 +265,41 @@ describe("replaceCompletedRunWithHistory", () => {
     expect(reconciled[1]).toBe(assistant);
   });
 
+  it("keeps the live Codex content when history has the same item id with different content", () => {
+    const user = {
+      ...message("item-user-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      codexTurnId: "turn-1",
+    };
+    const assistant = message(
+      "item-assistant-1",
+      "assistant",
+      "streamed final answer",
+      "2026-01-01T00:00:02.000Z",
+    );
+    const existing = [user, assistant];
+    const history = [
+      { ...user },
+      message(
+        assistant.id,
+        "assistant",
+        "stale persisted snapshot",
+        "2026-01-01T00:00:03.000Z",
+      ),
+    ];
+
+    const reconciled = replaceCompletedRunWithHistory(
+      existing,
+      history,
+      "run-1",
+      "codex",
+      "turn-1",
+    );
+
+    expect(reconciled).toBe(existing);
+    expect(reconciled[1]).toBe(assistant);
+    expect(reconciled[1].content).toBe("streamed final answer");
+  });
+
   it("keeps a live tool in place when the completion snapshot is missing it", () => {
     const existing = [
       message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),

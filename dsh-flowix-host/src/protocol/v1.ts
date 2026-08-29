@@ -59,6 +59,8 @@ export interface HistoryMessage {
   role: 'user' | 'assistant' | 'reasoning' | 'tool'
   content: string
   timestamp: string
+  /** Durable DSH event sequence; used as a safe thread/fork boundary. */
+  sourceSequence?: number
   isLoading?: boolean
   isCompleted?: boolean
   toolCallId?: string

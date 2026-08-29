@@ -34,6 +34,25 @@ function context(): AgentThreadCardMessageRenderContext {
 }
 
 describe("Codex turn-end message actions", () => {
+  it("shows copy and time only on the final assistant for agents without turn ids", () => {
+    const messages = [
+      message("assistant-1", "assistant"),
+      message("tool-1", "tool"),
+      message("assistant-2", "assistant"),
+    ];
+
+    expect(isLastAssistantInTurn(messages, 0)).toBe(false);
+    expect(isLastAssistantInTurn(messages, 2)).toBe(true);
+
+    const { list } = createRenderedAgentMessageList(messages, context());
+    expect(list.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(1);
+    expect(list.children[0].querySelector(".agent-thread-card__message-actions")).toBeNull();
+    const actions = list.children[2].querySelector(".agent-thread-card__message-actions");
+    expect(actions).not.toBeNull();
+    expect(actions?.querySelectorAll(".agent-thread-card__message-action")).toHaveLength(1);
+    expect(actions?.querySelector(".agent-thread-card__message-time")?.textContent).toContain("星期");
+  });
+
   it("keeps actions only on the final assistant when non-assistant rows lack a turn id", () => {
     const messages = [
       message("assistant-1", "assistant", "turn-1"),
@@ -112,9 +131,10 @@ describe("Codex turn-end message actions", () => {
     expect(confirmation).not.toBeNull();
     expect(confirmation?.previousElementSibling).toBe(forkButton);
     forkButton.click();
-    expect(list.querySelectorAll(".agent-thread-card__message-fork-confirm")).toHaveLength(1);
+    expect(list.querySelectorAll(".agent-thread-card__message-fork-confirm")).toHaveLength(0);
     expect(onFork).not.toHaveBeenCalled();
 
+    forkButton.click();
     list.querySelector<HTMLButtonElement>(
       ".agent-thread-card__message-fork-cancel-button",
     )?.click();
@@ -125,5 +145,44 @@ describe("Codex turn-end message actions", () => {
       ".agent-thread-card__message-fork-confirm-button",
     )?.click();
     expect(onFork).toHaveBeenCalledWith(expect.objectContaining({ id: "assistant-1" }));
+  });
+
+  it("closes the fork confirmation when the message action area is left", () => {
+    const { list } = createRenderedAgentMessageList(
+      [message("assistant-1", "assistant", "turn-1")],
+      context(),
+    );
+    const item = list.firstElementChild as HTMLElement;
+    const forkButton = list.querySelectorAll<HTMLButtonElement>(
+      ".agent-thread-card__message-action",
+    )[1];
+
+    forkButton.click();
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).not.toBeNull();
+    forkButton.click();
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).toBeNull();
+
+    forkButton.click();
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).not.toBeNull();
+    item.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).toBeNull();
+    expect(forkButton.style.visibility).toBe("");
+  });
+
+  it("closes the fork confirmation when clicking outside the actions", () => {
+    const { list } = createRenderedAgentMessageList(
+      [message("assistant-1", "assistant", "turn-1")],
+      context(),
+    );
+    const forkButton = list.querySelectorAll<HTMLButtonElement>(
+      ".agent-thread-card__message-action",
+    )[1];
+
+    forkButton.click();
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).not.toBeNull();
+    document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+
+    expect(list.querySelector(".agent-thread-card__message-fork-confirm")).toBeNull();
   });
 });

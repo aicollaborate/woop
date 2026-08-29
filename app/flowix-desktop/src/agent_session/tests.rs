@@ -29,6 +29,7 @@ mod tests {
             error_details: None,
             is_collapsed: None,
             codex_turn_id: None,
+            source_sequence: None,
         }
     }
 

@@ -22,6 +22,10 @@ pub struct ChatMessage {
     pub llm_content: Option<String>,
     pub system_reminder_directory: Option<String>,
     pub timestamp: String,
+    /// Provider event sequence used by external runtimes for history actions
+    /// such as forking a conversation at a stable message boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sequence: Option<i64>,
     pub is_loading: Option<bool>,
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
@@ -35,7 +39,7 @@ pub struct ChatMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<AgentErrorDetails>,
     pub is_collapsed: Option<bool>,
-    /// Codex app-server Turn that owns this message. Used by Codex-only
+    /// Codex app-server Turn that owns this message. Used by provider-specific
     /// actions such as forking a conversation from a completed assistant turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_turn_id: Option<String>,

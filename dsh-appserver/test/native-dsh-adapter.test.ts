@@ -2,6 +2,34 @@ import { describe, expect, it } from 'vitest'
 import { NativeDshAdapter } from '../src/app-server/adapters/native-dsh-adapter.js'
 
 describe('NativeDshAdapter thread launch', () => {
+  it('forks after the assistant message only after closing its turn', async () => {
+    const sourceEvents = [
+      { type: 'turn/start', seq: 1, data: { turn: 1 } },
+      { type: 'user/message', seq: 2, data: { id: 'u1', content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'assistant/message', seq: 3, data: { message: { id: 'a1', content: [{ type: 'text', text: 'hi' }] } } },
+      { type: 'turn/end', seq: 4, data: { turn: 1, reason: { kind: 'completed' } } },
+      { type: 'turn/start', seq: 5, data: { turn: 2 } },
+    ]
+    let seed: unknown[] | undefined
+    const childAgent = { session: { id: 'child', events: [], header: {}, deriveMessages: () => [] } }
+    const ctx = {
+      on: () => () => {},
+      sessions: { get: (id: string) => id === 'source' ? { id, events: sourceEvents, header: {} } : undefined },
+      agents: {
+        create: async (options: Record<string, unknown>) => {
+          seed = options.seed as unknown[]
+          return { agent: childAgent, dispose: async () => {} }
+        },
+        get: () => undefined,
+      },
+    }
+    const adapter = new NativeDshAdapter(ctx)
+
+    await adapter.forkThread('source', 3, 'child')
+
+    expect(seed?.map(event => (event as { seq: number }).seq)).toEqual([1, 2, 3, 4])
+  })
+
   it('creates a configured agent with its preset and permission', async () => {
     let options: Record<string, any> | undefined
     const mounted: string[] = []

@@ -293,6 +293,10 @@ export class ThreadMessageRenderController {
           getDisplayExpanded: context.getDisplayExpanded,
           setDisplayExpanded: context.setDisplayExpanded,
           isStreaming: context.isStreaming(message),
+          showActions: !input.isLoading && isLastAssistantInTurn(
+            input.messages,
+            input.messages.indexOf(message),
+          ),
           canFork: !input.isLoading && isLastAssistantInTurn(
             input.messages,
             input.messages.indexOf(message),

@@ -137,5 +137,7 @@ test('materializes persisted DSH events into stable display messages', () => {
   ])
   assert.deepEqual(messages[3]?.toolInput, { path: 'README.md' })
   assert.equal(messages[0]?.id, 'client-1')
+  assert.equal(messages[2]?.sourceSequence, 5)
+  assert.equal(messages[4]?.sourceSequence, 7)
   assert.equal(page.snapshotSequence, 8)
 })

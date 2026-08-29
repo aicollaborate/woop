@@ -25,6 +25,13 @@ pub struct CodexForkResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeepSeekHarnessForkResponse {
+    pub thread: ThreadInfo,
+    pub dsh_thread_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentConversationPage {
     pub items: Vec<AgentConversationInstance>,
     pub has_more: bool,
@@ -460,6 +467,45 @@ pub async fn deepseek_harness_thread_session_id(
         .get_external_session(&thread_id, "deepseek-harness")
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn deepseek_harness_thread_fork(
+    thread_id: String,
+    boundary_sequence: i64,
+    state: State<'_, AppState>,
+) -> Result<DeepSeekHarnessForkResponse, String> {
+    let source = state
+        .thread_manager
+        .get_thread(&thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "DeepSeek Harness thread not found".to_string())?;
+    let child = state
+        .thread_manager
+        .create_thread(
+            crate::agent_types::AgentId("deepseek-harness".to_string()),
+            format!("{} (fork)", source.info.title),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    match state
+        .deepseek_harness
+        .fork_thread(&thread_id, boundary_sequence, &child.thread_id)
+        .await
+    {
+        Ok(dsh_thread_id) => Ok(DeepSeekHarnessForkResponse {
+            thread: child,
+            dsh_thread_id,
+        }),
+        Err(error) => {
+            let _ = state
+                .thread_manager
+                .delete_thread_with_agent_conversations(&child.thread_id)
+                .await;
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]

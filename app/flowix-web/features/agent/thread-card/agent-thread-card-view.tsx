@@ -511,22 +511,32 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private async forkFromMessage(message: ThreadState["messages"][number]): Promise<void> {
-    if (this.typeKey !== "codex" || !this.threadId || !message.codexTurnId) return;
+    if (!this.threadId) return;
+    const isCodex = this.typeKey === "codex";
+    const isDsh = this.typeKey === "deepseek-harness";
+    if (!isCodex && !isDsh) return;
+    if (isCodex && !message.codexTurnId) return;
+    if (isDsh && message.sourceSequence === undefined) return;
     if (this.isDestroyed) return;
     try {
       const source = this.instance;
-      const result = await agent.forkCodexThread(this.threadId, message.codexTurnId);
+      const result = isCodex
+        ? await agent.forkCodexThread(this.threadId, message.codexTurnId!)
+        : await agent.forkDeepSeekHarnessThread(
+            this.threadId,
+            message.sourceSequence!,
+          );
       const fork = useAgentSessionStore.getState().createInstance({
-        agentType: "codex",
-        title: `${source?.title || defaultThreadTitle("codex")} (fork)`,
+        agentType: this.typeKey,
+        title: `${source?.title || defaultThreadTitle(this.typeKey)} (fork)`,
         threadId: result.thread.threadId,
-        runtimeConfig: source?.runtimeConfig ?? buildInitialInstanceRuntimeConfig("codex"),
+        runtimeConfig: source?.runtimeConfig ?? buildInitialInstanceRuntimeConfig(this.typeKey),
         source: { kind: "dedicated", notebookId: source?.source.notebookId ?? null },
         role: source?.role ?? undefined,
       });
       await selectAndOpenAgentConversation(fork.instanceId);
     } catch (error) {
-      logger.error("Failed to fork Codex conversation", { error });
+      logger.error(`Failed to fork ${this.typeKey} conversation`, { error });
       toast.error(error instanceof Error ? error.message : String(error));
     }
   }

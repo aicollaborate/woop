@@ -101,18 +101,39 @@ export function attachMessageActions(
   });
   actions.append(copyButton);
 
-  if (canFork) {
+  // Fork is available for providers that expose a stable message boundary.
+  // Copy and time are intentionally available to every agent's final
+  // assistant message.
+  if (
+    canFork &&
+    (message.codexTurnId || message.sourceSequence !== undefined)
+  ) {
     const forkButton = document.createElement("button");
     forkButton.type = "button";
     forkButton.className = "agent-thread-card__message-action";
     forkButton.title = language === "zh-CN" ? "从此处分叉对话" : "Fork conversation";
     forkButton.setAttribute("aria-label", forkButton.title);
     forkButton.append(createLucideIcon(GitBranch));
+    let activeConfirmation: HTMLSpanElement | null = null;
+    function handleOutsidePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (activeConfirmation && !(target instanceof Node && actions.contains(target))) {
+        closeConfirmation();
+      }
+    }
+    const closeConfirmation = () => {
+      activeConfirmation?.remove();
+      activeConfirmation = null;
+      document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+    };
+    item.addEventListener("mouseleave", closeConfirmation);
     forkButton.addEventListener("mousedown", (event) => event.stopPropagation());
     forkButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (actions.querySelector(".agent-thread-card__message-fork-confirm")) return;
-      forkButton.hidden = true;
+      if (activeConfirmation) {
+        closeConfirmation();
+        return;
+      }
 
       const confirmation = document.createElement("span");
       confirmation.className = "agent-thread-card__message-fork-confirm";
@@ -130,8 +151,7 @@ export function attachMessageActions(
         confirmEvent.stopPropagation());
       confirmButton.addEventListener("click", (confirmEvent) => {
         confirmEvent.stopPropagation();
-        confirmation.remove();
-        forkButton.hidden = false;
+        closeConfirmation();
         void onFork?.(message);
       });
 
@@ -143,12 +163,13 @@ export function attachMessageActions(
         cancelEvent.stopPropagation());
       cancelButton.addEventListener("click", (cancelEvent) => {
         cancelEvent.stopPropagation();
-        confirmation.remove();
-        forkButton.hidden = false;
+        closeConfirmation();
       });
 
-      confirmation.append(confirmButton, cancelButton);
+      confirmation.append(cancelButton, confirmButton);
+      activeConfirmation = confirmation;
       actions.insertBefore(confirmation, time);
+      document.addEventListener("pointerdown", handleOutsidePointerDown, true);
     });
     actions.append(forkButton);
   }
@@ -395,6 +416,7 @@ export function createAgentThreadCardMessageElement(options: {
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
   /** 消息是否仍在流式增长; 见 [renderAgentThreadCardBudgetedMarkdown]。 */
   isStreaming?: boolean;
+  showActions?: boolean;
   canFork?: boolean;
   onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }): AgentThreadCardMessageElementResult | null {
@@ -576,13 +598,13 @@ export function createAgentThreadCardMessageElement(options: {
       });
     }
 
-    if (options.canFork) {
+    if (options.showActions) {
       attachMessageActions(
         item,
         message,
         messageView,
         language,
-        true,
+        options.canFork === true,
         displayContext.onForkMessage,
       );
     }

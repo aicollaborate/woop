@@ -153,7 +153,8 @@ export function materializeSessionHistory(
         const content = messageText(projected as unknown as Record<string, unknown>)
         if (content !== '') {
           messages.push({ id: String(projected.id), role: 'assistant', content,
-            timestamp: eventTimestamp(event), isCompleted: data?.interrupted !== true })
+            timestamp: eventTimestamp(event), sourceSequence: Number(event.seq),
+            isCompleted: data?.interrupted !== true })
         }
         for (const sequence of sourceSequences(event)) appendTool(bySequence.get(sequence))
         break

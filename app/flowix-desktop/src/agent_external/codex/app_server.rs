@@ -1587,6 +1587,7 @@ fn app_server_base_message(id: String, timestamp: &str) -> ChatMessage {
         error_details: None,
         is_collapsed: None,
         codex_turn_id: None,
+        source_sequence: None,
     }
 }
 

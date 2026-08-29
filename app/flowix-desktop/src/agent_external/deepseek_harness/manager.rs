@@ -402,6 +402,61 @@ impl DeepSeekHarnessManager {
             .map_err(|error| error.to_string())
     }
 
+    /// Fork a DSH-owned session at a stable event boundary and bind the new
+    /// provider session to a new Flowix product thread.
+    pub async fn fork_thread(
+        &self,
+        flowix_thread_id: &str,
+        boundary_sequence: i64,
+        new_flowix_thread_id: &str,
+    ) -> Result<String, String> {
+        // Serialize the run check with chat_stream's registration. Without
+        // this guard, a new turn could be registered after the check but
+        // before thread/fork snapshots the provider session.
+        let _lifecycle = self.lifecycle_gate.lock().await;
+        if self.runs.target(flowix_thread_id, None).await.is_some() {
+            return Err("DeepSeek Harness 正在运行任务，请等待完成后再分叉对话".into());
+        }
+        let source_session_id = self
+            .sessions
+            .session_id(flowix_thread_id)
+            .await?
+            .ok_or_else(|| "DeepSeek Harness 对话尚未启动".to_string())?;
+        if boundary_sequence < 0 {
+            return Err("DeepSeek Harness Fork 缺少有效的消息边界".into());
+        }
+
+        let host = self.model_host().await?;
+        let result = host
+            .request(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": host.next_request_id(),
+                "method": "thread/fork",
+                "params": {
+                    "threadId": source_session_id,
+                    "boundarySeq": boundary_sequence,
+                }
+            }))
+            .await?;
+        let child_session_id = result
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "DeepSeek Harness 未返回 Fork 后的 session id".to_string())?
+            .to_string();
+        self.thread_manager
+            .upsert_external_session(
+                new_flowix_thread_id,
+                AGENT_TYPE,
+                &child_session_id,
+                Some(result),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(child_session_id)
+    }
+
     fn credential_reference(config: &AiModelConfig) -> String {
         if !config.api_key_env.trim().is_empty() {
             config.api_key_env.trim().to_string()

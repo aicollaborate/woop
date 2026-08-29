@@ -13,6 +13,10 @@ export const THEME_ADAPTIVE_AGENT_ICON_KEYS = new Set<AgentTypeKey>([
   'hermes',
 ]);
 
+const DEFAULT_AGENT_ICON_COLORS: Partial<Record<AgentTypeKey, string>> = {
+  'deepseek-harness': '#484848',
+};
+
 export function isThemeAdaptiveAgentIcon(typeKey: AgentTypeKey): boolean {
   return THEME_ADAPTIVE_AGENT_ICON_KEYS.has(typeKey);
 }
@@ -58,7 +62,9 @@ export function AgentIcon({
 
   const maskStyle = {
     ...style,
-    ...(color ? { '--agent-icon-color': color } : {}),
+    ...(color || DEFAULT_AGENT_ICON_COLORS[typeKey]
+      ? { '--agent-icon-color': color ?? DEFAULT_AGENT_ICON_COLORS[typeKey] }
+      : {}),
     '--agent-icon-src': `url("${type.icon}")`,
   } as CSSProperties & { '--agent-icon-src': string };
 

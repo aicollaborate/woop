@@ -248,6 +248,7 @@ fn value_to_message(value: &Value, index: usize) -> Option<ChatMessage> {
         error_details: None,
         is_collapsed: None,
         codex_turn_id: None,
+        source_sequence: None,
     })
 }
 
@@ -560,6 +561,7 @@ mod tests {
                 error_details: None,
                 is_collapsed: None,
                 codex_turn_id: None,
+                source_sequence: None,
             })
             .collect::<Vec<_>>();
         let first = page_from_messages(messages.clone(), None, 2);

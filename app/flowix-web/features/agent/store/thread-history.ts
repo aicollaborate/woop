@@ -544,6 +544,25 @@ function reuseRenderEquivalentMessageReferences(
 }
 
 /**
+ * Codex's live stream is authoritative for an item that already exists in
+ * the current projection. History can briefly expose an older or differently
+ * normalized snapshot for the same provider item while persistence catches
+ * up. Keep the live row wholesale in that case, including its content.
+ */
+function preferLiveMessageReferencesById(
+  existing: ChatMessage[],
+  next: ChatMessage[],
+): ChatMessage[] {
+  const existingById = new Map(existing.map((message) => [message.id, message]));
+  const reconciled = next.map((message) => existingById.get(message.id) ?? message);
+
+  return reconciled.length === existing.length &&
+    reconciled.every((message, index) => message === existing[index])
+    ? existing
+    : reconciled;
+}
+
+/**
  * Compare the render-relevant message shape while ignoring object identity.
  * History adapters return fresh objects, so replacing an equivalent message
  * array would otherwise cause a needless conversation re-render after every
@@ -762,10 +781,10 @@ export function replaceCompletedRunWithHistory(
       }
       reconciledRun.splice(insertAt, 0, assistant);
     }
-    return reuseRenderEquivalentMessageReferences(
-      existing,
-      [...existing.slice(0, existingAnchor), ...reconciledRun],
-    );
+    const next = [...existing.slice(0, existingAnchor), ...reconciledRun];
+    return agentType === "codex"
+      ? preferLiveMessageReferencesById(existing, next)
+      : reuseRenderEquivalentMessageReferences(existing, next);
   }
 
   // Other runtimes may not yet expose run-scoped user ids. An exact overlap

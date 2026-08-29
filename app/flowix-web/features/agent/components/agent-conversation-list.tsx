@@ -522,7 +522,7 @@ export function AgentConversationList() {
                           'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
                           running && 'agent-conversation-list__icon--running',
                         )}>
-                          <AgentIcon typeKey={agent.key} alt="" className="h-3 w-3 object-contain" />
+                          <AgentIcon typeKey={agent.key} alt="" className="h-3.5 w-3.5 object-contain" />
                         </span>
                         <span className="min-w-0 flex-1 truncate text-sm font-normal">
                           {instance.title?.trim() || t('common.untitled')}

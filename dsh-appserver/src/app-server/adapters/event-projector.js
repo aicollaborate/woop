@@ -25,7 +25,8 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
       llmContent: null,
       systemReminderDirectory: null,
       sourceSeq: Number(event.seq),
-      timestamp: String(event.time ?? event.timestamp ?? event.createdAt ?? ''),
+      timestamp: eventTimestamp(event),
+      sourceSequence: Number(event.seq),
       isLoading: false,
       toolCallId: callId ? String(callId) : null,
       toolName: data.name || data.toolName || toolNames?.get?.(String(callId)) || null,
@@ -57,7 +58,8 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
     llmContent: null,
     systemReminderDirectory: null,
     sourceSeq: Number(event.seq),
-    timestamp: String(event.time ?? event.timestamp ?? event.createdAt ?? ''),
+    timestamp: eventTimestamp(event),
+    sourceSequence: Number(event.seq),
     isLoading: false,
     toolCallId: null,
     toolName: null,
@@ -70,6 +72,18 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
     isCollapsed: null,
     codexTurnId: null,
   }
+}
+
+function eventTimestamp(event) {
+  const value = event.time ?? event.timestamp ?? event.createdAt
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString()
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const date = new Date(value)
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+  return ''
 }
 
 // `assistant/chunk` is a transport event, not a display message. Its payload
