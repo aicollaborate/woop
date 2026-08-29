@@ -22,7 +22,6 @@ import {
 type AgentMessage = ThreadState["messages"][number];
 
 const PROGRESSIVE_RENDER_MESSAGE_THRESHOLD = 30;
-const PROGRESSIVE_RENDER_CONTENT_THRESHOLD = 60_000;
 const PROGRESSIVE_RENDER_CHUNK_SIZE = 8;
 
 export interface ThreadMessageRenderControllerOptions {
@@ -242,14 +241,12 @@ export class ThreadMessageRenderController {
     if (input.isLoading || !input.shouldRenderMessages) return false;
     if (input.messages.length === 0) return false;
     if (this.canReuseRenderedMessages(input.messages)) return false;
-    if (input.messages.length >= PROGRESSIVE_RENDER_MESSAGE_THRESHOLD) return true;
-
-    let contentChars = 0;
-    for (const message of input.messages) {
-      contentChars += message.content?.length ?? 0;
-      if (contentChars >= PROGRESSIVE_RENDER_CONTENT_THRESHOLD) return true;
-    }
-    return false;
+    // Progressive rendering is an initial-history optimization. Once a
+    // message list is on screen, a completed turn or history reconcile must
+    // keep that list mounted; removing it to show the skeleton causes a
+    // one-frame flash after longer conversations.
+    if (this.renderedMessagesList) return false;
+    return input.messages.length >= PROGRESSIVE_RENDER_MESSAGE_THRESHOLD;
   }
 
   private startProgressiveRender(

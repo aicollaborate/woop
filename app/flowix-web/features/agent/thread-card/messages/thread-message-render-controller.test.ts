@@ -103,6 +103,53 @@ describe("ThreadMessageRenderController empty settings", () => {
     }
   });
 
+  it("does not show the skeleton when a completed long history is updated", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("codex");
+      const initialMessages = Array.from({ length: 31 }, (_, index) => ({
+        id: `end-${index}`,
+        role: "end" as const,
+        content: `message ${index}`,
+        timestamp: new Date().toISOString(),
+      }));
+
+      controller.render({
+        messages: initialMessages,
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      while (frames.length > 0) frames.shift()?.(0);
+
+      const updatedMessages = initialMessages.map((message, index) =>
+        index === initialMessages.length - 1
+          ? { ...message, content: "hello" }
+          : { ...message },
+      );
+      controller.render({
+        messages: updatedMessages,
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      expect(body.querySelector(".agent-thread-card__skeleton")).toBeNull();
+      expect(body.querySelector(".agent-thread-card__messages")).not.toBeNull();
+      expect(body.textContent).toContain("hello");
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("defers completed reasoning Markdown until the collapsed row is expanded", () => {
     const { body, controller } = createController("claude");
 

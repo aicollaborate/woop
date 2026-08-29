@@ -22,14 +22,28 @@ describe("createRuntimeInfoRequester", () => {
     expect(createRuntimeInfoRequester("claude", () => "thread-1")).toBeUndefined();
   });
 
-  it("resolves null without invoking when the thread id is missing", async () => {
-    for (const typeKey of ["deepseek-harness", "opencode", "codex"] as const) {
+  it("resolves null without invoking when the thread id is missing for thread-scoped runtimes", async () => {
+    for (const typeKey of ["deepseek-harness", "opencode"] as const) {
       const request = createRuntimeInfoRequester(typeKey, () => null);
       await expect(request?.()).resolves.toBeNull();
     }
     expect(mocks.sessionUsage).not.toHaveBeenCalled();
     expect(mocks.getOpenCodeSessionId).not.toHaveBeenCalled();
     expect(mocks.getCodexSessionId).not.toHaveBeenCalled();
+  });
+
+  it("loads Codex account and rate limits before a thread session exists", async () => {
+    const info = { account: { planType: "plus" }, rateLimits: {}, usage: null };
+    mocks.getCodexRuntimeInfo.mockResolvedValue(info);
+    const request = createRuntimeInfoRequester("codex", () => null);
+
+    await expect(request?.()).resolves.toEqual({
+      sessionId: undefined,
+      usage: {},
+      codex: info,
+    });
+    expect(mocks.getCodexSessionId).not.toHaveBeenCalled();
+    expect(mocks.getCodexRuntimeInfo).toHaveBeenCalledWith(null);
   });
 
   it("reads the thread id at call time instead of creation time", async () => {

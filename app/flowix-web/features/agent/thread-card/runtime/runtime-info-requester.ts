@@ -34,8 +34,12 @@ export function createRuntimeInfoRequester(
     case "codex":
       return async () => {
         const threadId = getThreadId();
-        if (!threadId) return null;
-        const sessionId = await agent.getCodexSessionId(threadId);
+        // Account and rate-limit data are global Codex runtime metadata and
+        // are available before a conversation has created a provider
+        // session. Only per-thread usage needs a session id.
+        const sessionId = threadId
+          ? await agent.getCodexSessionId(threadId)
+          : null;
         const info = await agent.getCodexRuntimeInfo(sessionId);
         return {
           sessionId: sessionId ?? undefined,
