@@ -77,14 +77,14 @@ test('host drives the official SDK client across a runtime process', async () =>
     await waitFor(frame => frame.id === ensureId)
     const installedProfile = JSON.parse(await readFile(resolve(dshHome, 'profiles/flowix/package.json'), 'utf8'))
     assert.deepEqual(installedProfile.dsh.profile.bundles, [
-      '@deepseek-ai/dsh-base', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
+      '@deepseek-ai/dsh-base', 'dsh-appserver', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
     ])
     assert.equal(await readFile(resolve(dshHome, 'profiles/flowix/node_modules/@flowix/dsh-flowix-bridge/index.js'), 'utf8')
       .then(source => source.includes("name = 'flowix-dsh-bridge'")), true)
     const pluginCatalogId = request('plugins.catalog')
     const pluginCatalog = await waitFor(frame => frame.id === pluginCatalogId)
     assert.deepEqual(pluginCatalog.result.plugins.profile.map(plugin => plugin.id), [
-      '@deepseek-ai/dsh-base', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
+      '@deepseek-ai/dsh-base', 'dsh-appserver', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
     ])
     const bridgeId = request('runtime.bridge.capabilities', { threadId: 'thread-1' })
     const bridge = await waitFor(frame => frame.id === bridgeId)

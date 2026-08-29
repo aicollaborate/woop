@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { FileTextIcon, TrashSimpleIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, FileTextIcon, TrashSimpleIcon } from '@phosphor-icons/react';
 
 import { useI18n } from '@/lib/i18n';
 import { isWindowsPlatform } from '@features/shortcuts';
@@ -15,14 +15,13 @@ import {
 import { DEFAULT_AGENT_TYPE_KEY, getAgentType } from '@/lib/agent-types';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { useDocumentStore } from '@features/document';
-import { clearRestoredAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
 import { getAgentConversationPresentation } from '@features/agent/conversation-presentation';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
 import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
 import { getResolvedExternalSessionId } from '@features/agent/services/external-agent-runtime-service';
-import { agent as agentClient, deepseekHarness } from '@platform/tauri/client';
+import { createRuntimeInfoRequester } from '@features/agent/thread-card/runtime/runtime-info-requester';
 import { toast } from '@/lib/toast';
 import {
   DropdownMenu,
@@ -43,6 +42,20 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
 
+  // archive/delete 由 store 端到端完成 (含 closeAgentConversation), instance
+  // 消失时父级会立刻 unmount 这个组件; 不再渲染兜底空态、不再做"instance 缺
+  // 失时" 的 hooks 防御。
+  const presentation = instance
+    ? getAgentConversationPresentation(instance, t('common.untitled'))
+    : null;
+  const agent = getAgentType(instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY);
+  const productThreadId = instance?.threadId ?? '';
+  const externalThreadId = productThreadId
+    ? getResolvedExternalSessionId(productThreadId) ?? productThreadId
+    : '';
+  const canArchive =
+    (agent.capabilities.supportsThreadArchive ?? false) && externalThreadId !== '';
+
   const badgeData = useMemo(() => computeAgentThreadCardBadgeData({
     threadState: projection ? {
       lastRun: projection.runs.lastRun,
@@ -53,68 +66,70 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
     typeKey: instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY,
   }), [codexModel, instance?.agentType, projection]);
 
-  if (!instance) return null;
-  const agent = getAgentType(instance.agentType);
-  const presentation = getAgentConversationPresentation(instance, t('common.untitled'));
-  const { source, runtimeCwd, hasSourceDocument } = presentation;
-  const externalThreadId = instance.threadId
-    ? getResolvedExternalSessionId(instance.threadId) ?? instance.threadId
-    : '';
-  const actionButtonClass = isWindows
-    ? DOCUMENT_TITLEBAR_ICON_BUTTON_WIN
-    : DOCUMENT_TITLEBAR_ICON_BUTTON_MAC;
+  const onArchive = useCallback(async () => {
+    if (!productThreadId) return;
+    try {
+      await useAgentSessionStore.getState().archiveThread(productThreadId);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('status.agent.archiveFailed'),
+      );
+    }
+  }, [productThreadId, t]);
 
-  const handleOpenSourceDocument = () => {
-    if (!hasSourceDocument) return;
+  const onDelete = useCallback(async () => {
+    if (!productThreadId) return;
+    if (!window.confirm(t('document.agent.deleteConfirm'))) return;
+    try {
+      await useAgentSessionStore.getState().deleteThread(productThreadId);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('status.agent.deleteFailed'),
+      );
+    }
+  }, [productThreadId, t]);
+
+  const onOpenSourceDocument = useCallback(() => {
+    if (!instance || !presentation?.hasSourceDocument) return;
+    const { source } = presentation;
     const open = source?.memoId
       ? openNoteByMemoId(source.memoId)
       : source?.documentPath
         ? useDocumentStore.getState().openExternalDocument(source.documentPath)
         : Promise.resolve();
     void open.catch(() => toast.error(t('status.agent.originUnavailable')));
-  };
-  const handleDeleteConversation = useCallback(() => {
-    useAgentSessionStore.getState().removeInstance(instance.instanceId);
-    clearRestoredAgentConversation(instance.instanceId);
-    if (useDocumentStore.getState().activeAgentConversationId === instance.instanceId) {
-      useDocumentStore.getState().closeAgentConversation();
-    }
-  }, [instance.instanceId]);
-  const commitTitle = () => {
+  }, [instance, presentation, t]);
+
+  const commitTitle = useCallback(() => {
     const title = titleDraft.trim();
-    if (title) void useAgentSessionStore.getState().renameAgentConversation({
-      instanceId: instance.instanceId,
-      threadId: instance.threadId,
-      title,
-      typeKey: instance.agentType,
-    });
+    if (title && instance) {
+      void useAgentSessionStore.getState().renameAgentConversation({
+        instanceId: instance.instanceId,
+        threadId: instance.threadId,
+        title,
+        typeKey: instance.agentType,
+      });
+    }
     setIsEditingTitle(false);
-  };
+  }, [instance, titleDraft]);
+
+  if (!instance || !presentation) return null;
+  const { hasSourceDocument, runtimeCwd } = presentation;
+  const actionButtonClass = isWindows
+    ? DOCUMENT_TITLEBAR_ICON_BUTTON_WIN
+    : DOCUMENT_TITLEBAR_ICON_BUTTON_MAC;
 
   return (
     <div
       data-tauri-drag-region
-      className="relative flex h-full min-w-0 flex-1 items-center gap-2 pl-3 before:absolute before:left-0 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-[var(--divider)]"
+      className="relative flex h-full min-w-0 flex-1 items-center gap-2 pl-3"
     >
       <span className="agent-thread-card__badge-hover-wrapper shrink-0">
         <BadgeHoverCard
           threadId={externalThreadId}
           model={badgeData.model}
           usage={badgeData.usage}
-          onRequestRuntimeInfo={instance.agentType === 'deepseek-harness' && instance.threadId
-            ? () => deepseekHarness.sessionUsage(instance.threadId!)
-            : instance.agentType === 'opencode'
-              ? async () => ({
-                  sessionId: (await agentClient.getOpenCodeSessionId(instance.threadId!)) ?? undefined,
-                  usage: {},
-                })
-            : instance.agentType === 'codex'
-              ? async () => {
-                  const sessionId = await agentClient.getCodexSessionId(instance.threadId!);
-                  const info = await agentClient.getCodexRuntimeInfo(sessionId);
-                  return { sessionId: sessionId ?? undefined, usage: info.usage ?? {}, codex: info };
-                }
-            : undefined}
+          onRequestRuntimeInfo={createRuntimeInfoRequester(instance.agentType, () => instance.threadId)}
           codex={instance.agentType === 'codex'}
           cwd={runtimeCwd}
         />
@@ -140,7 +155,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
       )}
       <div className={`ml-auto flex shrink-0 items-center ${isWindows ? 'gap-2 pr-4' : 'gap-3 pr-4'}`}>
         {hasSourceDocument ? <>
-            <button type="button" onClick={handleOpenSourceDocument} aria-label={t('document.agent.viewInNote')}
+            <button type="button" onClick={onOpenSourceDocument} aria-label={t('document.agent.viewInNote')}
               title={t('document.agent.viewInNote')} className={`${actionButtonClass} [-webkit-app-region:no-drag]`}>
               <FileTextIcon className="h-4 w-4" />
             </button>
@@ -157,7 +172,14 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-[216px] space-y-0.5 px-1 py-1.5">
-            <DropdownMenuItem onClick={handleDeleteConversation}
+            {canArchive ? (
+              <DropdownMenuItem onClick={onArchive}
+                className="justify-start gap-2 rounded-md px-2 py-1.5 text-left text-[var(--foreground)] hover:bg-[var(--muted)]">
+                <ArchiveIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{t('document.agent.archiveConversation')}</span>
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem onClick={onDelete}
               className="justify-start gap-2 rounded-md px-2 py-1.5 text-left text-[var(--destructive)] hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
               <TrashSimpleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{t('document.agent.deleteConversation')}</span>

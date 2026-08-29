@@ -50,6 +50,34 @@ describe("tool chunk idempotency", () => {
     });
   });
 
+  it("appends a new user turn despite stale provider ordering metadata", () => {
+    const state: LiveMessageState = {
+      ...emptyState(),
+      messages: [
+        {
+          id: "old-assistant",
+          role: "assistant",
+          content: "previous answer",
+          timestamp: new Date(2_000).toISOString(),
+          sourceTimestamp: 2_000,
+          sourceSequence: 20,
+        },
+      ],
+    };
+
+    const result = applyUserMessageChunk(state, "next question", {
+      id: "new-user",
+      sourceTimestamp: 1_000,
+      sourceSequence: 0,
+      sourceSubsequence: 0,
+    });
+
+    expect(result.messages.map((message) => message.id)).toEqual([
+      "old-assistant",
+      "new-user",
+    ]);
+  });
+
   it("upserts repeated tool calls before applying the result", () => {
     const first = applyToolCallChunk(
       emptyState(),

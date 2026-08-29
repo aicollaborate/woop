@@ -10,6 +10,12 @@ const tauriEntrypoint = resolve(repoRoot, 'node_modules/@tauri-apps/cli/tauri.js
 const config = process.argv[2] ?? 'app/flowix-desktop/tauri.conf.dev.json'
 const childEnv = { ...process.env }
 
+// Keep the legacy Flowix host as the development default. The official DSH
+// `--app-server` surface does not implement Flowix's model/config, credential
+// and bridge methods (for example `model/config/read`), so enabling it here
+// makes reconnect fail before a conversation can start. A compatible App
+// Server can still be selected explicitly through these environment variables.
+
 if (process.platform === 'win32') {
   // rustup installs Cargo here by default. GUI shells and automation often do
   // not inherit the updated user PATH until they are restarted.

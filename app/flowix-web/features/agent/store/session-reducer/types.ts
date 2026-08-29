@@ -1,7 +1,10 @@
 import type { ChatMessage } from "@/types";
 import type { AgentTypeKey, AgentRunState, LastRunSnapshot, AgentRunStatus } from "@/types/agent";
 import type { LiveMessageState } from "@features/agent/store/chunk-result";
-import { mergeHistoricalMessages } from "@features/agent/store/thread-history";
+import {
+  mergeHistoricalMessages,
+  mergeMessagesForThreadRender,
+} from "@features/agent/store/thread-history";
 
 /**
  * Single per-thread projection derived from the backend AgentEvent stream.
@@ -163,8 +166,8 @@ export function isProjectionRunActive(p: ThreadProjection): boolean {
  * snapshot / local→canonical thread id 切换等场景. 三个调用方原本各自
  * 复制了一份完全相同的合并逻辑, 这里抽成纯函数保证一致行为:
  *
- * - `from` 的 messages 追加到 `to` 的 messages 后, 走 mergeHistoricalMessages
- *   去重 + 排序 (agentType 决定排序方向).
+ * - `from` 的 messages 作为 live overlay 合并到 `to` 的 messages 后方；Codex
+ *   使用 provider transcript 顺序，其他 runtime 使用历史合并策略.
  * - `pending` 字段: 任一非空就用它, 否则 null. to 优先.
  * - `pagination` 字段: oldestSequence 取首个非 null; hasMoreHistory OR; loading
  *   状态取 to 的 (to 是 canonical session, 优先用其 loading 锁).
@@ -178,14 +181,19 @@ export function mergeThreadProjections(
   to: ThreadProjection | undefined,
   agentType: AgentTypeKey,
 ): ThreadProjection {
-  // messages: to 在前, from 在后, 走 mergeHistoricalMessages 做去重 + 排序.
+  // messages: to 在前, from 在后. Codex 的 provider transcript 顺序是权威的，
+  // 因此 canonical projection (to) 必须作为 history，临时 projection (from)
+  // 只能作为 live overlay；否则新一轮的 optimistic user 会被当成整段
+  // transcript 放到列表头部。其它 runtime 保留原有的历史合并策略。
   let mergedMessages = to?.messages ?? [];
   if (from && from.messages.length > 0) {
-    mergedMessages = mergeHistoricalMessages(
-      mergedMessages,
-      from.messages,
-      agentType,
-    );
+    mergedMessages = agentType === "codex"
+      ? mergeMessagesForThreadRender({
+          history: mergedMessages,
+          live: from.messages,
+          agentType,
+        })
+      : mergeHistoricalMessages(mergedMessages, from.messages, agentType);
   }
 
   return {

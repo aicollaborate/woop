@@ -92,6 +92,27 @@ function userMessageVisibleKey(message: ChatMessage): string | null {
   return `user:visible:${contentFingerprint(stripSystemBlock(message.content || ""))}`;
 }
 
+/**
+ * Compatibility fallback for provider histories whose user item id differs
+ * from the optimistic row id. Prefer ids when available; content matching is
+ * only used to detect that the latest cached turn has reached history.
+ */
+export function historyContainsCachedUser(
+  history: ChatMessage[],
+  cachedMessages: ChatMessage[],
+): boolean {
+  const historyUsers = history.filter((message) => message.role === "user");
+  const cachedUsers = cachedMessages.filter((message) => message.role === "user");
+  const historyUser = historyUsers[historyUsers.length - 1];
+  const cachedUser = cachedUsers[cachedUsers.length - 1];
+  if (historyUser && cachedUser && historyUser.id === cachedUser.id) return true;
+  return (
+    !!historyUser &&
+    !!cachedUser &&
+    userMessageVisibleKey(historyUser) === userMessageVisibleKey(cachedUser)
+  );
+}
+
 function messageContentStableKey(message: ChatMessage): string | null {
   if (message.role === "user") return userMessageVisibleKey(message);
   if (
@@ -155,13 +176,10 @@ function mergeHistoricalToolMessage(
 ): ChatMessage {
   if (existing.role !== "tool" || historical.role !== "tool") return existing;
   // 历史优先(持久权威): id/content/timestamp/toolName/isLoading 取历史,
-  // live 仅补充历史缺失的运行期字段。原先 `...existing` 在前导致合并消息
-  // 用 live 的 id/content, 丢失历史持久数据。
+  // live 仅补充历史缺失的运行期字段。保留 live canonical identity，
+  // 让历史物化时已有的 DOM 行可以原地更新，避免完成瞬间重建。
   return {
     ...historical,
-    // Keep the live canonical identity when history materializes the same
-    // call under a provider item id. This lets the existing rendered row be
-    // updated in place instead of switching message ids at completion.
     id: existing.id,
     toolCallId: existing.toolCallId ?? historical.toolCallId,
     toolData: historical.toolData || existing.toolData,
@@ -169,6 +187,18 @@ function mergeHistoricalToolMessage(
     toolDisplay: historical.toolDisplay ?? existing.toolDisplay,
     toolAgentType: historical.toolAgentType ?? existing.toolAgentType,
   };
+}
+
+/**
+ * Codex history is already an ordered provider transcript. Keep that order
+ * and add only rows that exist in the live overlay. Keeping this direction in
+ * one helper prevents callers from accidentally swapping history and live.
+ */
+function mergeCodexHistoryWithLive(
+  history: ChatMessage[],
+  live: ChatMessage[],
+): ChatMessage[] {
+  return mergeCodexHistoricalMessages(live, history);
 }
 
 export function mergeHistoricalMessages(
@@ -187,7 +217,7 @@ export function mergeHistoricalMessages(
   // that caused it. Keep the provider's historical order intact and append
   // only genuinely live-only rows (normally an in-progress tail).
   if (agentType === "codex") {
-    return mergeCodexHistoricalMessages(existing, hydratedHistorical);
+    return mergeCodexHistoryWithLive(hydratedHistorical, existing);
   }
 
   let mergedExisting = existing;
@@ -572,6 +602,7 @@ export function replaceCompletedRunWithHistory(
   }
   if (existingAnchor >= 0 && historyAnchor >= 0) {
     const runHistory = history.slice(historyAnchor);
+    const runExisting = existing.slice(existingAnchor);
     // History may contain a reconstructed tool row for the same call. Merge
     // it with the live row first so completion reconciliation cannot discard
     // the display metadata that was already used during streaming.
@@ -607,6 +638,20 @@ export function replaceCompletedRunWithHistory(
           message.toolCallId &&
           !historyToolIds.has(toolCallIdentityKey(message.toolCallId)),
       );
+    // The completion snapshot can also race the final assistant item. Keep a
+    // live assistant/reasoning tail when the provider history has fewer rows
+    // of that role in this run. Without this, a turn that already rendered its
+    // final answer can be replaced by a snapshot containing only the user and
+    // tool items, making the answer disappear until a later history reload.
+    const runExistingAssistantMessages = runExisting
+      .filter((message) => message.role === "assistant" || message.role === "reasoning");
+    const historyAssistantMessages = reconciledHistory.filter(
+      (message) => message.role === "assistant" || message.role === "reasoning",
+    );
+    const missingLiveAssistantMessages =
+      historyAssistantMessages.length < runExistingAssistantMessages.length
+        ? runExistingAssistantMessages.slice(historyAssistantMessages.length)
+        : [];
     // Reinsert live-only tools at their original position in the run.  The
     // completion snapshot can race rollout persistence, but appending these
     // rows made a tool that was between two assistant items jump to the end
@@ -614,7 +659,6 @@ export function replaceCompletedRunWithHistory(
     const historyIndexById = new Map(
       reconciledHistory.map((message, index) => [message.id, index]),
     );
-    const runExisting = existing.slice(existingAnchor);
     const toolPosition = new Map(
       missingLiveTools.map((tool) => [
         tool.id,
@@ -656,6 +700,25 @@ export function replaceCompletedRunWithHistory(
         if (index >= insertAt) historyIndexById.set(id, index + 1);
       }
     }
+    for (const assistant of missingLiveAssistantMessages) {
+      const existingPosition = runExisting.indexOf(assistant);
+      let insertAt = reconciledRun.length;
+      if (existingPosition >= 0) {
+        for (let i = existingPosition + 1; i < runExisting.length; i += 1) {
+          const nextExisting = runExisting[i];
+          const nextIndex = reconciledRun.findIndex(
+            (message) =>
+              message.role === nextExisting.role &&
+              message.content === nextExisting.content,
+          );
+          if (nextIndex >= 0) {
+            insertAt = nextIndex;
+            break;
+          }
+        }
+      }
+      reconciledRun.splice(insertAt, 0, assistant);
+    }
     return reuseRenderEquivalentMessageReferences(
       existing,
       [...existing.slice(0, existingAnchor), ...reconciledRun],
@@ -687,28 +750,34 @@ export function replaceCompletedRunWithHistory(
  * across turns; only already-hydrated historical counterparts at the same or an
  * earlier timestamp are suppressed.
  */
-export function mergeMessagesForThreadRender(
-  historyMessages: ChatMessage[],
-  liveMessages: ChatMessage[],
-  agentType?: AgentTypeKey,
-): ChatMessage[] {
-  if (historyMessages.length === 0) return liveMessages;
-  if (liveMessages.length === 0) return historyMessages;
+export interface MergeMessagesForThreadRenderOptions {
+  history: ChatMessage[];
+  live: ChatMessage[];
+  agentType?: AgentTypeKey;
+}
 
-  const history = hydrateHistoricalMessages(historyMessages, agentType);
-  const live = hydrateHistoricalMessages(liveMessages, agentType);
+export function mergeMessagesForThreadRender({
+  history,
+  live,
+  agentType,
+}: MergeMessagesForThreadRenderOptions): ChatMessage[] {
+  if (history.length === 0) return live;
+  if (live.length === 0) return history;
+
+  const hydratedHistory = hydrateHistoricalMessages(history, agentType);
+  const hydratedLive = hydrateHistoricalMessages(live, agentType);
   // The same Codex ordering contract applies to render-time overlays as to
   // initial/completion history reconciliation. Keeping this branch here
   // prevents a later caller from accidentally reintroducing timestamp order
   // after `mergeHistoricalMessages` already preserved provider order.
   if (agentType === "codex") {
-    return mergeCodexHistoricalMessages(live, history);
+    return mergeCodexHistoryWithLive(hydratedHistory, hydratedLive);
   }
-  const seenIds = new Set(history.map((message) => message.id));
+  const seenIds = new Set(hydratedHistory.map((message) => message.id));
   const historicalContentCounts = new Map<string, number>();
   const latestHistoricalTimeByContent = new Map<string, number>();
 
-  for (const message of history) {
+  for (const message of hydratedHistory) {
     const key = messageContentStableKey(message);
     if (!key) continue;
     historicalContentCounts.set(key, (historicalContentCounts.get(key) ?? 0) + 1);
@@ -718,13 +787,13 @@ export function mergeMessagesForThreadRender(
     );
   }
 
-  const merged = history.map((message, index) => ({
+  const merged = hydratedHistory.map((message, index) => ({
     message,
     order: index,
   }));
   let order = history.length;
 
-  for (const message of live) {
+  for (const message of hydratedLive) {
     if (seenIds.has(message.id)) continue;
 
     const key = messageContentStableKey(message);
@@ -764,7 +833,11 @@ export function mergeLiveMessagesIntoRenderableMessages(
     changed = true;
     return liveMessage;
   });
-  const merged = mergeMessagesForThreadRender(updatedExisting, live, agentType);
+  const merged = mergeMessagesForThreadRender({
+    history: updatedExisting,
+    live,
+    agentType,
+  });
   if (
     !changed &&
     merged.length === existingMessages.length &&

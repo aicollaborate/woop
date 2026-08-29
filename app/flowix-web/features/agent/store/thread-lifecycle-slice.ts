@@ -15,6 +15,9 @@ import {
   normalizeThreadTitle,
 } from "@features/agent/store/thread-titles";
 import { replayExternalEventsForThread } from "@features/agent/store/external-event-replay";
+import { useDocumentStore } from "@features/document/store/document-store";
+import { useWorkspaceRestoreStore } from "@features/workspace/store/workspace-restore-store";
+import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 
 type SessionSet = (
   updater: (state: LifecycleContext) => Partial<LifecycleContext> | LifecycleContext,
@@ -48,6 +51,7 @@ export interface ThreadLifecycleSlice {
   loadThreadCache(threadId: string): Promise<void>;
   loadMoreHistory(typeKey: AgentTypeKey, threadId: string): Promise<void>;
   deleteThread(threadId: string): Promise<void>;
+  archiveThread(threadId: string): Promise<void>;
   renameThread(
     threadId: string,
     title: string,
@@ -140,10 +144,114 @@ async function loadThread(
   }
 }
 
+/** Refresh the provider-backed thread list for one agent type so sidebar
+ * state stays aligned after lifecycle actions (archive/delete/rename). */
+async function reloadThreadListForType(
+  get: SessionGet,
+  typeKey: AgentTypeKey,
+): Promise<void> {
+  const store = get();
+  if (typeKey === "deepseek-harness") await store.loadThreadList();
+  else if (typeKey === "codex") await store.loadCodexThreadList();
+  else if (typeKey === "claude") await store.loadClaudeThreadList();
+  else if (typeKey === "hermes") await store.loadHermesThreadList();
+  else await store.loadLocalAgentThreadList(typeKey);
+}
+
+/** Drop all in-memory references to `threadId` so the titlebar / detail unmount
+ * immediately and React rules-of-hooks remain stable across the lifecycle. */
+function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
+  set((state) => {
+    const removedType = state.sessionMeta.threadTypes[threadId];
+    const { [threadId]: _removedProjection, ...threadProjections } =
+      state.threadProjections;
+    const { [threadId]: _removedType, ...threadTypes } =
+      state.sessionMeta.threadTypes;
+    const externalSessionResolutions = Object.fromEntries(
+      Object.entries(state.sessionMeta.externalSessionResolutions).filter(
+        ([local, resolved]) => local !== threadId && resolved !== threadId,
+      ),
+    );
+    return {
+      threadProjections,
+      sessionMeta: {
+        ...state.sessionMeta,
+        threadTypes,
+        externalSessionResolutions,
+        ...(removedType
+          ? {
+              threadLists: {
+                ...state.sessionMeta.threadLists,
+                [removedType]: (
+                  state.sessionMeta.threadLists[removedType] ?? []
+                ).filter((item) => item.threadId !== threadId),
+              },
+            }
+          : {}),
+        ...(removedType && state.sessionMeta.activeThreadIds[removedType] === threadId
+          ? {
+              activeThreadIds: {
+                ...state.sessionMeta.activeThreadIds,
+                [removedType]: undefined,
+              },
+              currentThreadTitles: {
+                ...state.sessionMeta.currentThreadTitles,
+                [removedType]: undefined,
+              },
+            }
+          : {}),
+      },
+    };
+  });
+}
+
+/** Close the third-column conversation view when its underlying thread is
+ * torn down, so the titlebar unmounts before the next render. */
+function closeConversationIfActive(threadId: string): void {
+  const doc = useDocumentStore.getState();
+  const activeInstanceId = doc.activeAgentConversationId;
+  if (!activeInstanceId) return;
+  const session = useAgentSessionStore.getState();
+  const instance = session.getInstance(activeInstanceId);
+  if (instance?.threadId !== threadId) return;
+  doc.closeAgentConversation();
+  useWorkspaceRestoreStore.getState().clearAgentConversation(activeInstanceId);
+}
+
 export function createThreadLifecycleSlice(
   set: SessionSet,
   get: SessionGet,
 ): ThreadLifecycleSlice {
+  /** End-to-end archive/delete: dispatches provider-side action by the
+   * runtime recorded in sessionMeta, then unconditionally tears down local
+   * state (projections, instances, sessionMeta rows, active conversation,
+   * workspace restore). IPC errors never leave local residue. */
+  const runThreadLifecycle = async (
+    threadId: string,
+    action: "archive" | "delete",
+  ): Promise<void> => {
+    const typeKey = getAgentType(
+      get().sessionMeta.threadTypes[threadId] ??
+        get().sessionMeta.activeAgentTypeKey,
+    );
+    get().invalidateThread(threadId);
+    try {
+      if (action === "archive") {
+        await agentClient.archiveAgentThread(typeKey.key, threadId);
+      } else {
+        await agentClient.deleteAgentThread(typeKey.key, threadId);
+      }
+    } finally {
+      get().invalidateThread(threadId, true);
+      get().removeInstancesForThread(threadId);
+      tearDownLocalThreadState(set, threadId);
+      closeConversationIfActive(threadId);
+      // provider 侧列表 (codex thread/list 等) 不再返回该 thread, 刷新让
+      // 侧栏与后端状态对齐; 失败不阻塞流程。
+      await reloadThreadListForType(get, typeKey.key).catch(() => undefined);
+    }
+  };
+
   return {
     migrateThreadState: (fromThreadId, toThreadId, typeKey) => {
       if (!fromThreadId || !toThreadId || fromThreadId === toThreadId) return;
@@ -181,66 +289,8 @@ export function createThreadLifecycleSlice(
     loadMoreHistory: async (typeKey, threadId) => {
       await get().loadMoreMessages(getAgentType(typeKey).key, threadId);
     },
-    deleteThread: async (threadId) => {
-      get().invalidateThread(threadId);
-      try {
-        await agentClient.deleteThread(threadId);
-        get().invalidateThread(threadId, true);
-        get().removeInstancesForThread(threadId);
-        set((state) => {
-          const type = state.sessionMeta.threadTypes[threadId];
-          const { [threadId]: _removedProjection, ...threadProjections } =
-            state.threadProjections;
-          const { [threadId]: _removedType, ...threadTypes } =
-            state.sessionMeta.threadTypes;
-          const externalSessionResolutions = Object.fromEntries(
-            Object.entries(state.sessionMeta.externalSessionResolutions).filter(
-              ([local, resolved]) => local !== threadId && resolved !== threadId,
-            ),
-          );
-          return {
-            threadProjections,
-            sessionMeta: {
-              ...state.sessionMeta,
-              threadTypes,
-              externalSessionResolutions,
-              ...(type
-                ? {
-                    threadLists: {
-                      ...state.sessionMeta.threadLists,
-                      [type]: (state.sessionMeta.threadLists[type] ?? []).filter(
-                        (item) => item.threadId !== threadId,
-                      ),
-                    },
-                  }
-                : {}),
-              ...(type && state.sessionMeta.activeThreadIds[type] === threadId
-                ? {
-                    activeThreadIds: {
-                      ...state.sessionMeta.activeThreadIds,
-                      [type]: undefined,
-                    },
-                    currentThreadTitles: {
-                      ...state.sessionMeta.currentThreadTitles,
-                      [type]: undefined,
-                    },
-                  }
-                : {}),
-            },
-          };
-        });
-      } catch (error) {
-        get().setThreadProjection(threadId, (projection) => ({
-          ...projection,
-          pagination: {
-            ...projection.pagination,
-            loadingInitial: false,
-            loadingMore: false,
-          },
-        }));
-        console.error("Failed to delete thread:", error);
-      }
-    },
+    deleteThread: (threadId) => runThreadLifecycle(threadId, "delete"),
+    archiveThread: (threadId) => runThreadLifecycle(threadId, "archive"),
     renameThread: async (threadId, title, typeKey) => {
       const nextTitle = normalizeThreadTitle(title);
       if (!threadId || !nextTitle) return;
@@ -268,11 +318,7 @@ export function createThreadLifecycleSlice(
       }));
       try {
         await agentClient.updateThreadTitle(threadId, nextTitle, type.key);
-        if (type.key === "deepseek-harness") await get().loadThreadList();
-        else if (type.key === "codex") await get().loadCodexThreadList();
-        else if (type.key === "claude") await get().loadClaudeThreadList();
-        else if (type.key === "hermes") await get().loadHermesThreadList();
-        else await get().loadLocalAgentThreadList(type.key);
+        await reloadThreadListForType(get, type.key);
       } catch (error) {
         get().setSessionMeta((meta) => ({
           ...meta,

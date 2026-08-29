@@ -18,7 +18,7 @@ test('flowix-dsh-bridge is a DSH bundle and keeps the runtime side UI-free', asy
   const source = await readFile(resolve(bridgeRoot, 'index.js'), 'utf8')
   const profileManifest = JSON.parse(await readFile(resolve(root, 'profile/flowix/package.json'), 'utf8'))
   assert.deepEqual(profileManifest.dsh.profile.bundles, [
-    '@deepseek-ai/dsh-base', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
+    '@deepseek-ai/dsh-base', 'dsh-appserver', '@flowix/dsh-flowix-bridge', 'dsh-flowix-memory',
   ])
   assert.doesNotMatch(source, /from ['"](?:react|@tauri-apps|sqlite|flowix)/i)
   assert.doesNotMatch(source, /^\s*import\s+/m)

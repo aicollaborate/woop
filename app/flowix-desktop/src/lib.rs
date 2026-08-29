@@ -3,6 +3,7 @@
 pub mod agent_external;
 mod agent_external_config;
 pub mod agent_history;
+pub mod agent_lifecycle;
 pub mod agent_session;
 mod agent_types;
 pub mod agent_wire;

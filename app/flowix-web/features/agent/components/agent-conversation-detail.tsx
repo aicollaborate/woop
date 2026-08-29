@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
 import { DEFAULT_AGENT_TYPE_KEY } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
+import { agent } from '@platform/tauri/client/agent';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import { acquireThreadInterest } from '@features/agent/store/thread-interest';
 import type { ThreadState } from '@features/agent/store/thread-runtime-state';
@@ -29,6 +30,9 @@ import { createExternalAgentRuntimeHandle } from '@features/agent/services/exter
 import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
 import { markConversationWorkspaceStarted } from '@features/agent/runtime/workspace-snapshot';
 import { AgentBackgroundTerminals } from '@features/agent/components/agent-background-terminals';
+import { buildInitialInstanceRuntimeConfig } from '@features/agent/store/initial-runtime-config';
+import { defaultThreadTitle } from '@features/agent/store/thread-titles';
+import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -124,6 +128,36 @@ export function AgentConversationDetail({
   const languageRef = useRef(language);
   const tRef = useRef(t);
   const submitRef = useRef<() => void>(() => undefined);
+  const [showScrollTopHint, setShowScrollTopHint] = useState(false);
+
+  const forkFromMessage = useCallback(async (message: ThreadState['messages'][number]) => {
+    const currentInstance = instanceRef.current;
+    const sourceThreadId = threadIdRef.current;
+    if (currentInstance?.agentType !== 'codex' || !sourceThreadId || !message.codexTurnId) return;
+
+    const confirmed = window.confirm(
+      languageRef.current === 'zh-CN'
+        ? '从这条消息创建新的 Codex 分支对话？原对话不会受到影响。'
+        : 'Create a new Codex fork from this message? The original conversation will remain unchanged.',
+    );
+    if (!confirmed || destroyedRef.current) return;
+
+    try {
+      const result = await agent.forkCodexThread(sourceThreadId, message.codexTurnId);
+      const fork = useAgentSessionStore.getState().createInstance({
+        agentType: 'codex',
+        title: `${currentInstance.title || defaultThreadTitle('codex')} (fork)`,
+        threadId: result.thread.threadId,
+        runtimeConfig: currentInstance.runtimeConfig ?? buildInitialInstanceRuntimeConfig('codex'),
+        source: { kind: 'dedicated', notebookId: currentInstance.source.notebookId ?? null },
+        role: currentInstance.role ?? undefined,
+      });
+      await selectAndOpenAgentConversation(fork.instanceId);
+    } catch (error) {
+      logger.error('Failed to fork Codex conversation', { error });
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
 
   renderThreadIdRef.current = renderThreadId;
   typeKeyRef.current = instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY;
@@ -207,6 +241,10 @@ export function AgentConversationDetail({
     void store.loadMessages(instance.agentType, threadId);
     return release;
   }, [instance, threadId]);
+
+  useEffect(() => {
+    setShowScrollTopHint(false);
+  }, [instanceId]);
 
   useLayoutEffect(() => {
     const dom = domRef.current;
@@ -329,6 +367,7 @@ export function AgentConversationDetail({
         t: (key) => tRef.current(key),
         createThreadCacheSkeleton: () => createThreadCacheSkeleton(tRef.current('editor.threadCard.loadingThreadCache')),
         createExternalAgentEmptySettings: () => externalSettings.createEmptySettings(),
+        onForkMessage: forkFromMessage,
       },
       composerOptions: {
         draft: composerDraft,
@@ -446,20 +485,35 @@ export function AgentConversationDetail({
   return (
     <section className="agent-conversation-detail markdown-editor flex h-full min-h-0 flex-col">
       <div ref={domRef} className="agent-thread-card agent-conversation-detail__card flex min-h-0 flex-1 flex-col">
-        <div
-          ref={bodyRef}
-          className="agent-thread-card__body"
-          data-no-context-menu-scroll
-          onScroll={() => messagesControllerRef.current?.handleScroll()}
-        >
-          <div ref={loadingIndicatorRef} className="agent-thread-card__loading-indicator" role="status" aria-live="polite">
-            <span className="agent-thread-card__loading-cells" aria-hidden="true">
-              {[0, 1, 2, 3].map((step) => (
-                <span key={step} className="agent-thread-card__loading-cell" style={{ '--cell-step': String(step) } as CSSProperties} />
-              ))}
-            </span>
-            <span className="agent-thread-card__loading-text" />
+        <div className="agent-conversation-detail__body-shell">
+          <div
+            ref={bodyRef}
+            className="agent-thread-card__body"
+            data-no-context-menu-scroll
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              setShowScrollTopHint(target.scrollTop > SCROLL_DELTA_EPSILON_PX);
+              messagesControllerRef.current?.handleScroll();
+            }}
+          >
+            <div ref={loadingIndicatorRef} className="agent-thread-card__loading-indicator" role="status" aria-live="polite">
+              <span className="agent-thread-card__loading-cells" aria-hidden="true">
+                {[0, 1, 2, 3].map((step) => (
+                  <span key={step} className="agent-thread-card__loading-cell" style={{ '--cell-step': String(step) } as CSSProperties} />
+                ))}
+              </span>
+              <span className="agent-thread-card__loading-text" />
+            </div>
           </div>
+          <div
+            aria-hidden="true"
+            className={[
+              'pointer-events-none absolute inset-x-0 top-0 z-[3] h-3',
+              'bg-gradient-to-b from-[color-mix(in_oklch,var(--foreground)_3%,transparent)] to-transparent',
+              'transition-opacity duration-200',
+              showScrollTopHint ? 'opacity-100' : 'opacity-0',
+            ].join(' ')}
+          />
         </div>
         <div className="agent-conversation-detail__composer-stack">
           <AgentBackgroundTerminals

@@ -10,7 +10,9 @@ import {
   getInitialThreadHistory,
   HISTORY_PAGE_SIZE,
   areMessagesEquivalent,
+  historyContainsCachedUser,
   mergeHistoricalMessages,
+  mergeMessagesForThreadRender,
   mergeLiveMessagesIntoRenderableMessages,
   prependHistoricalMessages,
   replaceCompletedRunWithHistory,
@@ -22,6 +24,13 @@ type SessionSet = (
 ) => void;
 type HistoryContext = ThreadHistorySlice & ProjectionSlice;
 type SessionGet = () => HistoryContext;
+
+const codexReconciles = new Map<string, Promise<void>>();
+const CODEX_RECONCILE_DELAYS = [0, 100, 500, 1500];
+
+function wait(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
 
 export interface ThreadHistorySlice {
   getMessageState(
@@ -173,13 +182,19 @@ export function createThreadHistorySlice(
         );
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         const messages = filterRenderableHistoryMessages(page.messages);
+        const cached = agentType === "codex" ? get().codexLiveTurns[threadId] : undefined;
         get().setThreadProjection(threadId, (projection) => ({
           ...projection,
-          messages: mergeHistoricalMessages(
-            projection.messages,
-            messages,
-            agentType,
-          ),
+          messages: cached
+            // The persisted page is the history base; the cached run is only
+            // a live tail overlay. Passing these in the opposite order makes
+            // a new optimistic Codex user row become the list head.
+            ? mergeMessagesForThreadRender({
+                history: messages,
+                live: cached.messages,
+                agentType,
+              })
+            : mergeHistoricalMessages(projection.messages, messages, agentType),
           pagination: {
             initialStatus: "ready",
             oldestSequence: page.oldestSequence,
@@ -188,6 +203,13 @@ export function createThreadHistorySlice(
             loadingMore: false,
           },
         }));
+        if (
+          agentType === "codex" &&
+          cached?.status === "awaiting_snapshot" &&
+          historyContainsCachedUser(messages, cached.messages)
+        ) {
+          get().clearCodexLiveTurn(threadId, cached.runId);
+        }
       } catch (error) {
         console.error("[AgentSession] Failed to load messages:", error);
         if (!isRequestCurrent(threadId, requestEpoch)) return;
@@ -203,15 +225,29 @@ export function createThreadHistorySlice(
     },
     reconcileCompletedRun: async (agentType, threadId, runId) => {
       if (get().threadTombstones[threadId]) return;
+      if (agentType === "codex") {
+        const existing = codexReconciles.get(threadId);
+        if (existing) return existing;
+      }
       const requestEpoch = get().threadEpochs[threadId] ?? 0;
-      try {
-        const page = await getInitialThreadHistory(
-          agentType,
-          threadId,
-          HISTORY_PAGE_SIZE,
-        );
+      const reconcile = (async () => {
+        try {
+          let page: Awaited<ReturnType<typeof getInitialThreadHistory>> | null = null;
+          let historicalMessages: ChatMessage[] = [];
+          for (const delay of agentType === "codex" ? CODEX_RECONCILE_DELAYS : [0]) {
+            await wait(delay);
+            page = await getInitialThreadHistory(agentType, threadId, HISTORY_PAGE_SIZE);
+            historicalMessages = filterRenderableHistoryMessages(page.messages);
+            const cached = get().codexLiveTurns[threadId];
+            if (
+              agentType !== "codex" ||
+              !cached ||
+              cached.runId !== runId ||
+              historyContainsCachedUser(historicalMessages, cached.messages)
+            ) break;
+          }
+          if (!page) return;
         if (!isRequestCurrent(threadId, requestEpoch)) return;
-        const historicalMessages = filterRenderableHistoryMessages(page.messages);
         get().setThreadProjection(threadId, (projection) => {
           const messages = replaceCompletedRunWithHistory(
             projection.messages,
@@ -248,8 +284,27 @@ export function createThreadHistorySlice(
             pagination: nextPagination,
           };
         });
-      } catch (error) {
-        console.error("[AgentSession] Failed to reconcile completed run:", error);
+        if (agentType === "codex") {
+          const cached = get().codexLiveTurns[threadId];
+          if (cached && cached.runId === runId) {
+            if (historyContainsCachedUser(historicalMessages, cached.messages)) {
+              get().clearCodexLiveTurn(threadId, runId);
+            }
+          }
+        }
+        } catch (error) {
+          console.error("[AgentSession] Failed to reconcile completed run:", error);
+        }
+      })();
+      if (agentType === "codex") {
+        codexReconciles.set(threadId, reconcile);
+        try {
+          await reconcile;
+        } finally {
+          if (codexReconciles.get(threadId) === reconcile) codexReconciles.delete(threadId);
+        }
+      } else {
+        await reconcile;
       }
     },
     loadMoreMessages: async (agentType, threadId) => {

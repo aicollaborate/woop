@@ -60,7 +60,7 @@ describe("mergeMessagesForThreadRender", () => {
       message("live-user-2", "user", "same", "2026-01-01T00:00:02.000Z"),
     ];
 
-    expect(mergeMessagesForThreadRender(history, live).map((m) => m.id)).toEqual([
+    expect(mergeMessagesForThreadRender({ history, live }).map((m) => m.id)).toEqual([
       "history-user-1",
       "history-assistant-1",
       "live-user-2",
@@ -75,7 +75,7 @@ describe("mergeMessagesForThreadRender", () => {
       message("live-user-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
     ];
 
-    expect(mergeMessagesForThreadRender(history, live).map((m) => m.id)).toEqual([
+    expect(mergeMessagesForThreadRender({ history, live }).map((m) => m.id)).toEqual([
       "live-user-1",
       "history-assistant-1",
     ]);
@@ -102,12 +102,40 @@ describe("mergeMessagesForThreadRender", () => {
     ];
 
     expect(
-      mergeMessagesForThreadRender(history, live, "codex").map((item) => item.id),
+      mergeMessagesForThreadRender({ history, live, agentType: "codex" }).map(
+        (item) => item.id,
+      ),
     ).toEqual([
       "history-user",
       "history-commentary",
       "history-tool",
       "history-final",
+    ]);
+  });
+
+  it("keeps the cached Codex live turn after loaded history", () => {
+    const history = [
+      message("history-user", "user", "first question", "2026-08-29T10:00:00.000Z"),
+      message("history-answer", "assistant", "first answer", "2026-08-29T10:00:01.000Z"),
+    ];
+    const cachedLiveTurn = [
+      message("live-user", "user", "second question", "2026-08-29T09:00:00.000Z"),
+      message("live-answer", "assistant", "working", "2026-08-29T09:00:01.000Z"),
+    ];
+
+    expect(
+      mergeMessagesForThreadRender({
+        history,
+        live: cachedLiveTurn,
+        agentType: "codex",
+      }).map(
+        (item) => item.id,
+      ),
+    ).toEqual([
+      "history-user",
+      "history-answer",
+      "live-user",
+      "live-answer",
     ]);
   });
 });
@@ -254,6 +282,25 @@ describe("replaceCompletedRunWithHistory", () => {
     ]);
   });
 
+  it("keeps the final live assistant when the Codex completion snapshot is partial", () => {
+    const existing = [
+      message("msg:codex:run-4:user:user-run-4", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("assistant-live-4", "assistant", "the complete final answer", "2026-01-01T00:00:03.000Z"),
+    ];
+    const history = [
+      message("msg:codex:run-4:user:user-run-4", "user", "ask", "2026-01-01T00:00:01.000Z"),
+    ];
+
+    expect(
+      replaceCompletedRunWithHistory(existing, history, "run-4", "codex").map(
+        (m) => m.id,
+      ),
+    ).toEqual([
+      "msg:codex:run-4:user:user-run-4",
+      "assistant-live-4",
+    ]);
+  });
+
   it("keeps a live tool when Codex replaces the Flowix user id in history", () => {
     const existing = [
       message("msg:codex:run-2:user:user-run-2", "user", "ask", "2026-01-01T00:00:01.000Z"),
@@ -351,7 +398,7 @@ describe("message dedup keys (content fingerprint)", () => {
     const live = [
       message("l-1", "assistant", "answer", "2026-01-01T00:00:00.000Z"),
     ];
-    expect(mergeMessagesForThreadRender(history, live).map((m) => m.id)).toEqual([
+    expect(mergeMessagesForThreadRender({ history, live }).map((m) => m.id)).toEqual([
       "h-1",
     ]);
   });
@@ -363,7 +410,7 @@ describe("message dedup keys (content fingerprint)", () => {
     const live = [
       message("l-1", "assistant", "answer!", "2026-01-01T00:00:00.000Z"),
     ];
-    expect(mergeMessagesForThreadRender(history, live).map((m) => m.id)).toEqual([
+    expect(mergeMessagesForThreadRender({ history, live }).map((m) => m.id)).toEqual([
       "h-1",
       "l-1",
     ]);
@@ -376,7 +423,7 @@ describe("message dedup keys (content fingerprint)", () => {
     const live = [
       message("l-1", "reasoning", "x", "2026-01-01T00:00:00.000Z"),
     ];
-    expect(mergeMessagesForThreadRender(history, live).map((m) => m.id)).toEqual([
+    expect(mergeMessagesForThreadRender({ history, live }).map((m) => m.id)).toEqual([
       "h-1",
       "l-1",
     ]);
@@ -391,7 +438,7 @@ describe("message dedup keys (content fingerprint)", () => {
       message("l-1", "assistant", big, "2026-01-01T00:00:00.000Z"),
     ];
     const t0 = Date.now();
-    const merged = mergeMessagesForThreadRender(history, live);
+    const merged = mergeMessagesForThreadRender({ history, live });
     const elapsed = Date.now() - t0;
     expect(merged.map((m) => m.id)).toEqual(["h-1"]);
     // JSON.stringify over 2MB repeated content would dominate this budget.

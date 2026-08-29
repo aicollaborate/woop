@@ -34,6 +34,20 @@ export interface AgentThreadCardMessageRenderContext {
    * 修正块切分。见 [renderAgentThreadCardBudgetedMarkdown]。
    */
   isStreaming: (message: AgentMessage) => boolean;
+  onForkMessage?: (message: AgentMessage) => void | Promise<void>;
+}
+
+function isLastAssistantInTurn(
+  messages: ThreadState["messages"],
+  index: number,
+): boolean {
+  const message = messages[index];
+  if (message.role !== "assistant" || !message.codexTurnId) return false;
+  for (let i = index + 1; i < messages.length; i += 1) {
+    if (messages[i].codexTurnId !== message.codexTurnId) break;
+    if (messages[i].role === "assistant") return false;
+  }
+  return message.isCompleted !== false;
 }
 
 export interface AgentThreadCardMessagePatchOptions {
@@ -171,6 +185,8 @@ export function appendRenderedAgentMessagesToTail(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
+      canFork: isLastAssistantInTurn(messages, messages.indexOf(message)),
+      onForkMessage: context.onForkMessage,
     });
     if (!rendered) continue;
     list.append(rendered.element);
@@ -193,7 +209,8 @@ export function createRenderedAgentMessageList(
   list.className = "agent-thread-card__messages";
   const rememberedMessages: ThreadState["messages"] = [];
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     const rendered = createAgentThreadCardMessageElement({
       message,
       language: context.language,
@@ -202,6 +219,8 @@ export function createRenderedAgentMessageList(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
+      canFork: isLastAssistantInTurn(messages, index),
+      onForkMessage: context.onForkMessage,
     });
     if (!rendered) continue;
     if (rendered.shouldRemember) rememberedMessages.push(message);

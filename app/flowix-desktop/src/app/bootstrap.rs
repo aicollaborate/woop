@@ -187,6 +187,10 @@ pub fn run() {
         opencode_acp_manager.clone(),
         deepseek_harness_manager.clone(),
     ));
+    let agent_lifecycle = Arc::new(crate::agent_lifecycle::AgentLifecycleService::new(
+        thread_manager_arc.clone(),
+        codex_app_server.clone(),
+    ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
     // 的�?盘变更转�?`memo-event` 推前�?��`AppHandle` �?`run()` 阶�?拿不�?
@@ -235,6 +239,7 @@ pub fn run() {
                 opencode: opencode_acp_manager.clone(),
                 deepseek_harness: deepseek_harness_manager.clone(),
                 agent_history: agent_history.clone(),
+                agent_lifecycle: agent_lifecycle.clone(),
                 thread_manager: thread_manager_for_state.clone(),
                 agent_access: agent_access_for_state.clone(),
                 security_bookmarks: security_bookmarks_for_state.clone(),
@@ -625,6 +630,7 @@ pub fn run() {
             commands::thread::codex_thread_get,
             commands::thread::codex_thread_get_page,
             commands::thread::codex_thread_session_id,
+            commands::thread::codex_thread_fork,
             commands::agent::model_catalog::codex_default_model,
             commands::agent::model_catalog::agent_supported_models,
             commands::agent::model_catalog::codex_runtime_info,
@@ -645,6 +651,8 @@ pub fn run() {
             commands::thread::opencode_thread_list,
             commands::thread::opencode_thread_get_page,
             commands::thread::thread_delete,
+            commands::thread::agent_thread_archive,
+            commands::thread::agent_thread_delete,
             commands::thread::thread_update_title,
             // window
             commands::window::show_main_window,

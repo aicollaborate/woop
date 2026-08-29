@@ -9,6 +9,10 @@ import {
   reduceProjection,
   type ThreadProjection,
 } from "@features/agent/store/session-reducer";
+import {
+  liveTurnMessages,
+  type CodexLiveTurnCache,
+} from "@features/agent/store/codex-live-turn-cache";
 
 type SessionSet = (
   updater: (state: ProjectionContext) => Partial<ProjectionContext> | ProjectionContext,
@@ -22,6 +26,8 @@ export interface ProjectionSlice {
   threadProjections: Record<string, ThreadProjection>;
   threadEpochs: Record<string, number>;
   threadTombstones: Record<string, true>;
+  codexLiveTurns: Record<string, CodexLiveTurnCache>;
+  clearCodexLiveTurn(threadId: string, runId?: string): void;
   dispatch(event: AgentEvent): void;
   setThreadProjection(
     threadId: string,
@@ -43,6 +49,15 @@ export function createProjectionSlice(
     threadProjections: {},
     threadEpochs: {},
     threadTombstones: {},
+    codexLiveTurns: {},
+    clearCodexLiveTurn: (threadId, runId) => {
+      set((state) => {
+        const current = state.codexLiveTurns[threadId];
+        if (!current || (runId && current.runId !== runId)) return state;
+        const { [threadId]: _removed, ...codexLiveTurns } = state.codexLiveTurns;
+        return { codexLiveTurns };
+      });
+    },
     dispatch: (event) => {
       set((state) => {
         if (state.threadTombstones[event.threadId]) return state;
@@ -50,11 +65,28 @@ export function createProjectionSlice(
           state.threadProjections[event.threadId] ?? emptyProjection();
         const next = reduceProjection(current, event);
         if (next === current) return state;
+        const codexLiveTurns = { ...state.codexLiveTurns };
+        if (event.agentType === "codex" && event.runId) {
+          if (event.kind === "stream_end" || event.kind === "error") {
+            const cached = codexLiveTurns[event.threadId];
+            if (cached?.runId === event.runId) {
+              codexLiveTurns[event.threadId] = { ...cached, status: "awaiting_snapshot", updatedAt: Date.now() };
+            }
+          } else {
+            codexLiveTurns[event.threadId] = {
+              runId: event.runId,
+              messages: liveTurnMessages(next.messages, event.runId),
+              status: "running",
+              updatedAt: Date.now(),
+            };
+          }
+        }
         return {
           threadProjections: {
             ...state.threadProjections,
             [event.threadId]: next,
           },
+          codexLiveTurns,
         };
       });
     },
@@ -77,7 +109,8 @@ export function createProjectionSlice(
         if (!(threadId in state.threadProjections)) return state;
         const { [threadId]: _removed, ...threadProjections } =
           state.threadProjections;
-        return { threadProjections };
+        const { [threadId]: _removedLive, ...codexLiveTurns } = state.codexLiveTurns;
+        return { threadProjections, codexLiveTurns };
       });
     },
     resetThreadProjections: (threadIds) => {
@@ -85,7 +118,11 @@ export function createProjectionSlice(
         const threadProjections = { ...state.threadProjections };
         for (const threadId of threadIds) {
           if (!state.threadTombstones[threadId]) {
-            threadProjections[threadId] = emptyProjection();
+            const cached = state.codexLiveTurns[threadId];
+            threadProjections[threadId] = {
+              ...emptyProjection(),
+              ...(cached ? { messages: cached.messages } : {}),
+            };
           }
         }
         return { threadProjections };
@@ -121,6 +158,12 @@ export function createProjectionSlice(
               },
             }
           : {}),
+        ...(deleted
+          ? (() => {
+              const { [threadId]: _removed, ...codexLiveTurns } = state.codexLiveTurns;
+              return { codexLiveTurns };
+            })()
+          : {}),
       }));
     },
     applySessionResolved: (event) => {
@@ -131,6 +174,7 @@ export function createProjectionSlice(
         const local = state.threadProjections[localThreadId];
         const legacySession = state.threadProjections[sessionId];
         let threadProjections = state.threadProjections;
+        let codexLiveTurns = state.codexLiveTurns;
         if (local || legacySession) {
           const merged = mergeThreadProjections(
             local,
@@ -140,9 +184,19 @@ export function createProjectionSlice(
           const { [sessionId]: _removed, ...rest } = threadProjections;
           threadProjections = { ...rest, [localThreadId]: merged };
         }
+        if (event.agentType === "codex") {
+          const localLive = state.codexLiveTurns[localThreadId];
+          const sessionLive = state.codexLiveTurns[sessionId];
+          if (localLive || sessionLive) {
+            codexLiveTurns = { ...state.codexLiveTurns };
+            if (!localLive && sessionLive) codexLiveTurns[localThreadId] = sessionLive;
+            delete codexLiveTurns[sessionId];
+          }
+        }
 
         return {
           threadProjections,
+          codexLiveTurns,
           threadEpochs: {
             ...state.threadEpochs,
             [sessionId]: (state.threadEpochs[sessionId] ?? 0) + 1,

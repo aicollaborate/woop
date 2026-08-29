@@ -1,3 +1,6 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ArrowsSplitIcon, CopyIcon } from "@phosphor-icons/react";
 import { translate, type AppLanguage } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
@@ -36,6 +39,74 @@ export interface AgentThreadCardMessageDisplayContext {
   language: AppLanguage;
   getDisplayExpanded: (message: AgentMessage) => boolean;
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
+  onForkMessage?: (message: AgentMessage) => void | Promise<void>;
+}
+
+function createPhosphorIcon(icon: typeof CopyIcon): SVGSVGElement {
+  const template = document.createElement("template");
+  template.innerHTML = renderToStaticMarkup(
+    createElement(icon, { size: 14, weight: "regular", "aria-hidden": true }),
+  );
+  return template.content.firstElementChild as SVGSVGElement;
+}
+
+function getMessageDateTimeText(message: AgentMessage, language: AppLanguage): string {
+  const date = new Date(message.timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(language === "zh-CN" ? "zh-CN" : "en-US", {
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function attachMessageActions(
+  item: HTMLDivElement,
+  message: AgentMessage,
+  messageView: ReturnType<typeof createAgentMessageViewModel>,
+  language: AppLanguage,
+  canFork: boolean,
+  onFork?: (message: AgentMessage) => void | Promise<void>,
+): void {
+  if (message.role !== "assistant") return;
+
+  const actions = document.createElement("div");
+  actions.className = "agent-thread-card__message-actions";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "agent-thread-card__message-action";
+  copyButton.title = language === "zh-CN" ? "复制消息" : "Copy message";
+  copyButton.setAttribute("aria-label", copyButton.title);
+  copyButton.append(createPhosphorIcon(CopyIcon));
+  copyButton.addEventListener("mousedown", (event) => event.stopPropagation());
+  copyButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(messageView.visibleContent);
+  });
+  actions.append(copyButton);
+
+  if (canFork) {
+    const forkButton = document.createElement("button");
+    forkButton.type = "button";
+    forkButton.className = "agent-thread-card__message-action";
+    forkButton.title = language === "zh-CN" ? "从此处分叉对话" : "Fork conversation";
+    forkButton.setAttribute("aria-label", forkButton.title);
+    forkButton.append(createPhosphorIcon(ArrowsSplitIcon));
+    forkButton.addEventListener("mousedown", (event) => event.stopPropagation());
+    forkButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void onFork?.(message);
+    });
+    actions.append(forkButton);
+  }
+
+  const time = document.createElement("span");
+  time.className = "agent-thread-card__message-time";
+  time.textContent = getMessageDateTimeText(message, language);
+  actions.append(time);
+  item.append(actions);
 }
 
 function getDisplayToggleLabel(
@@ -273,6 +344,8 @@ export function createAgentThreadCardMessageElement(options: {
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
   /** 消息是否仍在流式增长; 见 [renderAgentThreadCardBudgetedMarkdown]。 */
   isStreaming?: boolean;
+  canFork?: boolean;
+  onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }): AgentThreadCardMessageElementResult | null {
   const {
     message,
@@ -286,6 +359,7 @@ export function createAgentThreadCardMessageElement(options: {
     language,
     getDisplayExpanded,
     setDisplayExpanded,
+    onForkMessage: options.canFork ? options.onForkMessage : undefined,
   };
 
   if (!shouldRenderAgentMessage(message)) {
@@ -317,7 +391,13 @@ export function createAgentThreadCardMessageElement(options: {
       name.className = "agent-thread-card__message-tool-name";
       name.textContent = messageView.toolLabel;
       const command = parseAgentCommandInput(message.toolInput);
-      if (command && message.toolDisplay?.kind === "command") {
+      // The command parser is the source of truth for the command layout.
+      // `toolDisplay` is derived metadata and is not guaranteed to survive
+      // Codex history projection/reconciliation, while the raw command input
+      // is present in both the live and replay paths. Gating the expanded
+      // renderer on toolDisplay.kind makes the same tool switch between a
+      // command list while streaming and a single summary after completion.
+      if (command) {
         item.classList.add("agent-thread-card__message--tool-command");
         const head = document.createElement("div");
         head.className = "agent-thread-card__message-tool-head";
@@ -443,6 +523,17 @@ export function createAgentThreadCardMessageElement(options: {
         context: displayContext,
         isStreaming: options.isStreaming,
       });
+    }
+
+    if (options.canFork) {
+      attachMessageActions(
+        item,
+        message,
+        messageView,
+        language,
+        true,
+        displayContext.onForkMessage,
+      );
     }
 
     return { element: item, shouldRemember: true };

@@ -21,6 +21,7 @@ import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
 import { windows } from "@platform/tauri/client";
+import { agent } from "@platform/tauri/client/agent";
 import { normalizePlainLinkHref } from "@features/editor/extensions/markdown-link";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
@@ -50,6 +51,7 @@ import {
 } from "@features/agent/thread-card/messages";
 import { AgentConversationSurfaceController } from "@features/agent/thread-card/surface/agent-conversation-surface-controller";
 import { getAgentConversationRuntimeCwd } from "@features/agent/conversation-presentation";
+import { selectAndOpenAgentConversation } from "@features/workspace/use-cases/agent-conversation-navigation";
 
 const logger = createLogger("agent-thread-card");
 import {
@@ -453,6 +455,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       createThreadCacheSkeleton: () => this.createThreadCacheSkeleton(),
       createExternalAgentEmptySettings: () =>
         this.createExternalAgentEmptySettings(),
+      onForkMessage: (message) => this.forkFromMessage(message),
       },
       composerOptions: {
       draft: this.composerDraft,
@@ -498,6 +501,32 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.runInitialPromptIfNeeded();
     queueMicrotask(() => this.ensureInstanceBinding());
     this.schedulePersistedFullscreenRestore();
+  }
+
+  private async forkFromMessage(message: ThreadState["messages"][number]): Promise<void> {
+    if (this.typeKey !== "codex" || !this.threadId || !message.codexTurnId) return;
+    const confirmed = window.confirm(
+      this.language === "zh-CN"
+        ? "从这条消息创建新的 Codex 分支对话？原对话不会受到影响。"
+        : "Create a new Codex fork from this message? The original conversation will remain unchanged.",
+    );
+    if (!confirmed || this.isDestroyed) return;
+    try {
+      const source = this.instance;
+      const result = await agent.forkCodexThread(this.threadId, message.codexTurnId);
+      const fork = useAgentSessionStore.getState().createInstance({
+        agentType: "codex",
+        title: `${source?.title || defaultThreadTitle("codex")} (fork)`,
+        threadId: result.thread.threadId,
+        runtimeConfig: source?.runtimeConfig ?? buildInitialInstanceRuntimeConfig("codex"),
+        source: { kind: "dedicated", notebookId: source?.source.notebookId ?? null },
+        role: source?.role ?? undefined,
+      });
+      await selectAndOpenAgentConversation(fork.instanceId);
+    } catch (error) {
+      logger.error("Failed to fork Codex conversation", { error });
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private get threadId(): string | null {

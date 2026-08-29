@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use super::host::DshHostClient;
+use super::app_server::AppServerClient;
 use super::protocol;
 use super::transport::DshClient;
 
@@ -26,6 +27,40 @@ pub(crate) struct ProcessDshClientFactory;
 #[async_trait::async_trait]
 impl DshClientFactory for ProcessDshClientFactory {
     async fn spawn(&self, spec: &HostLaunchSpec) -> Result<Arc<dyn DshClient>, String> {
+        // Opt-in direct App Server transport. The command and optional JSON
+        // argument list are supplied by the runtime launcher while the
+        // migration is staged; legacy dsh-host remains the default fallback.
+        if let Ok(command) = std::env::var("FLOWIX_DSH_APPSERVER_COMMAND") {
+            let args = std::env::var("FLOWIX_DSH_APPSERVER_ARGS")
+                .ok()
+                .map(|raw| serde_json::from_str::<Vec<String>>(&raw)
+                    .map_err(|error| format!("FLOWIX_DSH_APPSERVER_ARGS is invalid: {error}")))
+                .transpose()?
+                .unwrap_or_default();
+            // Match the legacy host's strict child environment boundary. Do
+            // not leak arbitrary Desktop variables (especially credentials)
+            // into the App Server process.
+            let allowed = [
+                "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC",
+                "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "HOME", "USERPROFILE",
+                "NODE_USE_ENV_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+            ];
+            let mut env = allowed.iter().filter_map(|key| std::env::var(key).ok().map(|value| ((*key).to_string(), value))).collect::<std::collections::HashMap<_, _>>();
+            env.insert("FLOWIX_DSH_APPSERVER_STDIO".into(), "1".into());
+            env.insert("DSH_HOME".into(), spec.dsh_home.to_string_lossy().into_owned());
+            env.insert("DSH_PROFILE_DIR".into(), spec.dsh_home.join("profiles").join("flowix").to_string_lossy().into_owned());
+            env.insert("DSH_SETTINGS_PATH".into(), spec.settings_path.to_string_lossy().into_owned());
+            env.insert("DSH_CREDENTIALS_PATH".into(), spec.credentials_path.to_string_lossy().into_owned());
+            let client = AppServerClient::spawn(&command, &args, &env).await?;
+            let initialize = protocol::app_initialize_request(
+                client.next_request_id(),
+                env!("CARGO_PKG_VERSION"),
+            );
+            client.request(initialize).await?;
+            let client: Arc<dyn DshClient> = client;
+            return Ok(client);
+        }
         let client: Arc<dyn DshClient> = DshHostClient::spawn(
             &spec.session_root,
             &spec.dsh_home,

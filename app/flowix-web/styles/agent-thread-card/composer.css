@@ -273,6 +273,8 @@
     color 150ms ease;
 }
 
+/* hover / open 态背景与 add (+) 按钮的默认背景 (var(--muted)) 对齐,
+ * 同空状态 __empty-control 的 hover 规格, 不再单独加深。 */
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
@@ -285,7 +287,7 @@
 .markdown-editor
   .agent-composer--expanded
   .agent-thread-card__composer-model--open {
-  background: color-mix(in oklch, var(--muted) 80%, var(--foreground) 12%);
+  background: var(--muted);
   color: var(--foreground);
   outline: none;
 }
@@ -342,7 +344,7 @@
   .agent-thread-card__composer-workspace--open,
 .markdown-editor .agent-composer--expanded .agent-thread-card__composer-workspace:hover,
 .markdown-editor .agent-composer--expanded .agent-thread-card__composer-workspace--open {
-  background: color-mix(in oklch, var(--muted) 80%, var(--foreground) 12%);
+  background: var(--muted);
   color: var(--foreground);
   outline: none;
 }

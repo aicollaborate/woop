@@ -141,6 +141,11 @@ export function ensureFlowixProfile(): void {
     throw new Error("Flowix DSH memory bundle is missing; reinstall the DSH package");
   }
   copyProfilePackage(memorySourceDir, join(profileDir, "node_modules", "dsh-flowix-memory"));
+  const appServerSourceDir = join(sourceDir, "node_modules", "dsh-appserver");
+  if (!existsSync(join(appServerSourceDir, "package.json"))) {
+    throw new Error("DSH App Server bundle is missing; reinstall the DSH package");
+  }
+  copyProfilePackage(appServerSourceDir, join(profileDir, "node_modules", "dsh-appserver"));
   const bridgeSourceDir = join(sourceDir, "node_modules", "@flowix", "dsh-flowix-bridge");
   if (!existsSync(join(bridgeSourceDir, "package.json"))) {
     throw new Error("Flowix DSH bridge bundle is missing; reinstall the DSH package");

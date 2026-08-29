@@ -18,6 +18,13 @@ pub struct GetThreadResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexForkResponse {
+    pub thread: ThreadInfo,
+    pub codex_thread_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentConversationPage {
     pub items: Vec<AgentConversationInstance>,
     pub has_more: bool,
@@ -256,6 +263,38 @@ pub async fn codex_thread_session_id(
 }
 
 #[tauri::command]
+pub async fn codex_thread_fork(
+    thread_id: String,
+    last_turn_id: String,
+    state: State<'_, AppState>,
+) -> Result<CodexForkResponse, String> {
+    let source = state
+        .thread_manager
+        .get_thread(&thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Codex thread not found".to_string())?;
+    let title = if source.info.title.trim().is_empty() {
+        "Forked Codex conversation".to_string()
+    } else {
+        format!("{} (fork)", source.info.title)
+    };
+    let product_thread = state
+        .thread_manager
+        .create_thread(crate::agent_types::AgentId("codex".to_string()), title)
+        .await
+        .map_err(|error| error.to_string())?;
+    let codex_thread_id = state
+        .codex_app_server
+        .fork_thread(&thread_id, &last_turn_id, &product_thread.thread_id)
+        .await?;
+    Ok(CodexForkResponse {
+        thread: product_thread,
+        codex_thread_id,
+    })
+}
+
+#[tauri::command]
 pub async fn claude_thread_list(state: State<'_, AppState>) -> Result<Vec<ThreadInfo>, String> {
     state
         .agent_history
@@ -483,6 +522,92 @@ pub async fn thread_delete(
         .delete_thread_with_agent_conversations(&thread_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Result of the runtime-dispatched conversation lifecycle commands.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentThreadLifecycleResult {
+    /// Whether the provider-side thread was archived/deleted. `false` means
+    /// only Flowix-local state was removed (never-started conversation, or a
+    /// runtime without a provider lifecycle API).
+    pub provider: bool,
+}
+
+/// Unified conversation archive entry: apply the provider-side action for the
+/// runtime (Codex `thread/archive` keeps the rollout recoverable), then remove
+/// the Flowix thread so archived conversations leave the list.
+#[tauri::command]
+pub async fn agent_thread_archive(
+    agent_type: String,
+    thread_id: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<AgentThreadLifecycleResult, String> {
+    let provider = apply_thread_lifecycle(
+        &state,
+        &app_handle,
+        &agent_type,
+        &thread_id,
+        crate::agent_lifecycle::LifecycleAction::Archive,
+    )
+    .await?;
+    Ok(AgentThreadLifecycleResult { provider })
+}
+
+/// Unified conversation delete entry: hard-delete the provider-side thread for
+/// runtimes that own one (Codex `thread/delete` removes the rollout), then
+/// remove the Flowix thread. Runtimes without a provider lifecycle keep the
+/// historical Flowix-local delete semantics.
+#[tauri::command]
+pub async fn agent_thread_delete(
+    agent_type: String,
+    thread_id: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<AgentThreadLifecycleResult, String> {
+    let provider = apply_thread_lifecycle(
+        &state,
+        &app_handle,
+        &agent_type,
+        &thread_id,
+        crate::agent_lifecycle::LifecycleAction::Delete,
+    )
+    .await?;
+    Ok(AgentThreadLifecycleResult { provider })
+}
+
+/// Stop running turns, forward the action to the runtime's provider thread,
+/// then delete the Flowix thread and its conversation instances. Provider
+/// action must happen first: the flowix→provider session mapping is dropped by
+/// the local delete, and a live run streaming into an archived/deleted thread
+/// would only reproduce provider-side errors.
+async fn apply_thread_lifecycle(
+    state: &State<'_, AppState>,
+    app_handle: &tauri::AppHandle,
+    agent_type: &str,
+    thread_id: &str,
+    action: crate::agent_lifecycle::LifecycleAction,
+) -> Result<bool, String> {
+    let stopped = state.external_runtimes.stop_chat_all(thread_id, app_handle).await;
+    if stopped {
+        tracing::info!(
+            "[Thread] stopped running agent before {:?} of thread {thread_id}",
+            action
+        );
+    }
+
+    let provider = state
+        .agent_lifecycle
+        .apply(agent_type, thread_id, action)
+        .await?;
+
+    state
+        .thread_manager
+        .delete_thread_with_agent_conversations(thread_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(provider)
 }
 
 /// 重命�?thread ── �?SQLite `threads.title` �? 顺带 bump `updated_at`,

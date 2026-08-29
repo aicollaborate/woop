@@ -530,6 +530,7 @@ fn base_message(id: String, role: &str, content: String, timestamp: String) -> C
         is_completed: None,
         error_details: None,
         is_collapsed: None,
+        codex_turn_id: None,
     }
 }
 

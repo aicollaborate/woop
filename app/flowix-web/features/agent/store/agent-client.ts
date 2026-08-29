@@ -36,6 +36,8 @@ export const agentClient = {
   listOpenCodeThreads: agent.listOpenCodeThreads,
   getOpenCodeThreadPage: agent.getOpenCodeThreadPage,
   deleteThread: agent.deleteThread,
+  archiveAgentThread: agent.archiveAgentThread,
+  deleteAgentThread: agent.deleteAgentThread,
   updateThreadTitle: agent.updateThreadTitle,
 };
 

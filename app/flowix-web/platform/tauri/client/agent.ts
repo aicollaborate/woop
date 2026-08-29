@@ -305,6 +305,11 @@ export const agent = {
     }>('codex_thread_get_page', { threadId, beforeSequence, limit }),
   getCodexSessionId: (threadId: string) =>
     invoke<string | null>('codex_thread_session_id', { threadId }),
+  forkCodexThread: (threadId: string, lastTurnId: string) =>
+    invoke<{ thread: ThreadInfo; codexThreadId: string }>('codex_thread_fork', {
+      threadId,
+      lastTurnId,
+    }),
   getCodexDefaultModel: () =>
     invoke<string>('codex_default_model'),
   getCodexRuntimeInfo: (threadId?: string | null) =>
@@ -386,6 +391,13 @@ export const agent = {
     }>('opencode_thread_get_page', { threadId, beforeSequence, limit }),
   deleteThread: (threadId: string) =>
     invoke<void>('thread_delete', { threadId }),
+  // 统一的对话生命周期入口: 后端按 agentType 分发到对应 runtime 的 provider
+  // 侧 (codex -> thread/archive / thread/delete), 未适配的 runtime 保持
+  // Flowix 本地删除语义。
+  archiveAgentThread: (agentType: AgentTypeKey, threadId: string) =>
+    invoke<{ provider: boolean }>('agent_thread_archive', { agentType, threadId }),
+  deleteAgentThread: (agentType: AgentTypeKey, threadId: string) =>
+    invoke<{ provider: boolean }>('agent_thread_delete', { agentType, threadId }),
   // 閲嶅懡鍚?thread 鈹€鈹€ 棣栨潯鐢ㄦ埛娑堟伅钀藉湴鍚庤皟涓€娆? 瑕嗙洊 ensureThread 璧?early return
   // 鏃剁殑婕忕綉涔嬮奔(鐐硅繃"鏂板缓瀵硅瘽"鍐嶅彂娑堟伅鐨勫満鏅?銆傝繑鍥?None 琛ㄧず thread 涓嶅瓨鍦ㄣ€?
   updateThreadTitle: (threadId: string, title: string, agentType?: AgentTypeKey) =>

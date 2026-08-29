@@ -4,6 +4,95 @@ use crate::agent_wire::{AgentChunk, UsageInfo};
 
 pub const HOST_PROTOCOL_VERSION: u64 = 1;
 
+/// Codex-compatible DSH App Server protocol marker. This is intentionally
+/// separate from the legacy Flowix host protocol: App Server connections are
+/// initialized per JSON-RPC client and use thread/turn notifications directly.
+pub const APP_SERVER_PROTOCOL_VERSION: u64 = 1;
+
+pub fn app_initialize_request(id: u64, client_version: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": {
+            "clientInfo": { "name": "flowix-desktop", "version": client_version },
+            "capabilities": {}
+        }
+    })
+}
+
+pub fn app_thread_start_request(
+    id: u64,
+    thread_id: &str,
+    cwd: &str,
+    workspace_paths: &[String],
+    provider: &str,
+    model: &str,
+    agent_preset: &str,
+    permission_mode: &str,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "thread/start",
+        "params": {
+            "threadId": thread_id, "cwd": cwd, "workspacePaths": workspace_paths,
+            "provider": provider, "model": model, "agentPreset": agent_preset,
+            "permissionMode": permission_mode
+        }
+    })
+}
+
+pub fn app_thread_resume_request(
+    id: u64,
+    thread_id: &str,
+    provider: &str,
+    model: &str,
+    agent_preset: &str,
+    permission_mode: &str,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "thread/resume",
+        "params": {
+            "threadId": thread_id, "provider": provider, "model": model,
+            "agentPreset": agent_preset, "permissionMode": permission_mode
+        }
+    })
+}
+
+pub fn app_turn_start_request(id: u64, thread_id: &str, input: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "turn/start",
+        "params": { "threadId": thread_id, "input": input }
+    })
+}
+
+pub fn app_turn_interrupt_request(id: u64, thread_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "turn/interrupt",
+        "params": { "threadId": thread_id }
+    })
+}
+
+pub fn app_thread_events_request(
+    id: u64,
+    thread_id: &str,
+    after_sequence: Option<i64>,
+    limit: i64,
+) -> Value {
+    let mut params = json!({ "threadId": thread_id, "limit": limit.clamp(1, 1000) });
+    if let Some(sequence) = after_sequence.filter(|value| *value >= -1) {
+        params["afterSeq"] = json!(sequence);
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "method": "thread/events/list", "params": params })
+}
+
 pub fn initialize_request(id: u64) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -141,8 +230,9 @@ pub fn runtime_bridge_jobs_request(id: u64, thread_id: &str) -> Value {
 }
 
 pub fn runtime_status_request(id: u64) -> Value {
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "runtime/status" } else { "runtime.status" };
     json!({
-        "jsonrpc": "2.0", "id": id, "method": "runtime.status", "params": {}
+        "jsonrpc": "2.0", "id": id, "method": method, "params": {}
     })
 }
 
@@ -151,27 +241,33 @@ pub fn shutdown_request(id: u64) -> Value {
 }
 
 pub fn models_catalog_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "models.catalog", "params": {} })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "model/config/read" } else { "models.catalog" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
 }
 
 pub fn plugins_catalog_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "plugins.catalog", "params": {} })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "flowix/plugins/list" } else { "plugins.catalog" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
 }
 
 pub fn credential_status_request(id: u64, reference: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.status", "params": { "reference": reference } })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/read" } else { "credentials.status" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference } })
 }
 
 pub fn credential_set_request(id: u64, reference: &str, value: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.set", "params": { "reference": reference, "value": value } })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/set" } else { "credentials.set" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference, "value": value } })
 }
 
 pub fn credential_delete_request(id: u64, reference: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "credentials.delete", "params": { "reference": reference } })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/unset" } else { "credentials.delete" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference } })
 }
 
 pub fn model_settings_describe_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "settings.models.describe", "params": {} })
+    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "model/config/read" } else { "settings.models.describe" };
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
 }
 
 pub fn model_settings_upsert_request(
@@ -180,6 +276,9 @@ pub fn model_settings_upsert_request(
     profile: &crate::config::DeepSeekHarnessProviderSettings,
     expected_revision: u64,
 ) -> Value {
+    if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
+        return json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/upsert", "params": { "route": route, "profile": profile, "expectedRevision": expected_revision } });
+    }
     json!({
         "jsonrpc": "2.0", "id": id, "method": "settings.models.upsert",
         "params": { "route": route, "profile": profile, "expectedRevision": expected_revision }
@@ -187,6 +286,9 @@ pub fn model_settings_upsert_request(
 }
 
 pub fn model_settings_remove_request(id: u64, route: &str, expected_revision: u64) -> Value {
+    if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
+        return json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/remove", "params": { "route": route, "expectedRevision": expected_revision } });
+    }
     json!({
         "jsonrpc": "2.0", "id": id, "method": "settings.models.remove",
         "params": { "route": route, "expectedRevision": expected_revision }
@@ -231,6 +333,31 @@ pub fn event_route(message: &Value) -> Option<(String, String)> {
         message.pointer("/params/threadId")?.as_str()?.to_string(),
         message.pointer("/params/runId")?.as_str()?.to_string(),
     ))
+}
+
+/// Return the Thread associated with a direct App Server notification. Unlike
+/// the legacy `run.event` envelope, App Server notifications carry the thread
+/// id directly in `params` and may omit a run id (for example status changes).
+pub fn app_server_event_route(message: &Value) -> Option<String> {
+    let method = message.get("method").and_then(Value::as_str)?;
+    if !matches!(
+        method,
+        "thread/status/changed"
+            | "thread/started"
+            | "thread/resumed"
+            | "turn/started"
+            | "turn/completed"
+            | "item/started"
+            | "item/completed"
+            | "item/agentMessage/delta"
+            | "warning"
+    ) {
+        return None;
+    }
+    message
+        .pointer("/params/threadId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 pub enum AdaptedEvent {
@@ -348,6 +475,33 @@ fn longest_marker_prefix_suffix(value: &str, marker: &str) -> usize {
 }
 
 pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
+    // Direct App Server notifications are not wrapped in the legacy
+    // `params.event` envelope. Normalize the common streaming boundaries here
+    // so the existing projector can consume both transports during rollout.
+    if message.pointer("/params/event").is_none() {
+        let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
+        let thread_id = delivery_thread_id.to_string();
+        return match method {
+            "item/agentMessage/delta" => message
+                .pointer("/params/delta")
+                .and_then(Value::as_str)
+                .map(|text| text_chunk_value(text, thread_id, false))
+                .unwrap_or(AdaptedEvent::Ignore),
+            "turn/completed" => {
+                let status = message.pointer("/params/turn/status").and_then(Value::as_str).unwrap_or("completed");
+                let reason = match status {
+                    "completed" => "completed".to_string(),
+                    "cancelled" => "cancelled".to_string(),
+                    failed => message.pointer("/params/turn/error/message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| failed.to_string()),
+                };
+                AdaptedEvent::Completed(Some(reason))
+            }
+            _ => AdaptedEvent::Ignore,
+        };
+    }
     let Some(event) = message.pointer("/params/event") else {
         return AdaptedEvent::Ignore;
     };
@@ -446,6 +600,14 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                 .map(str::to_string),
         ),
         _ => AdaptedEvent::Ignore,
+    }
+}
+
+fn text_chunk_value(text: &str, thread_id: String, reasoning: bool) -> AdaptedEvent {
+    if reasoning {
+        AdaptedEvent::Chunk(AgentChunk::Reasoning { thread_id, text: text.to_string() })
+    } else {
+        AdaptedEvent::Chunk(AgentChunk::Text { thread_id, text: text.to_string() })
     }
 }
 
@@ -601,5 +763,40 @@ mod tests {
             request.pointer("/params/limit").and_then(Value::as_i64),
             Some(50)
         );
+    }
+
+    #[test]
+    fn builds_direct_app_server_requests() {
+        let initialize = app_initialize_request(1, "1.2.3");
+        assert_eq!(initialize["method"], "initialize");
+        assert_eq!(initialize.pointer("/params/clientInfo/name").and_then(Value::as_str), Some("flowix-desktop"));
+
+        let start = app_thread_start_request(
+            2, "thread-1", "/tmp", &["/tmp".to_string()], "deepseek",
+            "deepseek-chat", "standard", "read-only",
+        );
+        assert_eq!(start["method"], "thread/start");
+        assert_eq!(start.pointer("/params/threadId").and_then(Value::as_str), Some("thread-1"));
+        assert_eq!(start.pointer("/params/provider").and_then(Value::as_str), Some("deepseek"));
+
+        let turn = app_turn_start_request(3, "thread-1", "hello");
+        assert_eq!(turn["method"], "turn/start");
+        assert_eq!(turn.pointer("/params/input").and_then(Value::as_str), Some("hello"));
+
+        let interrupt = app_turn_interrupt_request(4, "thread-1");
+        assert_eq!(interrupt["method"], "turn/interrupt");
+    }
+
+    #[test]
+    fn routes_direct_app_server_notifications_by_thread() {
+        let event = json!({
+            "jsonrpc": "2.0",
+            "method": "item/agentMessage/delta",
+            "params": { "threadId": "thread-9", "delta": "hi" }
+        });
+        assert_eq!(app_server_event_route(&event).as_deref(), Some("thread-9"));
+
+        let unrelated = json!({ "jsonrpc": "2.0", "method": "server/ping", "params": {} });
+        assert!(app_server_event_route(&unrelated).is_none());
     }
 }

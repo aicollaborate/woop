@@ -14,6 +14,7 @@ export interface MessageChunkMetadata {
   sourceSequence?: number;
   sourceSubsequence?: number;
   errorDetails?: AgentErrorDetails;
+  codexTurnId?: string;
 }
 
 let generatedAssistantMessageSequence = 0;
@@ -46,6 +47,7 @@ export function applyUserMessageChunk(
       sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
       sourceSubsequence:
         existing.sourceSubsequence ?? metadata.sourceSubsequence,
+      codexTurnId: existing.codexTurnId ?? metadata.codexTurnId,
     };
     return {
       messages,
@@ -56,8 +58,13 @@ export function applyUserMessageChunk(
     };
   }
 
+  // User events are turn boundaries in the live event stream. They must stay
+  // after the already rendered transcript even when the provider attaches a
+  // stale/turn-local source timestamp (Codex commonly uses sequence 0 for
+  // every turn's user item). History pagination is the only path that may
+  // prepend older messages.
   return {
-    messages: insertAgentMessageBySourceOrder(st.messages, {
+    messages: [...st.messages, {
       id: metadata.id,
       role: "user",
       content: text,
@@ -65,7 +72,8 @@ export function applyUserMessageChunk(
       sourceTimestamp: metadata.sourceTimestamp,
       sourceSequence: metadata.sourceSequence,
       sourceSubsequence: metadata.sourceSubsequence,
-    }),
+      codexTurnId: metadata.codexTurnId,
+    }],
     pendingAssistantId: null,
     pendingReasoningId: null,
   };
@@ -117,6 +125,7 @@ export function applyTextChunk(
       sourceSequence: existing.sourceSequence ?? metadata.sourceSequence,
       sourceSubsequence:
         existing.sourceSubsequence ?? metadata.sourceSubsequence,
+      codexTurnId: existing.codexTurnId ?? metadata.codexTurnId,
     };
     return {
       messages,
@@ -134,6 +143,7 @@ export function applyTextChunk(
       sourceTimestamp: metadata.sourceTimestamp,
       sourceSequence: metadata.sourceSequence,
       sourceSubsequence: metadata.sourceSubsequence,
+      codexTurnId: metadata.codexTurnId,
     };
     return {
       messages: insertAgentMessageBySourceOrder(closedMessages, message),
@@ -150,6 +160,7 @@ export function applyTextChunk(
     sourceTimestamp: metadata.sourceTimestamp,
     sourceSequence: metadata.sourceSequence,
     sourceSubsequence: metadata.sourceSubsequence,
+    codexTurnId: metadata.codexTurnId,
   };
   return {
     messages: insertAgentMessageBySourceOrder(closedMessages, message),

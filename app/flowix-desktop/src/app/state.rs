@@ -41,6 +41,9 @@ pub struct AppState {
     /// Product-level history policy and fallback orchestration. Runtime
     /// adapters remain responsible for their own protocol and transcript.
     pub agent_history: Arc<crate::agent_history::AgentHistoryService>,
+    /// Product-level thread archive/delete dispatch across external runtimes.
+    /// Runtimes without a lifecycle adapter keep Flowix-local semantics.
+    pub agent_lifecycle: Arc<crate::agent_lifecycle::AgentLifecycleService>,
     pub thread_manager: Arc<ThreadManager>,
     /// Agent 可访问目录 (notebook + 用户额外 folder), 持久化在
     /// `~/.flowix/agent-access.json`。驱动 external agent 的

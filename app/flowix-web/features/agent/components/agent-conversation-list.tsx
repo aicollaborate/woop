@@ -184,7 +184,12 @@ export function AgentConversationList() {
   }, [hasMore]);
 
   const conversations = useMemo(() => {
-    const merged = { ...persistedInstances };
+    // 实例从内存 store 移除时 (archive / delete / removeInstance), 持久化快照
+    // 不会自动跟随; 以 `instances` 为准, 已被剔除的 instanceId 不再保留到列表里。
+    const activeIds = new Set(Object.keys(instances));
+    const merged = Object.fromEntries(
+      Object.entries(persistedInstances).filter(([id]) => activeIds.has(id)),
+    );
     for (const instance of Object.values(instances)) {
       const persisted = merged[instance.instanceId];
       if (!persisted || instance.updatedAt >= persisted.updatedAt) {

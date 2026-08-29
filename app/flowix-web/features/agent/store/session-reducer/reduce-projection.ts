@@ -88,6 +88,7 @@ function applyUserMessageToProjection(
     sourceTimestamp: event.sourceTimestamp,
     sourceSequence: event.sourceSequence,
     sourceSubsequence: event.sourceSubsequence,
+    codexTurnId: event.codexTurnId,
   });
   return {
     ...p,
@@ -111,6 +112,7 @@ function applyTextDeltaToProjection(
     sourceTimestamp: event.sourceTimestamp,
     sourceSequence: event.sourceSequence,
     sourceSubsequence: event.sourceSubsequence,
+    codexTurnId: event.codexTurnId,
   });
   // text 落地后 reasoning 行 closed (applyTextChunk 已把 reasoning isCompleted=true).
   // run-level state: 当前 tool 名清空 (新文本流开始).
@@ -138,6 +140,7 @@ function applyReasoningDeltaToProjection(
     sourceTimestamp: event.sourceTimestamp,
     sourceSequence: event.sourceSequence,
     sourceSubsequence: event.sourceSubsequence,
+    codexTurnId: event.codexTurnId,
   });
   return {
     ...p,
@@ -162,6 +165,7 @@ function applyFinalMessageToProjection(
     sourceTimestamp: event.sourceTimestamp,
     sourceSequence: event.sourceSequence,
     sourceSubsequence: event.sourceSubsequence,
+    codexTurnId: event.codexTurnId,
   });
   const runsNext = applyRunToolState(projectionToRuns(p), event, null);
   return {

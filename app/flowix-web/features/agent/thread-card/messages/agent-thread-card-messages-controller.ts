@@ -37,6 +37,7 @@ export interface AgentThreadCardMessagesControllerOptions {
   t: (key: I18nKey) => string;
   createThreadCacheSkeleton: () => HTMLDivElement;
   createExternalAgentEmptySettings: () => HTMLElement;
+  onForkMessage?: (message: ChatMessage) => void | Promise<void>;
 }
 
 export interface AgentThreadCardMessagesRenderInput {
@@ -73,6 +74,7 @@ export class AgentThreadCardMessagesController {
       t: options.t,
       createThreadCacheSkeleton: options.createThreadCacheSkeleton,
       createExternalAgentEmptySettings: options.createExternalAgentEmptySettings,
+      onForkMessage: options.onForkMessage,
     });
     this.cache = new ThreadCacheController({
       element: options.dom,

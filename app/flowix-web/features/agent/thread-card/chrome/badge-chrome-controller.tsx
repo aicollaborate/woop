@@ -2,12 +2,12 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AgentTypeKey } from "@/types/agent";
 import { getAgentType } from "@/lib/agent-types";
-import { agent, deepseekHarness } from "@platform/tauri/client";
 import { type ThreadState } from "@features/agent/store/thread-runtime-state";
 import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { BadgeHoverCard } from "@features/agent/thread-card/badge-hover-card";
 import { computeAgentThreadCardBadgeData } from "@features/agent/thread-card/runtime/run-status-presenter";
+import { createRuntimeInfoRequester } from "@features/agent/thread-card/runtime/runtime-info-requester";
 import { getResolvedExternalSessionId } from "@features/agent/services/external-agent-runtime-service";
 import { isThemeAdaptiveAgentIcon } from "@features/agent/components/agent-icon";
 
@@ -192,27 +192,10 @@ export class AgentThreadCardBadgeChromeController {
         threadId: externalThreadId,
         model,
         usage,
-        onRequestRuntimeInfo:
-          typeKey === "deepseek-harness"
-            ? () => {
-                const currentSessionId = this.getThreadId();
-                return currentSessionId
-                  ? deepseekHarness.sessionUsage(currentSessionId)
-                  : Promise.resolve(null);
-              }
-            : typeKey === "opencode"
-              ? async () => ({
-                  sessionId:
-                    (await agent.getOpenCodeSessionId(threadId)) ?? undefined,
-                  usage: {},
-                })
-            : typeKey === "codex"
-              ? async () => {
-                  const sessionId = await agent.getCodexSessionId(threadId);
-                  const info = await agent.getCodexRuntimeInfo(sessionId);
-                  return { sessionId: sessionId ?? undefined, usage: info.usage ?? {}, codex: info };
-                }
-              : undefined,
+        // threadId 在请求器内部按调用时读取, 不捕获本次 render 的快照。
+        onRequestRuntimeInfo: createRuntimeInfoRequester(typeKey, () =>
+          this.getThreadId(),
+        ),
         codex: typeKey === "codex",
         cwd: this.getCwd() ?? undefined,
         onOpenChange: (open: boolean) =>

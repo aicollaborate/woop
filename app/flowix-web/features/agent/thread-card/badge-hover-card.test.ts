@@ -1,7 +1,7 @@
 import { act, createElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BadgeHoverCard } from "./badge-hover-card";
+import { BadgeHoverCard, type BadgeHoverCardRuntimeInfo } from "./badge-hover-card";
 
 vi.mock("@shared/ui/hover-card", () => ({
   HoverCard: ({
@@ -198,6 +198,113 @@ describe("BadgeHoverCard", () => {
 
     expect(requestRuntimeInfo).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("42 / 7 tok");
+
+    await act(async () => root.unmount());
+  });
+
+  it("shows inline skeletons while runtime info is pending", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    let resolveRequest!: (value: BadgeHoverCardRuntimeInfo | null) => void;
+    const requestRuntimeInfo = vi
+      .fn()
+      .mockImplementation(
+        () =>
+          new Promise<BadgeHoverCardRuntimeInfo | null>((resolve) => {
+            resolveRequest = resolve;
+          }),
+      );
+
+    await act(async () => {
+      root.render(
+        createElement(BadgeHoverCard, {
+          threadId: "thread-1",
+          onRequestRuntimeInfo: requestRuntimeInfo,
+        }),
+      );
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-open="true"]')?.click();
+    });
+
+    // 在途: 空值行显示骨架块而不是 "-" 占位。
+    expect(
+      host.querySelectorAll(".agent-thread-card__hover-skeleton").length,
+    ).toBeGreaterThan(0);
+    expect(host.textContent).not.toContain("- / - tok");
+
+    await act(async () => {
+      resolveRequest({
+        model: "deepseek-chat",
+        usage: { input_tokens: 5, output_tokens: 1 },
+      });
+    });
+
+    // 完成: 骨架撤掉, 数据落到行内。
+    expect(
+      host.querySelectorAll(".agent-thread-card__hover-skeleton"),
+    ).toHaveLength(0);
+    expect(host.textContent).toContain("deepseek-chat");
+    expect(host.textContent).toContain("5 / 1 tok");
+
+    await act(async () => root.unmount());
+  });
+
+  it("never exposes the flowix instance threadId in the popover first row", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const instanceThreadId = "codex-local-agent-inst-6a02d087-3ce6-415a-a668-610f3345bb1e";
+    const providerSessionId = "0193f1c4-7c12-7e3a-9b22-c6b2c4b9af83";
+    let resolveRequest!: (value: BadgeHoverCardRuntimeInfo | null) => void;
+    const requestRuntimeInfo = vi
+      .fn()
+      .mockImplementation(
+        () =>
+          new Promise<BadgeHoverCardRuntimeInfo | null>((resolve) => {
+            resolveRequest = resolve;
+          }),
+      );
+
+    await act(async () => {
+      root.render(
+        createElement(BadgeHoverCard, {
+          threadId: instanceThreadId,
+          onRequestRuntimeInfo: requestRuntimeInfo,
+        }),
+      );
+    });
+
+    // 首帧: 本地 instance handle 不应出现, 而是显示骨架。
+    expect(host.textContent).not.toContain(instanceThreadId);
+    expect(host.textContent).not.toContain("codex-local-agent-inst");
+    expect(
+      host.querySelectorAll(".agent-thread-card__hover-skeleton").length,
+    ).toBeGreaterThan(0);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-open="true"]')?.click();
+    });
+
+    // request 仍在途: 仍未出现 instance handle, 也未出现 sessionId。
+    expect(host.textContent).not.toContain(instanceThreadId);
+
+    await act(async () => {
+      resolveRequest({
+        sessionId: providerSessionId,
+        usage: { input_tokens: 10, output_tokens: 2 },
+      });
+    });
+
+    // 解析后: 第一行展示 provider session id, 仍然不展示 instance handle。
+    expect(host.textContent).toContain(providerSessionId);
+    expect(host.textContent).not.toContain(instanceThreadId);
+    expect(host.textContent).not.toContain("codex-local-agent-inst");
+    expect(
+      host.querySelectorAll(".agent-thread-card__hover-skeleton"),
+    ).toHaveLength(0);
 
     await act(async () => root.unmount());
   });

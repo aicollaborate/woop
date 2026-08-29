@@ -149,6 +149,7 @@ impl DeepSeekHarnessManager {
             let reason = match result {
                 Ok(reason) => reason,
                 Err(error) => {
+                    tracing::error!(target: "dsh_appserver", thread_id, run_id, error, "DeepSeek Harness run failed");
                     manager
                         .emit_run_error(&app_handle, &thread_id, error.clone(), &run_id)
                         .await;
@@ -201,23 +202,46 @@ impl DeepSeekHarnessManager {
         // In particular, do not resolve a model config or call runtime.ensure
         // while a turn may still be using this thread's runtime.
         let host = self.model_host().await?;
-        let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
-        let ensure = protocol::runtime_ensure_request(
-            host.next_request_id(),
-            thread_id,
-            session_id,
-            &cwd.to_string_lossy(),
-            &workspace_paths,
-            &runtime_config.provider,
-            &runtime_config.provider_name,
-            &runtime_config.api_protocol,
-            &runtime_config.api_key_env,
-            &runtime_config.base_url,
-            &runtime_config.model,
-            agent_preset,
-            permission,
-        );
-        let session_id = resolved_session_id(host.request(ensure).await?)?;
+        let direct_app_server = std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some();
+        let session_id = if direct_app_server {
+            // App Server owns Thread/Turn lifecycle. A persisted session id is
+            // the durable Thread id; resume it when present, otherwise create
+            // a Thread using Flowix's stable thread id.
+            let request = if session_id.is_some() {
+                protocol::app_thread_resume_request(
+                    host.next_request_id(), thread_id, &runtime_config.provider,
+                    &runtime_config.model, agent_preset, permission,
+                )
+            } else {
+                protocol::app_thread_start_request(
+                    host.next_request_id(), thread_id, &cwd.to_string_lossy(),
+                    &message.workspace_paths_for_runtime(AGENT_TYPE),
+                    &runtime_config.provider, &runtime_config.model, agent_preset, permission,
+                )
+            };
+            let operation = if session_id.is_some() { "thread/resume" } else { "thread/start" };
+            let result = host.request(request).await?;
+            tracing::info!(target: "dsh_appserver", thread_id, run_id, operation, returned_thread_id = result.get("id").and_then(serde_json::Value::as_str).unwrap_or("<none>"), "App Server thread request completed");
+            session_id.map(str::to_string).unwrap_or_else(|| thread_id.to_string())
+        } else {
+            let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
+            let ensure = protocol::runtime_ensure_request(
+                host.next_request_id(),
+                thread_id,
+                session_id,
+                &cwd.to_string_lossy(),
+                &workspace_paths,
+                &runtime_config.provider,
+                &runtime_config.provider_name,
+                &runtime_config.api_protocol,
+                &runtime_config.api_key_env,
+                &runtime_config.base_url,
+                &runtime_config.model,
+                agent_preset,
+                permission,
+            );
+            resolved_session_id(host.request(ensure).await?)?
+        };
         self.runs.bind_session(thread_id, run_id, &session_id).await;
         self.sessions.commit(thread_id, &session_id, &cwd).await?;
         let mut events = host.subscribe(thread_id, run_id).await;
@@ -228,17 +252,25 @@ impl DeepSeekHarnessManager {
         // and leaks internal Flowix context into the transcript.
         let prompt = prompt_text.to_string();
         let client_message_id = format!("flowix:{thread_id}:{run_id}");
-        let start = protocol::run_start_request(
-            host.next_request_id(),
-            thread_id,
-            run_id,
-            &prompt,
-            &message.content,
-            &client_message_id,
-        );
+        let start = if direct_app_server {
+            protocol::app_turn_start_request(host.next_request_id(), thread_id, &prompt)
+        } else {
+            protocol::run_start_request(
+                host.next_request_id(),
+                thread_id,
+                run_id,
+                &prompt,
+                &message.content,
+                &client_message_id,
+            )
+        };
         if let Err(error) = host.request(start).await {
+            tracing::error!(target: "dsh_appserver", thread_id, run_id, error, "App Server turn/start failed");
             host.unsubscribe(thread_id, run_id).await;
             return Err(error);
+        }
+        if direct_app_server {
+            tracing::info!(target: "dsh_appserver", thread_id, run_id, "App Server turn/start accepted; waiting for notifications");
         }
 
         let mut projector = RunEventProjector::new(thread_id.to_string());
@@ -247,7 +279,10 @@ impl DeepSeekHarnessManager {
         let terminal_reason = loop {
             tokio::select! {
                 maybe = events.recv() => {
-                    let Some(value) = maybe else { break Some("runtime_crashed".to_string()) };
+                    let Some(value) = maybe else {
+                        tracing::error!(target: "dsh_appserver", thread_id, run_id, "App Server event subscription closed");
+                        break Some("runtime_crashed".to_string())
+                    };
                     self.runs.touch(thread_id, run_id).await;
                     match projector.accept(protocol::adapt_event(&value, thread_id)) {
                         Projection::Buffered => {}
@@ -261,6 +296,7 @@ impl DeepSeekHarnessManager {
                             ).await;
                         }
                         Projection::Completed { buffered, reason } => {
+                            tracing::info!(target: "dsh_appserver", thread_id, run_id, reason = reason.as_deref().unwrap_or("<none>"), "App Server turn reached terminal notification");
                             self.emit_buffered(buffered, app_handle, run_id).await;
                             break reason;
                         }
@@ -557,7 +593,11 @@ impl DeepSeekHarnessManager {
             .cancellation_targets(target.host_key.as_deref())
             .await;
         for host in hosts {
-            let request = protocol::run_cancel_request(host.next_request_id(), thread_id, &run_id);
+            let request = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
+                protocol::app_turn_interrupt_request(host.next_request_id(), thread_id)
+            } else {
+                protocol::run_cancel_request(host.next_request_id(), thread_id, &run_id)
+            };
             let _ = host.request(request).await;
         }
         if self.runs.remove_if_matches(thread_id, &run_id).await {
@@ -635,10 +675,15 @@ impl DeepSeekHarnessManager {
             );
             host.request(ensure).await?;
         }
-        host.request(protocol::runtime_bridge_jobs_request(
-            host.next_request_id(),
-            thread_id,
-        ))
+        let jobs_request = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": host.next_request_id(),
+                "method": "flowix/jobs/list", "params": { "threadId": thread_id }
+            })
+        } else {
+            protocol::runtime_bridge_jobs_request(host.next_request_id(), thread_id)
+        };
+        host.request(jobs_request)
         .await
     }
 

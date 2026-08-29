@@ -640,6 +640,79 @@ impl CodexAppServerManager {
         ))
     }
 
+    /// Fork a persisted Codex thread at the requested completed Turn and bind
+    /// the new Codex session to a new Flowix product thread.
+    pub async fn fork_thread(
+        &self,
+        flowix_thread_id: &str,
+        last_turn_id: &str,
+        new_flowix_thread_id: &str,
+    ) -> Result<String, String> {
+        self.ensure_connection().await?;
+        let stored = self
+            .inner
+            .thread_manager
+            .get_external_session(flowix_thread_id, AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())?;
+        let source_codex_thread_id = select_external_session_for_runtime(stored, None)
+            .ok_or_else(|| "Codex thread has not been started".to_string())?;
+        let result = self
+            .request(
+                "thread/fork",
+                json!({
+                    "threadId": source_codex_thread_id,
+                    "lastTurnId": last_turn_id,
+                    "historyMode": "paginated"
+                }),
+            )
+            .await?;
+        let new_codex_thread_id = result
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| "Codex app-server did not return a forked thread id".to_string())?
+            .to_string();
+        self.inner
+            .thread_manager
+            .upsert_external_session(
+                new_flowix_thread_id,
+                AGENT_TYPE,
+                &new_codex_thread_id,
+                Some(result),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(new_codex_thread_id)
+    }
+
+    /// Archive the provider-side Codex thread: the rollout moves into Codex's
+    /// archived sessions directory, so `thread/list` stops returning it. The
+    /// rollout stays recoverable through `thread/unarchive`.
+    pub async fn archive_thread(&self, codex_thread_id: &str) -> Result<(), String> {
+        self.provider_thread_lifecycle("thread/archive", codex_thread_id)
+            .await
+    }
+
+    /// Hard-delete the provider-side Codex thread together with any spawned
+    /// descendant threads. Rollout files and metadata are removed permanently;
+    /// missing rollouts are treated as already deleted by the app-server.
+    pub async fn delete_thread(&self, codex_thread_id: &str) -> Result<(), String> {
+        self.provider_thread_lifecycle("thread/delete", codex_thread_id)
+            .await
+    }
+
+    async fn provider_thread_lifecycle(
+        &self,
+        method: &str,
+        codex_thread_id: &str,
+    ) -> Result<(), String> {
+        self.ensure_connection().await?;
+        self.request(method, json!({ "threadId": codex_thread_id }))
+            .await?;
+        Ok(())
+    }
+
     /// Reply to a server-initiated JSON-RPC request with its original id.
     /// RequestId is kept as JSON text for compatibility with numeric and
     /// string ids emitted by different app-server versions.
@@ -931,7 +1004,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                         thread_id: flowix_thread_id.clone(),
                         text: delta.to_string(),
                     },
-                    item_delta_metadata(params),
+                    with_turn_id(item_delta_metadata(params), turn_id.as_deref()),
                 )
                 .await;
             }
@@ -951,7 +1024,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                         thread_id: flowix_thread_id.clone(),
                         text: delta.to_string(),
                     },
-                    item_delta_metadata(params),
+                    with_turn_id(item_delta_metadata(params), turn_id.as_deref()),
                 )
                 .await;
             }
@@ -978,7 +1051,17 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         }
         "item/completed" => {
             if let Some(item) = params.get("item") {
-                if let Some((id, name)) = tool_identity(item) {
+                if let Some((chunk, metadata)) = completed_message_chunk(&flowix_thread_id, item, turn_id.as_deref()) {
+                    emit_notification_chunk_with_metadata(
+                        inner,
+                        &flowix_thread_id,
+                        &run_id,
+                        &app,
+                        chunk,
+                        metadata,
+                    )
+                    .await;
+                } else if let Some((id, name)) = tool_identity(item) {
                     emit_notification_chunk_with_metadata(
                         inner,
                         &flowix_thread_id,
@@ -1016,6 +1099,32 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                // App Server normally finalizes messages through item/completed.
+                // The completed turn also carries the final agent message, so
+                // project it as an idempotent fallback before ending the stream.
+                if let Some(item) = params
+                    .pointer("/turn/items")
+                    .and_then(Value::as_array)
+                    .and_then(|items| {
+                        items.iter().rev().find(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("agentMessage")
+                        })
+                    })
+                {
+                    if let Some((chunk, metadata)) =
+                        completed_message_chunk(&flowix_thread_id, item, turn_id.as_deref())
+                    {
+                        emit_notification_chunk_with_metadata(
+                            inner,
+                            &flowix_thread_id,
+                            &run_id,
+                            &app,
+                            chunk,
+                            metadata,
+                        )
+                        .await;
+                    }
+                }
                 if let Some(reason) = &reason {
                     emit_notification_chunk(
                         inner,
@@ -1135,7 +1244,9 @@ fn item_metadata(item: &Value) -> AgentChunkMetadata {
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
-    item_metadata_from_id(item_id)
+    let mut metadata = item_metadata_from_id(item_id);
+    metadata.codex_turn_id = item.get("turnId").and_then(Value::as_str).map(str::to_string);
+    metadata
 }
 
 fn item_metadata_from_id(item_id: Option<String>) -> AgentChunkMetadata {
@@ -1144,6 +1255,55 @@ fn item_metadata_from_id(item_id: Option<String>) -> AgentChunkMetadata {
         source_message_id: item_id,
         ..AgentChunkMetadata::default()
     }
+}
+
+fn with_turn_id(mut metadata: AgentChunkMetadata, turn_id: Option<&str>) -> AgentChunkMetadata {
+    metadata.codex_turn_id = turn_id.map(str::to_string);
+    metadata
+}
+
+fn completed_message_chunk(
+    thread_id: &str,
+    item: &Value,
+    turn_id: Option<&str>,
+) -> Option<(AgentChunk, AgentChunkMetadata)> {
+    let text = match item.get("type").and_then(Value::as_str)? {
+        "agentMessage" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        "reasoning" => {
+            let summary = app_server_content_text(item.get("summary"));
+            if summary.is_empty() {
+                app_server_content_text(item.get("content"))
+            } else {
+                summary
+            }
+        }
+        _ => return None,
+    };
+    if !has_visible_text(&text) {
+        return None;
+    }
+    let chunk = if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
+        AgentChunk::Text {
+            thread_id: thread_id.to_string(),
+            text,
+        }
+    } else {
+        AgentChunk::Reasoning {
+            thread_id: thread_id.to_string(),
+            text,
+        }
+    };
+    let mut metadata = item_metadata(item);
+    metadata.codex_turn_id = turn_id.map(str::to_string);
+    // Completed item notifications do not repeat turnId in the item. The
+    // caller fills it from the notification context before emitting.
+    metadata.message_phase = Some("completed");
+    metadata.content_mode = Some("snapshot");
+    Some((chunk, metadata))
 }
 
 fn tool_identity(item: &Value) -> Option<(String, String)> {
@@ -1221,6 +1381,7 @@ fn app_server_thread_info(thread: &Value) -> Option<ThreadInfo> {
 fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (turn_index, turn) in turns.iter().enumerate() {
+        let turn_id = turn.get("id").and_then(Value::as_str).map(str::to_string);
         let timestamp = app_server_timestamp_string(
             turn.get("startedAt")
                 .or_else(|| turn.get("createdAt"))
@@ -1233,7 +1394,7 @@ fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
             .flatten()
             .enumerate()
         {
-            if let Some(message) = app_server_item_message(item, &timestamp, turn_index, item_index)
+            if let Some(message) = app_server_item_message(item, &timestamp, turn_index, item_index, turn_id.as_deref())
             {
                 messages.push(message);
             }
@@ -1287,6 +1448,7 @@ fn app_server_item_message(
     timestamp: &str,
     turn_index: usize,
     item_index: usize,
+    turn_id: Option<&str>,
 ) -> Option<ChatMessage> {
     let kind = item.get("type")?.as_str()?;
     let id = item
@@ -1296,6 +1458,7 @@ fn app_server_item_message(
         .map(str::to_string)
         .unwrap_or_else(|| format!("codex-{turn_index}-{item_index}"));
     let mut message = app_server_base_message(id, timestamp);
+    message.codex_turn_id = turn_id.map(str::to_string);
     match kind {
         "userMessage" => {
             message.role = "user".to_string();
@@ -1369,6 +1532,7 @@ fn app_server_base_message(id: String, timestamp: &str) -> ChatMessage {
         is_completed: None,
         error_details: None,
         is_collapsed: None,
+        codex_turn_id: None,
     }
 }
 
@@ -1546,6 +1710,7 @@ mod tests {
             "2026-01-01T00:00:00Z",
             0,
             0,
+            None,
         );
         assert!(message.is_none());
         assert!(!has_visible_text(" \n\t"));
@@ -1560,6 +1725,49 @@ mod tests {
         }));
         assert_eq!(metadata.message_id.as_deref(), Some("call-1"));
         assert_eq!(metadata.source_message_id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn projects_completed_agent_message_as_authoritative_snapshot() {
+        let (chunk, metadata) = completed_message_chunk(
+            "thread-1",
+            &json!({ "id": "message-1", "type": "agentMessage", "text": "Final answer" }),
+            None,
+        )
+        .expect("completed agent message");
+
+        assert!(matches!(
+            chunk,
+            AgentChunk::Text { thread_id, text }
+                if thread_id == "thread-1" && text == "Final answer"
+        ));
+        assert_eq!(metadata.message_id.as_deref(), Some("message-1"));
+        assert_eq!(metadata.source_message_id.as_deref(), Some("message-1"));
+        assert_eq!(metadata.message_phase.as_deref(), Some("completed"));
+        assert_eq!(metadata.content_mode.as_deref(), Some("snapshot"));
+    }
+
+    #[test]
+    fn projects_completed_reasoning_summary_as_authoritative_snapshot() {
+        let (chunk, metadata) = completed_message_chunk(
+            "thread-1",
+            &json!({
+                "id": "reasoning-1",
+                "type": "reasoning",
+                "summary": [{ "type": "text", "text": "Final reasoning" }],
+                "content": [{ "type": "text", "text": "Hidden detail" }]
+            }),
+            None,
+        )
+        .expect("completed reasoning");
+
+        assert!(matches!(
+            chunk,
+            AgentChunk::Reasoning { thread_id, text }
+                if thread_id == "thread-1" && text == "Final reasoning"
+        ));
+        assert_eq!(metadata.message_phase.as_deref(), Some("completed"));
+        assert_eq!(metadata.content_mode.as_deref(), Some("snapshot"));
     }
 
     #[test]

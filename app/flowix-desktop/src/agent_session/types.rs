@@ -35,6 +35,10 @@ pub struct ChatMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<AgentErrorDetails>,
     pub is_collapsed: Option<bool>,
+    /// Codex app-server Turn that owns this message. Used by Codex-only
+    /// actions such as forking a conversation from a completed assistant turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_turn_id: Option<String>,
 }
 
 /// `ChatMessage.role` 的合法取值。存储层仍是 `String` (SQLite TEXT), 这个

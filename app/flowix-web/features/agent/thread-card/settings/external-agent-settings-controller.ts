@@ -559,7 +559,7 @@ export class ExternalAgentSettingsController {
     if (!this.supportsRuntimeSetting("model")) return null;
     const button = createExternalAgentWorkspaceControl(
       this.t("agent.model.title"),
-      this.getCurrentExternalModelLabel(),
+      this.getComposerModelDisplayLabel(),
       (anchor) => this.toggleSettingsPopover("model", anchor),
     );
     button.classList.replace(
@@ -616,7 +616,7 @@ export class ExternalAgentSettingsController {
 
   refreshComposerModelButton(): void {
     if (!this.composerModelButton) return;
-    const label = this.getCurrentExternalModelLabel();
+    const label = this.getComposerModelDisplayLabel();
     const valueEl = this.composerModelButton.querySelector<HTMLElement>(
       ".agent-thread-card__composer-model-value",
     );
@@ -1307,6 +1307,18 @@ export class ExternalAgentSettingsController {
       (option) => option.id !== ("inherit" as AgentCodexModel),
     );
     return fallback?.label ?? this.getExternalModelDefaultLabel();
+  }
+
+  /**
+   * Composer 模型控件的展示值 ── 支持 reasoning 的 runtime (当前仅 Codex)
+   * 在模型名后追加当前推理深度, 例 "GPT-5.5 · medium"; 其余类型 / 模型名
+   * 尚未加载 (DSH 异步默认) 时退回纯模型名。深度小写展示, 与下拉项
+   * ("Medium") 同词但更贴 footer 的轻量语气。
+   */
+  private getComposerModelDisplayLabel(): string {
+    const label = this.getCurrentExternalModelLabel();
+    if (!label || !this.supportsRuntimeSetting("reasoning")) return label;
+    return `${label} · ${this.getCurrentCodexReasoningLabel().toLowerCase()}`;
   }
 
   private getCurrentCodexReasoningLabel(): string {

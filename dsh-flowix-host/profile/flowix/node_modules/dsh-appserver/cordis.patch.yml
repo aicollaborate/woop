@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-appserver-extension
+      name: 'dsh-appserver'

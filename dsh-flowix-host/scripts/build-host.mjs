@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { accessSync, constants, existsSync, writeFileSync as writeFile } from 'node:fs'
+import { accessSync, constants, cpSync, existsSync, writeFileSync as writeFile } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -27,6 +27,17 @@ const buildEnv = {
 }
 await mkdir(outdir, { recursive: true })
 
+// The development launcher loads the profile snapshot under dsh-flowix-host,
+// while production packaging copies the source package directly. Keep those
+// two inputs aligned before calculating the development build identity so a
+// local App Server change is immediately exercised by Tauri dev.
+const appServerSource = resolve(repo, 'dsh-appserver')
+const appServerProfile = resolve(root, 'profile/flowix/node_modules/dsh-appserver')
+if (!existsSync(resolve(appServerSource, 'package.json'))) {
+  throw new Error(`DSH App Server source is missing: ${appServerSource}`)
+}
+cpSync(appServerSource, appServerProfile, { recursive: true, force: true })
+
 // Derive a reproducible identity from every source and lock input that defines
 // the Flowix host/profile bundle. This detects stale outputs across worktrees
 // and does not depend on a previously generated .build file.
@@ -49,6 +60,7 @@ function sourceBuildId() {
     resolve(root, 'package.json'),
     resolve(root, 'upstream.lock.json'),
     resolve(repo, 'dsh-flowix-memory'),
+    resolve(repo, 'dsh-appserver'),
     resolve(repo, 'package-lock.json'),
   ]
   const add = (path) => {

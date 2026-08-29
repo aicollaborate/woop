@@ -507,6 +507,7 @@ fn history_message(id: String, role: &str, content: String, timestamp: i64) -> C
         is_completed: Some(true),
         error_details: None,
         is_collapsed: None,
+        codex_turn_id: None,
     }
 }
 

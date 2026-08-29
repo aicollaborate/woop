@@ -33,6 +33,7 @@ export interface ThreadMessageRenderControllerOptions {
   t: (key: I18nKey) => string;
   createThreadCacheSkeleton: () => HTMLDivElement;
   createExternalAgentEmptySettings: () => HTMLElement;
+  onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }
 
 export interface ThreadMessageRenderInput {
@@ -53,6 +54,7 @@ export class ThreadMessageRenderController {
   private readonly t: (key: I18nKey) => string;
   private readonly createThreadCacheSkeleton: () => HTMLDivElement;
   private readonly createExternalAgentEmptySettings: () => HTMLElement;
+  private readonly onForkMessage?: (message: AgentMessage) => void | Promise<void>;
   private renderedMessagesList: HTMLDivElement | null = null;
   private renderedEmptyState: HTMLElement | null = null;
   private renderedMessageRefs: ThreadState["messages"] = [];
@@ -62,6 +64,7 @@ export class ThreadMessageRenderController {
   private pendingRenderInput: ThreadMessageRenderInput | null = null;
   private progressiveRenderRafId: number | null = null;
   private progressiveRenderMessages: ThreadState["messages"] | null = null;
+  private previousIsLoading = false;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
     this.body = options.body;
@@ -73,6 +76,7 @@ export class ThreadMessageRenderController {
     this.createThreadCacheSkeleton = options.createThreadCacheSkeleton;
     this.createExternalAgentEmptySettings =
       options.createExternalAgentEmptySettings;
+    this.onForkMessage = options.onForkMessage;
   }
 
   render(input: ThreadMessageRenderInput): void {
@@ -117,8 +121,11 @@ export class ThreadMessageRenderController {
 
   private renderNow(input: ThreadMessageRenderInput): void {
     const scrollState = this.messageViewport.captureRenderScrollState();
-    // run 结束下降沿只更新 loading 状态。末条消息已经由流式渲染完成，
-    // 不再强制全量 re-parse，避免 replaceChildren 导致完成瞬间闪烁。
+    const loadingJustEnded = this.previousIsLoading && !input.isLoading;
+    this.previousIsLoading = input.isLoading;
+    // 流式 Markdown 使用块级增量解析，空行等边界在流式期间可能被暂时
+    // 切成多个 block。run 结束时只强制重解析末条消息的 content，既收敛
+    // 到最终 Markdown 结构，又保留 message row、滚动位置和交互状态。
     this.renderLoadingIndicator(input.isLoading);
 
     if (this.shouldRenderProgressively(input)) {
@@ -154,6 +161,18 @@ export class ThreadMessageRenderController {
     this.pruneDisplayExpandedOverrides(input.messages);
 
     if (this.canReuseRenderedMessages(input.messages)) {
+      if (loadingJustEnded) {
+        const finalized = this.tryPatchLastRenderedMessage(
+          input.messages,
+          { isLoading: input.isLoading, ...scrollState },
+          true,
+        );
+        recordMessageRenderPlan(
+          finalized ? "patch-last" : "noop",
+          input.messages.length,
+        );
+        return;
+      }
       recordMessageRenderPlan("noop", input.messages.length);
       return;
     }
@@ -440,6 +459,7 @@ export class ThreadMessageRenderController {
       },
       isStreaming: (message) =>
         isLoading && message === lastMessage && !message.isCompleted,
+      onForkMessage: this.onForkMessage,
     };
   }
 

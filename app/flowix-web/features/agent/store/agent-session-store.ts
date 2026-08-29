@@ -571,7 +571,7 @@ export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
   const runId =
     chunk.run_id ?? state.threadProjections[canonicalThreadId]?.runs.lastRun?.runId;
   if (runId) {
-    if (agentType === "opencode") return;
+    if (agentType === "opencode" || agentType === "codex") return;
     // Let the stream-end render settle first. The persisted history can lag
     // the event by a short window, and reconciliation is a consistency check,
     // not part of the interactive completion path.

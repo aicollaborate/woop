@@ -52,6 +52,7 @@ try {
   const bundles = profile?.dsh?.profile?.bundles
   const requiredBundles = [
     '@deepseek-ai/dsh-base',
+    'dsh-appserver',
     '@flowix/dsh-flowix-bridge',
     'dsh-flowix-memory',
   ]

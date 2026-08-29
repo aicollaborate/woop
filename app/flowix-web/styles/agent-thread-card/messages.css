@@ -44,6 +44,65 @@
   color: var(--foreground);
 }
 
+.markdown-editor .agent-thread-card__message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 22px;
+  margin-top: 2px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    visibility 0s linear 150ms;
+}
+
+.markdown-editor .agent-thread-card__message:hover .agent-thread-card__message-actions,
+.markdown-editor .agent-thread-card__message:focus-within .agent-thread-card__message-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.markdown-editor .agent-thread-card__message-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.markdown-editor .agent-thread-card__message-action:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.markdown-editor .agent-thread-card__message-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.markdown-editor .agent-thread-card__message-time {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
 .markdown-editor
   .agent-thread-card:not(.agent-thread-card--fullscreen)
   .agent-thread-card__message--user

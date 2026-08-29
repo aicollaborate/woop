@@ -78,7 +78,7 @@ export const AGENT_TYPES: AgentType[] = [
     desc: 'Use Codex coding agent',
     nameKey: 'agent.types.codex.name',
     descKey: 'agent.types.codex.desc',
-    capabilities: EXTERNAL_CLI_CAPABILITIES,
+    capabilities: { ...EXTERNAL_CLI_CAPABILITIES, supportsThreadArchive: true },
   },
   {
     key: 'claude',

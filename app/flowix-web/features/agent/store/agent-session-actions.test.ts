@@ -264,6 +264,23 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(useChatStore.getState().threadStates[threadId].isLoading).toBe(false);
     await vi.waitFor(() => expect(agent.getDeepSeekHarnessThreadPage).toHaveBeenCalled());
 
+    const codexThreadId = "tab-host-codex-completed";
+    useChatStore.getState().bindThreadType(codexThreadId, "codex");
+    useChatStore.getState().setActiveThreadId(codexThreadId);
+    emitChunk({
+      kind: "stream_start",
+      thread_id: codexThreadId,
+      run_id: "run-codex-completed",
+    });
+    emitChunk({
+      kind: "stream_end",
+      thread_id: codexThreadId,
+      reason: null,
+      run_id: "run-codex-completed",
+    });
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+    expect(agent.getCodexThreadPage).not.toHaveBeenCalled();
+
     releaseA();
     expect(unlisten).not.toHaveBeenCalled();
     releaseB();

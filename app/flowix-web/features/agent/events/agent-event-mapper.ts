@@ -78,6 +78,7 @@ export function mapAgentChunkToEvent(
     source_sequence?: number;
     source_subsequence?: number;
     reasoning_boundary?: boolean;
+    codex_turn_id?: string;
   };
   const sourceThreadId = chunk.thread_id;
   const threadId = resolveExternalChunkThreadId(
@@ -103,6 +104,7 @@ export function mapAgentChunkToEvent(
     sourceTimestamp: messageMetadata.source_timestamp,
     sourceSequence: messageMetadata.source_sequence,
     sourceSubsequence: messageMetadata.source_subsequence,
+    codexTurnId: messageMetadata.codex_turn_id,
     reasoningBoundary: messageMetadata.reasoning_boundary,
   };
 

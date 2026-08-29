@@ -68,6 +68,7 @@ await rm(join(runtime, 'src'), { recursive: true, force: true })
 await removeClientUiPackages(runtime)
 
 await copyTree(resolve(repo, 'dsh-flowix-memory'), join(runtime, 'node_modules/dsh-flowix-memory'))
+await copyTree(resolve(repo, 'dsh-appserver'), join(runtime, 'node_modules/dsh-appserver'), { skipNodeModules: true })
 // pnpm's legacy deploy can omit direct workspace roots even though their
 // transitive production closure is present. Materialize the two executable
 // roots explicitly so the managed bundle never depends on workspace links.
@@ -147,18 +148,19 @@ async function removeFilesByExtension(directory, extension) {
     }
   }
 }
-async function copyTree(source, destination) {
+async function copyTree(source, destination, options = {}) {
   await mkdir(dirname(destination), { recursive: true })
   await mkdir(destination, { recursive: true })
   for (const entry of await readdir(source, { withFileTypes: true })) {
+    if (options.skipNodeModules && entry.name === 'node_modules') continue
     const from = join(source, entry.name)
     const to = join(destination, entry.name)
     if (entry.isSymbolicLink()) {
       const target = resolve(dirname(from), await readlink(from))
       if (!existsSync(target)) continue
-      await copyTree(target, to)
+      await copyTree(target, to, options)
     } else if (entry.isDirectory()) {
-      await copyTree(from, to)
+      await copyTree(from, to, options)
     } else if (entry.isFile()) {
       await mkdir(dirname(to), { recursive: true })
       await cp(from, to, { force: true })

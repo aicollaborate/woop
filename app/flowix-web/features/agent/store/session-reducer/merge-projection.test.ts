@@ -67,6 +67,43 @@ describe("mergeThreadProjections", () => {
     expect(ids).toContain("a3");
   });
 
+  it("keeps a new Codex user turn after the canonical transcript", () => {
+    const from = emptyProjection();
+    from.messages = [
+      {
+        id: "msg:codex:run-2:user:user-run-2",
+        role: "user",
+        content: "second question",
+        // The optimistic row has local arrival time and is not a provider
+        // history row yet.
+        timestamp: "2026-08-03T00:00:02.000Z",
+      },
+    ];
+    const to = emptyProjection();
+    to.messages = [
+      {
+        id: "msg:codex:run-1:user:user-run-1",
+        role: "user",
+        content: "first question",
+        timestamp: "2026-08-03T00:00:00.000Z",
+      },
+      {
+        id: "msg:codex:run-1:assistant:item-1",
+        role: "assistant",
+        content: "first answer",
+        timestamp: "2026-08-03T00:00:01.000Z",
+      },
+    ];
+
+    expect(
+      mergeThreadProjections(from, to, "codex").messages.map((message) => message.id),
+    ).toEqual([
+      "msg:codex:run-1:user:user-run-1",
+      "msg:codex:run-1:assistant:item-1",
+      "msg:codex:run-2:user:user-run-2",
+    ]);
+  });
+
   it("uses to.pending.* ids first, falling back to from", () => {
     const from = emptyProjection();
     from.pending.assistantId = "from-assistant";

@@ -28,6 +28,7 @@ mod tests {
             is_completed: None,
             error_details: None,
             is_collapsed: None,
+            codex_turn_id: None,
         }
     }
 

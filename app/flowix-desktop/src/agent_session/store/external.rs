@@ -1028,5 +1028,6 @@ fn external_history_message(
         is_completed: Some(true),
         error_details: None,
         is_collapsed: None,
+        codex_turn_id: None,
     }
 }

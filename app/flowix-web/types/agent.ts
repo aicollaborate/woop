@@ -42,6 +42,9 @@ export interface AgentRuntimeCapabilities {
   supportsTextStreaming: boolean;
   supportsToolEvents: boolean;
   externalSessionBacked: boolean;
+  /** Provider keeps persisted threads that Flowix can archive (and later
+   * restore). Absent/false: conversation delete stays Flowix-local. */
+  supportsThreadArchive?: boolean;
 }
 
 /** Structured diagnostics from an external CLI/provider. Raw wire fields are
@@ -248,6 +251,8 @@ export interface ChatMessage {
   reasoning?: string;
   isCompleted?: boolean;
   isCollapsed?: boolean;
+  /** Codex Turn owning this projected message, when available. */
+  codexTurnId?: string;
 }
 
 // Tool call definition
@@ -525,6 +530,7 @@ interface AgentEventBase {
   sourceSequence?: number;
   sourceSubsequence?: number;
   reasoningBoundary?: boolean;
+  codexTurnId?: string;
 }
 
 export type AgentEvent =

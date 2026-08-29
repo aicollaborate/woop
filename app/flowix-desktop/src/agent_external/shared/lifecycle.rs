@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone, Debug, Default)]
 pub struct AgentChunkMetadata {
+    pub codex_turn_id: Option<String>,
     pub message_id: Option<String>,
     /// Provider-native item/message id retained for diagnostics and future
     /// transcript imports. `message_id` is the Flowix canonical identity.
@@ -19,6 +20,9 @@ pub struct AgentChunkMetadata {
 
 impl AgentChunkMetadata {
     fn apply_to_payload(&self, object: &mut serde_json::Map<String, Value>) {
+        if let Some(turn_id) = self.codex_turn_id.as_ref() {
+            object.insert("codex_turn_id".to_string(), Value::String(turn_id.clone()));
+        }
         if let Some(message_id) = self.message_id.as_ref() {
             object.insert("message_id".to_string(), Value::String(message_id.clone()));
         }
