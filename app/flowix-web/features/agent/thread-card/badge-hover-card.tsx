@@ -392,7 +392,7 @@ export function BadgeHoverCard({
             <>
               <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
                 <span className="text-[var(--muted-foreground)]">Codex 会员</span>
-                <span className="font-mono text-[var(--foreground)]">{codexInfo?.account?.planType ?? "-"}</span>
+                <span className="text-right font-mono tabular-nums text-[var(--foreground)]">{codexInfo?.account?.planType ?? "-"}</span>
               </div>
               <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
                 <span className="text-[var(--muted-foreground)]">5小时</span>
