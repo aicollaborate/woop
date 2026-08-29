@@ -17,11 +17,18 @@ import {
   prependHistoricalMessages,
   trySwapLastLiveMessage,
 } from "@features/agent/store/thread-history";
-import {
-  historyRevision,
-  isOlderHistorySnapshot,
-  reconcileHistorySnapshot,
-} from "@features/agent/store/history-sync";
+// history-sync is loaded lazily to keep its reconcile engine out of the desktop
+// startup graph (`check-web-bundle.mjs` STARTUP_GZIP_BUDGET=850_000). All three
+// symbols are only used inside `loadMessages` / `reconcileCompletedRun`, both
+// of which are already async, so a dynamic import adds no perceptible latency.
+type HistorySyncModule = typeof import("@features/agent/store/history-sync");
+let historySyncModulePromise: Promise<HistorySyncModule> | null = null;
+function loadHistorySync(): Promise<HistorySyncModule> {
+  if (!historySyncModulePromise) {
+    historySyncModulePromise = import("@features/agent/store/history-sync");
+  }
+  return historySyncModulePromise;
+}
 
 type SessionSet = (
   updater: (state: HistoryContext) => Partial<HistoryContext> | HistoryContext,
@@ -195,6 +202,8 @@ export function createThreadHistorySlice(
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         const messages = filterRenderableHistoryMessages(page.messages);
         const cached = agentType === "codex" ? get().codexLiveTurns[threadId] : undefined;
+        const { isOlderHistorySnapshot, historyRevision, reconcileHistorySnapshot } =
+          await loadHistorySync();
         get().setThreadProjection(threadId, (projection) => {
           if (
             isOlderHistorySnapshot(
@@ -289,6 +298,11 @@ export function createThreadHistorySlice(
       const requestEpoch = get().threadEpochs[threadId] ?? 0;
       const reconcile = (async () => {
         try {
+          const {
+            isOlderHistorySnapshot,
+            historyRevision,
+            reconcileHistorySnapshot,
+          } = await loadHistorySync();
           let page: Awaited<ReturnType<typeof getInitialThreadHistory>> | null = null;
           let historicalMessages: ChatMessage[] = [];
           for (const delay of agentType === "codex" ? CODEX_RECONCILE_DELAYS : [0]) {
