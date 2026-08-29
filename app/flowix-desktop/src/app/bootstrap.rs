@@ -177,7 +177,7 @@ pub fn run() {
     let external_runtimes = Arc::new(ExternalRuntimeRegistry::new(
         codex_app_server.clone(),
         claude_cli_manager,
-        hermes_cli_manager,
+        hermes_cli_manager.clone(),
         opencode_acp_manager.clone(),
         deepseek_harness_manager.clone(),
     ));
@@ -191,7 +191,7 @@ pub fn run() {
         thread_manager_arc.clone(),
         codex_app_server.clone(),
         opencode_acp_manager.clone(),
-        hermes_acp_manager.clone(),
+        hermes_cli_manager.clone(),
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook

@@ -46,9 +46,7 @@
   config:
     stdio: !!js process.env.FLOWIX_DSH_APPSERVER_STDIO ?? false
 
-# The legacy bridge owns the SDK server and must not be mounted when the
-# App Server is the selected stdio surface.
+# The legacy SDK JSON-RPC server must not be mounted when the App Server is
+# the selected stdio surface.
 - id: sdk-jsonrpc-server
-  disabled: !!js process.env.FLOWIX_DSH_APPSERVER_STDIO ?? false
-- id: flowix-dsh-bridge
   disabled: !!js process.env.FLOWIX_DSH_APPSERVER_STDIO ?? false

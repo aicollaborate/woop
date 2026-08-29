@@ -604,7 +604,6 @@ function PluginsTab() {
                         </span>
                         {plugin.scope === 'profile'
                           && plugin.id !== '@deepseek-ai/dsh-base'
-                          && plugin.id !== '@flowix/dsh-flowix-bridge'
                           && plugin.id !== 'dsh-flowix-memory' && (
                           <Button
                             type="button"

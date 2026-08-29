@@ -18,7 +18,7 @@ const SHARED_NEEDLES = [
 
 test('memory stays an independent profile bundle and is not duplicated in the host composition', () => {
   const product = read('config/flowix.cordis.yml')
-  const bridge = read('profile/flowix/node_modules/@flowix/dsh-flowix-bridge/cordis.patch.yml')
+  const appserver = read('profile/flowix/node_modules/dsh-appserver/cordis.patch.yml')
   const patch = read('../dsh-flowix-memory/cordis.patch.yml')
   const packageManifest = JSON.parse(read('../dsh-flowix-memory/package.json'))
 
@@ -30,8 +30,8 @@ test('memory stays an independent profile bundle and is not duplicated in the ho
   assert.equal(profile.dsh.profile.bundles[0], '@deepseek-ai/dsh-base')
   assert.match(product, /\[\]\s*$/)
   assert.doesNotMatch(product, /sdk-jsonrpc-server|flowix-dsh-bridge/)
-  assert.match(bridge, /id: sdk-jsonrpc-server/)
-  assert.match(bridge, /id: flowix-dsh-bridge/)
+  assert.match(appserver, /id: dsh-appserver-extension/)
+  assert.match(appserver, /name: 'dsh-appserver'/)
   assert.ok(profile.dsh.profile.bundles.includes('dsh-flowix-memory'))
   assert.match(patch, /FLOWIX_DSH_MCP_CLI/)
   assert.match(patch, /FLOWIX_CLI_PATH/)

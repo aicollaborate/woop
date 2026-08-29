@@ -57,7 +57,8 @@ enforces this boundary; Flowix semantics live in profile bundles.
   `dsh plugin` implementation for profile management.
 - `patches/flowix-dsh-bridge-runtime.patch` adds a product-neutral SDK JSON-RPC
   extension seam. It contains no Flowix method names or business protocol;
-  `@flowix/dsh-flowix-bridge` owns those methods through the seam.
+  the `dsh-appserver` profile bundle mounts into this seam to provide the
+  `flowix.bridge.*` JSON-RPC surface to the Flowix host.
 - `patches/session-resume-runtime.patch` lets the SDK server reopen a supplied
   persisted session id instead of silently replacing it.
 

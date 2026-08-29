@@ -26,7 +26,6 @@ const required = [
   /dsh-runtime\.json$/iu,
   /dsh-flowix-memory\//iu,
   /profile\/flowix\/package\.json$/iu,
-  /profile\/flowix\/node_modules\/@flowix\/dsh-flowix-bridge\/index\.js$/iu,
   /tools\/pnpm\/node_modules\/pnpm\/bin\/pnpm\.mjs$/iu,
   /bin\/pnpm(?:\.cmd)?$/iu,
   /bin\/dsh(?:\.cmd)?$/iu,
@@ -53,7 +52,6 @@ try {
   const requiredBundles = [
     '@deepseek-ai/dsh-base',
     'dsh-appserver',
-    '@flowix/dsh-flowix-bridge',
     'dsh-flowix-memory',
   ]
   if (!Array.isArray(bundles)

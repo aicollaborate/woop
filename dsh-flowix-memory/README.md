@@ -49,8 +49,8 @@ dsh plugin --profile flowix add dsh-flowix-memory
 ```
 
 The row activates for that profile. Other DSH clients can start it with
-`dsh --profile flowix`; this profile does not include Flowix Desktop's
-`@flowix/dsh-flowix-bridge` unless that bundle is installed separately.
+`dsh --profile flowix`; this profile also ships `dsh-appserver` so the
+official `flowix.bridge.*` JSON-RPC surface is available out of the box.
 
 ## Verify
 

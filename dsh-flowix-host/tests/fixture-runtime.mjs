@@ -46,8 +46,9 @@ input.on('line', line => {
     setImmediate(() => {
       const event = payload => {
         send({ jsonrpc: '2.0', method: 'session.event', params: { sessionId, event: payload } })
-        // Mirror the native event emitted by flowix-dsh-bridge. The host must
-        // consume this path without duplicating the SDK compatibility event.
+        // Mirror the native event emitted by the DSH bridge (delivered via
+        // dsh-appserver in production profiles). The host must consume this
+        // path without duplicating the SDK compatibility event.
         send({ jsonrpc: '2.0', method: 'flowix.bridge.event', params: {
           protocolVersion: 1, kind: 'session.event', sessionId, event: payload,
         } })

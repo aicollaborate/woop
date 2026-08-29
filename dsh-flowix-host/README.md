@@ -21,7 +21,7 @@ the local build through an ignored compatibility link at
 The DSH runtime is released independently from the Flowix Tauri application.
 Its archive contains the JSON-RPC host, the headless Harness runtime,
 the `dsh-flowix-memory` MCP bundle, and the `profile/flowix` profile bundle
-containing `@flowix/dsh-flowix-bridge`. It mounts no browser server or UI
+containing `dsh-appserver`. It mounts no browser server or UI
 surface; UI-only DSH profile bundles are outside the Flowix host contract.
 
 ## Build
@@ -106,7 +106,7 @@ of Node processes.
 
 `config/flowix.cordis.yml` is an empty profile root embedded in the host
 executable. The official `@deepseek-ai/dsh-base` bundle owns the core runtime
-roster; the single `@flowix/dsh-flowix-bridge` bundle owns Flowix's SDK entry
+roster; the single `dsh-appserver` bundle owns Flowix's SDK entry
 point and deployment-policy overrides. This keeps core plugin additions and
 service contracts aligned with upstream instead of duplicating its roster.
 The native `dsh-llm-pi-ai` adapter comes from that official base. Session JSONL and
@@ -134,7 +134,7 @@ The standalone archive ships two separate Flowix layers over the official
 
 - `dsh-flowix-memory/` is the independent MCP bundle used by the agent.
 - `profile/flowix/` is a normal DSH profile containing the
-  `@flowix/dsh-flowix-bridge` bundle used by the Flowix host.
+  `dsh-appserver` bundle used by the Flowix host.
 
 The host copies the profile payload into the selected DSH_HOME on first use,
 preserving existing user fields and patch layers. It does not run npm or pnpm,

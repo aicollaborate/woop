@@ -12,7 +12,7 @@ const memoryBundle = resolve(root, '..', 'dsh-flowix-memory')
 const tooling = resolve(root, 'scripts/tooling')
 const required = [
   '@deepseek-ai/dsh-base',
-  '@flowix/dsh-flowix-bridge',
+  'dsh-appserver',
   'dsh-flowix-memory',
 ]
 

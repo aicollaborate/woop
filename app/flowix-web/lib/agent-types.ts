@@ -69,7 +69,7 @@ export const AGENT_TYPES: AgentType[] = [
     desc: 'Use the bundled DeepSeek Harness SDK',
     nameKey: 'agent.types.deepseekHarness.name',
     descKey: 'agent.types.deepseekHarness.desc',
-    capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
+    capabilities: { ...STREAMING_EXTERNAL_CLI_CAPABILITIES, supportsThreadArchive: true },
   },
   {
     key: 'codex',
@@ -96,7 +96,7 @@ export const AGENT_TYPES: AgentType[] = [
     desc: 'Use OpenCode through Agent Client Protocol',
     nameKey: 'agent.types.opencode.name',
     descKey: 'agent.types.opencode.desc',
-    capabilities: STREAMING_EXTERNAL_CLI_CAPABILITIES,
+    capabilities: { ...STREAMING_EXTERNAL_CLI_CAPABILITIES, supportsThreadArchive: true },
   },
   {
     key: 'hermes',
@@ -105,7 +105,7 @@ export const AGENT_TYPES: AgentType[] = [
     desc: 'Use Hermes',
     nameKey: 'agent.types.hermes.name',
     descKey: 'agent.types.hermes.desc',
-    capabilities: EXTERNAL_CLI_CAPABILITIES,
+    capabilities: { ...EXTERNAL_CLI_CAPABILITIES, supportsThreadArchive: true },
   },
   {
     key: 'gemini',

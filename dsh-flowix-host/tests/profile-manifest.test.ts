@@ -7,14 +7,13 @@ test("required Flowix layers lead while third-party DSH bundles keep their order
     mergeFlowixProfileBundles([
       "third-party-a",
       "dsh-flowix-memory",
-      "@flowix/dsh-flowix-bridge",
+      "dsh-appserver",
       "third-party-b",
       "@deepseek-ai/dsh-base",
     ]),
     [
       "@deepseek-ai/dsh-base",
       "dsh-appserver",
-      "@flowix/dsh-flowix-bridge",
       "dsh-flowix-memory",
       "third-party-a",
       "third-party-b",
@@ -26,7 +25,6 @@ test("malformed profile bundle values are not persisted", () => {
   assert.deepEqual(mergeFlowixProfileBundles([null, 1, {}, "third-party"]), [
     "@deepseek-ai/dsh-base",
     "dsh-appserver",
-    "@flowix/dsh-flowix-bridge",
     "dsh-flowix-memory",
     "third-party",
   ]);

@@ -25,7 +25,8 @@ export function adaptHarnessNotification(
 }
 
 /**
- * Adapt the DSH-native event envelope emitted by flowix-dsh-bridge.
+ * Adapt the DSH-native event envelope emitted by the DSH bridge (delivered
+ * by the dsh-appserver bundle in this profile).
  *
  * This deliberately shares the same session-event adapter as the SDK
  * compatibility notification. The bridge is the preferred event path, while

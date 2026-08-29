@@ -1,5 +1,5 @@
 # Flowix boots an ordinary DSH profile over this empty root. The official
 # @deepseek-ai/dsh-base bundle owns the core runtime roster; Flowix-specific
-# composition belongs exclusively to @flowix/dsh-flowix-bridge, while
+# composition is delivered by the dsh-appserver bundle in this profile, and
 # dsh-flowix-memory remains an independent cross-client bundle.
 []

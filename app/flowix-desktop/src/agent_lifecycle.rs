@@ -49,13 +49,13 @@ impl AgentLifecycleService {
     ) -> Self {
         let adapters: [Arc<dyn ThreadLifecycleAdapter>; 3] = [
             Arc::new(CodexLifecycleAdapter { threads: threads.clone(), client: codex }),
-            Arc::new(AcpLifecycleAdapter { threads: threads.clone(), runtime: ExternalRuntimeKind::OpenCode, delete: Arc::new(move |thread_id| {
+            Arc::new(AcpLifecycleAdapter { runtime: ExternalRuntimeKind::OpenCode, delete: Arc::new(move |thread_id: String| {
                 let client = opencode.clone();
-                Box::pin(async move { client.delete_thread(thread_id).await })
+                Box::pin(async move { client.delete_thread(&thread_id).await })
             }) }),
-            Arc::new(AcpLifecycleAdapter { threads, runtime: ExternalRuntimeKind::Hermes, delete: Arc::new(move |thread_id| {
+            Arc::new(AcpLifecycleAdapter { runtime: ExternalRuntimeKind::Hermes, delete: Arc::new(move |thread_id: String| {
                 let client = hermes.clone();
-                Box::pin(async move { client.delete_thread(thread_id).await })
+                Box::pin(async move { client.delete_thread(&thread_id).await })
             }) }),
         ];
         Self::try_from_adapters(adapters)
@@ -103,10 +103,9 @@ struct CodexLifecycleAdapter {
     client: Arc<CodexAppServerManager>,
 }
 
-type DeleteProvider = Arc<dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send>> + Send + Sync>;
+type DeleteProvider = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send>> + Send + Sync>;
 
 struct AcpLifecycleAdapter {
-    threads: Arc<ThreadManager>,
     runtime: ExternalRuntimeKind,
     delete: DeleteProvider,
 }
@@ -119,13 +118,7 @@ impl ThreadLifecycleAdapter for AcpLifecycleAdapter {
         if action == LifecycleAction::Archive {
             return Ok(false);
         }
-        let session_id = self
-            .threads
-            .get_external_session(thread_id, self.runtime.key())
-            .await
-            .map_err(|error| error.to_string())?
-            .unwrap_or_else(|| thread_id.to_string());
-        (self.delete)(&session_id).await
+        (self.delete)(thread_id.to_string()).await
     }
 }
 
@@ -136,6 +129,9 @@ impl ThreadLifecycleAdapter for CodexLifecycleAdapter {
     }
 
     async fn apply(&self, thread_id: &str, action: LifecycleAction) -> Result<bool, String> {
+        if action == LifecycleAction::Archive {
+            return Ok(false);
+        }
         // Resolution order:
         //   1. the stored flowix→codex session binding (live-started thread)
         //   2. the thread id itself when it already is a Codex thread id
@@ -151,10 +147,7 @@ impl ThreadLifecycleAdapter for CodexLifecycleAdapter {
             None if is_codex_thread_id(thread_id) => thread_id.to_string(),
             None => return Ok(false),
         };
-        match action {
-            LifecycleAction::Archive => self.client.archive_thread(&codex_thread_id).await,
-            LifecycleAction::Delete => self.client.delete_thread(&codex_thread_id).await,
-        }?;
+        self.client.delete_thread(&codex_thread_id).await?;
         Ok(true)
     }
 }

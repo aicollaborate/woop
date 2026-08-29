@@ -184,12 +184,11 @@ export function AgentConversationList() {
   }, [hasMore]);
 
   const conversations = useMemo(() => {
-    // 实例从内存 store 移除时 (archive / delete / removeInstance), 持久化快照
-    // 不会自动跟随; 以 `instances` 为准, 已被剔除的 instanceId 不再保留到列表里。
-    const activeIds = new Set(Object.keys(instances));
-    const merged = Object.fromEntries(
-      Object.entries(persistedInstances).filter(([id]) => activeIds.has(id)),
-    );
+    // The backend snapshot is the durable source of truth. An editor card is
+    // intentionally not mounted in every document/webview, so using the
+    // in-memory registry as an allow-list makes valid conversations disappear
+    // whenever a card is temporarily unmounted or hydration is still pending.
+    const merged = { ...persistedInstances };
     for (const instance of Object.values(instances)) {
       const persisted = merged[instance.instanceId];
       if (!persisted || instance.updatedAt >= persisted.updatedAt) {

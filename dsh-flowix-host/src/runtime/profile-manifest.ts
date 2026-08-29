@@ -1,7 +1,6 @@
 export const FLOWIX_REQUIRED_PROFILE_BUNDLES = [
   "@deepseek-ai/dsh-base",
   "dsh-appserver",
-  "@flowix/dsh-flowix-bridge",
   "dsh-flowix-memory",
 ] as const;
 

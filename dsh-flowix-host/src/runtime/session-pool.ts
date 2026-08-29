@@ -233,7 +233,7 @@ export class SessionPool {
     try {
       await initializeRuntime(slot)
       slot.bridgeAvailable = await bridgeIsAvailable(slot.bridge)
-      if (!slot.bridgeAvailable) throw new Error('flowix-dsh-bridge is required by the DSH runtime profile')
+      if (!slot.bridgeAvailable) throw new Error('DSH bridge protocol is required by the DSH runtime profile')
       await this.executeThroughBridge(slot, marker, prompt)
     } catch (error) {
       // Initialization and capability negotiation happen before either run
@@ -284,9 +284,10 @@ export class SessionPool {
       }
     }
 
-    // flowix-dsh-bridge emits the DSH-native event stream independently of
-    // the SDK server's compatibility notification. Subscribe before prompt
-    // delivery so the bridge path is live for the complete turn. The legacy
+    // The DSH bridge (delivered by the dsh-appserver bundle in this profile)
+    // emits the DSH-native event stream independently of the SDK server's
+    // compatibility notification. Subscribe before prompt delivery so the
+    // bridge path is live for the complete turn. The legacy
     // onNotification path below remains active and is deduplicated by the
     // native session event sequence for old profiles and test runtimes.
     const bridgeSubscription = slot.bridge.subscribeEvents()
@@ -477,7 +478,7 @@ async function bridgeIsAvailable(bridge: FlowixDshBridgeClient): Promise<boolean
       && result.capabilities.includes('session-control')
   } catch (error) {
     const message = errorMessage(error)
-    if (/flowix-dsh-bridge plugin is not mounted|unknown .*flowix\.bridge|method not found.*flowix\.bridge/i.test(message)) {
+    if (/dsh-appserver plugin is not mounted|unknown .*flowix\.bridge|method not found.*flowix\.bridge/i.test(message)) {
       return false
     }
     throw error

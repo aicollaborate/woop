@@ -468,7 +468,7 @@ pub fn run_profile_plugin(
 fn is_required_flowix_profile_bundle(package: &str) -> bool {
     matches!(
         package,
-        "@deepseek-ai/dsh-base" | "@flowix/dsh-flowix-bridge" | "dsh-flowix-memory"
+        "@deepseek-ai/dsh-base" | "dsh-flowix-memory"
     )
 }
 
@@ -1342,9 +1342,6 @@ mod tests {
     fn protects_only_flowix_profile_requirements_from_managed_removal() {
         assert!(super::is_required_flowix_profile_bundle(
             "@deepseek-ai/dsh-base"
-        ));
-        assert!(super::is_required_flowix_profile_bundle(
-            "@flowix/dsh-flowix-bridge"
         ));
         assert!(super::is_required_flowix_profile_bundle(
             "dsh-flowix-memory"
