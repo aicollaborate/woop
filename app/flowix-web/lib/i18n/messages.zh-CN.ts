@@ -626,10 +626,6 @@ const zhCN = {
 
     // agent
     "agent.permission.default": "默认",
-    "agent.permission.readOnly": "只读",
-    "agent.permission.workspaceWrite": "空间读写",
-    "agent.permission.dangerFullAccess": "任意读写",
-    "agent.permission.yolo": "YOLO",
     "agent.permissionMode.menu": "权限模式",
     "agent.permissionMode.title": "权限模式",
     "agent.codexModel.default": "Codex 默认",

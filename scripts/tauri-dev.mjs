@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 
@@ -10,11 +10,9 @@ const tauriEntrypoint = resolve(repoRoot, 'node_modules/@tauri-apps/cli/tauri.js
 const config = process.argv[2] ?? 'app/flowix-desktop/tauri.conf.dev.json'
 const childEnv = { ...process.env }
 
-// Keep the legacy Flowix host as the development default. The official DSH
-// `--app-server` surface does not implement Flowix's model/config, credential
-// and bridge methods (for example `model/config/read`), so enabling it here
-// makes reconnect fail before a conversation can start. A compatible App
-// Server can still be selected explicitly through these environment variables.
+// Build and use the managed DSH bundle in dev. The bundle contains the private
+// Node and official CLI entrypoint, so the Rust client can launch the same
+// `app-server --listen stdio://` surface used by the production runtime.
 
 if (process.platform === 'win32') {
   // rustup installs Cargo here by default. GUI shells and automation often do
@@ -50,11 +48,33 @@ function npmRun(script) {
 
 npmRun('cli:build:dev')
 
-if (!process.env.FLOWIX_DSH_BUNDLE_ROOT) {
-  npmRun('dsh:build:dev')
+{
+  const bundleRoot = resolve(
+    repoRoot,
+    `.build/dsh-runtime-bundle/node24-${process.platform === 'darwin' ? 'macos' : process.platform}-${process.arch}`,
+  )
+  const complete = [
+    join(bundleRoot, 'node', process.platform === 'win32' ? 'node.exe' : 'node'),
+    join(bundleRoot, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'),
+    join(bundleRoot, 'profile/flowix/package.json'),
+    join(bundleRoot, 'profile/flowix/node_modules/dsh-appserver/package.json'),
+    join(bundleRoot, 'profile/flowix/node_modules/dsh-flowix-memory/package.json'),
+  ].every(existsSync)
+  if (!complete) {
+    const lock = resolve(repoRoot, '.build/dsh-runtime-bundle/.dev-build.lock')
+    try {
+      mkdirSync(lock)
+    } catch (error) {
+      throw new Error(`DSH dev bundle is being built by another process (${lock}): ${String(error)}`)
+    }
+    try {
+      npmRun('dsh:build:prod')
+    } finally {
+      rmSync(lock, { recursive: true, force: true })
+    }
+  }
 }
-
-if (process.platform === 'win32' && !childEnv.FLOWIX_DSH_BUNDLE_ROOT) {
+if (process.platform === 'win32') {
   const devHost = resolve(repoRoot, '.build/flowix-dsh-host/dsh-host.cjs')
   if (!existsSync(devHost)) {
     throw new Error(`Windows development host was not built at ${devHost}`)

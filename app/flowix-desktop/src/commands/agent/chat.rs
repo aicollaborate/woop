@@ -115,6 +115,24 @@ pub async fn chat_with_agent_stream(
     result.map(|response| AgentChatResponse { response })
 }
 
+/// Append input to the currently active Codex turn without creating a new run.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn steer_agent_stream(
+    threadId: String,
+    message: AgentUserMessage,
+    clientUserMessageId: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    if message.agent_type.as_deref() != Some("codex") {
+        return Err("turn/steer is only supported for Codex".to_string());
+    }
+    state.external_runtimes
+        .steer_codex(&threadId, message, clientUserMessageId, &app_handle)
+        .await
+}
+
 /// Frontend-initiated abort for an in-flight `chat_with_agent_stream`.
 /// Returns `true` if a chat was actually running for this `threadId` and
 /// got a cancel signal; `false` if there was nothing to cancel (e.g. user

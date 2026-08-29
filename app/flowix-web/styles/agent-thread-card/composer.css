@@ -101,6 +101,11 @@
 .agent-background-terminals__row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); }
 .agent-background-terminals__cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; }
 .agent-background-terminals__state { margin-left: auto; opacity: 0.65; }
+.agent-background-terminals__queue { border-top: 1px solid var(--border); padding: 0.35rem 0.75rem 0.45rem; }
+.agent-background-terminals__queue-row { display: flex; min-width: 0; gap: 0.45rem; align-items: baseline; line-height: 1.35; }
+.agent-background-terminals__queue-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); opacity: 0.82; }
+.agent-background-terminals__queue-mark { flex: 0 0 auto; color: var(--primary); }
+.agent-thread-card__queued-messages { margin: 0 0 -1.15rem; }
 
 /* Approval uses the same process strip and the same composer stack slot. The
  * approval modifier intentionally adds no outer-surface styles: border,
@@ -134,6 +139,7 @@
   .agent-thread-card__composer-image-remove,
   .agent-thread-card__composer-role-icon,
   .agent-thread-card__composer-model,
+  .agent-thread-card__composer-mode,
   .agent-thread-card__composer-permission,
   .agent-thread-card__composer-workspace
 ) {
@@ -161,6 +167,10 @@
   display: none;
 }
 
+.markdown-editor .agent-thread-card__composer-mode {
+  display: none;
+}
+
 .markdown-editor .agent-thread-card__composer-workspace {
   display: none;
 }
@@ -176,6 +186,7 @@
 }
 
 .markdown-editor .agent-thread-card__composer-permission:disabled,
+.markdown-editor .agent-thread-card__composer-mode:disabled,
 .markdown-editor .agent-thread-card__empty-control[data-kind='permission']:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -187,6 +198,7 @@
 }
 
 .markdown-editor .agent-thread-card__composer-permission:disabled:hover,
+.markdown-editor .agent-thread-card__composer-mode:disabled:hover,
 .markdown-editor .agent-thread-card__empty-control[data-kind='permission']:disabled:hover {
   background: transparent;
 }
@@ -251,7 +263,12 @@
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
   .agent-thread-card__composer-model,
-.markdown-editor .agent-composer--expanded .agent-thread-card__composer-model {
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-model,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-mode,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-mode {
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
@@ -295,6 +312,11 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
+  .agent-thread-card__composer-mode,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-mode,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
   .agent-thread-card__composer-permission,
 .markdown-editor .agent-composer--expanded .agent-thread-card__composer-permission,
 .markdown-editor
@@ -324,6 +346,16 @@
     color 150ms ease;
 }
 
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-mode:hover,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__composer
+  .agent-thread-card__composer-mode--open,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-mode:hover,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-mode--open,
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
@@ -373,6 +405,14 @@
   line-height: 1.6;
 }
 
+.markdown-editor .agent-thread-card__composer-mode-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
 .markdown-editor .agent-thread-card__composer-workspace .agent-thread-card__empty-control-chevron {
   width: 12px;
   height: 12px;
@@ -388,6 +428,13 @@
 }
 
 .markdown-editor .agent-thread-card__composer-model .agent-thread-card__empty-control-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.markdown-editor .agent-thread-card__composer-mode .agent-thread-card__empty-control-chevron {
   width: 12px;
   height: 12px;
   flex: 0 0 auto;

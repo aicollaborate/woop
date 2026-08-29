@@ -210,7 +210,7 @@ pub fn status() -> DshStatus {
         return match result {
             Ok(launch) => DshStatus {
                 installed: true,
-                executable_path: launch.args.first().map(|path| path.display().to_string()),
+                executable_path: Some(launch.executable.display().to_string()),
                 version: Some("dev".to_string()),
                 source: Some("flowix-dev-bundle".to_string()),
                 profile: DEFAULT_PROFILE.to_string(),
@@ -279,9 +279,18 @@ pub(crate) fn development_bundle_launch_spec() -> Option<Result<ManagedDshLaunch
     if !cfg!(debug_assertions) {
         return None;
     }
-    std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT")
-        .map(PathBuf::from)
-        .map(development_bundle_launch_spec_at)
+    let configured = std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT").map(PathBuf::from);
+    let root = configured.or_else(|| {
+        // Tauri dev launched from an IDE may not inherit tauri-dev.mjs's
+        // environment. Keep the dev transport deterministic by discovering
+        // the repository bundle beside the Cargo workspace.
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
+        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
+        let candidate = repo.join(format!(".build/dsh-runtime-bundle/node24-{platform}-{arch}"));
+        candidate.is_dir().then_some(candidate)
+    });
+    root.map(development_bundle_launch_spec_at)
 }
 
 fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, String> {
@@ -290,7 +299,6 @@ fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, 
     let node = canonical
         .join("node")
         .join(if cfg!(windows) { "node.exe" } else { "node" });
-    let host = canonical.join("host").join("dsh-host.cjs");
     let runtime = canonical
         .join("runtime")
         .join("node_modules")
@@ -305,7 +313,6 @@ fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, 
 
     for (label, path) in [
         ("private Node", &node),
-        ("host entrypoint", &host),
         ("DSH runtime entrypoint", &runtime),
         ("Flowix profile", &profile),
     ] {
@@ -320,9 +327,12 @@ fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, 
 
     Ok(ManagedDshLaunch {
         executable: node,
-        args: vec![host],
+        args: Vec::new(),
         root: canonical,
-        cli_entrypoint: None,
+        // Keep the upstream CLI entrypoint available to direct App Server
+        // launchers. The legacy host still uses `args`; App Server follows
+        // the same JS-on-private-Node model as Codex.
+        cli_entrypoint: Some(runtime),
     })
 }
 
@@ -583,6 +593,12 @@ pub fn managed_host_path() -> Option<PathBuf> {
 }
 
 pub fn managed_launch_spec() -> Option<ManagedDshLaunch> {
+    // In dev, the explicitly selected source-built bundle must win over an
+    // older installed runtime. Otherwise App Server testing silently launches
+    // the user's last downloaded DSH version.
+    if let Some(result) = development_bundle_launch_spec() {
+        return result.ok();
+    }
     current_installation().map(|installation| installation.launch)
 }
 
@@ -1266,7 +1282,7 @@ fn current_installation() -> Option<DshInstallation> {
     })
 }
 
-fn dsh_root() -> PathBuf {
+pub(crate) fn dsh_root() -> PathBuf {
     get_app_data_path().join(DSH_DIR_NAME)
 }
 

@@ -75,6 +75,16 @@ pub trait ExternalCliRuntime: Send + Sync {
         app_handle: &tauri::AppHandle,
     ) -> Result<String, String>;
 
+    async fn steer_chat(
+        &self,
+        _thread_id: &str,
+        _message: AgentUserMessage,
+        _client_user_message_id: String,
+        _app_handle: &tauri::AppHandle,
+    ) -> Result<(), String> {
+        Err("this agent does not support steering an active turn".to_string())
+    }
+
     async fn stop_chat(
         &self,
         thread_id: &str,
@@ -158,6 +168,7 @@ impl_external_runtime!(OpenCodeAcpManager, ExternalRuntimeKind::OpenCode);
 
 pub struct ExternalRuntimeRegistry {
     runtimes: HashMap<ExternalRuntimeKind, Box<dyn ExternalCliRuntime>>,
+    codex: Option<Arc<CodexAppServerManager>>,
 }
 
 impl ExternalRuntimeRegistry {
@@ -168,6 +179,7 @@ impl ExternalRuntimeRegistry {
         opencode: Arc<OpenCodeAcpManager>,
         deepseek_harness: Arc<DeepSeekHarnessManager>,
     ) -> Self {
+        let codex_for_registry = codex.clone();
         Self::try_from_runtimes(vec![
             Box::new(codex),
             Box::new(claude),
@@ -176,6 +188,12 @@ impl ExternalRuntimeRegistry {
             Box::new(deepseek_harness),
         ])
         .expect("built-in external runtimes must have unique kinds")
+        .with_codex(codex_for_registry)
+    }
+
+    fn with_codex(mut self, codex: Arc<CodexAppServerManager>) -> Self {
+        self.codex = Some(codex);
+        self
     }
 
     fn try_from_runtimes(runtimes: Vec<Box<dyn ExternalCliRuntime>>) -> Result<Self, String> {
@@ -189,7 +207,35 @@ impl ExternalRuntimeRegistry {
                 ));
             }
         }
-        Ok(Self { runtimes: registry })
+        // Test-only construction does not need direct Codex steering access.
+        // `new` installs the concrete manager immediately afterwards.
+        Ok(Self { runtimes: registry, codex: None })
+    }
+
+    pub async fn steer_codex(
+        &self,
+        thread_id: &str,
+        message: AgentUserMessage,
+        client_user_message_id: String,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<(), String> {
+        // The registry stores the concrete manager separately because steering
+        // is currently Codex-only.  Call the inherent method explicitly here:
+        // method syntax on `Arc<CodexAppServerManager>` can otherwise resolve
+        // to `ExternalCliRuntime::steer_chat`, whose default implementation
+        // intentionally rejects steering for runtimes that do not support it.
+        let codex = self
+            .codex
+            .as_ref()
+            .ok_or_else(|| "Codex runtime is unavailable".to_string())?;
+        CodexAppServerManager::steer_chat(
+            codex.as_ref(),
+            thread_id,
+            message,
+            client_user_message_id,
+            app_handle,
+        )
+        .await
     }
 
     pub fn get(&self, kind: ExternalRuntimeKind) -> Option<&dyn ExternalCliRuntime> {

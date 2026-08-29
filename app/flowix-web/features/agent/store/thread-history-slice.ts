@@ -37,7 +37,10 @@ type HistoryContext = ThreadHistorySlice & ProjectionSlice;
 type SessionGet = () => HistoryContext;
 
 const codexReconciles = new Map<string, Promise<void>>();
-const CODEX_RECONCILE_DELAYS = [0, 100, 500, 1500];
+// Codex history is normally available immediately after turn completion. Keep
+// one delayed retry for app-server persistence lag, but avoid four snapshots
+// and four render/reconcile cycles for every completed turn.
+const CODEX_RECONCILE_DELAYS = [0, 1500];
 
 function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -215,26 +218,14 @@ export function createThreadHistorySlice(
           }
           const reconciled = cached
             // The persisted page is the history base; the cached run is only
-            // a live tail overlay. Passing these in the opposite order makes
-            // a new optimistic Codex user row become the list head.
-            ? cached.status === "awaiting_snapshot"
-              ? reconcileHistorySnapshot({
-                  agentType,
-                  current: projection.messages,
-                  snapshot: {
-                    messages,
-                    revision: historyRevision(page.snapshotSequence),
-                    oldestCursor: page.oldestSequence,
-                    hasMore: page.hasMore,
-                  },
-                  reason: "run_completed",
-                  runId: cached.runId,
-                }).messages
-              : mergeMessagesForThreadRender({
-                  history: messages,
-                  live: cached.messages,
-                  agentType,
-                })
+            // a live tail overlay. Both running and awaiting_snapshot states
+            // use the same merge contract; completion status only controls
+            // when the cache may be cleared below.
+            ? mergeMessagesForThreadRender({
+                history: messages,
+                live: cached.messages,
+                agentType,
+              })
             : reconcileHistorySnapshot({
                 agentType,
                 current: projection.messages,
@@ -305,11 +296,13 @@ export function createThreadHistorySlice(
           } = await loadHistorySync();
           let page: Awaited<ReturnType<typeof getInitialThreadHistory>> | null = null;
           let historicalMessages: ChatMessage[] = [];
+          let cachedTurnId: string | undefined;
           for (const delay of agentType === "codex" ? CODEX_RECONCILE_DELAYS : [0]) {
             await wait(delay);
             page = await getInitialThreadHistory(agentType, threadId, HISTORY_PAGE_SIZE);
             historicalMessages = filterRenderableHistoryMessages(page.messages);
             const cached = get().codexLiveTurns[threadId];
+            cachedTurnId = cached?.runId === runId ? cached?.turnId : undefined;
             if (
               agentType !== "codex" ||
               !cached ||
@@ -340,6 +333,7 @@ export function createThreadHistorySlice(
             },
             reason: "run_completed",
             runId,
+            turnId: cachedTurnId,
           }).messages;
           const nextPagination = {
             initialStatus: "ready" as const,

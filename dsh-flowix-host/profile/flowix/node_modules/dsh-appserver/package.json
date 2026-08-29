@@ -4,7 +4,7 @@
   "type": "module",
   "version": "0.2.0",
   "description": "Codex app-server-shaped protocol adapter for DeepSeek Harness",
-  "files": ["src", "cordis.patch.yml", "README.md", "DESIGN.md"],
+  "files": ["src", "bin", "cordis.patch.yml", "README.md", "DESIGN.md"],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

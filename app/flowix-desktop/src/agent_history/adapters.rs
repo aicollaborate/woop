@@ -30,7 +30,6 @@ pub(super) fn builtin_adapters(
             client: codex,
         }),
         Arc::new(DshHistoryAdapter {
-            threads: threads.clone(),
             client: dsh,
         }),
         Arc::new(OpenCodeHistoryAdapter { client: opencode }),
@@ -79,7 +78,6 @@ impl HistoryAdapter for CodexHistoryAdapter {
 }
 
 struct DshHistoryAdapter {
-    threads: Arc<ThreadManager>,
     client: Arc<DeepSeekHarnessManager>,
 }
 
@@ -92,10 +90,7 @@ impl HistoryAdapter for DshHistoryAdapter {
         provider_policy()
     }
     async fn list_threads(&self) -> Result<Vec<ThreadInfo>, String> {
-        self.threads
-            .list_external_threads(self.runtime().key())
-            .await
-            .map_err(|error| error.to_string())
+        self.client.list_threads().await
     }
     async fn read_page(
         &self,

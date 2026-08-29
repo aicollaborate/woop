@@ -25,7 +25,8 @@ use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
     emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata, AgentChunkMetadata,
-    StreamingEmitBuffer, STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
+    persist_external_chunk_for_thread_with_metadata, StreamingEmitBuffer,
+    STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
 use crate::agent_session::{ChatMessage, ThreadManager, ThreadMessagesPage};
 use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
@@ -202,14 +203,15 @@ impl DeepSeekHarnessManager {
         // In particular, do not resolve a model config or call runtime.ensure
         // while a turn may still be using this thread's runtime.
         let host = self.model_host().await?;
-        let direct_app_server = std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some();
-        let session_id = if direct_app_server {
+        let session_id = {
             // App Server owns Thread/Turn lifecycle. A persisted session id is
             // the durable Thread id; resume it when present, otherwise create
-            // a Thread using Flowix's stable thread id.
-            let request = if session_id.is_some() {
+            // a new provider-owned Thread. Older builds incorrectly used the
+            // Flowix local id as the DSH session id; fork that durable log once
+            // into a canonical DSH session before continuing it.
+            let request = if let Some(existing_session_id) = session_id {
                 protocol::app_thread_resume_request(
-                    host.next_request_id(), thread_id, &runtime_config.provider,
+                    host.next_request_id(), existing_session_id, &runtime_config.provider,
                     &runtime_config.model, agent_preset, permission,
                 )
             } else {
@@ -219,59 +221,47 @@ impl DeepSeekHarnessManager {
                     &runtime_config.provider, &runtime_config.model, agent_preset, permission,
                 )
             };
-            let operation = if session_id.is_some() { "thread/resume" } else { "thread/start" };
+            let operation = if session_id.is_some() {
+                "thread/resume"
+            } else {
+                "thread/start"
+            };
             let result = host.request(request).await?;
-            tracing::info!(target: "dsh_appserver", thread_id, run_id, operation, returned_thread_id = result.get("id").and_then(serde_json::Value::as_str).unwrap_or("<none>"), "App Server thread request completed");
-            session_id.map(str::to_string).unwrap_or_else(|| thread_id.to_string())
-        } else {
-            let workspace_paths = message.workspace_paths_for_runtime(AGENT_TYPE);
-            let ensure = protocol::runtime_ensure_request(
-                host.next_request_id(),
-                thread_id,
-                session_id,
-                &cwd.to_string_lossy(),
-                &workspace_paths,
-                &runtime_config.provider,
-                &runtime_config.provider_name,
-                &runtime_config.api_protocol,
-                &runtime_config.api_key_env,
-                &runtime_config.base_url,
-                &runtime_config.model,
-                agent_preset,
-                permission,
-            );
-            resolved_session_id(host.request(ensure).await?)?
+            let returned_thread_id = result
+                .pointer("/thread/id")
+                .or_else(|| result.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| format!("DSH App Server {operation} did not return thread.id"))?;
+            tracing::info!(target: "dsh_appserver", thread_id, run_id, operation, returned_thread_id, "App Server thread request completed");
+            if let Some(existing_session_id) = session_id {
+                if existing_session_id != returned_thread_id {
+                    return Err(format!(
+                        "DSH App Server {operation} returned a different thread id: expected {existing_session_id}, got {returned_thread_id}"
+                    ));
+                }
+            }
+            returned_thread_id.to_string()
         };
         self.runs.bind_session(thread_id, run_id, &session_id).await;
         self.sessions.commit(thread_id, &session_id, &cwd).await?;
-        let mut events = host.subscribe(thread_id, run_id).await;
+        // App Server notifications are keyed by the DSH-owned session id.
+        // Keep the Flowix local id only as the projection destination below.
+        let mut events = host.subscribe(&session_id, run_id).await;
         let prompt_text = message.llm_content.as_deref().unwrap_or(&message.content);
         // Workspace roots are already passed through runtime.ensure and
         // DSH_WORKSPACE_ROOTS. Do not append a human-readable workspace block
         // to the user prompt: it becomes part of the persisted user message
         // and leaks internal Flowix context into the transcript.
         let prompt = prompt_text.to_string();
-        let client_message_id = format!("flowix:{thread_id}:{run_id}");
-        let start = if direct_app_server {
-            protocol::app_turn_start_request(host.next_request_id(), thread_id, &prompt)
-        } else {
-            protocol::run_start_request(
-                host.next_request_id(),
-                thread_id,
-                run_id,
-                &prompt,
-                &message.content,
-                &client_message_id,
-            )
-        };
+        let start = protocol::app_turn_start_request(host.next_request_id(), &session_id, &prompt);
         if let Err(error) = host.request(start).await {
             tracing::error!(target: "dsh_appserver", thread_id, run_id, error, "App Server turn/start failed");
-            host.unsubscribe(thread_id, run_id).await;
+            host.unsubscribe(&session_id, run_id).await;
             return Err(error);
         }
-        if direct_app_server {
-            tracing::info!(target: "dsh_appserver", thread_id, run_id, "App Server turn/start accepted; waiting for notifications");
-        }
+        tracing::info!(target: "dsh_appserver", thread_id, run_id, "App Server turn/start accepted; waiting for notifications");
 
         let mut projector = RunEventProjector::new(thread_id.to_string());
         let mut flush = tokio::time::interval(STREAM_FLUSH_INTERVAL);
@@ -310,7 +300,7 @@ impl DeepSeekHarnessManager {
         };
         let buffered = projector.finish();
         self.emit_buffered(buffered, app_handle, run_id).await;
-        host.unsubscribe(thread_id, run_id).await;
+        host.unsubscribe(&session_id, run_id).await;
         Ok(terminal_reason.filter(|reason| reason != "completed"))
     }
 
@@ -325,6 +315,9 @@ impl DeepSeekHarnessManager {
         // default metadata and would collapse every assistant segment in the
         // run back to `assistant:stream` in the live IPC payload.
         for (chunk, metadata) in buffered {
+            persist_external_chunk_for_thread_with_metadata(
+                &self.thread_manager, AGENT_TYPE, chunk.thread_id(), &chunk, run_id, None, &metadata,
+            ).await;
             emit_chunk_with_run_id_and_metadata(app, &chunk, AGENT_TYPE, run_id, &metadata);
         }
     }
@@ -336,6 +329,9 @@ impl DeepSeekHarnessManager {
         metadata: &AgentChunkMetadata,
         run_id: &str,
     ) {
+        persist_external_chunk_for_thread_with_metadata(
+            &self.thread_manager, AGENT_TYPE, chunk.thread_id(), chunk, run_id, None, metadata,
+        ).await;
         emit_chunk_with_run_id_and_metadata(app, chunk, AGENT_TYPE, run_id, metadata);
     }
 
@@ -355,6 +351,55 @@ impl DeepSeekHarnessManager {
 
     pub(crate) async fn model_host(&self) -> Result<HostLease, String> {
         self.hosts.shared(&self.host_launch_spec()).await
+    }
+
+    /// List provider-owned threads from the same App Server process used for
+    /// chat. This is the source of truth after a UI refresh/restart; the
+    /// Flowix index is only the local association/metadata store.
+    pub async fn list_threads(&self) -> Result<Vec<crate::agent_session::ThreadInfo>, String> {
+        let host = self.model_host().await?;
+        let value = host
+            .request(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": host.next_request_id(),
+                "method": "thread/list",
+                "params": {}
+            }))
+            .await?;
+        // App Server thread/list uses its own protocol shape (`id`, `turns`,
+        // `status`). It is not Flowix's ThreadInfo (`threadId`, title and
+        // timestamps). Only the provider id is needed to rehydrate the local
+        // mapping; the final list is read from Flowix's index below so titles
+        // and card associations remain intact across refreshes.
+        let threads = value
+            .get("threads")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "invalid DSH thread/list response: threads is not an array".to_string())?;
+        // Rehydrate Flowix's product index from the provider-owned list. This
+        // is essential after a UI/Rust restart: the DSH log survives in
+        // DSH_HOME, while the in-memory registry does not.
+        for thread in threads {
+            let Some(thread_id) = thread
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            // A provider-only session cannot be safely attached to a Flowix
+            // card without the durable local→external binding. Do not invent
+            // a self-mapping here; existing bindings are enough for the UI.
+            let _ = self
+                .thread_manager
+                .find_thread_by_external_session(thread_id, AGENT_TYPE)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        self.thread_manager
+            .list_external_threads(AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     fn credential_reference(config: &AiModelConfig) -> String {
@@ -557,12 +602,8 @@ impl DeepSeekHarnessManager {
             .ok_or_else(|| format!("no DeepSeek Harness session for thread {thread_id}"))?;
         let host = self.hosts.shared(&self.host_launch_spec()).await?;
         let result = host
-            .request(protocol::session_history_request(
-                host.next_request_id(),
-                &session_id,
-                before_sequence,
-                snapshot_sequence,
-                limit,
+            .request(protocol::app_session_history_request(
+                host.next_request_id(), &session_id, before_sequence, snapshot_sequence, limit,
             ))
             .await;
         let page: DshSessionHistoryPage = result.and_then(|value| {
@@ -593,11 +634,7 @@ impl DeepSeekHarnessManager {
             .cancellation_targets(target.host_key.as_deref())
             .await;
         for host in hosts {
-            let request = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
-                protocol::app_turn_interrupt_request(host.next_request_id(), thread_id)
-            } else {
-                protocol::run_cancel_request(host.next_request_id(), thread_id, &run_id)
-            };
+            let request = protocol::app_turn_interrupt_request(host.next_request_id(), &target.session_id);
             let _ = host.request(request).await;
         }
         if self.runs.remove_if_matches(thread_id, &run_id).await {
@@ -635,54 +672,10 @@ impl DeepSeekHarnessManager {
         // In particular, do not resolve a model config or call runtime.ensure
         // while a turn may still be using this thread's runtime.
         let host = self.model_host().await?;
-        let run_active = self
-            .runs
-            .running_threads(AGENT_TYPE)
-            .await
-            .contains_key(thread_id);
-        let status = host
-            .request(protocol::runtime_status_request(host.next_request_id()))
-            .await?;
-        let has_runtime = status
-            .get("runtimes")
-            .and_then(Value::as_array)
-            .is_some_and(|runtimes| {
-                runtimes.iter().any(|runtime| {
-                    runtime.get("threadId").and_then(Value::as_str) == Some(thread_id)
-                })
-            });
-        // A run registers before its async runtime.ensure starts.  Do not race
-        // that startup window by creating a second slot with reduced settings;
-        // the next poll will see the slot once the run has initialized it.
-        if !has_runtime && !run_active {
-            let configured = select_harness_config(self.dsh_model_configs().await?, None)?;
-            let runtime_config = resolve_runtime_config(&configured, None)?;
-            let cwd = self.sessions.resolve_cwd(thread_id, None).await?;
-            let ensure = protocol::runtime_ensure_request(
-                host.next_request_id(),
-                thread_id,
-                Some(&session_id),
-                &cwd.to_string_lossy(),
-                &[],
-                &runtime_config.provider,
-                &runtime_config.provider_name,
-                &runtime_config.api_protocol,
-                &runtime_config.api_key_env,
-                &runtime_config.base_url,
-                &runtime_config.model,
-                normalize_agent_preset(None),
-                normalize_permission(None),
-            );
-            host.request(ensure).await?;
-        }
-        let jobs_request = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": host.next_request_id(),
-                "method": "flowix/jobs/list", "params": { "threadId": thread_id }
-            })
-        } else {
-            protocol::runtime_bridge_jobs_request(host.next_request_id(), thread_id)
-        };
+        let jobs_request = serde_json::json!({
+            "jsonrpc": "2.0", "id": host.next_request_id(),
+            "method": "flowix/jobs/list", "params": { "threadId": session_id }
+        });
         host.request(jobs_request)
         .await
     }

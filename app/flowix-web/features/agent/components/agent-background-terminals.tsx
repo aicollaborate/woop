@@ -31,7 +31,7 @@ function readTerminals(value: unknown): BackgroundTerminal[] {
   });
 }
 
-export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { threadId: string | null; agentType: 'codex' | 'deepseek-harness'; enabled: boolean }) {
+export function AgentBackgroundTerminals({ threadId, agentType, enabled, queuedMessages = [] }: { threadId: string | null; agentType: 'codex' | 'deepseek-harness'; enabled: boolean; queuedMessages?: string[] }) {
   const { t } = useI18n();
   const [terminals, setTerminals] = useState<BackgroundTerminal[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -86,7 +86,7 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
   }, [agentType, enabled, threadId]);
 
   const countLabel = useMemo(() => t('agent.backgroundTerminals.count', { count: terminals.length }), [t, terminals.length]);
-  if (!enabled || failed || (terminals.length === 0 && !approval)) return null;
+  if (!enabled || failed || (terminals.length === 0 && !approval && queuedMessages.length === 0)) return null;
 
   if (approval) {
     return (
@@ -108,13 +108,14 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
             <button type="button" onClick={() => void respondToApproval('accept')}>确认执行</button>
           </div>
         </div>
+        {queuedMessages.length > 0 && <QueuedMessages messages={queuedMessages} />}
       </div>
     );
   }
 
   return (
     <div className="agent-background-terminals" data-expanded={expanded}>
-      <button
+      {terminals.length > 0 && <button
         type="button"
         className="agent-background-terminals__summary"
         aria-expanded={expanded}
@@ -126,8 +127,8 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
         <svg className="agent-background-terminals__chevron" viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
         </svg>
-      </button>
-      {expanded && (
+      </button>}
+      {expanded && terminals.length > 0 && (
         <div className="agent-background-terminals__details">
           {terminals.map((terminal) => (
             <div className="agent-background-terminals__row" key={terminal.id}>
@@ -139,6 +140,20 @@ export function AgentBackgroundTerminals({ threadId, agentType, enabled }: { thr
           ))}
         </div>
       )}
+      {queuedMessages.length > 0 && <QueuedMessages messages={queuedMessages} />}
+    </div>
+  );
+}
+
+function QueuedMessages({ messages }: { messages: string[] }) {
+  return (
+    <div className="agent-background-terminals__queue" aria-label="Queued messages">
+      {messages.map((message, index) => (
+        <div className="agent-background-terminals__queue-row" key={`${index}-${message}`}>
+          <span className="agent-background-terminals__queue-mark">↳</span>
+          <span>{message}</span>
+        </div>
+      ))}
     </div>
   );
 }

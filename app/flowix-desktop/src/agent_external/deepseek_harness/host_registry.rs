@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use super::host::DshHostClient;
 use super::app_server::AppServerClient;
 use super::protocol;
 use super::transport::DshClient;
@@ -27,16 +26,7 @@ pub(crate) struct ProcessDshClientFactory;
 #[async_trait::async_trait]
 impl DshClientFactory for ProcessDshClientFactory {
     async fn spawn(&self, spec: &HostLaunchSpec) -> Result<Arc<dyn DshClient>, String> {
-        // Opt-in direct App Server transport. The command and optional JSON
-        // argument list are supplied by the runtime launcher while the
-        // migration is staged; legacy dsh-host remains the default fallback.
-        if let Ok(command) = std::env::var("FLOWIX_DSH_APPSERVER_COMMAND") {
-            let args = std::env::var("FLOWIX_DSH_APPSERVER_ARGS")
-                .ok()
-                .map(|raw| serde_json::from_str::<Vec<String>>(&raw)
-                    .map_err(|error| format!("FLOWIX_DSH_APPSERVER_ARGS is invalid: {error}")))
-                .transpose()?
-                .unwrap_or_default();
+            let (command, args) = app_server_command(&spec.dsh_home)?;
             // Match the legacy host's strict child environment boundary. Do
             // not leak arbitrary Desktop variables (especially credentials)
             // into the App Server process.
@@ -57,20 +47,85 @@ impl DshClientFactory for ProcessDshClientFactory {
                 client.next_request_id(),
                 env!("CARGO_PKG_VERSION"),
             );
-            client.request(initialize).await?;
+            let initialized = client.request(initialize).await?;
+            let version = initialized.get("protocolVersion").and_then(serde_json::Value::as_u64);
+            if version != Some(super::protocol::APP_SERVER_PROTOCOL_VERSION) {
+                return Err(format!("dsh-appserver protocol version mismatch (server={version:?}, client={})", super::protocol::APP_SERVER_PROTOCOL_VERSION));
+            }
             let client: Arc<dyn DshClient> = client;
-            return Ok(client);
-        }
-        let client: Arc<dyn DshClient> = DshHostClient::spawn(
-            &spec.session_root,
-            &spec.dsh_home,
-            &spec.settings_path,
-            &spec.credentials_path,
-            &spec.plugin_settings_path,
-        )
-        .await?;
-        Ok(client)
+            Ok(client)
     }
+}
+
+fn app_server_command(dsh_home: &std::path::Path) -> Result<(String, Vec<String>), String> {
+    if let Ok(command) = std::env::var("FLOWIX_DSH_APPSERVER_COMMAND") {
+        let args = std::env::var("FLOWIX_DSH_APPSERVER_ARGS")
+            .ok()
+            .map(|raw| serde_json::from_str::<Vec<String>>(&raw)
+                .map_err(|error| format!("FLOWIX_DSH_APPSERVER_ARGS is invalid: {error}")))
+            .transpose()?
+            .unwrap_or_default();
+        return Ok((command, args));
+    }
+
+    let launch = crate::dsh::managed_launch_spec()
+        .ok_or("DSH App Server is enabled but no managed DSH bundle is available".to_string())?;
+    // The child uses the per-session DSH_HOME below. Syncing only the durable
+    // install directory leaves that child on an old profile and lets the
+    // legacy SDK JSON-RPC server own model/config/read.
+    sync_flowix_profile(&launch.root, dsh_home)?;
+    let cli = launch.cli_entrypoint
+        .ok_or("managed DSH bundle has no CLI entrypoint for App Server".to_string())?;
+    // The dsh CLI boots the named profile; dsh-appserver's profile config owns
+    // the stdio transport. `app-server` is not an upstream CLI subcommand and
+    // would be forwarded into the profile application as an unknown runtime
+    // argument.
+    let args = vec![cli.to_string_lossy().into_owned(), "--profile".into(), "flowix".into()];
+    // `executable` is the private Node binary for managed JS bundles. Native
+    // launchers can still provide an explicit command through the environment.
+    Ok((launch.executable.to_string_lossy().into_owned(), args))
+}
+
+fn sync_flowix_profile(bundle_root: &std::path::Path, dsh_home: &std::path::Path) -> Result<(), String> {
+    let source = bundle_root.join("profile").join("flowix");
+    let target = dsh_home.join("profiles").join("flowix");
+    // Remove obsolete profile plugins instead of leaving them discoverable in
+    // a profile that is now exclusively owned by dsh-appserver.
+    for obsolete in [
+        target.join("node_modules/@flowix/dsh-flowix-bridge"),
+        target.join("node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server"),
+    ] {
+        if obsolete.exists() {
+            std::fs::remove_dir_all(&obsolete)
+                .map_err(|error| format!("remove obsolete DSH plugin {}: {error}", obsolete.display()))?;
+        }
+    }
+    for relative in [
+        std::path::Path::new("package.json"),
+        std::path::Path::new("cordis.patch.yml"),
+        std::path::Path::new("node_modules/dsh-appserver"),
+        std::path::Path::new("node_modules/dsh-flowix-memory"),
+    ] {
+        let from = source.join(relative);
+        let to = target.join(relative);
+        if !from.exists() { return Err(format!("managed DSH profile is missing {}", from.display())); }
+        copy_profile_tree(&from, &to)?;
+    }
+    Ok(())
+}
+
+fn copy_profile_tree(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    if source.is_dir() {
+        std::fs::create_dir_all(target).map_err(|error| format!("create DSH profile directory {}: {error}", target.display()))?;
+        for entry in std::fs::read_dir(source).map_err(|error| format!("read DSH profile directory {}: {error}", source.display()))? {
+            let entry = entry.map_err(|error| format!("read DSH profile entry: {error}"))?;
+            copy_profile_tree(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = target.parent() { std::fs::create_dir_all(parent).map_err(|error| format!("create DSH profile parent {}: {error}", parent.display()))?; }
+        std::fs::copy(source, target).map_err(|error| format!("sync DSH profile {}: {error}", target.display()))?;
+    }
+    Ok(())
 }
 
 pub(crate) struct HostRegistry {

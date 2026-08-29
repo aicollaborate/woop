@@ -14,9 +14,8 @@ type Pending = oneshot::Sender<Result<Value, String>>;
 
 /// A transport for the DSH App Server JSON-RPC/JSONL protocol.
 ///
-/// Unlike the legacy DshHostClient this client does not know about
-/// `host.initialize`, `runtime.ensure`, or `run.event`; it forwards App Server
-/// requests verbatim and routes server notifications by their thread id.
+/// It forwards dsh-appserver requests verbatim and routes server notifications
+/// by their provider-owned thread id.
 pub(crate) struct AppServerClient {
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Child>>,

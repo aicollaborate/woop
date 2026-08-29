@@ -132,6 +132,10 @@ export interface AgentSessionStore
       runId?: string;
     },
   ) => Promise<void>;
+  pendingCodexMessages: Record<string, PendingCodexMessage[]>;
+  enqueueCodexMessage: (message: PendingCodexMessage) => void;
+  removeCodexMessage: (threadId: string, messageId: string) => void;
+  removeCodexMessageByClientId: (threadId: string, clientUserMessageId: string) => void;
   stopStream: () => Promise<void>;
   stopThreadRun: (threadId: string, runId?: string) => Promise<void>;
   dispatchAgentEvent: (event: AgentEvent) => void;
@@ -140,6 +144,16 @@ export interface AgentSessionStore
   reconcileRunningRunsFromSnapshot: (running: Record<string, RunInfo>) => void;
   reconcileRunningRuns: () => Promise<Record<string, RunInfo>>;
 
+}
+
+export interface PendingCodexMessage {
+  id: string;
+  threadId: string;
+  content: string;
+  imagePaths?: string[];
+  options?: Parameters<AgentSessionStore["sendMessageToThread"]>[3];
+  queuedAt: number;
+  clientUserMessageId?: string;
 }
 
 // --------------------------------------------------------------------
@@ -229,6 +243,34 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
         ...createProjectionSlice(set),
         ...createThreadHistorySlice(set, get),
         ...createThreadLifecycleSlice(set, get),
+        pendingCodexMessages: {},
+        enqueueCodexMessage: (message) => {
+          set((state) => ({
+            pendingCodexMessages: {
+              ...state.pendingCodexMessages,
+              [message.threadId]: [
+                ...(state.pendingCodexMessages[message.threadId] ?? []),
+                message,
+              ],
+            },
+          }));
+        },
+        removeCodexMessage: (threadId, messageId) => {
+          set((state) => {
+            const current = state.pendingCodexMessages[threadId] ?? [];
+            const next = current.filter((message) => message.id !== messageId);
+            if (next.length === current.length) return state;
+            const pendingCodexMessages = { ...state.pendingCodexMessages };
+            if (next.length) pendingCodexMessages[threadId] = next;
+            else delete pendingCodexMessages[threadId];
+            return { pendingCodexMessages };
+          });
+        },
+        removeCodexMessageByClientId: (threadId, clientUserMessageId) => {
+          const current = get().pendingCodexMessages[threadId] ?? [];
+          const match = current.find((message) => message.clientUserMessageId === clientUserMessageId);
+          if (match) get().removeCodexMessage(threadId, match.id);
+        },
 
         sendMessageToThread: async (threadId, content, typeKey, options) => {
           const trimmed = content.trim();
@@ -282,6 +324,43 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             systemReminderDirectory:
               options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
           });
+          if (
+            type.key === "codex" &&
+            get().threadProjections[threadId]?.runs.isLoading
+          ) {
+            const clientUserMessageId = `flowix-${createRunId(threadId)}`;
+            const pendingId = `pending-${clientUserMessageId}`;
+            get().enqueueCodexMessage({
+              id: pendingId,
+              threadId,
+              content: trimmed,
+              imagePaths: options?.imagePaths,
+              options,
+              queuedAt: Date.now(),
+              clientUserMessageId,
+            });
+            try {
+              await agentClient.steerChat(threadId, {
+                content: trimmed,
+                llmContent,
+                imagePaths: options?.imagePaths,
+                agentType: "codex",
+                runtimeConfig: options?.runtimeConfig ?? undefined,
+              }, clientUserMessageId);
+            } catch (err) {
+              get().removeCodexMessage(threadId, pendingId);
+              logger.error("Failed to steer Codex turn", { error: String(err) });
+              get().dispatch({
+                kind: "error",
+                agentType: type.key,
+                threadId,
+                runId: get().threadProjections[threadId]?.runs.activeRunId ?? createRunId(threadId),
+                timestamp: Date.now(),
+                message: String(err),
+              });
+            }
+            return;
+          }
           const runId = options?.runId ?? createRunId(threadId);
           userMessage.id = completedRunUserMessageId(type.key, runId);
           const startedAt = Date.now();
@@ -544,7 +623,12 @@ installGlobalAgentSettingsSync((updater) =>
 
 /** Window-local bridge that routes native agent chunks into the canonical store. */
 export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
+  const stateBeforeDispatch = useAgentSessionStore.getState();
   useAgentSessionStore.getState().dispatchAgentChunk(chunk);
+  if (chunk.kind === "user_message") {
+    const clientId = (chunk as AgentChunk & { client_user_message_id?: string }).client_user_message_id;
+    if (clientId) stateBeforeDispatch.removeCodexMessageByClientId(chunk.thread_id, clientId);
+  }
   if (chunk.kind !== "stream_end") return;
 
   const state = useAgentSessionStore.getState();

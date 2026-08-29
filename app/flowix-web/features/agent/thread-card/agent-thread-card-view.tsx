@@ -140,6 +140,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   // "思考中" 仅在 isLoading 为 true 时显示 ── 与面板 agent-thinking-indicator
   // 反馈保持一致。
   private loadingIndicator: HTMLDivElement;
+  private queuedMessages: HTMLDivElement;
   private collapseButton: HTMLButtonElement;
   private deleteButton: HTMLButtonElement;
   private fullscreenButton: HTMLButtonElement;
@@ -328,6 +329,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.collapseButton = domParts.collapseButton;
     this.body = domParts.body;
     this.loadingIndicator = domParts.loadingIndicator;
+    this.queuedMessages = domParts.queuedMessages;
     this.composer = domParts.composer;
     this.composerRoleIcon = domParts.composerRoleIcon;
     this.input = domParts.input;
@@ -348,6 +350,10 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const composerModelButton = this.externalAgentSettings.createComposerModelButton();
     if (composerModelButton) {
       domParts.composerActions.append(composerModelButton);
+    }
+    const composerModeButton = this.externalAgentSettings.createComposerModeButton();
+    if (composerModeButton) {
+      domParts.composerActions.append(composerModeButton);
     }
     const composerPermissionButton = this.externalAgentSettings.createComposerPermissionButton();
     if (composerPermissionButton) {
@@ -467,7 +473,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
           ? this.t("editor.threadCard.stop")
           : this.t("editor.threadCard.send"),
       getSendButtonWantsStop: () =>
-        this.currentRuntimeView().sendButtonWantsStop,
+        this.currentRuntimeView().sendButtonWantsStop &&
+        !(this.typeKey === "codex" && !!this.input.value.trim()),
       getHasAttachments: () => this.composerImages.hasImages,
       getHasPendingAttachments: () => this.composerImages.hasPending,
       submit: () => {
@@ -505,12 +512,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private async forkFromMessage(message: ThreadState["messages"][number]): Promise<void> {
     if (this.typeKey !== "codex" || !this.threadId || !message.codexTurnId) return;
-    const confirmed = window.confirm(
-      this.language === "zh-CN"
-        ? "从这条消息创建新的 Codex 分支对话？原对话不会受到影响。"
-        : "Create a new Codex fork from this message? The original conversation will remain unchanged.",
-    );
-    if (!confirmed || this.isDestroyed) return;
+    if (this.isDestroyed) return;
     try {
       const source = this.instance;
       const result = await agent.forkCodexThread(this.threadId, message.codexTurnId);
@@ -1365,14 +1367,25 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       !!this.threadId,
     );
 
-    // 输入框运行期不再 disabled ── 允许用户继续输入 / 改稿, 草稿保留
-    // 在 this.input.value, 等运行结束后再次按 Enter 即可投递。 真正的
-    // 拦截在 submit() 里: isBusy 时早返, 不清空 input.value, 也不触发
-    // ensureAgentThreadCardThread / sendMessageToThread。
-    //
-    // send 按钮仍交给 ComposerController 处理 ── runtimeView 判定忙碌时
-    // wantStop=true, 渲染 stop 图标 + 走 stopExternalAgentThreadCardRun。
+    // 输入框运行期不再 disabled ── Codex 可以继续输入并转入串行队列；
+    // 其它 agent 仍在 submit() 中等待当前运行结束。空输入时 send 按钮
+    // 继续显示 stop，已有输入时切换为 send。
     this.composerController.setSendButtonState();
+    const queued = useAgentSessionStore.getState().pendingCodexMessages[this.threadId ?? ""] ?? [];
+    this.queuedMessages.hidden = queued.length === 0;
+    this.queuedMessages.replaceChildren(
+      ...queued.map((message) => {
+        const row = document.createElement("div");
+        row.className = "agent-background-terminals__queue-row";
+        const mark = document.createElement("span");
+        mark.className = "agent-background-terminals__queue-mark";
+        mark.textContent = "↳";
+        const text = document.createElement("span");
+        text.textContent = message.content;
+        row.append(mark, text);
+        return row;
+      }),
+    );
     this.renderMetaState(state, runtimeView.isBusy);
 
     this.messages.render({
@@ -1454,7 +1467,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // 清空; 用户可在运行结束后再次按 Enter 投递同一段草稿。
     //
     // 输入框不 disabled; busy 时只阻止发送, 用户仍可继续编辑草稿。
-    if (this.currentRuntimeView().isBusy) return;
+    if (this.currentRuntimeView().isBusy && this.typeKey !== "codex") return;
 
     // 提取全文档作为隐藏 LLM 上下文 ── 跳过本卡 (agentThreadCard), 避免把
     // LLM 自己之前的回答 / 工具结果当成'笔记内容'再喂回去造成循环。
@@ -1472,7 +1485,6 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.composerImages.clearAfterSubmit();
     this.updateAttrs({ inputDraft: null, inputImages: [] });
     this.composerController.updateMultiLineState();
-    this.renderThreadState();
 
     const source = getCurrentThreadCardSource();
     try {

@@ -122,6 +122,7 @@ export class ExternalAgentSettingsController {
 
   private modelButton: HTMLButtonElement | null = null;
   private composerModelButton: HTMLButtonElement | null = null;
+  private composerModeButton: HTMLButtonElement | null = null;
   private composerPermissionButton: HTMLButtonElement | null = null;
   private composerWorkspaceButton: HTMLButtonElement | null = null;
   private reasoningButton: HTMLButtonElement | null = null;
@@ -240,13 +241,8 @@ export class ExternalAgentSettingsController {
         ? undefined
         : settings.agentCodexModel;
     }
-    // DSH 不继承 Codex 系的全局权限默认 (danger-full-access) ── 无显式
-    // 选择时显示并落自己的 workspace-write 默认。
-    if (kind === "permission") {
-      return this.getTypeKey() === "deepseek-harness"
-        ? "workspace-write"
-        : settings.agentPermissionMode;
-    }
+    // 权限默认与所有 agent 统一 (danger-full-access / 完全访问), 无特殊分支。
+    if (kind === "permission") return settings.agentPermissionMode;
     if (kind === "reasoning") return settings.agentCodexReasoningEffort;
     return undefined;
   }
@@ -589,6 +585,31 @@ export class ExternalAgentSettingsController {
     return button;
   }
 
+  /** Compact DSH mode switcher placed beside the model control. */
+  createComposerModeButton(): HTMLButtonElement | null {
+    if (!this.supportsRuntimeSetting("mode")) return null;
+    const label = this.t("agent.mode.title");
+    const button = createExternalAgentWorkspaceControl(
+      label,
+      this.getCurrentHarnessModeLabel(),
+      (anchor) => this.toggleSettingsPopover("mode", anchor),
+    );
+    button.classList.replace(
+      "agent-thread-card__composer-workspace",
+      "agent-thread-card__composer-mode",
+    );
+    const value = button.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-workspace-value",
+    );
+    value?.classList.replace(
+      "agent-thread-card__composer-workspace-value",
+      "agent-thread-card__composer-mode-value",
+    );
+    this.composerModeButton = button;
+    this.refreshComposerModeButton();
+    return button;
+  }
+
   /** Compact permission switcher placed beside the workspace control. */
   createComposerPermissionButton(): HTMLButtonElement | null {
     if (!this.supportsRuntimeSetting("permission")) return null;
@@ -626,6 +647,25 @@ export class ExternalAgentSettingsController {
       "aria-label",
       `${this.t("agent.model.title")}: ${label}`,
     );
+  }
+
+  private refreshComposerModeButton(): void {
+    if (!this.composerModeButton) return;
+    const value = this.getCurrentHarnessModeLabel();
+    const valueEl = this.composerModeButton.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-mode-value",
+    );
+    if (valueEl) valueEl.textContent = value;
+    const label = this.t("agent.mode.title");
+    this.composerModeButton.title = `${label}: ${value}`;
+    this.composerModeButton.setAttribute("aria-label", `${label}: ${value}`);
+    // A running turn owns the preset used to mount its agent. Changing this
+    // control only updates the conversation config; the next submission will
+    // detect the changed preset and restart the runtime before resuming the
+    // same session. Keep the control enabled so users can prepare that next
+    // turn while the current one is still running.
+    this.composerModeButton.disabled = false;
+    this.composerModeButton.setAttribute("aria-disabled", "false");
   }
 
   private refreshComposerWorkspaceButton(): void {
@@ -673,6 +713,7 @@ export class ExternalAgentSettingsController {
 
   refreshEmptySettings(): void {
     this.refreshComposerModelButton();
+    this.refreshComposerModeButton();
     this.refreshComposerPermissionButton();
     this.refreshComposerWorkspaceButton();
     if (this.workspaceDisplay) {
@@ -1445,8 +1486,11 @@ export class ExternalAgentSettingsController {
 
   private renderHarnessModeSettings(): void {
     const current = this.getCurrentHarnessMode();
+    // DSH 模式选择器使用田字格双列布局, 每个 cell 垂直堆叠标题+副标题。
+    const grid = document.createElement("div");
+    grid.className = "agent-thread-card__codex-settings-grid";
     DEEPSEEK_HARNESS_MODE_OPTIONS.forEach((option) => {
-      this.popover.append(
+      grid.append(
         createCodexSettingsItem(
           this.t(option.labelKey),
           option.id === current,
@@ -1455,9 +1499,11 @@ export class ExternalAgentSettingsController {
             this.setSettingsPopoverOpen(false);
           },
           this.t(option.descriptionKey),
+          { layout: "grid" },
         ),
       );
     });
+    this.popover.append(grid);
   }
 
   private renderPermissionSettings(): void {

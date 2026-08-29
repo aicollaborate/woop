@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { AppServer, InMemoryHarnessAdapter } from '../src/index.js'
 
 describe('dsh-appserver protocol', () => {
+  it('negotiates the App Server protocol version during initialize', async () => {
+    const server = new AppServer(null, { adapter: new InMemoryHarnessAdapter() })
+    const initialized = await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } })
+    expect(initialized.result?.protocolVersion).toBe(1)
+
+    const incompatible = new AppServer(null, { adapter: new InMemoryHarnessAdapter() })
+    const result = await incompatible.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 2 } })
+    expect(result.error?.code).toBe(-32602)
+  })
+
   it('requires initialize before thread operations', async () => {
     const server = new AppServer(null, { adapter: new InMemoryHarnessAdapter() })
     const result = await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'thread/list' })
@@ -11,13 +21,16 @@ describe('dsh-appserver protocol', () => {
   it('supports thread start, turn, read, fork and paged turns', async () => {
     const server = new AppServer(null, { adapter: new InMemoryHarnessAdapter() })
     await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize' })
-    await server.dispatch({ jsonrpc: '2.0', id: 2, method: 'thread/start', params: { threadId: 'root' } })
-    await server.dispatch({ jsonrpc: '2.0', id: 3, method: 'turn/start', params: { threadId: 'root', input: 'hello' } })
-    const fork = await server.dispatch({ jsonrpc: '2.0', id: 4, method: 'thread/fork', params: { threadId: 'root', newThreadId: 'child' } })
+    const started = await server.dispatch({ jsonrpc: '2.0', id: 2, method: 'thread/start', params: { threadId: 'flowix-local-root' } })
+    const root = (started.result as { thread: { id: string } }).thread.id
+    expect(root).toMatch(/^session-/)
+    expect(root).not.toBe('flowix-local-root')
+    await server.dispatch({ jsonrpc: '2.0', id: 3, method: 'turn/start', params: { threadId: root, input: 'hello' } })
+    const fork = await server.dispatch({ jsonrpc: '2.0', id: 4, method: 'thread/fork', params: { threadId: root, newThreadId: 'child' } })
     const read = await server.dispatch({ jsonrpc: '2.0', id: 5, method: 'thread/read', params: { threadId: 'child' } })
-    const page = await server.dispatch({ jsonrpc: '2.0', id: 6, method: 'thread/turns/list', params: { threadId: 'root', limit: 1 } })
+    const page = await server.dispatch({ jsonrpc: '2.0', id: 6, method: 'thread/turns/list', params: { threadId: root, limit: 1 } })
     expect(fork.error).toBeUndefined()
-    expect((read.result as { thread: { parentThreadId?: string } }).thread.parentThreadId).toBe('root')
+    expect((read.result as { thread: { parentThreadId?: string } }).thread.parentThreadId).toBe(root)
     expect((page.result as { page: { data: unknown[] } }).page.data).toHaveLength(1)
   })
 

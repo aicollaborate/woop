@@ -40,4 +40,32 @@ describe('NativeDshAdapter thread launch', () => {
     expect(mounted).toEqual(['standard'])
     expect(permissions).toEqual(['workspace-write'])
   })
+
+  it('projects real persisted DSH messages and usage', async () => {
+    const events = [
+      { type: 'request/context', seq: 1, time: 100, data: { provider: 'minimax-cn', model: 'MiniMax-M3', contextWindow: 1000000 } },
+      { type: 'user/message', seq: 2, time: 101, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'assistant/chunk', seq: 3, time: 102, data: { chunk: { type: 'usage', usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 11 } } } },
+      { type: 'assistant/message', seq: 4, time: 103, data: { message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'hi' }] }, usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 11 } } },
+    ]
+    const ctx = {
+      on: () => () => {},
+      agents: { get: () => undefined },
+      sessions: { get: () => undefined },
+      get: (name: string) => name === 'sessionPersistence' ? { inspect: async () => ({ events }) } : undefined,
+    }
+    const adapter = new NativeDshAdapter(ctx)
+    await expect(adapter.sessionHistory('session-1')).resolves.toMatchObject({
+      sessionId: 'session-1',
+      messages: [
+        expect.objectContaining({ id: 'u1', role: 'user', content: 'hello', sourceSeq: 2 }),
+        expect.objectContaining({ id: 'a1', role: 'assistant', content: 'hi', sourceSeq: 4 }),
+      ],
+      snapshotSequence: 4,
+    })
+    await expect(adapter.sessionUsage('session-1')).resolves.toEqual({
+      sessionId: 'session-1', modelId: 'MiniMax-M3', inputTokens: 7, outputTokens: 3,
+      cacheReadTokens: 11, cacheWriteTokens: 0, contextTokens: null, contextWindow: 1000000,
+    })
+  })
 })

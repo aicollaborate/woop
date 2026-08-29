@@ -46,7 +46,7 @@
   config:
     stdio: !!js process.env.FLOWIX_DSH_APPSERVER_STDIO ?? false
 
-# The legacy SDK JSON-RPC server must not be mounted when the App Server is
-# the selected stdio surface.
+# Flowix has exactly one JSON-RPC owner. The upstream SDK server implements a
+# different protocol and must never share stdin/stdout with dsh-appserver.
 - id: sdk-jsonrpc-server
-  disabled: !!js process.env.FLOWIX_DSH_APPSERVER_STDIO ?? false
+  disabled: true

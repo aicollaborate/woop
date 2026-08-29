@@ -20,22 +20,18 @@ export const CODEX_APP_SERVER_PERMISSION_IDS: AgentPermissionMode[] = [
   "read-only",
 ];
 
-export const CODEX_APP_SERVER_ACCESS_OPTIONS: Array<{
+/** 统一文案：所有 agent 对话框底部权限选择器共用 3 档。 */
+export const SHARED_ACCESS_OPTIONS: Array<{
   id: AgentPermissionMode;
   label: string;
 }> = [
-  { id: "danger-full-access", label: "Full Access" },
-  { id: "workspace-write", label: "Workspace Write" },
-  { id: "read-only", label: "Read Only" },
+  { id: "danger-full-access", label: "完全访问" },
+  { id: "workspace-write", label: "空间读写" },
+  { id: "read-only", label: "只读" },
 ];
 
-/** Legacy CLI-shaped options retained for runtimes such as OpenCode. */
-export const CODEX_ACCESS_OPTIONS: Array<{ id: AgentPermissionMode; label: string }> = [
-  { id: "yolo", label: "YOLO" },
-  { id: "danger-full-access", label: "Full Access" },
-  { id: "workspace-write", label: "Workspace Write" },
-  { id: "read-only", label: "Read Only" },
-];
+// Codex App Server 只支持这 3 档沙箱; 用 SHARED_ACCESS_OPTIONS 同一份配置。
+export const CODEX_APP_SERVER_ACCESS_OPTIONS = SHARED_ACCESS_OPTIONS;
 
 export const CODEX_REASONING_OPTIONS: Array<{
   id: AgentCodexReasoningEffort;

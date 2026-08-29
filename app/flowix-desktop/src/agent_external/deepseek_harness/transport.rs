@@ -1,4 +1,3 @@
-use super::host::DshHostClient;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -10,28 +9,6 @@ pub(crate) trait DshClient: Send + Sync {
     async fn subscribe(&self, thread_id: &str, run_id: &str) -> mpsc::UnboundedReceiver<Value>;
     async fn unsubscribe(&self, thread_id: &str, run_id: &str);
     async fn shutdown(&self);
-}
-
-#[async_trait::async_trait]
-impl DshClient for DshHostClient {
-    fn next_request_id(&self) -> u64 {
-        DshHostClient::next_request_id(self)
-    }
-    fn is_closed(&self) -> bool {
-        DshHostClient::is_closed(self)
-    }
-    async fn request(&self, value: Value) -> Result<Value, String> {
-        self.request_value(value).await
-    }
-    async fn subscribe(&self, thread_id: &str, run_id: &str) -> mpsc::UnboundedReceiver<Value> {
-        DshHostClient::subscribe(self, thread_id, run_id).await
-    }
-    async fn unsubscribe(&self, thread_id: &str, run_id: &str) {
-        DshHostClient::unsubscribe(self, thread_id, run_id).await
-    }
-    async fn shutdown(&self) {
-        DshHostClient::shutdown(self).await
-    }
 }
 
 #[cfg(test)]

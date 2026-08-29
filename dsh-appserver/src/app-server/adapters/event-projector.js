@@ -4,9 +4,72 @@ export function stableItemId(threadId, event) { return `${threadId}-item-${event
 export function textOf(value) {
   if (typeof value === 'string') return value
   if (typeof value?.text === 'string') return value.text
+  if (value?.message) return textOf(value.message)
   if (Array.isArray(value?.content)) return value.content.map(block => typeof block === 'string' ? block : block?.text || '').join('')
   if (typeof value?.content === 'string') return value.content
   return JSON.stringify(value)
+}
+
+export function messageFromEvent(threadId, event, toolNames = undefined) {
+  if (event.type === 'tool/call' || event.type === 'tool/result') {
+    const data = event.data || {}
+    const callId = data.callId || data.toolCallId || data.id || data.message?.source?.callId
+    const result = event.type === 'tool/result'
+      ? (data.message?.content ?? data.result ?? data.content ?? data)
+      : undefined
+    const input = event.type === 'tool/call' ? (data.arguments ?? data.input) : undefined
+    return {
+      id: String(callId || `${threadId}-tool-${event.seq}`),
+      role: 'tool',
+      content: textOf(result ?? input ?? data),
+      llmContent: null,
+      systemReminderDirectory: null,
+      sourceSeq: Number(event.seq),
+      timestamp: String(event.time ?? event.timestamp ?? event.createdAt ?? ''),
+      isLoading: false,
+      toolCallId: callId ? String(callId) : null,
+      toolName: data.name || data.toolName || toolNames?.get?.(String(callId)) || null,
+      toolData: result === undefined ? null : textOf(result),
+      toolInput: input ?? null,
+      toolCalls: null,
+      reasoning: null,
+      isCompleted: event.type === 'tool/result',
+      errorDetails: null,
+      isCollapsed: null,
+      codexTurnId: null,
+    }
+  }
+  const role = event.type === 'user/message' ? 'user' : event.type === 'assistant/message' ? 'assistant' : undefined
+  if (!role) return undefined
+  const payload = role === 'assistant' ? event.data?.message ?? event.data : event.data
+  const blocks = Array.isArray(payload?.content) ? payload.content : []
+  const toolCalls = blocks.filter(block => block?.type === 'tool-call')
+  let content = blocks.length ? blocks.filter(block => block?.type === 'text').map(block => block.text || '').join('') : textOf(payload)
+  if (role === 'user') {
+    if (content.startsWith('<system-reminder>') || content.startsWith('Current runtime context.')) return undefined
+    content = content.split('\n<## CONTEXT PROMPT ##>')[0]
+  }
+  if (!content.trim() && !toolCalls.length) return undefined
+  return {
+    id: String(payload?.id || `${threadId}-message-${event.seq}`),
+    role,
+    content,
+    llmContent: null,
+    systemReminderDirectory: null,
+    sourceSeq: Number(event.seq),
+    timestamp: String(event.time ?? event.timestamp ?? event.createdAt ?? ''),
+    isLoading: false,
+    toolCallId: null,
+    toolName: null,
+    toolData: null,
+    toolInput: null,
+    toolCalls: toolCalls.length ? toolCalls : null,
+    reasoning: null,
+    isCompleted: true,
+    errorDetails: null,
+    isCollapsed: null,
+    codexTurnId: null,
+  }
 }
 
 // `assistant/chunk` is a transport event, not a display message. Its payload
@@ -20,13 +83,31 @@ export function assistantChunkText(value) {
   return chunk.text
 }
 
-export function itemFromEvent(threadId, event) {
+export function itemFromEvent(threadId, event, toolNames = undefined) {
   const types = { 'user/message': 'userMessage', 'assistant/message': 'agentMessage', 'tool/call': 'toolCall', 'tool/result': 'toolResult', 'approval/asked': 'approvalRequest', 'approval/decided': 'approvalRequest' }
   const type = types[event.type]
   if (!type) return undefined
   if (event.type === 'approval/asked') return { id: stableItemId(threadId, event), type, sourceSeq: event.seq, status: 'inProgress', toolName: event.data?.toolName, callId: event.data?.callId, reason: event.data?.reason }
   if (event.type === 'approval/decided') return { id: stableItemId(threadId, event), type, sourceSeq: event.seq, status: 'completed', outcome: event.data?.outcome }
-  return { id: stableItemId(threadId, event), type, sourceSeq: event.seq, text: textOf(event.data) }
+  const data = event.data || {}
+  if (event.type === 'tool/call') {
+    return {
+      id: stableItemId(threadId, event), type, sourceSeq: event.seq,
+      callId: data.callId || data.id, toolName: data.name || data.toolName,
+      input: data.arguments ?? data.input ?? {}, text: textOf(data.arguments ?? data.input ?? {}),
+    }
+  }
+  if (event.type === 'tool/result') {
+    const message = data.message || {}
+    const callId = data.callId || data.toolCallId || data.id || message.source?.callId
+    return {
+      id: stableItemId(threadId, event), type, sourceSeq: event.seq,
+      callId, toolName: data.name || data.toolName || toolNames?.get?.(String(callId)),
+      result: message.content ?? data.result ?? data.content ?? data,
+      text: textOf(message.content ?? data.result ?? data.content ?? data),
+    }
+  }
+  return { id: stableItemId(threadId, event), type, sourceSeq: event.seq, text: textOf(data) }
 }
 
 export function turnEndStatus(data) {
@@ -40,6 +121,13 @@ export function turnEndStatus(data) {
 export function projectTurns(threadId, events, fallbackMessages = []) {
   const turns = []
   const byNumber = new Map()
+  const toolNames = new Map()
+  for (const event of events || []) {
+    if (event.type !== 'tool/call') continue
+    const callId = event.data?.callId || event.data?.id
+    const name = event.data?.name || event.data?.toolName
+    if (callId && name) toolNames.set(String(callId), String(name))
+  }
   let current
   for (const event of events || []) {
     const number = event.data?.turn
@@ -50,7 +138,7 @@ export function projectTurns(threadId, events, fallbackMessages = []) {
       continue
     }
     const target = number != null ? byNumber.get(number) || current : current
-    const item = itemFromEvent(threadId, event)
+    const item = itemFromEvent(threadId, event, toolNames)
     if (item && target) {
       const previous = target.items.findIndex(existing => existing.id === item.id)
       if (previous >= 0) target.items[previous] = { ...target.items[previous], ...item }

@@ -15,6 +15,7 @@ struct ActiveRun {
 
 pub(crate) struct RunTarget {
     pub(crate) run_id: String,
+    pub(crate) session_id: String,
     pub(crate) stream_end_emitted: Arc<AtomicBool>,
     pub(crate) host_key: Option<String>,
 }
@@ -83,6 +84,7 @@ impl RunCoordinator {
             (expected_run_id.is_none() || expected_run_id == Some(run.run_id.as_str())).then(|| {
                 RunTarget {
                     run_id: run.run_id.clone(),
+                    session_id: run.session_id.clone(),
                     stream_end_emitted: run.stream_end_emitted.clone(),
                     host_key: run.host_key.clone(),
                 }

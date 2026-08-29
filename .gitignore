@@ -10,6 +10,8 @@ node_modules/
 dist/
 .build/
 dsh-flowix-host/vendor/deepseek-harness
+dsh-appserver/bin/
+dsh-flowix-host/profile/flowix/node_modules/dsh-appserver/bin/
 app/target/
 app/flowix-desktop/target/
 app/flowix-desktop/binaries/

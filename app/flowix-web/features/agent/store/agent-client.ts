@@ -4,6 +4,7 @@ import type { SubscribeOptions } from "@platform/tauri/event-bus";
 
 export const agentClient = {
   chatStream: agent.chatStream,
+  steerChat: agent.steerChat,
   stopChatStream: agent.stopChatStream,
   runningThreads: agent.runningThreads,
   backgroundTerminals: agent.backgroundTerminals,

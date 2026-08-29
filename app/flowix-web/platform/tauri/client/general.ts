@@ -140,6 +140,7 @@ function snapshotFromHarnessUsage(
   usage: DeepSeekHarnessSessionUsage,
 ): DeepSeekHarnessSessionSnapshot {
   return {
+    sessionId: usage.sessionId,
     model: usage.modelId ?? undefined,
     usage: {
       input_tokens: usage.inputTokens,
@@ -156,6 +157,7 @@ function snapshotFromHarnessUsage(
 }
 
 export interface DeepSeekHarnessSessionSnapshot {
+  sessionId: string;
   model?: string;
   usage: UsageInfo;
 }

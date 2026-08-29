@@ -5,6 +5,7 @@ import { serveStdio } from './transports/stdio.js'
 import { ApprovalManager } from './approvals/approval-manager.js'
 
 const SERVER_INFO = Object.freeze({ name: 'dsh-appserver', version: '0.2.0' })
+const APP_SERVER_PROTOCOL_VERSION = 1
 
 export class DshAppServer {
   constructor(ctx, { maxQueuedRequests = 1024, adapter } = {}) {
@@ -74,10 +75,15 @@ export class DshAppServer {
       assertRequest(request)
       if (request.method === 'initialize') {
         if (this.connections.has(connectionId)) throw new RpcError(ErrorCode.alreadyInitialized, 'Already initialized')
+        const requestedVersion = request.params?.protocolVersion
+        if (requestedVersion !== undefined && requestedVersion !== APP_SERVER_PROTOCOL_VERSION) {
+          throw new RpcError(ErrorCode.invalidParams, `Unsupported App Server protocol version: ${String(requestedVersion)}`)
+        }
         const optOut = request.params?.capabilities?.optOutNotificationMethods
         const generation = this.approvals.connect(connectionId)
         this.connections.set(connectionId, { generation, optOut: new Set(Array.isArray(optOut) ? optOut.filter(value => typeof value === 'string') : []) })
         return success(request.id, {
+          protocolVersion: APP_SERVER_PROTOCOL_VERSION,
           serverInfo: SERVER_INFO,
           capabilities: {
             threads: true, turns: true, fork: true, history: true, interrupt: true,

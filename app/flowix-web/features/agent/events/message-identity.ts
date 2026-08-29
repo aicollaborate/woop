@@ -18,6 +18,13 @@ export function canonicalAgentMessageId(
     return sourceMessageId;
   }
   if (sourceMessageId.startsWith("msg:")) return sourceMessageId;
+  // Codex app-server item ids are identical across live notifications and
+  // thread/turns/list history, so wrapping them with the runId creates two
+  // disjoint identity spaces for the same row. Keep provider ids unwrapped
+  // so live projection rows and history rows reconcile by reference. Errors
+  // stay run-scoped: they carry no provider item id and distinct failures
+  // from different runs must not collapse onto one row.
+  if (agentType === "codex" && role !== "error") return sourceMessageId;
   return `msg:${agentType}:${runId}:${role}:${sourceMessageId}`;
 }
 

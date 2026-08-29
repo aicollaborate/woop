@@ -15,6 +15,12 @@ export interface MessageChunkMetadata {
   sourceSubsequence?: number;
   errorDetails?: AgentErrorDetails;
   codexTurnId?: string;
+  /**
+   * Run-scoped id of the optimistic user row. When a provider user item
+   * arrives with its own id (Codex item/completed), the optimistic row is
+   * adopted in place instead of growing a duplicate.
+   */
+  optimisticId?: string;
 }
 
 let generatedAssistantMessageSequence = 0;
@@ -29,6 +35,68 @@ export function applyUserMessageChunk(
   text: string,
   metadata: MessageChunkMetadata & { id: string },
 ): ApplyResult {
+  // Codex relays the provider userMessage item id (with the owning turn id)
+  // as soon as the turn starts. Adopt it in place: rewrite the optimistic
+  // run-scoped row's id instead of appending a second user row. Position,
+  // content and neighbouring references stay untouched, so the renderer's
+  // patch-last fast path keeps holding while the row is still the tail.
+  if (
+    metadata.codexTurnId &&
+    metadata.optimisticId &&
+    metadata.id !== metadata.optimisticId
+  ) {
+    const optimisticIndex = st.messages.findIndex(
+      (message) =>
+        message.role === "user" &&
+        message.id === metadata.optimisticId &&
+        !message.codexTurnId,
+    );
+    if (optimisticIndex >= 0) {
+      const optimistic = st.messages[optimisticIndex];
+      const messages = [...st.messages];
+      messages[optimisticIndex] = {
+        ...optimistic,
+        id: metadata.id,
+        codexTurnId: metadata.codexTurnId,
+      };
+      return {
+        messages,
+        pendingAssistantId: null,
+        pendingReasoningId: null,
+      };
+    }
+  }
+
+  // A Codex user item can race the synthetic lifecycle event and arrive with
+  // a different run-scoped id.  The turn is authoritative here; when the
+  // optimistic id is unavailable, adopt the newest unacknowledged user row
+  // with the same visible text instead of appending a second row.  Restrict
+  // this fallback to the tail so identical prompts from older turns never
+  // collapse into the current turn.
+  if (metadata.codexTurnId) {
+    const optimisticIndex = [...st.messages].reverse().findIndex(
+      (message) =>
+        message.role === "user" &&
+        !message.codexTurnId &&
+        message.content === text,
+    );
+    if (optimisticIndex >= 0) {
+      const index = st.messages.length - 1 - optimisticIndex;
+      const optimistic = st.messages[index];
+      const messages = [...st.messages];
+      messages[index] = {
+        ...optimistic,
+        id: metadata.id,
+        codexTurnId: metadata.codexTurnId,
+      };
+      return {
+        messages,
+        pendingAssistantId: null,
+        pendingReasoningId: null,
+      };
+    }
+  }
+
   const existingIndex = st.messages.findIndex(
     (message) => message.id === metadata.id && message.role === "user",
   );
@@ -111,6 +179,17 @@ export function applyTextChunk(
     : -1;
   if (existingIndex >= 0 && targetId) {
     const existing = closedMessages[existingIndex];
+    // Completed-item snapshots are re-sent by design (item/completed plus
+    // the turn/completed fallback). When the snapshot matches the streamed
+    // content, keep every reference intact so duplicate delivery is a store
+    // no-op instead of a fresh object graph.
+    if (metadata.contentMode === "snapshot" && existing.content === text) {
+      return {
+        messages: closedMessages,
+        pendingAssistantId: metadata.phase === "completed" ? null : targetId,
+        pendingReasoningId: null,
+      };
+    }
     const messages = [...closedMessages];
     messages[existingIndex] = {
       ...existing,
@@ -187,6 +266,19 @@ export function applyReasoningChunk(
     : -1;
   if (existingIndex >= 0 && targetId) {
     const existing = st.messages[existingIndex];
+    // Snapshot idempotency: identical content and completion state keep the
+    // row reference (and the array) untouched for duplicate snapshots.
+    if (
+      metadata.contentMode === "snapshot" &&
+      existing.content === text &&
+      (existing.isCompleted ?? false) === (metadata.phase === "completed")
+    ) {
+      return {
+        messages: st.messages,
+        pendingReasoningId: metadata.phase === "completed" ? null : targetId,
+        pendingAssistantId: st.pendingAssistantId,
+      };
+    }
     const messages = [...st.messages];
     messages[existingIndex] = {
       ...existing,

@@ -46,9 +46,10 @@
 
 .markdown-editor .agent-thread-card__message-actions {
   display: flex;
+  position: relative;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 2px;
   min-height: 22px;
   margin-top: 2px;
   opacity: 0;
@@ -57,6 +58,36 @@
   transition:
     opacity 150ms ease,
     visibility 0s linear 150ms;
+}
+
+.markdown-editor .agent-thread-card__message-fork-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+.markdown-editor .agent-thread-card__message-fork-confirm-button,
+.markdown-editor .agent-thread-card__message-fork-cancel-button {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.markdown-editor .agent-thread-card__message-fork-confirm-button:hover,
+.markdown-editor .agent-thread-card__message-fork-cancel-button:hover {
+  background: var(--muted);
+  color: var(--foreground);
 }
 
 .markdown-editor .agent-thread-card__message:hover .agent-thread-card__message-actions,
@@ -92,14 +123,15 @@
 }
 
 .markdown-editor .agent-thread-card__message-action svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .markdown-editor .agent-thread-card__message-time {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 22px;
+  padding: 0 4px;
   white-space: nowrap;
 }
 

@@ -84,6 +84,9 @@ export function selectAgentThreadCardRuntimeView(input: {
     isRunning,
     isBusy,
     showLoadingIndicator,
+    // Codex accepts the next prompt into Flowix's serial queue while its
+    // current turn is running. The composer decides whether there is input;
+    // this base value remains the stop state for an empty composer.
     sendButtonWantsStop: isRunning,
   };
 }

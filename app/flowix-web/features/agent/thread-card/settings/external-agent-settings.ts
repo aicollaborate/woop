@@ -111,15 +111,26 @@ export function updateExternalAgentEmptyControl(
   if (valueEl) valueEl.textContent = value;
 }
 
+export type CodexSettingsItemLayout = "list" | "grid";
+
+export interface CodexSettingsItemOptions {
+  layout?: CodexSettingsItemLayout;
+}
+
 export function createCodexSettingsItem(
   label: string,
   selected: boolean,
   onSelect: () => void,
   description?: string,
+  options?: CodexSettingsItemOptions,
 ): HTMLElement {
+  const layout: CodexSettingsItemLayout = options?.layout ?? "list";
+  const isGrid = layout === "grid";
   const item = document.createElement("button");
   item.type = "button";
-  item.className = "agent-thread-card__codex-settings-item";
+  item.className = isGrid
+    ? "agent-thread-card__codex-settings-item agent-thread-card__codex-settings-item--grid"
+    : "agent-thread-card__codex-settings-item";
   item.setAttribute("role", "menuitemradio");
   item.setAttribute("aria-checked", selected ? "true" : "false");
   item.addEventListener("click", (event) => {
@@ -127,7 +138,9 @@ export function createCodexSettingsItem(
     onSelect();
   });
   const content = document.createElement("span");
-  content.className = "agent-thread-card__codex-settings-item-content";
+  content.className = isGrid
+    ? "agent-thread-card__codex-settings-item-content agent-thread-card__codex-settings-item-content--grid"
+    : "agent-thread-card__codex-settings-item-content";
   const text = document.createElement("span");
   text.className = "agent-thread-card__codex-settings-item-label";
   text.textContent = label;

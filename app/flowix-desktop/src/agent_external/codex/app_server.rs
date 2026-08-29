@@ -323,8 +323,10 @@ impl CodexAppServerManager {
         {
             return Err("Codex already has an active turn for this thread".to_string());
         }
-        self.emit_user_message(app_handle, &flowix_thread_id, &message, &run_id)
-            .await;
+        // The web projection inserts the user row optimistically before this
+        // request reaches the runtime. Codex's own userMessage item is the
+        // acknowledgement/history source; emitting another synthetic user
+        // event here creates a second visible row and has no provider id.
         self.emit_stream_start(app_handle, &flowix_thread_id, &message, &run_id)
             .await;
 
@@ -366,6 +368,34 @@ impl CodexAppServerManager {
             .await;
         }
         Ok(String::new())
+    }
+
+    pub async fn steer_chat(
+        &self,
+        flowix_thread_id: &str,
+        message: AgentUserMessage,
+        client_user_message_id: String,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<(), String> {
+        self.ensure_connection().await?;
+        let active = self.inner.active_turns.lock().await.get(flowix_thread_id)
+            .map(|turn| (turn.codex_thread_id.clone(), turn.codex_turn_id.clone()))
+            .ok_or_else(|| "Codex has no steerable active turn".to_string())?;
+        let mut input = vec![json!({
+            "type": "text",
+            "text": message.llm_content.unwrap_or(message.content),
+        })];
+        input.extend(message.image_paths.iter()
+            .filter(|path| std::path::Path::new(path).is_file())
+            .map(|path| json!({ "type": "localImage", "path": path })));
+        self.request("turn/steer", json!({
+            "threadId": active.0,
+            "expectedTurnId": active.1,
+            "clientUserMessageId": client_user_message_id,
+            "input": input,
+        })).await?;
+        let _ = app_handle;
+        Ok(())
     }
 
     pub async fn stop_chat(
@@ -1251,6 +1281,7 @@ fn item_metadata(item: &Value) -> AgentChunkMetadata {
         .map(str::to_string);
     let mut metadata = item_metadata_from_id(item_id);
     metadata.codex_turn_id = item.get("turnId").and_then(Value::as_str).map(str::to_string);
+    metadata.client_user_message_id = item.get("clientId").and_then(Value::as_str).map(str::to_string);
     metadata
 }
 
@@ -1273,6 +1304,13 @@ fn completed_message_chunk(
     turn_id: Option<&str>,
 ) -> Option<(AgentChunk, AgentChunkMetadata)> {
     let text = match item.get("type").and_then(Value::as_str)? {
+        // Relay every completed userMessage item, not just steers. The
+        // provider item id turns the optimistic `user-<run>` row into a
+        // history-stable identity mid-turn (the frontend adopts it in
+        // place), so completion reconciliation can anchor by id instead of
+        // content fingerprints. Steer items additionally carry clientId so
+        // the frontend can reconcile the pending composer row.
+        "userMessage" => app_server_content_text(item.get("content")),
         "agentMessage" => item
             .get("text")
             .and_then(Value::as_str)
@@ -1291,7 +1329,14 @@ fn completed_message_chunk(
     if !has_visible_text(&text) {
         return None;
     }
-    let chunk = if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
+    let chunk = if item.get("type").and_then(Value::as_str) == Some("userMessage") {
+        AgentChunk::UserMessage {
+            thread_id: thread_id.to_string(),
+            id: item.get("id").and_then(Value::as_str).unwrap_or("codex-user").to_string(),
+            text,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }
+    } else if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
         AgentChunk::Text {
             thread_id: thread_id.to_string(),
             text,
@@ -1487,6 +1532,11 @@ fn app_server_item_message(
             if !has_visible_text(&message.content) {
                 return None;
             }
+            // Persisted reasoning items are terminal. Live rows set
+            // isCompleted=true on the item/completed snapshot; matching it
+            // here keeps render-equivalence (and the collapsed default)
+            // stable across live/history reconciliation.
+            message.is_completed = Some(true);
             message.reasoning = Some(message.content.clone());
         }
         "commandExecution"

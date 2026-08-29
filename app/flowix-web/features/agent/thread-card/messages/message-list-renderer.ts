@@ -6,6 +6,7 @@ import {
 } from "@features/agent/message";
 import {
   createAgentThreadCardMessageElement,
+  attachMessageActions,
   renderAgentThreadCardBudgetedMarkdown,
 } from "@features/agent/thread-card/messages/message-item-renderer";
 
@@ -24,6 +25,8 @@ export interface RenderedAgentMessageCache {
 
 export interface AgentThreadCardMessageRenderContext {
   language: AppLanguage;
+  /** True while the current Codex turn is still producing items. */
+  isLoading: boolean;
   getReasoningCollapsed: (message: AgentMessage) => boolean;
   setReasoningCollapsed: (messageId: string, collapsed: boolean) => void;
   getDisplayExpanded: (message: AgentMessage) => boolean;
@@ -37,17 +40,60 @@ export interface AgentThreadCardMessageRenderContext {
   onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }
 
-function isLastAssistantInTurn(
+export function isLastAssistantInTurn(
   messages: ThreadState["messages"],
   index: number,
 ): boolean {
   const message = messages[index];
   if (message.role !== "assistant" || !message.codexTurnId) return false;
   for (let i = index + 1; i < messages.length; i += 1) {
-    if (messages[i].codexTurnId !== message.codexTurnId) break;
-    if (messages[i].role === "assistant") return false;
+    // A turn can contain reasoning/tool rows which do not carry the Codex
+    // turn id in the projected client state. They must not terminate the
+    // search: only a later assistant with the same turn id proves that this
+    // assistant is not the turn's final assistant output.
+    if (
+      messages[i].role === "assistant" &&
+      messages[i].codexTurnId === message.codexTurnId
+    ) {
+      return false;
+    }
   }
   return message.isCompleted !== false;
+}
+
+function syncMessageActions(
+  messages: ThreadState["messages"],
+  list: HTMLDivElement,
+  context: AgentThreadCardMessageRenderContext,
+): void {
+  const renderedMessages = getRenderedAgentMessages(messages);
+  for (let index = 0; index < renderedMessages.length; index += 1) {
+    const message = renderedMessages[index];
+    const item = list.children[index] as HTMLDivElement | undefined;
+    if (!item || message.role !== "assistant") continue;
+
+    // During a live turn the current last assistant is only a provisional
+    // tail: a tool call or another assistant item may still arrive. Actions
+    // are therefore enabled only after the turn has stopped streaming.
+    const shouldShow =
+      !context.isLoading &&
+      isLastAssistantInTurn(messages, messages.indexOf(message));
+    const actions = item.querySelector<HTMLElement>(
+      ".agent-thread-card__message-actions",
+    );
+    if (shouldShow && !actions) {
+      attachMessageActions(
+        item,
+        message,
+        createAgentMessageViewModel(message, context.language),
+        context.language,
+        true,
+        context.onForkMessage,
+      );
+    } else if (!shouldShow && actions) {
+      actions.remove();
+    }
+  }
 }
 
 export interface AgentThreadCardMessagePatchOptions {
@@ -152,6 +198,7 @@ export function patchLastRenderedAgentMessage(
     return null;
   }
 
+  syncMessageActions(messages, list, context);
   afterRender();
   return [...cache.refs.slice(0, -1), nextLast];
 }
@@ -194,6 +241,7 @@ export function appendRenderedAgentMessagesToTail(
   }
 
   if (appendedCount === 0) return null;
+  syncMessageActions(messages, list, context);
   afterRender();
   return newRendered;
 }
@@ -226,6 +274,8 @@ export function createRenderedAgentMessageList(
     if (rendered.shouldRemember) rememberedMessages.push(message);
     list.append(rendered.element);
   }
+
+  syncMessageActions(messages, list, context);
 
   return { list, rememberedMessages };
 }

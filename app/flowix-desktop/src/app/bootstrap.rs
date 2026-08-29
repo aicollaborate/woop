@@ -607,6 +607,7 @@ pub fn run() {
             commands::agent::image_cache::delete_cached_agent_image,
             commands::agent::image_cache::read_cached_agent_image,
             commands::agent::chat::chat_with_agent_stream,
+            commands::agent::chat::steer_agent_stream,
             commands::agent::chat::stop_agent_stream,
             commands::agent::chat::agent_running_threads,
             commands::agent::chat::agent_background_terminals,

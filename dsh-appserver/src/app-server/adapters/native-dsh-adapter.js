@@ -1,4 +1,4 @@
-import { assistantChunkText, itemFromEvent, projectNotifications, projectTurns, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
+import { assistantChunkText, itemFromEvent, messageFromEvent, projectNotifications, projectTurns, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
 
 // Native adapter for Flowix's bundled DeepSeek Harness runtime.
 // It deliberately imports no Flowix bridge package. The host supplies a Cordis ctx.
@@ -47,7 +47,7 @@ export class NativeDshAdapter {
   async startThread(id, config = {}) {
     const handle = await this.ctx.agents.create(this.agentCreateOptions(id, config))
     this.applyPermission(handle.agent, config.permissionMode)
-    this.runtimes.set(id, handle)
+    this.runtimes.set(String(handle.agent.session.id), handle)
     return this.thread(handle.agent)
   }
 
@@ -61,14 +61,14 @@ export class NativeDshAdapter {
   }
 
   async forkThread(sourceId, boundarySeq, childId) {
-    const source = this.ctx.sessions.get(sourceId)
+    const source = this.ctx.sessions.get(sourceId) || (await this.resumeThread(sourceId), this.ctx.sessions.get(sourceId))
     if (!source) throw new Error(`Session not found: ${sourceId}`)
     const boundary = boundarySeq === undefined ? source.seq - 1 : boundarySeq
     if (!Number.isInteger(Number(boundary)) || Number(boundary) < -1 || Number(boundary) >= source.events.length) throw new Error(`Invalid fork boundary: ${boundary}`)
     const boundaryEvent = source.events.find(event => Number(event.seq) === Number(boundary))
     if (boundaryEvent && ['turn/start', 'step/start', 'agent/inbox/spliced'].includes(boundaryEvent.type)) throw new Error(`Cannot fork at a non-message boundary: ${boundary}`)
     const seed = source.events.slice(0, boundary + 1)
-    const id = childId || `thread-${Date.now()}`
+    const id = childId || `session-${Date.now()}`
     const handle = await this.ctx.agents.create({
       sessionId: id,
       seed,
@@ -83,7 +83,7 @@ export class NativeDshAdapter {
     const agentOptions = this.agentOptions(config)
     const presets = this.ctx.get?.('agentPresets')
     return {
-      sessionId: id,
+      ...(typeof id === 'string' && id ? { sessionId: id } : {}),
       meta: {
         ...(typeof config.cwd === 'string' ? { cwd: config.cwd } : {}),
         ...(agentPreset ? { agentPreset } : {}),
@@ -253,10 +253,31 @@ export class NativeDshAdapter {
     return this.startThread(id)
   }
 
-  async sessionHistory(id) {
-    const page = await this.listEvents(id, -1, 100000)
-    const snapshotSeq = page.data.reduce((max, event) => Math.max(max, Number(event?.seq) || 0), 0)
-    return { sessionId: id, events: page.data, snapshotSeq }
+  async sessionHistory(id, { beforeSequence, snapshotSequence, limit = 50 } = {}) {
+    const snapshot = await this.eventSnapshot(id)
+    const all = snapshot.events || []
+    const ceiling = Number.isInteger(Number(snapshotSequence)) ? Number(snapshotSequence) : Number(all.at(-1)?.seq ?? 0)
+    const before = Number.isInteger(Number(beforeSequence)) ? Number(beforeSequence) : Number.POSITIVE_INFINITY
+    const toolNames = new Map()
+    for (const event of all) {
+      if (event.type !== 'tool/call') continue
+      const callId = event.data?.callId || event.data?.id
+      const name = event.data?.name || event.data?.toolName
+      if (callId && name) toolNames.set(String(callId), String(name))
+    }
+    const messages = all
+      .filter(event => Number(event.seq) <= ceiling && Number(event.seq) < before)
+      .map(event => messageFromEvent(id, event, toolNames))
+      .filter(Boolean)
+    const pageLimit = Math.min(200, Math.max(1, Number(limit) || 50))
+    const page = messages.slice(-pageLimit)
+    return {
+      sessionId: id,
+      messages: page,
+      oldestSequence: page[0]?.sourceSeq ?? null,
+      snapshotSequence: ceiling,
+      hasMore: messages.length > page.length,
+    }
   }
 
   async listJobs(id) {
@@ -271,19 +292,20 @@ export class NativeDshAdapter {
   }
 
   async sessionUsage(id) {
-    const snapshot = await this.ctx.get?.('sessionPersistence')?.inspect?.(id)
+    const snapshot = await this.eventSnapshot(id)
     const events = snapshot?.events || []
-    const usage = events.filter(event => event.type === 'usage').reduce((total, event) => {
-      const data = event.data || {}
+    const usage = events.filter(event => event.type === 'assistant/message' && event.data?.usage).reduce((total, event) => {
+      const data = event.data.usage
       total.inputTokens += Number(data.inputTokens || data.input_tokens || 0)
       total.outputTokens += Number(data.outputTokens || data.output_tokens || 0)
       total.cacheReadTokens += Number(data.cacheReadTokens || data.cache_read_tokens || 0)
       total.cacheWriteTokens += Number(data.cacheWriteTokens || data.cache_write_tokens || 0)
-      total.contextTokens = data.contextTokens ?? total.contextTokens
-      total.contextWindow = data.contextWindow ?? total.contextWindow
-      total.modelId = data.modelId ?? total.modelId
       return total
     }, { sessionId: id, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, contextTokens: null, contextWindow: null, modelId: null })
+    const context = [...events].reverse().find(event => event.type === 'request/context')?.data || {}
+    usage.contextTokens = context.contextTokens ?? null
+    usage.contextWindow = context.contextWindow ?? null
+    usage.modelId = context.model ?? context.modelId ?? null
     return usage
   }
 
@@ -337,9 +359,10 @@ export class NativeDshAdapter {
 
   describeModels() {
     const settings = this.ctx.get?.('settings')
-    if (!settings?.describe) throw new Error('DSH settings service is unavailable')
-    const descriptor = settings.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai')
-    if (!descriptor) throw new Error('DSH llm-pi-ai settings namespace is unavailable')
+    if (!settings?.describe) return { revision: 0, providers: {}, applies: [] }
+    let descriptor
+    try { descriptor = settings.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai') } catch (_) { descriptor = undefined }
+    if (!descriptor) return { revision: 0, providers: {}, applies: [] }
     const user = descriptor.user && typeof descriptor.user === 'object' && !Array.isArray(descriptor.user) ? descriptor.user : {}
     return { revision: descriptor.revision, providers: user.providers && typeof user.providers === 'object' && !Array.isArray(user.providers) ? user.providers : {}, applies: descriptor.applies }
   }

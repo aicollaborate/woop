@@ -37,8 +37,16 @@ describe("createRuntimeInfoRequester", () => {
     const request = createRuntimeInfoRequester("deepseek-harness", () => threadId);
     await expect(request?.()).resolves.toBeNull();
     threadId = "thread-2";
-    mocks.sessionUsage.mockResolvedValue({ usage: {} });
-    await request?.();
+    mocks.sessionUsage.mockResolvedValue({
+      sessionId: "dsh-session-2",
+      model: "deepseek-chat",
+      usage: { input_tokens: 12 },
+    });
+    await expect(request?.()).resolves.toEqual({
+      sessionId: "dsh-session-2",
+      model: "deepseek-chat",
+      usage: { input_tokens: 12 },
+    });
     expect(mocks.sessionUsage).toHaveBeenCalledWith("thread-2");
   });
 

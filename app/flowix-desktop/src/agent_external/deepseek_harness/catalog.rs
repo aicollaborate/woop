@@ -35,90 +35,10 @@ impl DeepSeekHarnessManager {
             .await
             .map_err(|error| error.to_string())?;
 
-        let instance = self
-            .thread_manager
-            .find_agent_conversation_by_thread_id(thread_id)
-            .await
-            .map_err(|error| error.to_string())?;
-        let persisted_config = instance
-            .as_ref()
-            .and_then(|value| value.runtime_config.as_deref())
-            .and_then(|raw| serde_json::from_str::<PersistedRuntimeConfig>(raw).ok());
-        let provider_id = persisted_config
-            .as_ref()
-            .and_then(|config| config.model.as_ref())
-            .and_then(|model| model.provider_id.as_deref());
-        let model_id = persisted_config
-            .as_ref()
-            .and_then(|config| config.model.as_ref())
-            .and_then(|model| model.key.as_deref());
-
-        let configured = select_harness_config(self.dsh_model_configs().await?, provider_id)?;
-        let runtime_config = resolve_runtime_config(&configured, model_id)?;
-        let cwd = instance
-            .as_ref()
-            .and_then(|value| value.frozen_cwd.clone())
-            .or_else(|| {
-                persisted_config
-                    .as_ref()
-                    .and_then(|config| config.workspace_snapshot.as_ref())
-                    .and_then(|snapshot| snapshot.cwd.clone())
-            })
-            .or_else(|| {
-                persisted_config
-                    .as_ref()
-                    .and_then(|config| config.cwd.clone())
-            })
-            .unwrap_or_else(|| {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .to_string_lossy()
-                    .into_owned()
-            });
-        let workspace_paths = persisted_config
-            .as_ref()
-            .and_then(|config| config.workspace_snapshot.as_ref())
-            .map(|snapshot| snapshot.workspace_paths.clone())
-            .unwrap_or_default();
-        let agent_preset = normalize_agent_preset(
-            persisted_config
-                .as_ref()
-                .and_then(|config| config.deepseek_harness.as_ref())
-                .and_then(|config| config.mode.as_deref()),
-        );
-        let permission = normalize_permission(
-            persisted_config
-                .as_ref()
-                .and_then(|config| config.access.as_ref())
-                .and_then(|config| config.sandbox.as_deref()),
-        );
-
-        let host = self.ensure_host(&runtime_config).await?;
-        let ensure = protocol::runtime_ensure_request(
-            host.next_request_id(),
-            thread_id,
-            session_id.as_deref(),
-            &cwd,
-            &workspace_paths,
-            &runtime_config.provider,
-            &runtime_config.provider_name,
-            &runtime_config.api_protocol,
-            &runtime_config.api_key_env,
-            &runtime_config.base_url,
-            &runtime_config.model,
-            agent_preset,
-            permission,
-        );
-        let session_id = resolved_session_id(host.request(ensure).await?)?;
-        self.thread_manager
-            .upsert_external_session(thread_id, AGENT_TYPE, &session_id, None)
-            .await
-            .map_err(|error| error.to_string())?;
-        let result = timed_host_request(
-            &host.client(),
-            protocol::session_usage_request(host.next_request_id(), &session_id),
-        )
-        .await?;
+        let Some(session_id) = session_id else { return Ok(None) };
+        let host = self.model_host().await?;
+        let request = protocol::app_session_usage_request(host.next_request_id(), &session_id);
+        let result = timed_host_request(&host.client(), request).await?;
         if result.is_null() {
             return Ok(None);
         }

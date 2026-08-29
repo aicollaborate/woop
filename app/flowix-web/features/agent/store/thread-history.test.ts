@@ -268,26 +268,16 @@ describe("replaceCompletedRunWithHistory", () => {
   it("keeps a live tool in place when the completion snapshot is missing it", () => {
     const existing = [
       message("older-user", "user", "old", "2026-01-01T00:00:00.000Z"),
-      message(
-        "msg:codex:run-1:user:user-run-1",
-        "user",
-        "ask",
-        "2026-01-01T00:00:01.000Z",
-      ),
+      message("user-run-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
       {
         ...message("live-tool", "tool", "tool output", "2026-01-01T00:00:02.000Z"),
-        toolCallId: "msg:codex:run-1:tool-call:call-1",
+        toolCallId: "call-1",
         toolName: "command_execution",
       },
       message("assistant-live", "assistant", "part", "2026-01-01T00:00:03.000Z"),
     ];
     const history = [
-      message(
-        "msg:codex:run-1:user:user-run-1",
-        "user",
-        "ask",
-        "2026-01-01T00:00:01.000Z",
-      ),
+      message("item-u1", "user", "ask", "2026-01-01T00:00:01.000Z"),
       message("assistant-final", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
     ];
 
@@ -297,7 +287,7 @@ describe("replaceCompletedRunWithHistory", () => {
       ),
     ).toEqual([
       "older-user",
-      "msg:codex:run-1:user:user-run-1",
+      "item-u1",
       "live-tool",
       "assistant-final",
     ]);
@@ -305,11 +295,11 @@ describe("replaceCompletedRunWithHistory", () => {
 
   it("keeps the final live assistant when the Codex completion snapshot is partial", () => {
     const existing = [
-      message("msg:codex:run-4:user:user-run-4", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("user-run-4", "user", "ask", "2026-01-01T00:00:01.000Z"),
       message("assistant-live-4", "assistant", "the complete final answer", "2026-01-01T00:00:03.000Z"),
     ];
     const history = [
-      message("msg:codex:run-4:user:user-run-4", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      message("item-u4", "user", "ask", "2026-01-01T00:00:01.000Z"),
     ];
 
     expect(
@@ -317,30 +307,43 @@ describe("replaceCompletedRunWithHistory", () => {
         (m) => m.id,
       ),
     ).toEqual([
-      "msg:codex:run-4:user:user-run-4",
+      "item-u4",
       "assistant-live-4",
     ]);
   });
 
-  it("keeps a live tool when Codex replaces the Flowix user id in history", () => {
+  it("keeps a live tool when the run anchors by Codex turn id after adoption", () => {
+    // After the provider userMessage item adopts the optimistic row, the
+    // run boundary is the turn-scoped user row: ids already match history
+    // and the turn id anchors the replacement directly.
     const existing = [
-      message("msg:codex:run-2:user:user-run-2", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      {
+        ...message("item-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+        codexTurnId: "turn-2",
+      },
       {
         ...message("live-tool-2", "tool", "tool output", "2026-01-01T00:00:02.000Z"),
-        toolCallId: "msg:codex:run-2:tool-call:call-2",
+        toolCallId: "call-2",
         toolName: "command_execution",
       },
       message("assistant-live-2", "assistant", "part", "2026-01-01T00:00:03.000Z"),
     ];
     const history = [
-      message("item-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+      {
+        ...message("item-1", "user", "ask", "2026-01-01T00:00:01.000Z"),
+        codexTurnId: "turn-2",
+      },
       message("item-2", "assistant", "complete", "2026-01-01T00:00:03.000Z"),
     ];
 
     expect(
-      replaceCompletedRunWithHistory(existing, history, "run-2", "codex").map(
-        (m) => m.id,
-      ),
+      replaceCompletedRunWithHistory(
+        existing,
+        history,
+        "run-2",
+        "codex",
+        "turn-2",
+      ).map((m) => m.id),
     ).toEqual([
       "item-1",
       "live-tool-2",

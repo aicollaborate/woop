@@ -82,12 +82,9 @@
   border-radius: 8px;
   background: var(--card);
   color: var(--agent-foreground);
-  /* 与 DropdownMenuContent 同源: tailwind shadow-lg ≈
-   * 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)
-   * 这里混色由 foreground 主题 token 推导, light/dark 都自然适配。 */
-  box-shadow:
-    0 10px 15px -3px color-mix(in oklch, var(--foreground) 10%, transparent),
-    0 4px 6px -4px color-mix(in oklch, var(--foreground) 10%, transparent);
+  /* 与消息输入框的模型 / 权限 / 空间设置弹窗使用同一套容器投影。 */
+  box-shadow: 0 10px 30px
+    color-mix(in oklch, var(--foreground) 16%, transparent);
   /* 弹窗入场动画 ── 与 DropdownMenuContent 的 animate-in fade-in-0
    * zoom-in-95 同源: opacity 0→1 + scale 0.95→1, transform-origin
    * top left (从 trigger 右上角弹出)。 */
@@ -454,4 +451,3 @@
   flex: 0 0 auto;
   color: currentColor;
 }
-

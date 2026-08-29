@@ -564,13 +564,6 @@ export function areMessagesEquivalent(
       content: message.content,
       notice: message.notice,
       errorDetails: message.errorDetails,
-      llmContent: message.llmContent,
-      systemReminderDirectory: message.systemReminderDirectory,
-      systemReminderDocumentPath: message.systemReminderDocumentPath,
-      timestamp: message.timestamp,
-      sourceTimestamp: message.sourceTimestamp,
-      sourceSequence: message.sourceSequence,
-      sourceSubsequence: message.sourceSubsequence,
       isLoading: message.isLoading ?? false,
       toolCallId: message.toolCallId,
       toolName: message.toolName,
@@ -588,13 +581,6 @@ export function areMessagesEquivalent(
       content: other.content,
       notice: other.notice,
       errorDetails: other.errorDetails,
-      llmContent: other.llmContent,
-      systemReminderDirectory: other.systemReminderDirectory,
-      systemReminderDocumentPath: other.systemReminderDocumentPath,
-      timestamp: other.timestamp,
-      sourceTimestamp: other.sourceTimestamp,
-      sourceSequence: other.sourceSequence,
-      sourceSubsequence: other.sourceSubsequence,
       isLoading: other.isLoading ?? false,
       toolCallId: other.toolCallId,
       toolName: other.toolName,
@@ -612,21 +598,38 @@ export function areMessagesEquivalent(
 
 /**
  * Replace the just-completed live run with its persisted representation.
- * The stable user id is the run boundary, so older pages already loaded by the
- * user stay intact while partial assistant/tool rows from the live stream are
- * removed instead of being appended beside the final history rows.
+ * The run boundary is its user row: the Codex turn id once the provider
+ * userMessage item has adopted the optimistic row, the stable run-scoped
+ * user id before that, and a visible-content match as the final fallback.
+ * Older pages already loaded by the user stay intact while partial
+ * assistant/tool rows from the live stream are removed instead of being
+ * appended beside the final history rows.
  */
 export function replaceCompletedRunWithHistory(
   existing: ChatMessage[],
   historical: ChatMessage[],
   runId: string,
   agentType?: AgentTypeKey,
+  turnId?: string,
 ): ChatMessage[] {
   const history = hydrateHistoricalMessages(historical, agentType);
   if (history.length === 0) return existing;
   const anchorId = completedRunUserMessageId(agentType, runId);
-  const existingAnchor = existing.findIndex((message) => message.id === anchorId);
-  let historyAnchor = history.findIndex((message) => message.id === anchorId);
+  const turnUserAnchor = (messages: ChatMessage[]): number =>
+    turnId
+      ? messages.findIndex(
+          (message) =>
+            message.role === "user" && message.codexTurnId === turnId,
+        )
+      : -1;
+  const existingAnchor = Math.max(
+    turnUserAnchor(existing),
+    existing.findIndex((message) => message.id === anchorId),
+  );
+  let historyAnchor = Math.max(
+    turnUserAnchor(history),
+    history.findIndex((message) => message.id === anchorId),
+  );
   // Codex owns history item ids (`item-*`), while Flowix uses a stable
   // run-scoped id for the optimistic user row. Match the visible user
   // message when those provider/product ids differ so live-only tool rows

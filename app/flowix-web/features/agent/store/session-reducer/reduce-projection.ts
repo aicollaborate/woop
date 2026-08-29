@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@/types/agent";
+import { completedRunUserMessageId } from "@features/agent/events/message-identity";
 import {
   applyErrorChunk,
   applyReasoningChunk,
@@ -89,6 +90,11 @@ function applyUserMessageToProjection(
     sourceSequence: event.sourceSequence,
     sourceSubsequence: event.sourceSubsequence,
     codexTurnId: event.codexTurnId,
+    // Only provider-backed user items (Codex) carry the turn id; those are
+    // exactly the events allowed to adopt the optimistic row in place.
+    optimisticId: event.codexTurnId
+      ? completedRunUserMessageId(event.agentType, event.runId)
+      : undefined,
   });
   return {
     ...p,

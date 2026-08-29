@@ -23,6 +23,8 @@ export interface ReconcileHistoryInput {
   snapshot: HistorySnapshot;
   reason: HistorySyncReason;
   runId?: string | null;
+  /** Codex turn owning the run; anchors the user row when ids already match. */
+  turnId?: string | null;
 }
 
 export interface ReconcileHistoryResult {
@@ -41,7 +43,7 @@ export interface ReconcileHistoryResult {
 export function reconcileHistorySnapshot(
   input: ReconcileHistoryInput,
 ): ReconcileHistoryResult {
-  const { agentType, current, snapshot, reason, runId } = input;
+  const { agentType, current, snapshot, reason, runId, turnId } = input;
   const messages =
     reason === "run_completed" && runId
       ? replaceCompletedRunWithHistory(
@@ -49,6 +51,7 @@ export function reconcileHistorySnapshot(
           snapshot.messages,
           runId,
           agentType,
+          turnId ?? undefined,
         )
       : mergeHistoricalMessages(current, snapshot.messages, agentType);
 

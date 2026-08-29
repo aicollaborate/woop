@@ -4,7 +4,6 @@ mod config;
 mod discovery;
 mod error;
 mod event_adapter;
-mod host;
 mod host_registry;
 mod manager;
 mod probe;

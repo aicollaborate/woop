@@ -39,6 +39,7 @@ export interface AgentThreadCardDomParts {
   collapseButton: HTMLButtonElement;
   body: HTMLElement;
   loadingIndicator: HTMLDivElement;
+  queuedMessages: HTMLDivElement;
   composer: HTMLElement;
   composerImages: HTMLDivElement;
   composerActions: HTMLDivElement;
@@ -222,8 +223,11 @@ export function createAgentThreadCardDom(
    * 把它断开后重连, 重启 @keyframes 计时到 t=0, 高频 streaming 下亮峰永远到不了。
    */
   body.append(loadingIndicator);
+  const queuedMessages = document.createElement("div");
+  queuedMessages.className = "agent-background-terminals agent-thread-card__queued-messages";
+  queuedMessages.hidden = true;
   dom.append(container);
-  container.append(header, body, composer);
+  container.append(header, body, queuedMessages, composer);
 
   return {
     dom,
@@ -242,6 +246,7 @@ export function createAgentThreadCardDom(
     collapseButton,
     body,
     loadingIndicator,
+    queuedMessages,
     composer,
     composerImages,
     composerActions,

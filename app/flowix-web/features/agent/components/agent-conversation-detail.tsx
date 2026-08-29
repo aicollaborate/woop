@@ -39,6 +39,7 @@ const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
 const SCROLL_DELTA_EPSILON_PX = 0.5;
 const INPUT_DRAFT_MAX_CHARS = 500;
 const EMPTY_MESSAGES: ThreadState['messages'] = [];
+const EMPTY_PENDING_CODEX_MESSAGES: readonly [] = [];
 const DETAIL_DRAFT_KEY_PREFIX = 'flowix:agent-conversation-draft:';
 const logger = createLogger('agent-conversation-detail');
 
@@ -98,6 +99,11 @@ export function AgentConversationDetail({
   ));
   const messages = projection?.messages ?? EMPTY_MESSAGES;
   const isLoading = !!projection?.runs.isLoading;
+  const pendingCodexMessages = useAgentSessionStore((state) =>
+    threadId
+      ? state.pendingCodexMessages[threadId] ?? EMPTY_PENDING_CODEX_MESSAGES
+      : EMPTY_PENDING_CODEX_MESSAGES,
+  );
   const initialHistoryStatus = projection?.pagination.initialStatus ?? 'idle';
   const isInitialHistoryLoading = shouldShowInitialHistorySkeleton(
     threadId,
@@ -135,12 +141,7 @@ export function AgentConversationDetail({
     const sourceThreadId = threadIdRef.current;
     if (currentInstance?.agentType !== 'codex' || !sourceThreadId || !message.codexTurnId) return;
 
-    const confirmed = window.confirm(
-      languageRef.current === 'zh-CN'
-        ? '从这条消息创建新的 Codex 分支对话？原对话不会受到影响。'
-        : 'Create a new Codex fork from this message? The original conversation will remain unchanged.',
-    );
-    if (!confirmed || destroyedRef.current) return;
+    if (destroyedRef.current) return;
 
     try {
       const result = await agent.forkCodexThread(sourceThreadId, message.codexTurnId);
@@ -169,9 +170,9 @@ export function AgentConversationDetail({
   tRef.current = t;
 
   const submit = useCallback(async () => {
-    // 线程绑定是异步的; submittingRef 挡住"创建中"期间的重入, 避免快速双击
-    // 在 threadId 尚未回写时重复 createThread (笔记内嵌卡片的 isCreating 同理)。
-    if (submittingRef.current || isLoadingRef.current) return;
+    // 线程绑定是异步的; submittingRef 挡住"创建中"期间的重入。Codex
+    // 已有运行时允许本次提交转入队列，其它 agent 仍等待当前运行结束。
+    if (submittingRef.current || (isLoadingRef.current && typeKeyRef.current !== 'codex')) return;
     const input = inputRef.current;
     const currentInstance = instanceRef.current;
     const content = input?.value.trim() ?? '';
@@ -283,6 +284,8 @@ export function AgentConversationDetail({
     externalSettingsRef.current = externalSettings;
     const composerModelButton = externalSettings.createComposerModelButton();
     if (composerModelButton) composerActions.append(composerModelButton);
+    const composerModeButton = externalSettings.createComposerModeButton();
+    if (composerModeButton) composerActions.append(composerModeButton);
     const composerPermissionButton = externalSettings.createComposerPermissionButton();
     if (composerPermissionButton) composerActions.append(composerPermissionButton);
     const composerWorkspaceButton = externalSettings.createComposerWorkspaceButton();
@@ -375,7 +378,8 @@ export function AgentConversationDetail({
         getCurrentInputDraft: () => draftRef.current ?? '',
         getUserHistoryMessages: () => getAgentThreadCardUserHistoryMessagesFromMessages(messagesRef.current),
         getSendLabel: (wantStop) => tRef.current(wantStop ? 'editor.threadCard.stop' : 'editor.threadCard.send'),
-        getSendButtonWantsStop: () => isLoadingRef.current,
+        getSendButtonWantsStop: () =>
+          isLoadingRef.current && !(typeKeyRef.current === 'codex' && !!inputRef.current?.value.trim()),
         getHasAttachments: () => composerImagesController.hasImages,
         getHasPendingAttachments: () => composerImagesController.hasPending,
         submit: () => submitRef.current(),
@@ -520,6 +524,7 @@ export function AgentConversationDetail({
             threadId={threadId}
             agentType={instance.agentType === 'codex' ? 'codex' : 'deepseek-harness'}
             enabled={instance.agentType === 'codex' || instance.agentType === 'deepseek-harness'}
+            queuedMessages={pendingCodexMessages.map((message) => message.content)}
           />
           <div ref={composerMountRef} />
         </div>

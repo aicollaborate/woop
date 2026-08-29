@@ -8,7 +8,6 @@ if (!process.argv[2] || !existsSync(bundle)) throw new Error('usage: node verify
 const runtimeModules = join(bundle, 'runtime/node_modules')
 const roots = [
   '@deepseek-ai/dsh',
-  '@deepseek-ai/dsh-sdk-jsonrpc-server',
   '@deepseek-ai/dsh-sdk-protocol',
   '@deepseek-ai/dsh-shell',
   '@deepseek-ai/dsh-subagent-in-process-driver',
@@ -26,7 +25,6 @@ if (!existsSync(pnpmManifest)) failures.push('private pnpm package is missing')
 else await visitPackage(dirname(pnpmManifest), 'private pnpm')
 for (const path of [
   join(bundle, process.platform === 'win32' ? 'node/node.exe' : 'node/node'),
-  join(bundle, 'host/dsh-host.cjs'),
   join(bundle, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'),
   join(bundle, 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs'),
   join(bundle, process.platform === 'win32' ? 'bin/pnpm.cmd' : 'bin/pnpm'),
@@ -34,6 +32,14 @@ for (const path of [
   join(bundle, 'runtime-build.json'),
 ]) {
   if (!existsSync(path)) failures.push(`required private runtime file is missing: ${path}`)
+}
+for (const forbidden of [
+  'runtime/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server',
+  'runtime/node_modules/@flowix/dsh-flowix-bridge',
+  'host/dsh-host.cjs',
+]) {
+  const path = join(bundle, forbidden)
+  if (existsSync(path)) failures.push(`legacy DSH transport must not be bundled: ${path}`)
 }
 if (failures.length) throw new Error(`managed runtime closure is incomplete:\n- ${failures.join('\n- ')}`)
 process.stdout.write(`verified managed runtime closure (${visited.size} packages, no links)\n`)

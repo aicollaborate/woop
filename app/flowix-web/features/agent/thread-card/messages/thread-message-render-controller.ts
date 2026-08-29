@@ -7,6 +7,7 @@ import {
   appendRenderedAgentMessagesToTail,
   createRenderedAgentMessageList,
   getRenderedAgentMessages,
+  isLastAssistantInTurn,
   patchLastRenderedAgentMessage,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
@@ -292,6 +293,11 @@ export class ThreadMessageRenderController {
           getDisplayExpanded: context.getDisplayExpanded,
           setDisplayExpanded: context.setDisplayExpanded,
           isStreaming: context.isStreaming(message),
+          canFork: !input.isLoading && isLastAssistantInTurn(
+            input.messages,
+            input.messages.indexOf(message),
+          ),
+          onForkMessage: this.onForkMessage,
         });
         if (!rendered) continue;
         if (rendered.shouldRemember) rememberedMessages.push(message);
@@ -448,6 +454,7 @@ export class ThreadMessageRenderController {
     const lastMessage = messages[messages.length - 1];
     return {
       language: this.getLanguage(),
+      isLoading,
       getReasoningCollapsed: (message) => this.getReasoningCollapsed(message),
       setReasoningCollapsed: (messageId, collapsed) => {
         this.reasoningCollapsedOverrides.set(messageId, collapsed);

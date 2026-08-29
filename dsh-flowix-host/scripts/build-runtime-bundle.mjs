@@ -38,18 +38,17 @@ const privatePnpmVersion = '11.7.0'
 await run(corepack(), ['pnpm@11.7.0', 'install', '--frozen-lockfile', '--prod=false'], vendor)
 const builtMarkers = [
   resolve(vendor, 'apps/cli/lib/bin.js'),
-  resolve(vendor, 'packages/sdk/server/lib/index.js'),
   resolve(vendor, 'packages/llm/llm-pi-ai/lib/types/catalog.js'),
 ]
 if (!builtMarkers.every(existsSync) || process.env.FLOWIX_DSH_REBUILD_LIBS === '1') {
   await run(corepack(), ['pnpm@11.7.0', 'run', 'build:lib:host'], vendor)
 }
-if (process.env.FLOWIX_DSH_SKIP_HOST_BUILD !== '1') {
-  await run(process.execPath, [resolve(hostRoot, 'scripts/build-host.mjs')], hostRoot)
-}
 await rm(bundle, { recursive: true, force: true })
 await mkdir(bundle, { recursive: true })
 await run(corepack(), [
+  // Deploy is used only as a dependency-closure materializer. The SDK server
+  // package is pruned below and the executable root is replaced by the real
+  // DSH CLI package, so it can never become Flowix's runtime entry point.
   'pnpm@11.7.0', '--filter', 'dsh-jsonrpc-agent-pkg', 'deploy', '--legacy', '--prod',
   '--config.node-linker=hoisted', '--config.auto-install-peers=false',
   '--config.link-workspace-packages=true', runtime,
@@ -66,6 +65,10 @@ await rm(join(runtime, 'src'), { recursive: true, force: true })
 // after deploy; the closure verifier explicitly treats them as optional for
 // this headless distribution.
 await removeClientUiPackages(runtime)
+// Flowix speaks only the dsh-appserver Thread/Turn protocol. Remove the stock
+// SDK JSON-RPC surface even when it arrives transitively through dsh-base.
+await rm(join(runtime, 'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server'), { recursive: true, force: true })
+await rm(join(runtime, 'node_modules/@flowix/dsh-flowix-bridge'), { recursive: true, force: true })
 
 await copyTree(resolve(repo, 'dsh-flowix-memory'), join(runtime, 'node_modules/dsh-flowix-memory'))
 await copyTree(resolve(repo, 'dsh-appserver'), join(runtime, 'node_modules/dsh-appserver'), { skipNodeModules: true })
@@ -73,13 +76,24 @@ await copyTree(resolve(repo, 'dsh-appserver'), join(runtime, 'node_modules/dsh-a
 // transitive production closure is present. Materialize the two executable
 // roots explicitly so the managed bundle never depends on workspace links.
 await copyTree(resolve(vendor, 'apps/cli'), join(runtime, 'node_modules/@deepseek-ai/dsh'))
-await copyTree(resolve(vendor, 'packages/sdk/server'), join(runtime, 'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server'))
 await copyTree(resolve(vendor, 'packages/sdk/protocol'), join(runtime, 'node_modules/@deepseek-ai/dsh-sdk-protocol'))
 await copyTree(resolve(vendor, 'packages/shell/shell'), join(runtime, 'node_modules/@deepseek-ai/dsh-shell'))
 await copyTree(resolve(vendor, 'packages/subagent/subagent-in-process-driver'), join(runtime, 'node_modules/@deepseek-ai/dsh-subagent-in-process-driver'))
-await copyTree(resolve(hostRoot, 'profile/flowix'), join(bundle, 'profile/flowix'))
-await mkdir(join(bundle, 'host'), { recursive: true })
-await cp(resolve(repo, '.build/flowix-dsh-host/dsh-host.cjs'), join(bundle, 'host/dsh-host.cjs'))
+// The profile source may contain development-time workspace links under
+// node_modules. Do not follow those links into the distributable bundle;
+// dsh-appserver and memory are materialized into the runtime closure below.
+await copyTree(resolve(hostRoot, 'profile/flowix'), join(bundle, 'profile/flowix'), { skipNodeModules: true })
+// The profile loader resolves its bundles relative to profile/flowix, so the
+// two Flowix-owned packages must also be materialized there. Copying only the
+// runtime closure is insufficient for `dsh --profile flowix`.
+await copyTree(resolve(repo, 'dsh-appserver'), join(bundle, 'profile/flowix/node_modules/dsh-appserver'), { skipNodeModules: true })
+await copyTree(resolve(repo, 'dsh-flowix-memory'), join(bundle, 'profile/flowix/node_modules/dsh-flowix-memory'), { skipNodeModules: true })
+for (const packageName of ['dsh-appserver', 'dsh-flowix-memory']) {
+  const packageJson = join(bundle, 'profile/flowix/node_modules', packageName, 'package.json')
+  if (!existsSync(packageJson)) {
+    throw new Error(`Flowix profile is incomplete: ${packageName} is missing from ${dirname(packageJson)}`)
+  }
+}
 await mkdir(join(bundle, 'node'), { recursive: true })
 const nodeExecutable = join(bundle, 'node', process.platform === 'win32' ? 'node.exe' : 'node')
 await cp(process.execPath, nodeExecutable)

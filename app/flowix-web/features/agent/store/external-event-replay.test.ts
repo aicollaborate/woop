@@ -210,7 +210,7 @@ describe("external event replay", () => {
     const messages = projection.messages;
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({
-      id: "msg:codex:codex-replay-run:user:user-replay-1",
+      id: "user-replay-1",
       role: "user",
       content: "Persisted question",
     });
@@ -220,13 +220,18 @@ describe("external event replay", () => {
     });
   });
 
-  it("keeps repeated Codex item ids isolated across runs", async () => {
+  it("keeps Codex replay rows keyed by provider item id across runs", async () => {
     const { replayExternalEventsForThread } = await import(
       "@features/agent/store/external-event-replay"
     );
     const { useAgentSessionStore } = await import(
       "@features/agent/store/agent-session-store"
     );
+    // Codex live ids are no longer run-wrapped: item ids must be unique per
+    // thread (verified against real rollouts — ids embed the turn hash).
+    // Cross-run isolation for persisted replay is enforced by the Rust
+    // materializer (`external_run_scoped_id`), which stays untouched; this
+    // JS path documents the per-thread-unique contract instead.
     const threadId = "codex-reused-item-ids";
     const firstRunId = "run-first";
     const secondRunId = "run-second";
@@ -258,7 +263,7 @@ describe("external event replay", () => {
         thread_id: threadId,
         run_id: runId,
         agent_type: "codex",
-        message_id: "assistant-item_0",
+        message_id: `${runId}-assistant-item_0`,
         message_phase: "completed",
         content_mode: "snapshot",
         source_timestamp: sourceTimestamp + 1,
@@ -271,10 +276,10 @@ describe("external event replay", () => {
         thread_id: threadId,
         run_id: runId,
         agent_type: "codex",
-        id: "tool-item_1",
+        id: `${runId}-tool-item_1`,
         name: "command_execution",
         input: { command: "pwd" },
-        message_id: "tool-tool-item_1",
+        message_id: `${runId}-tool-item_1`,
         source_timestamp: sourceTimestamp + 2,
         source_sequence: 2,
         source_subsequence: 0,
@@ -284,10 +289,10 @@ describe("external event replay", () => {
         thread_id: threadId,
         run_id: runId,
         agent_type: "codex",
-        id: "tool-item_1",
+        id: `${runId}-tool-item_1`,
         name: "command_execution",
         result: toolResult,
-        message_id: "tool-tool-item_1",
+        message_id: `${runId}-tool-item_1`,
         source_timestamp: sourceTimestamp + 3,
         source_sequence: 3,
         source_subsequence: 0,
@@ -324,18 +329,10 @@ describe("external event replay", () => {
       { role: "assistant", content: "answer 2" },
       { role: "tool", content: '"result 2"' },
     ]);
-    expect(messages[1].id).toBe(
-      "msg:codex:run-first:assistant:assistant-item_0",
-    );
-    expect(messages[4].id).toBe(
-      "msg:codex:run-second:assistant:assistant-item_0",
-    );
-    expect(messages[2].toolCallId).toBe(
-      "msg:codex:run-first:tool-call:tool-item_1",
-    );
-    expect(messages[5].toolCallId).toBe(
-      "msg:codex:run-second:tool-call:tool-item_1",
-    );
+    expect(messages[1].id).toBe("run-first-assistant-item_0");
+    expect(messages[4].id).toBe("run-second-assistant-item_0");
+    expect(messages[2].toolCallId).toBe("run-first-tool-item_1");
+    expect(messages[5].toolCallId).toBe("run-second-tool-item_1");
   });
 
   it("folds legacy Claude reasoning ids into one row during database replay", async () => {

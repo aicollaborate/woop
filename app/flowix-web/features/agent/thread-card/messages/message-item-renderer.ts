@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ArrowsSplitIcon, CopyIcon } from "@phosphor-icons/react";
+import { Check, Copy, GitBranch } from "lucide-react";
 import { translate, type AppLanguage } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
@@ -42,10 +42,10 @@ export interface AgentThreadCardMessageDisplayContext {
   onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }
 
-function createPhosphorIcon(icon: typeof CopyIcon): SVGSVGElement {
+function createLucideIcon(icon: typeof Copy): SVGSVGElement {
   const template = document.createElement("template");
   template.innerHTML = renderToStaticMarkup(
-    createElement(icon, { size: 14, weight: "regular", "aria-hidden": true }),
+    createElement(icon, { size: 14, strokeWidth: 2, "aria-hidden": true }),
   );
   return template.content.firstElementChild as SVGSVGElement;
 }
@@ -61,7 +61,7 @@ function getMessageDateTimeText(message: AgentMessage, language: AppLanguage): s
   }).format(date);
 }
 
-function attachMessageActions(
+export function attachMessageActions(
   item: HTMLDivElement,
   message: AgentMessage,
   messageView: ReturnType<typeof createAgentMessageViewModel>,
@@ -79,11 +79,25 @@ function attachMessageActions(
   copyButton.className = "agent-thread-card__message-action";
   copyButton.title = language === "zh-CN" ? "复制消息" : "Copy message";
   copyButton.setAttribute("aria-label", copyButton.title);
-  copyButton.append(createPhosphorIcon(CopyIcon));
+  copyButton.append(createLucideIcon(Copy));
+  let copyResetTimer: number | undefined;
   copyButton.addEventListener("mousedown", (event) => event.stopPropagation());
-  copyButton.addEventListener("click", (event) => {
+  copyButton.addEventListener("click", async (event) => {
     event.stopPropagation();
-    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(messageView.visibleContent);
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(messageView.visibleContent);
+      copyButton.replaceChildren(createLucideIcon(Check));
+      copyButton.dataset.state = "copied";
+      if (copyResetTimer !== undefined) window.clearTimeout(copyResetTimer);
+      copyResetTimer = window.setTimeout(() => {
+        copyButton.replaceChildren(createLucideIcon(Copy));
+        copyButton.dataset.state = "";
+        copyResetTimer = undefined;
+      }, 1000);
+    } catch {
+      // Clipboard permission failures should not show a false success state.
+    }
   });
   actions.append(copyButton);
 
@@ -93,11 +107,48 @@ function attachMessageActions(
     forkButton.className = "agent-thread-card__message-action";
     forkButton.title = language === "zh-CN" ? "从此处分叉对话" : "Fork conversation";
     forkButton.setAttribute("aria-label", forkButton.title);
-    forkButton.append(createPhosphorIcon(ArrowsSplitIcon));
+    forkButton.append(createLucideIcon(GitBranch));
     forkButton.addEventListener("mousedown", (event) => event.stopPropagation());
     forkButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      void onFork?.(message);
+      if (actions.querySelector(".agent-thread-card__message-fork-confirm")) return;
+      forkButton.hidden = true;
+
+      const confirmation = document.createElement("span");
+      confirmation.className = "agent-thread-card__message-fork-confirm";
+      confirmation.setAttribute("role", "group");
+      confirmation.setAttribute(
+        "aria-label",
+        language === "zh-CN" ? "确认分叉对话" : "Confirm fork",
+      );
+
+      const confirmButton = document.createElement("button");
+      confirmButton.type = "button";
+      confirmButton.className = "agent-thread-card__message-fork-confirm-button";
+      confirmButton.textContent = language === "zh-CN" ? "确认" : "Confirm";
+      confirmButton.addEventListener("mousedown", (confirmEvent) =>
+        confirmEvent.stopPropagation());
+      confirmButton.addEventListener("click", (confirmEvent) => {
+        confirmEvent.stopPropagation();
+        confirmation.remove();
+        forkButton.hidden = false;
+        void onFork?.(message);
+      });
+
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "agent-thread-card__message-fork-cancel-button";
+      cancelButton.textContent = language === "zh-CN" ? "取消" : "Cancel";
+      cancelButton.addEventListener("mousedown", (cancelEvent) =>
+        cancelEvent.stopPropagation());
+      cancelButton.addEventListener("click", (cancelEvent) => {
+        cancelEvent.stopPropagation();
+        confirmation.remove();
+        forkButton.hidden = false;
+      });
+
+      confirmation.append(confirmButton, cancelButton);
+      actions.insertBefore(confirmation, time);
     });
     actions.append(forkButton);
   }

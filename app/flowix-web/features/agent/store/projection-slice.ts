@@ -73,9 +73,15 @@ export function createProjectionSlice(
               codexLiveTurns[event.threadId] = { ...cached, status: "awaiting_snapshot", updatedAt: Date.now() };
             }
           } else {
+            // Tool events do not repeat the turn id; keep the last one seen
+            // so the cache can anchor the run slice after the user row has
+            // adopted its provider id.
+            const previous = codexLiveTurns[event.threadId];
+            const turnId = event.codexTurnId ?? previous?.turnId;
             codexLiveTurns[event.threadId] = {
               runId: event.runId,
-              messages: liveTurnMessages(next.messages, event.runId),
+              turnId: turnId ?? previous?.turnId,
+              messages: liveTurnMessages(next.messages, event.runId, turnId),
               status: "running",
               updatedAt: Date.now(),
             };

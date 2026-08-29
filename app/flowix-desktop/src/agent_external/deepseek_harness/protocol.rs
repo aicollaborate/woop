@@ -2,19 +2,21 @@ use serde_json::{json, Value};
 
 use crate::agent_wire::{AgentChunk, UsageInfo};
 
-pub const HOST_PROTOCOL_VERSION: u64 = 1;
-
 /// Codex-compatible DSH App Server protocol marker. This is intentionally
 /// separate from the legacy Flowix host protocol: App Server connections are
 /// initialized per JSON-RPC client and use thread/turn notifications directly.
 pub const APP_SERVER_PROTOCOL_VERSION: u64 = 1;
 
+/// Returns whether the App Server transport has been selected for this
+/// process. Keeping this decision in one place prevents the request builder,
+/// manager, and process factory from drifting during the migration.
 pub fn app_initialize_request(id: u64, client_version: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": "initialize",
         "params": {
+            "protocolVersion": APP_SERVER_PROTOCOL_VERSION,
             "clientInfo": { "name": "flowix-desktop", "version": client_version },
             "capabilities": {}
         }
@@ -23,7 +25,7 @@ pub fn app_initialize_request(id: u64, client_version: &str) -> Value {
 
 pub fn app_thread_start_request(
     id: u64,
-    thread_id: &str,
+    flowix_thread_id: &str,
     cwd: &str,
     workspace_paths: &[String],
     provider: &str,
@@ -36,7 +38,10 @@ pub fn app_thread_start_request(
         "id": id,
         "method": "thread/start",
         "params": {
-            "threadId": thread_id, "cwd": cwd, "workspacePaths": workspace_paths,
+            // The App Server owns the DSH session identity. `flowixThreadId`
+            // is correlation metadata only; it must never be reused as the
+            // provider-owned `threadId`/session id.
+            "flowixThreadId": flowix_thread_id, "cwd": cwd, "workspacePaths": workspace_paths,
             "provider": provider, "model": model, "agentPreset": agent_preset,
             "permissionMode": permission_mode
         }
@@ -93,100 +98,25 @@ pub fn app_thread_events_request(
     json!({ "jsonrpc": "2.0", "id": id, "method": "thread/events/list", "params": params })
 }
 
-pub fn initialize_request(id: u64) -> Value {
+pub fn app_runtime_dispose_request(id: u64, thread_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "method": "host.initialize",
-        "params": {
-            "protocolVersion": HOST_PROTOCOL_VERSION,
-            "client": { "name": "flowix-desktop", "version": env!("CARGO_PKG_VERSION") }
-        }
-    })
-}
-
-pub fn runtime_ensure_request(
-    id: u64,
-    thread_id: &str,
-    session_id: Option<&str>,
-    cwd: &str,
-    workspace_paths: &[String],
-    provider: &str,
-    provider_name: &str,
-    api_protocol: &str,
-    api_key_env: &str,
-    base_url: &str,
-    model: &str,
-    agent_preset: &str,
-    permission_mode: &str,
-) -> Value {
-    let mut params = json!({
-        "threadId": thread_id,
-        "cwd": cwd,
-        "workspacePaths": workspace_paths,
-        "provider": provider,
-        "providerName": provider_name,
-        "apiProtocol": api_protocol,
-        "apiKeyEnv": api_key_env,
-        "baseUrl": base_url,
-        "model": model,
-        "agentPreset": agent_preset,
-        "permissionMode": permission_mode
-    });
-    if let Some(session_id) = session_id {
-        params["sessionId"] = json!(session_id);
-    }
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "runtime.ensure",
-        "params": params
-    })
-}
-
-pub fn run_start_request(
-    id: u64,
-    thread_id: &str,
-    run_id: &str,
-    model_text: &str,
-    display_text: &str,
-    client_message_id: &str,
-) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "run.start",
-        "params": {
-            "threadId": thread_id,
-            "runId": run_id,
-            "prompt": {
-                "modelText": model_text,
-                "displayText": display_text,
-                "clientMessageId": client_message_id
-            }
-        }
-    })
-}
-
-pub fn runtime_dispose_request(id: u64, thread_id: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "runtime.dispose",
+        "method": "thread/close",
         "params": { "threadId": thread_id }
     })
 }
 
-pub fn session_usage_request(id: u64, session_id: &str) -> Value {
+pub fn app_session_usage_request(id: u64, session_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "method": "session.usage",
+        "method": "flowix/session/usage",
         "params": { "sessionId": session_id }
     })
 }
 
-pub fn session_history_request(
+pub fn app_session_history_request(
     id: u64,
     session_id: &str,
     before_sequence: Option<i64>,
@@ -206,68 +136,33 @@ pub fn session_history_request(
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "method": "session.history",
+        "method": "session/history",
         "params": params
     })
 }
 
-pub fn run_cancel_request(id: u64, thread_id: &str, run_id: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "run.cancel",
-        "params": { "threadId": thread_id, "runId": run_id }
-    })
-}
-
-pub fn runtime_bridge_jobs_request(id: u64, thread_id: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "runtime.bridge.jobs.list",
-        "params": { "threadId": thread_id }
-    })
-}
-
-pub fn runtime_status_request(id: u64) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "runtime/status" } else { "runtime.status" };
-    json!({
-        "jsonrpc": "2.0", "id": id, "method": method, "params": {}
-    })
-}
-
-pub fn shutdown_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "host.shutdown", "params": {} })
-}
-
 pub fn models_catalog_request(id: u64) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "model/config/read" } else { "models.catalog" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/read", "params": {} })
 }
 
 pub fn plugins_catalog_request(id: u64) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "flowix/plugins/list" } else { "plugins.catalog" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "flowix/plugins/list", "params": {} })
 }
 
 pub fn credential_status_request(id: u64, reference: &str) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/read" } else { "credentials.status" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference } })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credential/read", "params": { "reference": reference } })
 }
 
 pub fn credential_set_request(id: u64, reference: &str, value: &str) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/set" } else { "credentials.set" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference, "value": value } })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credential/set", "params": { "reference": reference, "value": value } })
 }
 
 pub fn credential_delete_request(id: u64, reference: &str) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "credential/unset" } else { "credentials.delete" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": { "reference": reference } })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "credential/unset", "params": { "reference": reference } })
 }
 
 pub fn model_settings_describe_request(id: u64) -> Value {
-    let method = if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() { "model/config/read" } else { "settings.models.describe" };
-    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/read", "params": {} })
 }
 
 pub fn model_settings_upsert_request(
@@ -276,23 +171,11 @@ pub fn model_settings_upsert_request(
     profile: &crate::config::DeepSeekHarnessProviderSettings,
     expected_revision: u64,
 ) -> Value {
-    if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
-        return json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/upsert", "params": { "route": route, "profile": profile, "expectedRevision": expected_revision } });
-    }
-    json!({
-        "jsonrpc": "2.0", "id": id, "method": "settings.models.upsert",
-        "params": { "route": route, "profile": profile, "expectedRevision": expected_revision }
-    })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/upsert", "params": { "route": route, "profile": profile, "expectedRevision": expected_revision } })
 }
 
 pub fn model_settings_remove_request(id: u64, route: &str, expected_revision: u64) -> Value {
-    if std::env::var_os("FLOWIX_DSH_APPSERVER_COMMAND").is_some() {
-        return json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/remove", "params": { "route": route, "expectedRevision": expected_revision } });
-    }
-    json!({
-        "jsonrpc": "2.0", "id": id, "method": "settings.models.remove",
-        "params": { "route": route, "expectedRevision": expected_revision }
-    })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/remove", "params": { "route": route, "expectedRevision": expected_revision } })
 }
 
 pub fn models_discover_request(
@@ -310,7 +193,7 @@ pub fn models_discover_request(
     if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
         params["apiKey"] = json!(api_key);
     }
-    json!({ "jsonrpc": "2.0", "id": id, "method": "models.discover", "params": params })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "models/discover", "params": params })
 }
 
 pub fn response_result(message: &Value) -> Option<Result<Value, String>> {
@@ -498,6 +381,24 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                         .unwrap_or_else(|| failed.to_string()),
                 };
                 AdaptedEvent::Completed(Some(reason))
+            }
+            "item/started" | "item/completed" => {
+                let item = message.pointer("/params/item").unwrap_or(&Value::Null);
+                let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+                let id = item.get("callId").or_else(|| item.get("id")).and_then(Value::as_str);
+                let Some(id) = id else { return AdaptedEvent::Ignore; };
+                let name = item.get("toolName").and_then(Value::as_str).unwrap_or("tool").to_string();
+                match (method, item_type) {
+                    ("item/started", "toolCall") => AdaptedEvent::Chunk(AgentChunk::ToolCall {
+                        thread_id, id: id.to_string(), name,
+                        input: item.get("input").cloned().unwrap_or_else(|| json!({})),
+                    }),
+                    ("item/completed", "toolResult") => AdaptedEvent::Chunk(AgentChunk::ToolResult {
+                        thread_id, id: id.to_string(), name,
+                        result: item.get("result").cloned().unwrap_or(Value::Null),
+                    }),
+                    _ => AdaptedEvent::Ignore,
+                }
             }
             _ => AdaptedEvent::Ignore,
         };
@@ -738,10 +639,10 @@ mod tests {
 
     #[test]
     fn builds_a_bounded_session_history_request() {
-        let request = session_history_request(9, "session-1", Some(42), Some(100), 500);
+        let request = app_session_history_request(9, "session-1", Some(42), Some(100), 500);
         assert_eq!(
             request.get("method").and_then(Value::as_str),
-            Some("session.history")
+            Some("session/history")
         );
         assert_eq!(
             request.pointer("/params/sessionId").and_then(Value::as_str),
@@ -766,6 +667,26 @@ mod tests {
     }
 
     #[test]
+    fn builds_app_server_history_and_usage_methods() {
+        assert_eq!(
+            app_session_history_request(1, "session-1", None, None, 10)
+                .get("method")
+                .and_then(Value::as_str),
+            Some("session/history")
+        );
+        assert_eq!(
+            app_session_usage_request(2, "session-1")
+                .get("method")
+                .and_then(Value::as_str),
+            Some("flowix/session/usage")
+        );
+        assert_eq!(
+            app_runtime_dispose_request(3, "thread-1")["method"],
+            "thread/close"
+        );
+    }
+
+    #[test]
     fn builds_direct_app_server_requests() {
         let initialize = app_initialize_request(1, "1.2.3");
         assert_eq!(initialize["method"], "initialize");
@@ -776,7 +697,11 @@ mod tests {
             "deepseek-chat", "standard", "read-only",
         );
         assert_eq!(start["method"], "thread/start");
-        assert_eq!(start.pointer("/params/threadId").and_then(Value::as_str), Some("thread-1"));
+        assert_eq!(start.pointer("/params/threadId"), None);
+        assert_eq!(
+            start.pointer("/params/flowixThreadId").and_then(Value::as_str),
+            Some("thread-1")
+        );
         assert_eq!(start.pointer("/params/provider").and_then(Value::as_str), Some("deepseek"));
 
         let turn = app_turn_start_request(3, "thread-1", "hello");

@@ -20,6 +20,15 @@ events are audit history only. Session policy is exposed through
 
 接口按 Codex app-server 的资源目录组织：初始化、Thread、Turn、Model、Credential、Runtime 和 Session。生产运行时、协议测试和 HTTP 测试共用同一个 dispatcher。
 
+## Standalone launcher
+
+`bin/flowix-dsh-appserver.mjs` is the stable Flowix process entrypoint for
+direct App Server migration. It intentionally delegates the actual DSH runtime
+command to `FLOWIX_DSH_RUNTIME_COMMAND` and optional JSON string arguments in
+`FLOWIX_DSH_RUNTIME_ARGS`, while setting `FLOWIX_DSH_APPSERVER_STDIO=1` and
+preserving stdin/stdout/stderr. This keeps upstream CLI invocation details out
+of the Desktop client.
+
 ## 目录
 
 ```text

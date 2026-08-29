@@ -229,6 +229,8 @@ export const agent = {
     invoke<string | null>('read_cached_agent_image', { path }),
   chatStream: (threadId: string, message: AgentUserMessage) =>
     invoke<ChatResponse>('chat_with_agent_stream', { threadId, message }),
+  steerChat: (threadId: string, message: AgentUserMessage, clientUserMessageId: string) =>
+    invoke<void>('steer_agent_stream', { threadId, message, clientUserMessageId }),
   // 缁堟杩愯涓殑 chat_stream銆傚悗绔?AgentManager.stop_chat 缈昏浆 cancel flag,
   // 姝ｅ湪璺戠殑 ReAct 寰幆鍦ㄤ笅涓€涓?checkpoint 妫€娴嬪埌鍚庤皟 flush_cancel 閫€鍑恒€?
   // 杩斿洖 true = 鎴愬姛瑙﹀彂浜嗗彇娑? false = 褰撳墠娌℃湁 chat 鍦ㄨ窇 (no-op)銆?

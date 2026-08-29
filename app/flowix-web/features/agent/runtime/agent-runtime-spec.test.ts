@@ -216,7 +216,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       "workspace-write",
       "read-only",
     ]);
-    expect(getAgentAccessOptions("claude").map((option) => option.id)).toContain(
+    expect(getAgentAccessOptions("claude").map((option) => option.id)).not.toContain(
       "yolo",
     );
   });
@@ -234,7 +234,7 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(result.codex?.permissionMode).toBe("danger-full-access");
   });
 
-  it("passes yolo through Claude runtime config", () => {
+  it("migrates legacy Claude yolo selection to full access", () => {
     const result = buildAgentRuntimeConfig({
       typeKey: "claude",
       notebookPath: "/tmp/project",
@@ -243,15 +243,15 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
       codexReasoningEffort: "medium",
     });
 
-    expect(result.claude?.permissionMode).toBe("yolo");
+    expect(result.claude?.permissionMode).toBe("danger-full-access");
   });
 
-  it("DeepSeek Harness 默认 fail closed 到 workspace-write, 不复用 Codex 兜底", () => {
-    expect(normalizeDshPermissionMode(undefined)).toBe("workspace-write");
-    expect(normalizeDshPermissionMode("inherit")).toBe("workspace-write");
-    expect(normalizeDshPermissionMode("yolo")).toBe("workspace-write");
+  it("DeepSeek Harness 默认回落 danger-full-access, 与所有 agent 统一", () => {
+    expect(normalizeDshPermissionMode(undefined)).toBe("danger-full-access");
+    expect(normalizeDshPermissionMode("inherit")).toBe("danger-full-access");
+    expect(normalizeDshPermissionMode("yolo")).toBe("danger-full-access");
     expect(normalizeDshPermissionMode("unknown" as never)).toBe(
-      "workspace-write",
+      "danger-full-access",
     );
     expect(normalizeDshPermissionMode("read-only")).toBe("read-only");
     expect(normalizeDshPermissionMode("workspace-write")).toBe(
@@ -260,38 +260,6 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(normalizeDshPermissionMode("danger-full-access")).toBe(
       "danger-full-access",
     );
-  });
-
-  it("DeepSeek Harness 前端全局默认 danger-full-access 不被继承", () => {
-    // 全局 sessionMeta 默认是 danger-full-access (Codex 语义); DSH 卡片
-    // 未显式选权限时使用自己的 workspace-write 默认, 不静默继承完全访问。
-    const result = buildAgentRuntimeConfig({
-      typeKey: "deepseek-harness",
-      notebookPath: "/tmp/project",
-      permissionMode: "danger-full-access",
-      codexModel: "inherit",
-      codexReasoningEffort: "medium",
-    });
-    expect(result.deepseekHarness?.permissionMode).toBe("workspace-write");
-
-    // inherit / yolo 归一化到 workspace-write
-    const inherited = buildAgentRuntimeConfig({
-      typeKey: "deepseek-harness",
-      notebookPath: "/tmp/project",
-      permissionMode: "inherit",
-      codexModel: "inherit",
-      codexReasoningEffort: "medium",
-    });
-    expect(inherited.deepseekHarness?.permissionMode).toBe("workspace-write");
-
-    const yolo = buildAgentRuntimeConfig({
-      typeKey: "deepseek-harness",
-      notebookPath: "/tmp/project",
-      permissionMode: "yolo",
-      codexModel: "inherit",
-      codexReasoningEffort: "medium",
-    });
-    expect(yolo.deepseekHarness?.permissionMode).toBe("workspace-write");
   });
 
   it("DeepSeek Harness 卡片显式选择的权限仍生效", () => {
@@ -308,11 +276,11 @@ describe("buildAgentRuntimeConfig — 「资料列表 + 当前笔记本」派生
     expect(explicit.deepseekHarness?.permissionMode).toBe("read-only");
   });
 
-  it("DeepSeek Harness 权限选项不含 yolo", () => {
+  it("DeepSeek Harness 权限选项不含 yolo, 默认完全访问", () => {
     expect(getAgentAccessOptions("deepseek-harness").map((o) => o.id)).toEqual([
+      "danger-full-access",
       "workspace-write",
       "read-only",
-      "danger-full-access",
     ]);
   });
 });

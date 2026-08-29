@@ -649,10 +649,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
 
     // agent
     "agent.permission.default": "Default",
-    "agent.permission.readOnly": "Read Only",
-    "agent.permission.workspaceWrite": "Workspace Write",
-    "agent.permission.dangerFullAccess": "Full Access",
-    "agent.permission.yolo": "YOLO",
     "agent.permissionMode.menu": "Access level",
     "agent.permissionMode.title": "Access level",
     "agent.codexModel.default": "Codex default",

@@ -31,7 +31,7 @@ async fn timed_host_request_with_timeout<C: DshClient + ?Sized>(
 }
 
 async fn dispose_probe_runtime<C: DshClient + ?Sized>(host: &Arc<C>, thread_id: &str) {
-    let request = protocol::runtime_dispose_request(host.next_request_id(), thread_id);
+    let request = protocol::app_runtime_dispose_request(host.next_request_id(), thread_id);
     let _ = tokio::time::timeout(Duration::from_secs(2), host.request(request)).await;
 }
 
