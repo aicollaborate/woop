@@ -565,15 +565,16 @@ export function MainLayout() {
   }, []);
 
   const handleOpenTodos = useCallback(async () => {
+    const nextFilter = activeFilter === 'todos' ? 'all' : 'todos';
     closePluginSurface();
     setMemoListVisible(true);
-    setActiveFilter('todos');
+    setActiveFilter(nextFilter);
     await loadMemos({
       notebookId: selectedNotebook?.id,
-      filter: 'todos',
+      filter: nextFilter,
       sort: activeSort,
     });
-  }, [activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
+  }, [activeFilter, activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
 
   // 状态栏 Agents 星标: 打开中间列展示 AgentConversationList,
   // 已在 agents 视图则 no-op, 不再回退。
