@@ -12,7 +12,7 @@ export interface AppUpdate {
 export type AppUpdateDownloadProgress =
   | { phase: 'started'; contentLength?: number }
   | { phase: 'progress'; downloadedBytes: number; contentLength?: number }
-  | { phase: 'finished'; downloadedBytes: number };
+  | { phase: 'installing'; downloadedBytes: number; contentLength?: number };
 
 let checkPromise: Promise<AppUpdate | null> | null = null;
 let installPromise: Promise<void> | null = null;

@@ -90,7 +90,7 @@ export const deepseekHarness = {
       pluginKey,
       enabled,
     }),
-  manageProfilePlugin: (action: 'add' | 'remove' | 'update', packageSpec?: string) =>
+  manageProfilePlugin: (action: 'remove', packageSpec?: string) =>
     invoke<string>('dsh_manage_profile_plugin', {
       action,
       package: packageSpec?.trim() || null,
@@ -111,6 +111,7 @@ export interface DshIntegrationStatus {
   installed: boolean;
   executablePath?: string | null;
   version?: string | null;
+  harnessVersion?: string | null;
   source?: string | null;
   profile: string;
   message?: string | null;
@@ -118,7 +119,7 @@ export interface DshIntegrationStatus {
 }
 
 export interface DshDownloadProgress {
-  phase: 'checking' | 'downloading' | 'downloaded' | 'installed' | 'up-to-date' | 'cancelled' | 'failed';
+  phase: 'checking' | 'downloading' | 'downloaded' | 'installing' | 'installed' | 'up-to-date' | 'cancelled' | 'failed';
   downloadedBytes: number;
   totalBytes?: number | null;
   percent?: number | null;
@@ -203,6 +204,7 @@ export interface DeepSeekHarnessPlugin {
   name: string;
   enabled: boolean;
   toggleable: boolean;
+  removable?: boolean;
   scope: 'host' | 'preset' | 'profile';
   preset?: string;
 }

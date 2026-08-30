@@ -2,6 +2,12 @@ import { assistantChunkText, itemFromEvent, messageFromEvent, projectNotificatio
 
 // Native adapter for Flowix's bundled DeepSeek Harness runtime.
 // It deliberately imports no Flowix bridge package. The host supplies a Cordis ctx.
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+
 export class NativeDshAdapter {
   constructor(ctx) {
     this.ctx = ctx
@@ -330,11 +336,60 @@ export class NativeDshAdapter {
   }
 
   listPlugins() {
-    const registry = this.ctx.get?.('plugins') || this.ctx.get?.('pluginRegistry')
-    const entries = registry?.list?.() || registry?.plugins || []
-    return { plugins: Array.from(entries, plugin => typeof plugin === 'string' ? { id: plugin, name: plugin, enabled: true } : ({
-      id: String(plugin.id || plugin.name || 'unknown'), name: String(plugin.name || plugin.id || 'unknown'), enabled: plugin.enabled !== false,
-    })) }
+    // Loader entries are the actual configured plugin rows. The inventory is
+    // the public projection when that optional bundle is mounted. `ctx.registry`
+    // is only a Cordis runtime registry: its values are runtime records, not
+    // plugin manifests, so it cannot reliably provide an id/name.
+    const loader = this.ctx.get?.('loader') || this.ctx.loader
+    const loaderEntries = loader?.entries ? Array.from(loader.entries())
+      .filter(entry => !entry.options?.group)
+      .map(entry => ({
+        id: entry.options?.id,
+        entryId: entry.options?.id,
+        moduleName: entry.options?.name,
+        enabled: !entry.disabled,
+      })) : []
+    const profile = profilePlugins()
+    const profileNames = new Set(profile.map(plugin => plugin.id))
+    const hostEntries = loaderEntries.filter(entry => !profileNames.has(entry.moduleName) && !profileNames.has(entry.id))
+    const inventory = this.ctx.get?.('pluginInventory')
+    const inventoryEntries = inventory?.list?.()?.entries
+    const registry = this.ctx.get?.('plugins') || this.ctx.get?.('pluginRegistry') || this.ctx.registry
+    const entries = hostEntries.length > 0
+      ? hostEntries
+      : Array.isArray(inventoryEntries)
+      ? inventoryEntries
+      : registry?.list?.() || registry?.plugins || (registry?.values ? Array.from(registry.values()) : [])
+    const plugins = Array.from(entries, (plugin, index) => {
+      const inventoryEntry = typeof plugin === 'object' && plugin !== null && 'moduleName' in plugin
+      const inventoryId = inventoryEntry ? plugin.moduleName : undefined
+      const id = typeof plugin === 'string'
+        ? plugin
+        : String(plugin.id || inventoryId || plugin.name || plugin.pluginId || plugin.callback?.name || 'unknown')
+      const name = typeof plugin === 'string'
+        ? plugin
+        : String(plugin.name || inventoryId || plugin.id || plugin.pluginId || plugin.callback?.name || 'unknown')
+      const keyId = typeof plugin === 'object' && plugin !== null
+        ? String(plugin.entryId || id)
+        : id
+      return {
+        key: `host:${index}:${keyId}`,
+        id,
+        name,
+        enabled: typeof plugin === 'string' || plugin.enabled !== false,
+        toggleable: false,
+        scope: 'host',
+      }
+    })
+    const presets = presetPlugins()
+    return {
+      plugins: {
+        platform: process.platform,
+        host: plugins,
+        presets,
+        profile,
+      },
+    }
   }
 
   profileInfo() {
@@ -457,4 +512,115 @@ export class NativeDshAdapter {
     this.runtimes.clear()
     this.listeners.clear()
   }
+}
+
+function profilePlugins() {
+  const profileDir = process.env.DSH_PROFILE_DIR
+  if (!profileDir) return []
+  try {
+    const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+    const bundles = Array.isArray(manifest.dsh?.profile?.bundles)
+      ? manifest.dsh.profile.bundles.filter(value => typeof value === 'string')
+      : []
+    return bundles.map((packageName, index) => {
+      let name = packageName
+      try {
+        const packageManifest = JSON.parse(readFileSync(join(profileDir, 'node_modules', packageName, 'package.json'), 'utf8'))
+        name = packageManifest.description?.trim() || packageManifest.name?.trim() || packageName
+      } catch (_) {}
+      return {
+        key: `profile:${index}:${packageName}`,
+        id: packageName,
+        name,
+        enabled: true,
+        toggleable: false,
+        removable: false,
+        scope: 'profile',
+      }
+    })
+  } catch (_) {
+    return []
+  }
+}
+
+function disabledPluginKeys() {
+  const path = process.env.FLOWIX_DSH_PLUGIN_SETTINGS_PATH
+  if (!path) return new Set()
+  try {
+    const settings = JSON.parse(readFileSync(path, 'utf8'))
+    return new Set(Array.isArray(settings?.disabled) ? settings.disabled.filter(value => typeof value === 'string') : [])
+  } catch (_) {
+    return new Set()
+  }
+}
+
+function presetPlugins() {
+  const root = presetRoot()
+  if (!root) return {}
+  const disabled = disabledPluginKeys()
+  const result = {}
+  for (const preset of ['standard', 'code', 'minimal', 'cordis']) {
+    const source = join(root, preset, 'agent.cordis.yml')
+    if (!existsSync(source)) continue
+    result[preset] = parsePreset(source, preset, disabled)
+  }
+  return result
+}
+
+function presetRoot() {
+  const configured = process.env.DSH_AGENT_PRESET_ROOT || process.env.FLOWIX_DSH_PRESET_ROOT
+  if (configured) return configured
+  try {
+    return join(dirname(require.resolve('@deepseek-ai/dsh/package.json')), 'config', 'agent-presets')
+  } catch (_) {
+    return undefined
+  }
+}
+
+function parsePreset(source, preset, disabled) {
+  const rows = []
+  let current
+  const flush = () => {
+    if (current && current.name && current.name !== 'cordis:group') {
+      rows.push({
+        key: `preset:${preset}:${rows.length}:${current.id}`,
+        id: current.id,
+        name: current.name,
+        enabled: !current.disabled && !disabled.has(`preset:${preset}:${rows.length}:${current.id}`),
+        toggleable: true,
+        removable: false,
+        scope: 'preset',
+        preset,
+      })
+    }
+    current = undefined
+  }
+  for (const line of readFileSync(source, 'utf8').split(/\r?\n/)) {
+    const idMatch = /^(\s*)- id:\s*(.+?)\s*$/.exec(line)
+    if (idMatch) {
+      flush()
+      current = { id: cleanScalar(idMatch[2]), indent: idMatch[1].length }
+      continue
+    }
+    if (!current) continue
+    const nameMatch = /^(\s+)name:\s*(.+?)\s*$/.exec(line)
+    if (nameMatch && current.name === undefined && nameMatch[1].length > current.indent) {
+      current.name = cleanScalar(nameMatch[2].replace(/^!!js\s+/, ''))
+      continue
+    }
+    const disabledMatch = /^(\s+)disabled:\s*(.+?)\s*$/.exec(line)
+    if (disabledMatch && disabledMatch[1].length > current.indent) {
+      current.disabled = disabledMatch[2].trim() === 'true'
+    }
+  }
+  flush()
+  return rows
+}
+
+function cleanScalar(value) {
+  const trimmed = value.trim()
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
 }

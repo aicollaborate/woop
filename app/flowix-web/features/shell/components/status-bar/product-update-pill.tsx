@@ -12,7 +12,7 @@ export function ProductUpdatePill({ updater }: { updater: AppUpdaterState }) {
   const { status, update, installNow } = updater;
 
   async function handleClick() {
-    if (!update || status === 'installing') return;
+    if (!update || status === 'downloading' || status === 'installing') return;
     try {
       await installNow();
     } catch {
@@ -24,14 +24,15 @@ export function ProductUpdatePill({ updater }: { updater: AppUpdaterState }) {
     return null;
   }
 
+  const downloading = status === 'downloading';
   const installing = status === 'installing';
-  const label = installing ? t('appUpdates.installing') : t('appUpdates.install');
+  const label = downloading ? t('appUpdates.downloading') : installing ? t('appUpdates.installing') : t('appUpdates.install');
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      disabled={installing}
+      disabled={downloading || installing}
       title={`${t('appUpdates.available')}: ${update.version}`}
       className={cn(
         'inline-flex h-[22px] items-center gap-0.5 rounded-md px-2',
@@ -42,7 +43,7 @@ export function ProductUpdatePill({ updater }: { updater: AppUpdaterState }) {
       )}
       aria-label={label}
     >
-      {installing ? (
+      {downloading || installing ? (
         <ArrowDownToLine className="h-3 w-3 shrink-0 animate-bounce" />
       ) : (
         <ArrowUp className="h-3 w-3 shrink-0" />

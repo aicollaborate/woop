@@ -19,17 +19,12 @@
     "cli:build:dev": "node scripts/build-cli.mjs --debug",
     "cli:build:prod": "node scripts/build-cli.mjs",
     "cli:build:prod:macos": "node scripts/build-cli.mjs --macos",
-    "dsh:build:dev": "npm --prefix dsh-flowix-host run build:dev",
-    "dsh:build:prod": "npm --prefix dsh-flowix-host run build:prod --",
-    "dsh:package": "node scripts/package-dsh.mjs",
-    "dsh:release": "npm run dsh:build:prod && node scripts/package-dsh.mjs",
-    "dsh:publish": "bash scripts/release-dsh.sh",
+    "dsh:build:dev": "node scripts/build-dsh-dev.mjs",
     "tauri:dev": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.conf.dev.json",
     "tauri:dev:win": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.windows.dev.conf.json",
     "tauri:build:prod": "node scripts/build-tauri-production.mjs",
     "release:updater": "bash scripts/release.sh",
     "verify:flowix-package": "node scripts/verify-flowix-package.mjs",
-    "verify:dsh-package": "node scripts/verify-dsh-package.mjs",
     "icons:phosphor:bold": "node scripts/extract-phosphor-bold-paths.mjs"
   },
   "dependencies": {

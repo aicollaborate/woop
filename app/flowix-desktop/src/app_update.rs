@@ -1,11 +1,12 @@
 use reqwest::Client;
+use futures::StreamExt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
 const UPDATE_ENDPOINT: &str = "https://download.flowix.cc/updater/";
@@ -140,10 +141,33 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
         .error_for_status()
         .map_err(|e| format!("download application update: {e}"))?;
     let total = response.content_length();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("read application update: {e}"))?;
+    let _ = app.emit(
+        "app-update-progress",
+        serde_json::json!({"phase":"started","contentLength":total}),
+    );
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    let mut downloaded = 0u64;
+    let mut last_emit = Instant::now();
+    while let Some(chunk) = stream.next().await {
+        if cancelled.load(Ordering::Acquire) {
+            return Err("application update cancelled".into());
+        }
+        let chunk = chunk.map_err(|e| format!("read application update: {e}"))?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        bytes.extend_from_slice(&chunk);
+        if last_emit.elapsed() >= Duration::from_millis(100) {
+            let _ = app.emit(
+                "app-update-progress",
+                serde_json::json!({"phase":"progress","downloadedBytes":downloaded,"contentLength":total}),
+            );
+            last_emit = Instant::now();
+        }
+    }
+    let _ = app.emit(
+        "app-update-progress",
+        serde_json::json!({"phase":"progress","downloadedBytes":downloaded,"contentLength":total}),
+    );
     if cancelled.load(Ordering::Acquire) {
         return Err("application update cancelled".into());
     }
@@ -155,10 +179,6 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
             ));
         }
     }
-    let _ = app.emit(
-        "app-update-progress",
-        serde_json::json!({"phase":"finished","downloadedBytes":bytes.len(),"contentLength":total}),
-    );
     let root = std::env::temp_dir().join("flowix-updates");
     std::fs::create_dir_all(&root).map_err(|e| format!("create update directory: {e}"))?;
     let suffix = if cfg!(target_os = "windows") {
@@ -175,6 +195,10 @@ async fn download_and_launch(app: &AppHandle, cancelled: &AtomicBool) -> Result<
         suffix
     ));
     std::fs::write(&path, &bytes).map_err(|e| format!("stage application update: {e}"))?;
+    let _ = app.emit(
+        "app-update-progress",
+        serde_json::json!({"phase":"installing","downloadedBytes":bytes.len(),"contentLength":total}),
+    );
     launch_installer(&path)
 }
 

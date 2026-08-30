@@ -42,6 +42,7 @@ impl DshClientFactory for ProcessDshClientFactory {
             env.insert("DSH_PROFILE_DIR".into(), spec.dsh_home.join("profiles").join("flowix").to_string_lossy().into_owned());
             env.insert("DSH_SETTINGS_PATH".into(), spec.settings_path.to_string_lossy().into_owned());
             env.insert("DSH_CREDENTIALS_PATH".into(), spec.credentials_path.to_string_lossy().into_owned());
+            env.insert("FLOWIX_DSH_PLUGIN_SETTINGS_PATH".into(), spec.plugin_settings_path.to_string_lossy().into_owned());
             let client = AppServerClient::spawn(&command, &args, &env).await?;
             let initialize = protocol::app_initialize_request(
                 client.next_request_id(),

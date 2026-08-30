@@ -1,7 +1,5 @@
 # Dependencies
 node_modules/
-# Project-owned DSH runtime bundle; packaging copies this source verbatim.
-!dsh-flowix-host/profile/flowix/node_modules/
 .pnp
 .pnp.js
 .pnpm-store/
@@ -9,9 +7,7 @@ node_modules/
 # Build outputs
 dist/
 .build/
-dsh-flowix-host/vendor/deepseek-harness
 dsh-appserver/bin/
-dsh-flowix-host/profile/flowix/node_modules/dsh-appserver/bin/
 app/target/
 app/flowix-desktop/target/
 app/flowix-desktop/binaries/

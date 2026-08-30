@@ -15,6 +15,31 @@ afterEach(() => {
 });
 
 describe("agent thread card Markdown math", () => {
+  it.each(["user", "assistant"])(
+    "renders raw HTML from %s messages as text",
+    (role) => {
+      const container = document.createElement("div");
+      container.innerHTML = renderAgentThreadCardMarkdownToHtml(
+        `<script>alert(1)</script>\n\n<strong>${role}</strong>`,
+      );
+
+      expect(container.querySelector("script")).toBeNull();
+      expect(container.querySelector("strong")).toBeNull();
+      expect(container.textContent).toContain("<script>alert(1)</script>");
+      expect(container.textContent).toContain(`<strong>${role}</strong>`);
+    },
+  );
+
+  it("continues to render Markdown formatting while HTML is escaped", () => {
+    const html = renderAgentThreadCardMarkdownToHtml(
+      "**bold** and `code`\n\n<div>literal</div>",
+    );
+
+    expect(html).toContain("<strong>bold</strong>");
+    expect(html).toContain("<code>code</code>");
+    expect(html).toContain("&lt;div&gt;literal&lt;/div&gt;");
+  });
+
   it("recognizes Codex inline LaTeX delimiters", () => {
     const html = renderAgentThreadCardMarkdownToHtml(
       "Assume \\(q,k\\in\\mathbb R^d\\).",

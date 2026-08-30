@@ -67,6 +67,7 @@ pub struct DshStatus {
     pub installed: bool,
     pub executable_path: Option<String>,
     pub version: Option<String>,
+    pub harness_version: Option<String>,
     pub source: Option<String>,
     pub profile: String,
     pub message: Option<String>,
@@ -181,6 +182,7 @@ struct CurrentDsh {
 #[derive(Debug, Clone)]
 struct DshInstallation {
     version: String,
+    harness_version: Option<String>,
     host_path: PathBuf,
     build_id: Option<String>,
     sha256: Option<String>,
@@ -203,6 +205,7 @@ pub fn status() -> DshStatus {
                 installed: true,
                 executable_path: Some(launch.executable.display().to_string()),
                 version: Some("dev".to_string()),
+                harness_version: harness_version_from_root(&launch.root),
                 source: Some("flowix-dev-bundle".to_string()),
                 profile: DEFAULT_PROFILE.to_string(),
                 message: None,
@@ -212,6 +215,7 @@ pub fn status() -> DshStatus {
                 installed: false,
                 executable_path: None,
                 version: None,
+                harness_version: None,
                 source: Some("flowix-dev-bundle".to_string()),
                 profile: DEFAULT_PROFILE.to_string(),
                 message: Some(message),
@@ -219,33 +223,12 @@ pub fn status() -> DshStatus {
             },
         };
     }
-
-    // The Windows/macOS/Linux dev launcher builds a source-backed host at
-    // `.build/flowix-dsh-host/dsh-host.cjs` without creating a production
-    // `current.json`. Keep the preferences UI aligned with the host resolver
-    // instead of falling through to a stale managed DSH installation.
-    if cfg!(debug_assertions) {
-        let dev_host = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(".build/flowix-dsh-host/dsh-host.cjs");
-        if dev_host.is_file() {
-            return DshStatus {
-                installed: true,
-                executable_path: Some(dev_host.display().to_string()),
-                version: Some("dev".to_string()),
-                source: Some("flowix-dev-bundle".to_string()),
-                profile: DEFAULT_PROFILE.to_string(),
-                message: None,
-                archive_size: None,
-            };
-        }
-    }
-
     match current_installation() {
         Some(installation) => DshStatus {
             installed: true,
             executable_path: Some(installation.host_path.display().to_string()),
             version: Some(installation.version.clone()),
+            harness_version: installation.harness_version.clone(),
             source: Some("flowix-managed".to_string()),
             profile: DEFAULT_PROFILE.to_string(),
             message: None,
@@ -255,6 +238,7 @@ pub fn status() -> DshStatus {
             installed: false,
             executable_path: None,
             version: None,
+            harness_version: None,
             source: None,
             profile: DEFAULT_PROFILE.to_string(),
             message: Some("DeepSeek Harness is not installed".to_string()),
@@ -263,68 +247,34 @@ pub fn status() -> DshStatus {
     }
 }
 
-/// Resolve the complete local runtime bundle used by Tauri development.
-/// Returning the validation error here makes status reporting and process
-/// launching share one definition of "available".
 pub(crate) fn development_bundle_launch_spec() -> Option<Result<ManagedDshLaunch, String>> {
     if !cfg!(debug_assertions) {
         return None;
     }
-    let configured = std::env::var_os("FLOWIX_DSH_BUNDLE_ROOT").map(PathBuf::from);
+    let configured = std::env::var_os("FLOWIX_DSH_DEV_ROOT").map(PathBuf::from);
     let root = configured.or_else(|| {
-        // Tauri dev launched from an IDE may not inherit tauri-dev.mjs's
-        // environment. Keep the dev transport deterministic by discovering
-        // the repository bundle beside the Cargo workspace.
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
         let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
-        let candidate = repo.join(format!(".build/dsh-runtime-bundle/node24-{platform}-{arch}"));
+        let candidate = repo.join(format!(".build/dsh-runtime-dev/node24-{platform}-{arch}"));
         candidate.is_dir().then_some(candidate)
     });
-    root.map(development_bundle_launch_spec_at)
+    root.map(|root| {
+        let canonical = dunce::canonicalize(&root).map_err(|error| format!("invalid DSH dev runtime {}: {error}", root.display()))?;
+        let node = canonical.join("node").join(if cfg!(windows) { "node.exe" } else { "node" });
+        let runtime = canonical.join("runtime/node_modules/@deepseek-ai/dsh/lib/bin.js");
+        let profile = canonical.join("profile").join(DEFAULT_PROFILE).join("package.json");
+        for (label, path) in [("private Node", &node), ("DSH CLI", &runtime), ("Flowix profile", &profile)] {
+            if !path.is_file() { return Err(format!("DSH dev runtime is incomplete: {label} is missing at {}", path.display())); }
+        }
+        Ok(ManagedDshLaunch { executable: node, args: vec![runtime.clone()], root: canonical, cli_entrypoint: Some(runtime) })
+    })
 }
 
-fn development_bundle_launch_spec_at(root: PathBuf) -> Result<ManagedDshLaunch, String> {
-    let canonical = dunce::canonicalize(&root)
-        .map_err(|error| format!("invalid DSH bundle root {}: {error}", root.display()))?;
-    let node = canonical
-        .join("node")
-        .join(if cfg!(windows) { "node.exe" } else { "node" });
-    let runtime = canonical
-        .join("runtime")
-        .join("node_modules")
-        .join("@deepseek-ai")
-        .join("dsh")
-        .join("lib")
-        .join("bin.js");
-    let profile = canonical
-        .join("profile")
-        .join(DEFAULT_PROFILE)
-        .join("package.json");
-
-    for (label, path) in [
-        ("private Node", &node),
-        ("DSH runtime entrypoint", &runtime),
-        ("Flowix profile", &profile),
-    ] {
-        if !path.is_file() {
-            return Err(format!(
-                "DSH bundle at {} is incomplete: {label} is missing at {}",
-                canonical.display(),
-                path.display()
-            ));
-        }
-    }
-
-    Ok(ManagedDshLaunch {
-        executable: node,
-        args: Vec::new(),
-        root: canonical,
-        // Keep the upstream CLI entrypoint available to direct App Server
-        // launchers. The legacy host still uses `args`; App Server follows
-        // the same JS-on-private-Node model as Codex.
-        cli_entrypoint: Some(runtime),
-    })
+fn harness_version_from_root(root: &Path) -> Option<String> {
+    let package = root.join("runtime/node_modules/@deepseek-ai/dsh/package.json");
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(package).ok()?).ok()?;
+    value.get("version")?.as_str().map(ToOwned::to_owned)
 }
 
 /// Best-effort size lookup for the install card. A manifest outage must not
@@ -478,15 +428,6 @@ fn install_runtime_inner(
     before_publish: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<DshStatus, String> {
     emit_progress(app, "checking", 0, None, false);
-    if cfg!(debug_assertions) {
-        let dev_host = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(".build/flowix-dsh-host/dsh-host.cjs");
-        if dev_host.is_file() {
-            emit_progress(app, "up-to-date", 0, None, false);
-            return Ok(status());
-        }
-    }
     let manifest = fetch_manifest()?;
     check_cancelled()?;
     if !matches!(manifest.schema_version, 1 | 2) {
@@ -547,6 +488,7 @@ fn install_runtime_inner(
     let staging = versions.join(format!(".installing-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging).map_err(|e| format!("create DSH staging directory: {e}"))?;
 
+    emit_progress(app, "installing", download.bytes.len() as u64, Some(download.bytes.len() as u64), false);
     let result = extract_archive(&download.bytes, &staging)
         .and_then(|()| check_cancelled())
         .and_then(|()| {
@@ -584,9 +526,6 @@ pub fn managed_host_path() -> Option<PathBuf> {
 }
 
 pub fn managed_launch_spec() -> Option<ManagedDshLaunch> {
-    // In dev, the explicitly selected source-built bundle must win over an
-    // older installed runtime. Otherwise App Server testing silently launches
-    // the user's last downloaded DSH version.
     if let Some(result) = development_bundle_launch_spec() {
         return result.ok();
     }
@@ -1308,6 +1247,7 @@ fn current_installation() -> Option<DshInstallation> {
         .unwrap_or_else(|| launch.executable.clone());
     Some(DshInstallation {
         version: current.version,
+        harness_version: harness_version_from_root(&version_root),
         host_path: host,
         build_id: current.build_id,
         sha256: current.sha256,
@@ -1468,6 +1408,7 @@ mod tests {
     fn legacy_installation_without_checksum_is_not_reused() {
         let current = super::DshInstallation {
             version: "1.0.0".to_string(),
+            harness_version: None,
             host_path: std::path::PathBuf::from("dsh-host"),
             build_id: Some("same-build".to_string()),
             sha256: None,

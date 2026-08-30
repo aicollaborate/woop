@@ -92,7 +92,8 @@ type LocalAgentIntroOption = (typeof LOCAL_AGENT_INTRO_OPTIONS)[number];
 function isActiveDshDownload(progress: DshDownloadProgress | null): boolean {
   return progress?.phase === 'checking'
     || progress?.phase === 'downloading'
-    || progress?.phase === 'downloaded';
+    || progress?.phase === 'downloaded'
+    || progress?.phase === 'installing';
 }
 
 function isWindowsPlatform(): boolean {
@@ -1077,7 +1078,9 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
   const [installError, setInstallError] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const update = updater.update;
+  const isDownloading = updater.status === 'downloading';
   const isInstalling = updater.status === 'installing';
+  const isUpdating = isDownloading || isInstalling;
 
   useEffect(() => {
     if (update?.version && update.version !== dismissedVersion) {
@@ -1085,7 +1088,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
     }
   }, [dismissedVersion, update?.version]);
 
-  if (!update || (updater.status !== 'available' && updater.status !== 'installing') || update.version === dismissedVersion) {
+  if (!update || (updater.status !== 'available' && !isUpdating) || update.version === dismissedVersion) {
     return null;
   }
 
@@ -1102,7 +1105,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
     if (isCancelling) return;
     setIsCancelling(true);
     try {
-      if (isInstalling) await updater.cancelNow();
+      if (isUpdating) await updater.cancelNow();
       setDismissedVersion(update.version);
     } finally {
       setIsCancelling(false);
@@ -1130,7 +1133,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
             {t('productUpdates.version', { version: update.version })}
           </p>
 
-          {isInstalling && updater.progress && (
+          {isUpdating && updater.progress && (
             <UpdateProgress
               className="mt-5"
               value={{
@@ -1138,7 +1141,7 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
                 downloadedBytes: updater.progress.phase === 'progress' ? updater.progress.downloadedBytes : undefined,
                 totalBytes: updater.progress.phase === 'progress' ? updater.progress.contentLength : undefined,
               }}
-              label={t('appUpdates.progress', { percent: downloadPercent ?? 0 })}
+              label={t(isDownloading ? 'appUpdates.downloading' : 'appUpdates.installing')}
             />
           )}
 
@@ -1148,9 +1151,9 @@ function AppUpdatePrompt({ updater }: { updater: AppUpdaterState }) {
             <Button type="button" variant="outline" onClick={() => void handleCancel()} disabled={isCancelling}>
               {t('dialog.cancel')}
             </Button>
-            <Button type="button" onClick={() => void handleInstall()} disabled={isInstalling}>
-              {isInstalling && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isInstalling ? t('appUpdates.installing') : t('appUpdates.install')}
+            <Button type="button" onClick={() => void handleInstall()} disabled={isUpdating}>
+              {isUpdating && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isDownloading ? t('appUpdates.downloading') : isInstalling ? t('appUpdates.installing') : t('appUpdates.install')}
             </Button>
           </div>
         </div>
@@ -1171,7 +1174,7 @@ function DshInstallPrompt({
 }) {
   const { t } = useI18n();
   const { busy, error, progress, install, cancel } = useDshRuntimeInstaller();
-  const canCancel = busy && progress?.phase !== 'downloaded';
+  const canCancel = busy && progress?.phase !== 'downloaded' && progress?.phase !== 'installing';
   const [slide, setSlide] = useState<'mcp' | 'intro' | 'download'>('mcp');
   const [mcpCopied, setMcpCopied] = useState(false);
   const [checkingLocalAgents, setCheckingLocalAgents] = useState(false);
@@ -1349,7 +1352,7 @@ function DshInstallPrompt({
                   <UpdateProgress
                     className="mt-5 text-left"
                     value={progress}
-                    label={t('preferences.dsh.setup.downloadProgress')}
+                    label={t(progress.phase === 'installing' ? 'preferences.dsh.setup.installing' : 'preferences.dsh.setup.downloading')}
                     resumedLabel={t('preferences.dsh.setup.resumed')}
                   />
                 )}
@@ -1391,7 +1394,7 @@ function DshInstallPrompt({
               </Button>
               <Button type="button" onClick={() => void handleInstall()} disabled={busy}>
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {busy ? t('preferences.dsh.setup.installing') : t('preferences.dsh.setup.install')}
+                {busy ? t(progress?.phase === 'installing' ? 'preferences.dsh.setup.installing' : 'preferences.dsh.setup.downloading') : t('preferences.dsh.setup.install')}
               </Button>
               {canCancel && (
                 <Button type="button" variant="outline" onClick={() => void handleCancel()}>

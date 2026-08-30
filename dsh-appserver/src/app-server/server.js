@@ -3,8 +3,19 @@ import { createMethodRegistry } from './methods/index.js'
 import { assertRequest, ErrorCode, failure, paramsOf, RpcError, success } from './protocol/json-rpc.js'
 import { serveStdio } from './transports/stdio.js'
 import { ApprovalManager } from './approvals/approval-manager.js'
+import { createRequire } from 'node:module'
 
 const SERVER_INFO = Object.freeze({ name: 'dsh-appserver', version: '0.2.0' })
+const require = createRequire(import.meta.url)
+const HARNESS_INFO = (() => {
+  try {
+    const packageJson = require.resolve('@deepseek-ai/dsh/package.json')
+    const packageInfo = require(packageJson)
+    return Object.freeze({ name: packageInfo.name, version: packageInfo.version })
+  } catch {
+    return null
+  }
+})()
 const APP_SERVER_PROTOCOL_VERSION = 1
 
 export class DshAppServer {
@@ -85,6 +96,7 @@ export class DshAppServer {
         return success(request.id, {
           protocolVersion: APP_SERVER_PROTOCOL_VERSION,
           serverInfo: SERVER_INFO,
+          ...(HARNESS_INFO === null ? {} : { harness: HARNESS_INFO }),
           capabilities: {
             threads: true, turns: true, fork: true, history: true, interrupt: true,
             models: { list: true, configure: true, delete: true },

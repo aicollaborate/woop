@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Bot,
   Check,
+  Cpu,
   Database,
   Loader2,
   PanelsTopLeft,
   Puzzle,
   Settings2,
   ShieldCheck,
+  Tag,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Input } from '@shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@shared/ui/select';
 import { AgentSection } from '@features/preferences/sections/agent';
 import { SectionHeader } from '@features/preferences/sections/primitives';
 import { useI18n, type I18nKey } from '@/lib/i18n';
@@ -66,6 +68,13 @@ const DSH_PRESETS: readonly {
     descriptionKey: 'agent.mode.cordis.description',
   },
 ];
+
+const PRESET_TITLE_KEYS: Record<string, I18nKey> = {
+  standard: 'preferences.dsh.plugins.presetStandard',
+  code: 'preferences.dsh.plugins.presetPtc',
+  minimal: 'preferences.dsh.plugins.presetMinimal',
+  cordis: 'preferences.dsh.plugins.presetCreative',
+};
 
 export function DshSettingsSection() {
   const { t } = useI18n();
@@ -222,7 +231,7 @@ function DshInstallPage({
   const { t } = useI18n();
   const { busy, error, progress, install, cancel } = useDshRuntimeInstaller(initialStatus);
   const [archiveSize, setArchiveSize] = useState<number | null>(initialStatus.archiveSize ?? null);
-  const canCancel = busy && progress?.phase !== 'downloaded';
+  const canCancel = busy && progress?.phase !== 'downloaded' && progress?.phase !== 'installing';
 
   useEffect(() => {
     if (initialStatus.installed) return;
@@ -266,7 +275,7 @@ function DshInstallPage({
         <div className="mt-[60px] flex justify-center gap-2">
           <Button type="button" onClick={() => void startInstall()} disabled={busy}>
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {busy ? t('preferences.dsh.setup.installing') : t('preferences.dsh.setup.install')}
+            {busy ? t(progress?.phase === 'installing' ? 'preferences.dsh.setup.installing' : 'preferences.dsh.setup.downloading') : t('preferences.dsh.setup.install')}
           </Button>
           {canCancel && (
             <Button type="button" variant="outline" onClick={() => void cancelInstall()}>
@@ -278,7 +287,7 @@ function DshInstallPage({
         {busy && progress && (
           <div className="mx-auto mt-6 max-w-md space-y-2 text-left">
             <div className="flex justify-between text-xs text-[var(--muted-foreground)]">
-              <span>{t('preferences.dsh.setup.downloadProgress')}</span>
+              <span>{t(progress.phase === 'installing' ? 'preferences.dsh.setup.installing' : 'preferences.dsh.setup.downloading')}</span>
               <span>{progress.percent == null ? '…' : `${progress.percent}%`}</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-[var(--muted)]">
@@ -326,7 +335,12 @@ function GeneralTab({
   const [uninstalling, setUninstalling] = useState(false);
   const rows = [
     {
-      icon: Bot,
+      icon: Tag,
+      title: t('preferences.dsh.general.harnessVersion'),
+      value: status?.harnessVersion ?? 'unknown',
+    },
+    {
+      icon: Cpu,
       title: t('preferences.dsh.general.runtime'),
       value: t('preferences.dsh.general.runtimeValue'),
     },
@@ -378,7 +392,7 @@ function GeneralTab({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 pb-[30px]">
       <SectionHeader
         title={t('preferences.dsh.general.title')}
         className="flex h-8 items-center border-b-0 pb-0"
@@ -408,7 +422,7 @@ function GeneralTab({
             onClick={() => void checkForUpdates()}
           >
             {busy
-              ? t('preferences.dsh.runtime.updating')
+              ? t(progress?.phase === 'installing' ? 'preferences.dsh.runtime.installing' : 'preferences.dsh.runtime.downloading')
               : t('preferences.dsh.runtime.check')}
           </Button>
           <Button
@@ -421,13 +435,13 @@ function GeneralTab({
             {uninstalling && <Loader2 className="h-4 w-4 animate-spin" />}
             {uninstalling
               ? t('preferences.dsh.runtime.uninstalling')
-              : t('preferences.dsh.runtime.uninstall')}
+              : t('preferences.dsh.runtime.uninstallButton')}
           </Button>
         </div>
         {busy && progress && (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-[var(--muted-foreground)]">
-              <span>{t('preferences.dsh.runtime.downloadProgress')}</span>
+              <span>{t(progress.phase === 'installing' ? 'preferences.dsh.runtime.installing' : 'preferences.dsh.runtime.downloading')}</span>
               <span>{progress.percent == null ? '…' : `${progress.percent}%`}</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-[var(--muted)]">
@@ -442,11 +456,6 @@ function GeneralTab({
               </p>
             )}
           </div>
-        )}
-        {status?.installed && (
-          <p className="text-xs text-[var(--muted-foreground)]">
-            {t('preferences.dsh.runtime.detected')}: {status.version ?? 'unknown'}
-          </p>
         )}
         {error && <p className="text-xs text-[var(--destructive)]">{error}</p>}
       </div>
@@ -466,8 +475,8 @@ function PluginsTab() {
   const [catalog, setCatalog] = useState<DeepSeekHarnessPluginCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
-  const [packageSpec, setPackageSpec] = useState('');
   const [managingPlugin, setManagingPlugin] = useState<string | null>(null);
+  const [pluginFilter, setPluginFilter] = useState<'configurable' | 'all'>('configurable');
   const normalizedQuery = query.trim().toLowerCase();
 
   const loadCatalog = useCallback(() => {
@@ -487,13 +496,12 @@ function PluginsTab() {
     return loadCatalog();
   }, [loadCatalog]);
 
-  const manageProfilePlugin = useCallback(async (action: 'add' | 'remove' | 'update', target?: string) => {
-    const spec = action === 'update' ? '' : (target ?? packageSpec.trim());
-    if ((action === 'add' || action === 'remove') && !spec) return;
+  const manageProfilePlugin = useCallback(async (action: 'remove', target?: string) => {
+    const spec = target ?? '';
+    if (!spec) return;
     setManagingPlugin(`${action}:${spec}`);
     try {
       await deepseekHarness.manageProfilePlugin(action, spec || undefined);
-      if (action === 'add') setPackageSpec('');
       loadCatalog();
       toast.success(t('preferences.dsh.plugins.manageSuccess'));
     } catch (error) {
@@ -501,7 +509,7 @@ function PluginsTab() {
     } finally {
       setManagingPlugin(null);
     }
-  }, [loadCatalog, packageSpec, t]);
+  }, [loadCatalog, t]);
 
   const togglePlugin = async (plugin: DeepSeekHarnessPlugin) => {
     if (!plugin.toggleable || togglingKey !== null) return;
@@ -522,7 +530,7 @@ function PluginsTab() {
         { key: 'host', title: t('preferences.dsh.plugins.host'), plugins: catalog.host ?? [] },
         ...Object.entries(catalog.presets ?? {}).map(([preset, plugins]) => ({
           key: `preset:${preset}`,
-          title: `${t('preferences.dsh.plugins.preset')} · ${preset}`,
+          title: t(PRESET_TITLE_KEYS[preset] ?? 'preferences.dsh.plugins.preset'),
           plugins,
         })),
       ];
@@ -541,46 +549,34 @@ function PluginsTab() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t('preferences.dsh.plugins.searchPlaceholder')}
-          className="h-8 w-44 shrink-0"
-        />
-      </div>
-      <div className="border-b border-[var(--divider)]" />
-      <p className="text-xs text-[var(--muted-foreground)]">
-        {t('preferences.dsh.plugins.hostHint')}
-      </p>
-      <div className="flex items-center gap-2 rounded-lg border border-[var(--divider)] bg-[var(--card)] p-2.5">
-        <Input
-          value={packageSpec}
-          onChange={(event) => setPackageSpec(event.target.value)}
-          placeholder={t('preferences.dsh.plugins.packagePlaceholder')}
           className="h-8 min-w-0 flex-1"
         />
-        <Button
-          type="button"
-          size="sm"
-          disabled={!packageSpec.trim() || managingPlugin !== null}
-          onClick={() => void manageProfilePlugin('add')}
-        >
-          {managingPlugin?.startsWith('add:') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {t('preferences.dsh.plugins.install')}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={managingPlugin !== null}
-          onClick={() => void manageProfilePlugin('update')}
-        >
-          {t('preferences.dsh.plugins.updateAll')}
-        </Button>
+        <Select value={pluginFilter} onValueChange={(value) => {
+          if (value === 'configurable' || value === 'all') setPluginFilter(value);
+        }}>
+          <SelectTrigger className="h-8 w-32 shrink-0 bg-transparent">
+            <SelectValue>
+              {t(pluginFilter === 'configurable'
+                ? 'preferences.dsh.plugins.filterConfigurable'
+                : 'preferences.dsh.plugins.filterAll')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="configurable">{t('preferences.dsh.plugins.filterConfigurable')}</SelectItem>
+            <SelectItem value="all">{t('preferences.dsh.plugins.filterAll')}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
+      <div className="border-b border-[var(--divider)]" />
       {/* WKWebView 下外层滚动容器吃不到底部间距, 在列表自身留 pb-10 兜底 */}
       <div className="space-y-2 pb-10">
         {loadError && <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-3.5 py-3 text-xs text-red-600">{t('preferences.dsh.plugins.loadError')}: {loadError}</p>}
         {catalog === null && loadError === null && <p className="text-xs text-[var(--muted-foreground)]">{t('preferences.dsh.plugins.loading')}</p>}
         {groups.map(({ key, title, plugins }) => {
-          const visiblePlugins = plugins.filter(({ id, name }) =>
-            `${id} ${name}`.toLowerCase().includes(normalizedQuery),
+          const visiblePlugins = plugins.filter(({ id, name, toggleable }) =>
+            id !== '@deepseek-ai/dsh-base'
+            && (pluginFilter === 'all' || toggleable)
+            && `${id} ${name}`.toLowerCase().includes(normalizedQuery),
           );
           if (visiblePlugins.length === 0) return null;
           return (
@@ -603,6 +599,7 @@ function PluginsTab() {
                           {t(plugin.enabled ? 'preferences.dsh.plugins.enabled' : 'preferences.dsh.plugins.disabled')}
                         </span>
                         {plugin.scope === 'profile'
+                          && plugin.removable !== false
                           && plugin.id !== '@deepseek-ai/dsh-base'
                           && plugin.id !== 'dsh-flowix-memory' && (
                           <Button

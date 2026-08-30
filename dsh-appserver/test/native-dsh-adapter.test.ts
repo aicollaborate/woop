@@ -2,6 +2,79 @@ import { describe, expect, it } from 'vitest'
 import { NativeDshAdapter } from '../src/app-server/adapters/native-dsh-adapter.js'
 
 describe('NativeDshAdapter thread launch', () => {
+  it('returns the grouped plugin catalog shape expected by Flowix', () => {
+    const adapter = new NativeDshAdapter({
+      get: (name: string) => name === 'plugins' ? { list: () => ['dsh-appserver'] } : undefined,
+    })
+
+    expect(adapter.listPlugins()).toEqual({
+      plugins: {
+        platform: process.platform,
+        host: [{
+          key: 'host:0:dsh-appserver', id: 'dsh-appserver', name: 'dsh-appserver',
+          enabled: true, toggleable: false, scope: 'host',
+        }],
+        presets: {},
+        profile: [],
+      },
+    })
+  })
+
+  it('reads plugins from the Cordis registry when no plugin service is exposed', () => {
+    const adapter = new NativeDshAdapter({
+      registry: { values: () => [{ name: 'dsh-appserver' }] },
+    })
+
+    expect(adapter.listPlugins().plugins.host.map((plugin: { id: string }) => plugin.id)).toEqual(['dsh-appserver'])
+  })
+
+  it('uses the loader inventory instead of Cordis runtime records', () => {
+    const adapter = new NativeDshAdapter({
+      get: (name: string) => name === 'pluginInventory'
+        ? { list: () => ({ entries: [
+          { entryId: 'entry-1', moduleName: '@deepseek-ai/dsh-tool-web', enabled: true, fiberPhase: 'active' },
+          { entryId: 'entry-2', moduleName: '@deepseek-ai/dsh-tool-fs', enabled: false, fiberPhase: null },
+        ] }) }
+        : name === 'plugins'
+          ? { list: () => [{ callback: () => {}, fibers: [] }] }
+        : undefined,
+    })
+
+    expect(adapter.listPlugins().plugins.host).toEqual([
+      {
+        key: 'host:0:entry-1', id: '@deepseek-ai/dsh-tool-web', name: '@deepseek-ai/dsh-tool-web',
+        enabled: true, toggleable: false, scope: 'host',
+      },
+      {
+        key: 'host:1:entry-2', id: '@deepseek-ai/dsh-tool-fs', name: '@deepseek-ai/dsh-tool-fs',
+        enabled: false, toggleable: false, scope: 'host',
+      },
+    ])
+  })
+
+  it('projects configured loader rows and omits Cordis groups', () => {
+    const adapter = new NativeDshAdapter({
+      loader: {
+        entries: () => [
+          { options: { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web' }, disabled: false },
+          { options: { id: 'tools', name: 'cordis:group', group: true }, disabled: false },
+          { options: { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' }, disabled: true },
+        ],
+      },
+    })
+
+    expect(adapter.listPlugins().plugins.host).toEqual([
+      {
+        key: 'host:0:tool-web', id: 'tool-web', name: '@deepseek-ai/dsh-tool-web',
+        enabled: true, toggleable: false, scope: 'host',
+      },
+      {
+        key: 'host:1:tool-fs', id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs',
+        enabled: false, toggleable: false, scope: 'host',
+      },
+    ])
+  })
+
   it('forks after the assistant message only after closing its turn', async () => {
     const sourceEvents = [
       { type: 'turn/start', seq: 1, data: { turn: 1 } },

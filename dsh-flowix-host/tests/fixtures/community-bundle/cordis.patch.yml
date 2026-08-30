@@ -1,3 +1,0 @@
-- insert:
-    - id: community-fixture
-      name: '@deepseek-ai/dsh-time-context'

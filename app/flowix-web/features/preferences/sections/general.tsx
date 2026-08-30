@@ -241,7 +241,9 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
   };
 
   const checkingUpdates = updater.status === 'checking';
+  const downloadingUpdate = updater.status === 'downloading';
   const installingUpdate = updater.status === 'installing';
+  const updatingProduct = downloadingUpdate || installingUpdate;
   const downloadPercent = updater.progress?.phase === 'progress' && updater.progress.contentLength
     ? Math.min(100, Math.round((updater.progress.downloadedBytes / updater.progress.contentLength) * 100))
     : null;
@@ -390,7 +392,7 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
           variant="outline"
           className="px-3"
           onClick={handleCheckProductUpdates}
-          disabled={checkingUpdates || installingUpdate}
+          disabled={checkingUpdates || updatingProduct}
         >
           {checkingUpdates
             ? t('preferences.general.productUpdates.checking')
@@ -411,7 +413,7 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
               <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                 {t('productUpdates.version', { version: updater.update.version })}
               </p>
-              {installingUpdate && updater.progress && (
+              {updatingProduct && updater.progress && (
                 <UpdateProgress
                   className="mt-3"
                   value={{
@@ -419,12 +421,12 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
                     downloadedBytes: updater.progress.phase === 'progress' ? updater.progress.downloadedBytes : undefined,
                     totalBytes: updater.progress.phase === 'progress' ? updater.progress.contentLength : undefined,
                   }}
-                  label={t('appUpdates.progress', { percent: downloadPercent ?? 0 })}
+                  label={t(downloadingUpdate ? 'appUpdates.downloading' : 'appUpdates.installing')}
                 />
               )}
             </div>
-            <Button variant="outline" size="sm" onClick={handleInstallUpdate} disabled={installingUpdate}>
-              {t('appUpdates.install')}
+            <Button variant="outline" size="sm" onClick={handleInstallUpdate} disabled={updatingProduct}>
+              {downloadingUpdate ? t('appUpdates.downloading') : installingUpdate ? t('appUpdates.installing') : t('appUpdates.install')}
             </Button>
           </div>
         </div>

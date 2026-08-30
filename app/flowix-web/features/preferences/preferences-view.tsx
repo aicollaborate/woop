@@ -134,7 +134,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 			...group,
 			tabs: experimental
 				? group.tabs
-				: group.tabs.filter((tab) => tab.id !== 'cloudSync'),
+				: group.tabs.filter((tab) => !['cloudSync', 'connections', 'tools', 'history'].includes(tab.id)),
 		})),
 		[experimental],
 	);
@@ -149,7 +149,9 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 	}, [experimental, initialTab]);
 
 	useEffect(() => {
-		if (!experimental && activeTab === 'cloudSync') setActiveTab('general');
+		if (!experimental && ['cloudSync', 'connections', 'tools', 'history'].includes(activeTab)) {
+			setActiveTab('general');
+		}
 	}, [activeTab, experimental]);
 
 	useEffect(() => {
@@ -181,7 +183,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 									className={cn(
 										'w-full justify-start gap-1.5 py-4 rounded-lg',
 										activeTab === tab.id &&
-											'bg-muted text-[var(--primary)] hover:bg-muted dark:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] dark:hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)]'
+											'bg-muted hover:bg-muted dark:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] dark:hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)]'
 									)}
 									onClick={() => setActiveTab(tab.id)}
 								>

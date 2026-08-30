@@ -20,8 +20,7 @@ npm run dev:mobile -- --port 1421 # 仅移动端前端预览 (localhost:1421)，
 npm run tauri build      # 生产构建
 npm run cli:build:dev    # CLI debug build
 npm run cli:build:prod   # CLI production build for the current platform
-npm run dsh:build:dev    # DSH source-development host
-npm run dsh:build:prod   # DSH managed production bundle
+npm run dsh:build:dev    # Download the DSH CLI carrier and build the local dev runtime
 npm run tauri:build:prod # Flowix production bundle + updater artifacts
 pkill -f "node.*vite" 2>/dev/null   # 端口冲突时
 sudo xcode-select -r                 # 首次运行

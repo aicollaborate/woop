@@ -7,7 +7,7 @@ import {
   type AppUpdateDownloadProgress,
 } from '@platform/tauri/client/updater';
 
-export type AppUpdaterStatus = 'idle' | 'checking' | 'none' | 'available' | 'installing' | 'error';
+export type AppUpdaterStatus = 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'installing' | 'error';
 
 export interface AppUpdaterState {
   status: AppUpdaterStatus;
@@ -58,11 +58,14 @@ export function useAppUpdater({
     const current = updateRef.current;
     if (!current) return;
 
-    setStatus('installing');
+    setStatus('downloading');
     setError(null);
     setProgress(null);
     try {
-      await installAppUpdate(setProgress);
+      await installAppUpdate((next) => {
+        setProgress(next);
+        setStatus(next.phase === 'installing' ? 'installing' : 'downloading');
+      });
     } catch (installError) {
       setStatus('available');
       if (!isCancellationError(installError)) setError(installError);

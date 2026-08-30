@@ -139,6 +139,14 @@ const cardMarked = new Marked({
   async: false,
   gfm: true,
   breaks: true,
+  // Agent messages can contain arbitrary user/assistant text. Keep Markdown
+  // formatting, but render raw HTML as text instead of handing it to
+  // `template.innerHTML` as executable/interactive markup.
+  renderer: {
+    html({ text }: { text: string }) {
+      return escapeAgentThreadCardHtml(text);
+    },
+  },
 });
 
 cardMarked.use({

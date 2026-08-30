@@ -59,33 +59,6 @@ jobs:
       - name: Unit tests
         run: npm test
 
-  dsh:
-    name: DSH · host checks + E2E
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Prepare locked Harness checkout
-        run: |
-          corepack enable
-          npm --prefix dsh-flowix-host run vendor:install
-
-      - name: DSH host checks
-        run: npm --prefix dsh-flowix-host run check
-
-      - name: DSH host E2E
-        run: npm --prefix dsh-flowix-host run test:e2e
-
   rust:
     name: Rust · clippy + tests
     runs-on: ubuntu-22.04

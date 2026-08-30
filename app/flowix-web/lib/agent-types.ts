@@ -66,7 +66,7 @@ export const AGENT_TYPES: AgentType[] = [
     key: 'deepseek-harness',
     icon: iconDeepSeek,
     name: 'DeepSeek Harness',
-    desc: 'Use the bundled DeepSeek Harness SDK',
+    desc: 'Use the bundled DeepSeek Harness',
     nameKey: 'agent.types.deepseekHarness.name',
     descKey: 'agent.types.deepseekHarness.desc',
     capabilities: { ...STREAMING_EXTERNAL_CLI_CAPABILITIES, supportsThreadArchive: true },

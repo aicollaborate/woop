@@ -1,9 +1,0 @@
-coverage/
-*.log
-
-# The vendored repository owns its own generated-file rules. Keep Flowix
-# outputs out of the source snapshot as an extra guard.
-vendor/deepseek-harness/node_modules/
-vendor/deepseek-harness/**/node_modules/
-vendor/deepseek-harness/**/lib/
-vendor/deepseek-harness/dist-exe/

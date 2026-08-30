@@ -11,7 +11,8 @@ const DSH_DOWNLOAD_PROGRESS_EVENT = 'dsh-download-progress';
 function isActiveDownload(progress: DshDownloadProgress | null): boolean {
   return progress?.phase === 'checking'
     || progress?.phase === 'downloading'
-    || progress?.phase === 'downloaded';
+    || progress?.phase === 'downloaded'
+    || progress?.phase === 'installing';
 }
 
 /** Shared installation state for the DSH setup and Runtime settings views. */
