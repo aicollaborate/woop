@@ -107,6 +107,7 @@ const manifest = {
     },
   },
 }
+await mkdir(resolve(release, 'platforms/windows'), { recursive: true })
 await writeFile(resolve(release, 'platforms/windows/latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 await writeFile(resolve(release, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(`created ${archive}`)
