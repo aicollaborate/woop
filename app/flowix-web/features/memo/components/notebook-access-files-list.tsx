@@ -295,7 +295,7 @@ export function NotebookAccessFilesList({
                         ? 'text-[var(--primary-foreground)]'
                         : 'text-[var(--primary)]',
                     )}
-                    weight="fill"
+                    weight="regular"
                   />
                 )}
               </div>

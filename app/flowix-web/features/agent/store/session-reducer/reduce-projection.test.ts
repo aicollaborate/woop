@@ -422,6 +422,46 @@ describe("reduceProjection / tool call cycle", () => {
     expect(p.runs.runs["r1"]?.currentTool).toBeNull();
   });
 
+  it("renders a context compaction as an ordered system message", () => {
+    let p = emptyProjection();
+    p = reduceProjection(
+      p,
+      event("context_compaction", {
+        agentType: "codex",
+        threadId: "t1",
+        runId: "r1",
+        timestamp: 2500,
+        id: "compaction-1",
+        sourceTimestamp: 2500,
+        sourceSequence: 3,
+        codexTurnId: "turn-1",
+      }),
+    );
+
+    expect(p.messages).toHaveLength(1);
+    expect(p.messages[0]).toMatchObject({
+      id: "compaction-1",
+      role: "system",
+      messageType: "context-compaction",
+      codexTurnId: "turn-1",
+    });
+
+    const same = reduceProjection(
+      p,
+      event("context_compaction", {
+        agentType: "codex",
+        threadId: "t1",
+        runId: "r1",
+        timestamp: 2500,
+        id: "compaction-1",
+        sourceTimestamp: 2500,
+        sourceSequence: 3,
+        codexTurnId: "turn-1",
+      }),
+    );
+    expect(same).toBe(p);
+  });
+
   it("stream_end closes any still-loading tool rows", () => {
     let p = emptyProjection();
     p = reduceProjection(p, streamStart("r1"));

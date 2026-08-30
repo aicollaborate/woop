@@ -19,6 +19,7 @@ import {
   ComposerController,
   ComposerDraftController,
   ComposerImageController,
+  ComposerAddMenuController,
   createAgentComposerDom,
   disposeAgentComposerDom,
   getAgentThreadCardUserHistoryMessagesFromMessages,
@@ -120,6 +121,7 @@ export function AgentConversationDetail({
   const composerImagesControllerRef = useRef<ComposerImageController | null>(null);
   const externalSettingsRef = useRef<ExternalAgentSettingsController | null>(null);
   const rolePickerRef = useRef<AgentRolePickerController | null>(null);
+  const addMenuRef = useRef<ComposerAddMenuController | null>(null);
   const surfaceRef = useRef<AgentConversationSurfaceController | null>(null);
   const draftRef = useRef<string | null>(null);
   const destroyedRef = useRef(false);
@@ -272,6 +274,7 @@ export function AgentConversationDetail({
       input,
       codexSettingsPopover: settingsPopover,
       composerRolePopover: rolePopover,
+      composerAddPopover: addPopover,
       sendButtonMount,
     } = composerParts;
     inputRef.current = input;
@@ -424,6 +427,16 @@ export function AgentConversationDetail({
         composerController.resetHistoryNavigation();
         input.focus();
       },
+      triggerManagedExternally: true,
+    });
+    const addMenu = new ComposerAddMenuController({
+      trigger: composerRoleButton,
+      popover: addPopover,
+      rolePopover: rolePopover,
+      rolePicker,
+      images: composerImagesController,
+      t: (key) => tRef.current(key),
+      isDestroyed: () => destroyedRef.current,
     });
     rolePicker.refreshIcon();
     messagesControllerRef.current = messageController;
@@ -431,6 +444,7 @@ export function AgentConversationDetail({
     surfaceRef.current = surface;
     composerImagesControllerRef.current = composerImagesController;
     rolePickerRef.current = rolePicker;
+    addMenuRef.current = addMenu;
     composerController.updateMultiLineState();
     // Paint the selected thread's initial state in the same layout pass. The
     // history request starts in a passive effect, so waiting for the normal
@@ -456,6 +470,7 @@ export function AgentConversationDetail({
       surface.dispose();
       composerImagesController.dispose();
       rolePicker.dispose();
+      addMenu.dispose();
       externalSettings.dispose();
       externalSettingsRef.current = null;
       disposeAgentComposerDom(composerParts);
@@ -465,6 +480,7 @@ export function AgentConversationDetail({
       surfaceRef.current = null;
       composerImagesControllerRef.current = null;
       rolePickerRef.current = null;
+      addMenuRef.current = null;
     };
   }, []);
 

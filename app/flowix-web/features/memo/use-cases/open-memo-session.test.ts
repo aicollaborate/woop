@@ -23,9 +23,16 @@ const testState = vi.hoisted(() => ({
   setActiveFileBrowserPath: vi.fn((path: string | null) => {
     testState.activeFileBrowserPath = path;
   }),
-  openExternalDocument: vi.fn(async () => {
+  openExternalDocument: vi.fn(async (_path?: string, _options?: { history: 'skip'; scopePath: string }) => {
     testState.currentDocumentSource = 'external';
   }),
+  openMemoTarget: vi.fn((input: { memoId: string; path: string | null; memo?: MemoItem | null; notebook?: Notebook | null }) => {
+    const { memo: _memo, notebook: _notebook, ...documentInput } = input;
+    return testState.openMemoDocument(documentInput);
+  }),
+  openExternalTarget: vi.fn((path: string, options: { history: 'skip'; scopePath: string }) => (
+    testState.openExternalDocument(path, options)
+  )),
 }));
 
 vi.mock('@features/memo', () => ({
@@ -50,6 +57,11 @@ vi.mock('@features/document', () => ({
       openExternalDocument: testState.openExternalDocument,
     }),
   },
+}));
+
+vi.mock('@features/workspace/use-cases/workspace-navigation', () => ({
+  openMemoTarget: testState.openMemoTarget,
+  openExternalTarget: testState.openExternalTarget,
 }));
 
 import {
@@ -93,6 +105,8 @@ describe('restorePersistedMemoSession', () => {
     testState.setActiveFileBrowserPath.mockClear();
     testState.openMemoDocument.mockClear();
     testState.openExternalDocument.mockClear();
+    testState.openMemoTarget.mockClear();
+    testState.openExternalTarget.mockClear();
     testState.openMemoDocument.mockImplementation(async (input) => {
       testState.activeMemoSession = {
         memoId: input.memoId,

@@ -233,6 +233,7 @@ fn value_to_message(value: &Value, index: usize) -> Option<ChatMessage> {
         id: extract_first_string(value, &["id", "message_id", "messageId"])
             .unwrap_or_else(|| format!("hermes_{}_{}", index, Uuid::new_v4())),
         role,
+        message_type: None,
         content: content.clone(),
         llm_content: Some(content),
         system_reminder_directory: None,
@@ -546,6 +547,7 @@ mod tests {
             .map(|i| ChatMessage {
                 id: i.to_string(),
                 role: "user".to_string(),
+                message_type: None,
                 content: i.to_string(),
                 llm_content: None,
                 system_reminder_directory: None,

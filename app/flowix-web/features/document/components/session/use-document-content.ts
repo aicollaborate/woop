@@ -10,6 +10,7 @@ import {
   type DocumentIdentity,
 } from '@features/document';
 import { translate } from '@/lib/i18n';
+import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { formatDateTime } from '@/lib/utils';
 import {
@@ -191,7 +192,7 @@ export function useDocumentContent({
               readPath = latestPath;
               fullContent = retryContent;
               setActiveDocumentPath(identity, latestPath);
-              useDocumentStore.getState().replaceActiveMemoPath(memoId!, latestPath);
+              replaceActiveMemoPath(memoId!, latestPath);
             }
           }
         }

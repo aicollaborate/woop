@@ -23,22 +23,6 @@ export function joinPath(basePath: string, filePath: string): string {
   return `${basePath.replace(/[\\/]+$/, '')}/${filePath.replace(/^[\\/]+/, '')}`;
 }
 
-/**
- * 拼 memo 物理路径 ── v3 改造: 直接用 `memo.filename` (磁盘文件名, 含 .md)
- * 拼接到 notebookPath 根目录, 不再需要 `memo.path` 字段或 `#<id>` 后缀。
- */
-export function resolveMemoDocumentPath(
-  notebookPath: string | undefined,
-  memo: MemoItem,
-  fallbackPath: string,
-): string {
-  if (!notebookPath || !memo.filename) {
-    return fallbackPath;
-  }
-
-  return joinPath(notebookPath, memo.filename);
-}
-
 export function findMemoById(
   state: Pick<MemoStore, 'memos' | 'selectedMemo'>,
   memoId: string | null | undefined,
@@ -47,8 +31,3 @@ export function findMemoById(
   return state.memos.find((memo) => memo.id === memoId)
     ?? (state.selectedMemo?.id === memoId ? state.selectedMemo : null);
 }
-
-// `memoNeedsFilenameFinalize` 移除 ── v3 改造后物理 rename 不再发生
-// (filename 由后端 memo index 持有, 后端 rename_memo 一次同步物理文件 +
-// memo index, 物理路径不会"未及时更新"), 所以前端不再需要"写盘后
-// 检测 path 是否需要 finalize"的兜底机制。

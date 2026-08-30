@@ -44,6 +44,7 @@ import {
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
+import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
 
@@ -560,7 +561,7 @@ export function MemoActions({
 
       const latestActiveMemoSession = useDocumentStore.getState().activeMemoSession;
       if (latestActiveMemoSession?.memoId === memo.id) {
-        useDocumentStore.getState().replaceActiveMemoPath(memo.id, restored.path);
+        replaceActiveMemoPath(memo.id, restored.path);
         window.dispatchEvent(new CustomEvent('flowix:memo-version-restored', {
           detail: {
             memoId: memo.id,

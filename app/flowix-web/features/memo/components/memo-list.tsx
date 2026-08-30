@@ -60,6 +60,7 @@ import {
 } from '@features/memo/components/memo-list-loading-state';
 import { memoRepository, notebookRepository } from '@features/memo/services/memo-repository';
 import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
+import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
 import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
@@ -359,7 +360,7 @@ export function MemoList() {
     void memoRepository.delete(memo.id).then(() => {
       if (selectedMemo?.id === memo.id) {
         setSelectedMemo(null);
-        useDocumentStore.getState().clearDocument();
+        void clearWorkspaceDocument();
       }
       triggerRefresh();
     });
@@ -389,7 +390,7 @@ export function MemoList() {
       setSelectedNotebook(null);
       setSelectedMemo(null);
       setMemos([]);
-      useDocumentStore.getState().clearDocument();
+      void clearWorkspaceDocument();
       setSelectedTagId(null);
       setLoadedMemoListQueryKey(null);
       setIsMemoListLoading(false);
@@ -485,7 +486,7 @@ export function MemoList() {
           !latestDocumentState.activeMemoSession &&
           latestDocumentState.currentDocumentSource !== 'external'
         ) {
-          latestDocumentState.clearDocument();
+          void clearWorkspaceDocument();
         }
       } catch (error) {
         if (!cancelled) {
@@ -694,7 +695,9 @@ export function MemoList() {
     // 现在没有虚拟列表, 新 memo 永远渲染在列表最前 ── 入场动画交给
     // useMemoInsertAnimation.onListRendered 在 layout 阶段跑一次。
     prepareForInsert(newMemo.id);
-    handleMemoCreated(newMemo, { select: shouldSelectNewMemo });
+    // Opening is a workspace navigation transaction. Leave selection to the
+    // facade so a failed document open can restore the previous memo.
+    handleMemoCreated(newMemo, { select: false });
 
     if (shouldSelectNewMemo) {
       openMemoSession({ ...newMemo, isOpen: true }, selectedNotebook);

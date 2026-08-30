@@ -75,6 +75,8 @@ describe('memo store list loading', () => {
 
     let persisted = JSON.parse(localStorage.getItem('test-memo-store') ?? '{}');
     expect(persisted.state.activeFilter).toBe('agents');
+    expect(persisted.state.selectedMemoId).toBe('current');
+    expect(persisted.state.selectedMemo).toBeUndefined();
 
     useMemoStore.getState().setActiveFilter('color');
     persisted = JSON.parse(localStorage.getItem('test-memo-store') ?? '{}');

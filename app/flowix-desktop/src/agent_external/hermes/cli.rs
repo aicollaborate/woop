@@ -403,6 +403,7 @@ impl HermesCliManager {
                 ThreadChatMessage {
                     id: canonical_message_id(AGENT_TYPE, run_id, "user", &format!("user-{run_id}")),
                     role: "user".to_string(),
+                    message_type: None,
                     content: prompt.to_string(),
                     llm_content: Some(prompt.to_string()),
                     system_reminder_directory: message.system_reminder_directory.clone(),
@@ -440,6 +441,7 @@ impl HermesCliManager {
                 ThreadChatMessage {
                     id: canonical_message_id(AGENT_TYPE, run_id, "assistant", "stream"),
                     role: "assistant".to_string(),
+                    message_type: None,
                     content: text.to_string(),
                     llm_content: None,
                     system_reminder_directory: None,

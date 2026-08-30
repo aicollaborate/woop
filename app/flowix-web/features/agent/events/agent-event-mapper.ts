@@ -158,6 +158,17 @@ export function mapAgentChunkToEvent(
             : base.messageId,
         ),
       };
+    case "context_compaction":
+      return {
+        ...base,
+        kind: "context_compaction",
+        id: canonicalAgentMessageId(
+          base.agentType,
+          base.runId,
+          "system",
+          chunk.id,
+        ) ?? chunk.id,
+      };
     case "tool_call":
       return {
         ...base,

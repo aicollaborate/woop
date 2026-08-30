@@ -14,6 +14,10 @@ export {
   type ComposerImageControllerOptions,
 } from "./composer-image-controller";
 export {
+  ComposerAddMenuController,
+  type ComposerAddMenuControllerOptions,
+} from "./composer-add-menu-controller";
+export {
   createAgentComposerDom,
   disposeAgentComposerDom,
   type AgentComposerDomFactoryOptions,

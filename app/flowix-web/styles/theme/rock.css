@@ -27,6 +27,7 @@
 	--accent: oklch(0.95 0.006 var(--neutral-hue));
 
 	--border: oklch(0.946 0.006 var(--neutral-hue));
+	--border-popup: oklch(0.920 0.006 var(--neutral-hue));
 	--input: var(--border);
 	/* 分割线: 与 light / mist 同档 (L=0.932, 比 --border 深 0.014)
 	 * ── 跨主题切换时分割线权重一致, 在暖橄榄灰中性轴上 ΔL vs bg

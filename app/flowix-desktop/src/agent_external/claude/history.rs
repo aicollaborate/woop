@@ -516,6 +516,7 @@ fn base_message(id: String, role: &str, content: String, timestamp: String) -> C
     ChatMessage {
         id,
         role: role.to_string(),
+        message_type: None,
         content,
         llm_content: None,
         system_reminder_directory: None,

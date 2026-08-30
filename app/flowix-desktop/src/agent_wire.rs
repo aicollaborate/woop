@@ -249,6 +249,8 @@ pub enum AgentChunk {
     Text { thread_id: String, text: String },
     /// 推理模型的思考过程 (reasoning_content)
     Reasoning { thread_id: String, text: String },
+    /// Codex automatically compacted the conversation context.
+    ContextCompaction { thread_id: String, id: String },
     /// LLM 发出的工具调用
     ToolCall {
         thread_id: String,
@@ -321,6 +323,7 @@ impl AgentChunk {
             Self::UserMessage { .. } => "user_message",
             Self::Text { .. } => "text",
             Self::Reasoning { .. } => "reasoning",
+            Self::ContextCompaction { .. } => "context_compaction",
             Self::ToolCall { .. } => "tool_call",
             Self::ToolResult { .. } => "tool_result",
             Self::Error { .. } => "error",
@@ -336,6 +339,7 @@ impl AgentChunk {
             Self::UserMessage { thread_id, .. }
             | Self::Text { thread_id, .. }
             | Self::Reasoning { thread_id, .. }
+            | Self::ContextCompaction { thread_id, .. }
             | Self::ToolCall { thread_id, .. }
             | Self::ToolResult { thread_id, .. }
             | Self::Error { thread_id, .. }

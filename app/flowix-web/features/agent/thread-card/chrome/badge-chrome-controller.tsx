@@ -17,6 +17,7 @@ export interface AgentThreadCardBadgeChromeControllerOptions {
   badgeName: HTMLSpanElement;
   hoverCardMount: HTMLSpanElement;
   getThreadId: () => string | null;
+  getSessionId: () => string | null;
   getThreadState: () => ThreadState | undefined;
   getTypeKey: () => AgentTypeKey;
   getCwd: () => string | null;
@@ -29,10 +30,10 @@ export class AgentThreadCardBadgeChromeController {
   private readonly hoverCardMount: HTMLSpanElement;
   private readonly hoverCardRoot: Root;
   private readonly getThreadId: () => string | null;
+  private readonly getSessionId: () => string | null;
   private readonly getThreadState: () => ThreadState | undefined;
   private readonly getTypeKey: () => AgentTypeKey;
   private readonly getCwd: () => string | null;
-  private hoverCardTimer: ReturnType<typeof setInterval> | null = null;
   private hoverCardPositionFrame: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private disposed = false;
@@ -52,6 +53,7 @@ export class AgentThreadCardBadgeChromeController {
     this.hoverCardMount = options.hoverCardMount;
     this.hoverCardRoot = createRoot(options.hoverCardMount);
     this.getThreadId = options.getThreadId;
+    this.getSessionId = options.getSessionId;
     this.getThreadState = options.getThreadState;
     this.getTypeKey = options.getTypeKey;
     this.getCwd = options.getCwd;
@@ -70,6 +72,10 @@ export class AgentThreadCardBadgeChromeController {
     );
     this.badgeName.textContent = type.name;
     this.syncRuntimeState();
+    // Conversation instances may hydrate after the NodeView is mounted. Repaint
+    // the already-mounted React tree so the persisted session id becomes
+    // visible without waiting for another hover or a network lookup.
+    this.renderHoverCardContent();
   }
 
   syncRuntimeState(): void {
@@ -133,7 +139,6 @@ export class AgentThreadCardBadgeChromeController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.stopHoverCardTimer();
     window.removeEventListener("resize", this.handleViewportChange);
     document.removeEventListener("scroll", this.handleViewportChange, true);
     this.resizeObserver?.disconnect();
@@ -151,33 +156,12 @@ export class AgentThreadCardBadgeChromeController {
     });
   }
 
-  private startHoverCardTimer(): void {
-    if (this.hoverCardTimer !== null) return;
-    this.hoverCardTimer = setInterval(() => {
-      this.renderHoverCardContent();
-    }, 1000);
-  }
-
-  private handleHoverCardOpenChange(open: boolean): void {
-    if (!open) {
-      this.stopHoverCardTimer();
-      return;
-    }
-    this.renderHoverCardContent();
-    this.startHoverCardTimer();
-  }
-
-  private stopHoverCardTimer(): void {
-    if (this.hoverCardTimer === null) return;
-    clearInterval(this.hoverCardTimer);
-    this.hoverCardTimer = null;
-  }
-
   private renderHoverCardContent(): void {
     if (this.disposed) return;
     const threadId = this.getThreadId() ?? "";
-    const externalThreadId =
-      getResolvedExternalSessionId(threadId) ?? threadId;
+    const sessionId =
+      this.getSessionId() ??
+      (threadId ? getResolvedExternalSessionId(threadId) : null);
     const typeKey = this.getTypeKey();
     const { model, usage } =
       computeAgentThreadCardBadgeData({
@@ -189,17 +173,21 @@ export class AgentThreadCardBadgeChromeController {
       });
     this.hoverCardRoot.render(
       React.createElement(BadgeHoverCard, {
-        threadId: externalThreadId,
+        threadId: threadId || undefined,
+        sessionId: sessionId ?? undefined,
         model,
         usage,
-        // threadId 在请求器内部按调用时读取, 不捕获本次 render 的快照。
-        onRequestRuntimeInfo: createRuntimeInfoRequester(typeKey, () =>
-          this.getThreadId(),
+        onRequestRuntimeInfo: createRuntimeInfoRequester(
+          typeKey,
+          () => this.getThreadId(),
+          () =>
+            this.getSessionId() ??
+            (this.getThreadId()
+              ? getResolvedExternalSessionId(this.getThreadId()!)
+              : null),
         ),
         codex: typeKey === "codex",
         cwd: this.getCwd() ?? undefined,
-        onOpenChange: (open: boolean) =>
-          this.handleHoverCardOpenChange(open),
       }),
     );
   }

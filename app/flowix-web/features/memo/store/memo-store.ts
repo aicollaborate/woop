@@ -142,7 +142,11 @@ export interface MemoStore {
   notebooksInitialized: boolean;
   // Selection state
   selectedMemo: MemoItem | null;
+  /** Stable persisted identity; the full entity is hydrated from backend data. */
+  selectedMemoId: string | null;
   selectedNotebook: Notebook | null;
+  /** Stable persisted identity; the full entity is hydrated from backend data. */
+  selectedNotebookId: string | null;
   // UI filter/sort
   activeFilter: ExtendedFilterType;
   activePluginId: string | null;
@@ -243,7 +247,9 @@ export const useMemoStore = create<MemoStore>()(
       notebooks: [],
       notebooksInitialized: false,
       selectedMemo: null,
+      selectedMemoId: null,
       selectedNotebook: null,
+      selectedNotebookId: null,
       activeFilter: 'all',
       activePluginId: null,
       activeFileBrowserPath: null,
@@ -254,19 +260,36 @@ export const useMemoStore = create<MemoStore>()(
 
       setMemos: (memos) => set({ memos }),
       setNotebooks: (notebooks) => set((state) => {
-        const selectedNotebook = state.selectedNotebook
-          ? notebooks.find((notebook) => notebook.id === state.selectedNotebook?.id) ?? state.selectedNotebook
-          : state.selectedNotebook;
-        return { notebooks, selectedNotebook, notebooksInitialized: true };
+        // Prefer the persisted id. The object fallback keeps tests and
+        // pre-migration in-memory callers compatible while the first backend
+        // snapshot is being applied.
+        const selectedNotebookId = state.selectedNotebookId
+          ?? state.selectedNotebook?.id
+          ?? null;
+        const selectedNotebook = selectedNotebookId
+          ? notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? null
+          : null;
+        return {
+          notebooks,
+          selectedNotebook,
+          selectedNotebookId: selectedNotebook?.id ?? null,
+          notebooksInitialized: true,
+        };
       }),
-      setSelectedMemo: (memo) => set({ selectedMemo: memo }),
+      setSelectedMemo: (memo) => set({
+        selectedMemo: memo,
+        selectedMemoId: memo?.id ?? null,
+      }),
       setSelectedNotebook: (notebook) => {
-        const currentNotebookId = get().selectedNotebook?.id ?? null;
+        const currentNotebookId = get().selectedNotebookId
+          ?? get().selectedNotebook?.id
+          ?? null;
         const nextNotebookId = notebook?.id ?? null;
         if (currentNotebookId !== nextNotebookId) {
           useTagStore.getState().setSelectedTagId(null);
           set({
             selectedNotebook: notebook,
+            selectedNotebookId: nextNotebookId,
             activeFilter: 'all',
             activePluginId: null,
             activeFileBrowserPath: null,
@@ -274,12 +297,11 @@ export const useMemoStore = create<MemoStore>()(
           });
           return;
         }
-        set({ selectedNotebook: notebook });
+        set({ selectedNotebook: notebook, selectedNotebookId: nextNotebookId });
       },
       // 中间列五种入口互斥单选 ── 全集: 全部 / 对话 / 待办 / 标签 /
       // 文件夹浏览。每条 setter 都把其他状态归位, 避免点标签时文件树还
-      // 霸着中间列。null 时按目标值回退 (activeFilter 的 null 暂未出现,
-      // 留 API 留作未来 reset 入口用)。
+      // 霸着中间列。
       setActiveFilter: (filter) => {
         const previous = get();
         if (previous.activeFilter === filter && previous.activeFileBrowserPath === null) return;
@@ -288,9 +310,6 @@ export const useMemoStore = create<MemoStore>()(
           activePluginId: null,
           activeFileBrowserPath: null,
           activeFileBrowserDocument: null,
-          // 离开 'tagged' 时清掉标签选中, 避免下次再切回 'tagged' 时拿
-          // 到陈旧 tagId (此前由调用方手动清, 现在统一收敛)。
-          ...(filter !== 'tagged' ? {} : {}),
         });
         if (filter !== 'tagged') {
           useTagStore.getState().setSelectedTagId(null);
@@ -394,8 +413,19 @@ export const useMemoStore = create<MemoStore>()(
         // todos/tags), so do not derive document selection from this query.
         // Explicit actions such as opening, deleting, or changing notebook
         // still update `selectedMemo` through their own store actions.
+        const restoredMemo = state.selectedMemoId
+          ? nextMemos.find((memo) => memo.id === state.selectedMemoId)
+          : null;
         set({
           memos: nextMemos,
+          ...(restoredMemo
+            ? {
+                selectedMemo: {
+                  ...restoredMemo,
+                  isOpen: state.selectedMemo?.isOpen,
+                },
+              }
+            : {}),
         });
       },
 
@@ -458,6 +488,7 @@ export const useMemoStore = create<MemoStore>()(
           set({
             memos: state.memos.filter(m => m.id !== id),
             selectedMemo: state.selectedMemo?.id === id ? null : state.selectedMemo,
+            selectedMemoId: state.selectedMemoId === id ? null : state.selectedMemoId,
           });
         }
         return success;
@@ -500,6 +531,7 @@ export const useMemoStore = create<MemoStore>()(
             state.activeFilter === 'tagged'
               ? state.memos
               : upsertSortedMemo(state.memos, memo, state.activeFilter, state.activeSort),
+          selectedMemoId: options?.select ? memo.id : state.selectedMemoId,
           selectedMemo:
             options?.select
               ? { ...memo, isOpen: true }
@@ -532,6 +564,7 @@ export const useMemoStore = create<MemoStore>()(
           memos: state.memos.filter((m) => m.id !== id),
           selectedMemo:
             state.selectedMemo?.id === id ? null : state.selectedMemo,
+          selectedMemoId: state.selectedMemoId === id ? null : state.selectedMemoId,
         }));
         // Deleted 不 bump refreshTrigger — 列表已经同步, 没有需要重拉的派生字段
       },
@@ -539,8 +572,10 @@ export const useMemoStore = create<MemoStore>()(
     {
       name: STORAGE_KEYS.MEMO,
       partialize: (state) => ({
-        selectedNotebook: state.selectedNotebook,
-        selectedMemo: state.selectedMemo,
+        // Persist identities only. Notebook/Memo entities are backend data
+        // and may be renamed, deleted, or updated while the app is closed.
+        selectedNotebookId: state.selectedNotebookId ?? state.selectedNotebook?.id ?? null,
+        selectedMemoId: state.selectedMemoId ?? state.selectedMemo?.id ?? null,
         // 侧边栏入口要和中间列一起恢复。中间列的颜色 / 时间筛选不属于
         // 侧边栏导航，因此恢复时归位到“全部”。
         activeFilter: isSidebarNavigationFilter(state.activeFilter)
@@ -549,6 +584,26 @@ export const useMemoStore = create<MemoStore>()(
         activeFileBrowserPath: state.activeFileBrowserPath,
         activeFileBrowserDocument: state.activeFileBrowserDocument,
       }),
+      // Migrate the old persisted shape, which stored full selected entities.
+      // Do not rehydrate those stale objects into runtime state.
+      merge: (persisted, current) => {
+        const legacy = persisted as Partial<MemoStore> & {
+          selectedNotebook?: Notebook | null;
+          selectedMemo?: MemoItem | null;
+        };
+        return {
+          ...current,
+          ...legacy,
+          selectedNotebook: null,
+          selectedMemo: null,
+          selectedNotebookId: legacy.selectedNotebookId
+            ?? legacy.selectedNotebook?.id
+            ?? null,
+          selectedMemoId: legacy.selectedMemoId
+            ?? legacy.selectedMemo?.id
+            ?? null,
+        };
+      },
     }
   )
 );

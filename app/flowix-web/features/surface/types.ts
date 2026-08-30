@@ -6,6 +6,7 @@ import type { PluginWorkbench } from '@features/plugin/plugin-workbench';
 import type { PluginArtifactRendererId } from '@features/plugin/plugin-note';
 import type { MemoItem } from '@/types/memo-item';
 import type { PluginDescriptor } from '@platform/tauri/client';
+import type { WorkspaceNavigationState } from '@features/workspace/store/workspace-target';
 
 export type ThirdColumnSurfaceCapability =
   | 'edit'
@@ -96,7 +97,9 @@ export type ThirdColumnSurface =
 
 export type ThirdColumnSurfaceKind = ThirdColumnSurface['kind'];
 
-export interface ResolvableDocumentSurface {
+export interface DocumentSurfaceContext {
+  /** Identity captured from the document session, independent of props. */
+  identity: DocumentSurfaceIdentity;
   memo: MemoItem | null;
   markdown: MarkdownSurface;
   artifact?: {
@@ -105,15 +108,60 @@ export interface ResolvableDocumentSurface {
   };
 }
 
-export interface ResolveThirdColumnSurfaceInput {
-  webUrl?: string | null;
-  document?: ResolvableDocumentSurface | null;
-  pluginWorkbench?: {
-    plugin: PluginDescriptor;
-    notebookPath: string | undefined;
-    currentNotePath: string | null;
-    currentNoteContent: string;
-  } | null;
-  agentConversationId?: string | null;
+export type DocumentSurfaceIdentity =
+  | {
+      kind: 'memo';
+      memoId: string;
+      path: string;
+      notebookId: string | null;
+      notebookPath: string | null;
+      transitionId: number | null;
+    }
+  | {
+      kind: 'external';
+      path: string;
+      scopePath: string | null;
+      transitionId: number | null;
+    };
+
+export interface PluginWorkbenchContext {
+  plugin: PluginDescriptor;
+  notebookPath: string | undefined;
+  currentNotePath: string | null;
+  currentNoteContent: string;
+}
+
+export interface ResolveWorkspaceSurfaceInput {
+  navigation: WorkspaceNavigationState;
+  document?: DocumentSurfaceContext | null;
+  pluginWorkbench?: PluginWorkbenchContext | null;
   emptyMessage: string;
 }
+
+export interface ResolveTabSurfaceInput {
+  target: TabSurfaceTarget;
+}
+
+export type TabDocumentTarget =
+  | {
+      kind: 'memo';
+      memoId: string;
+      path: string;
+      notebookId: string;
+      notebookPath: string;
+    }
+  | {
+      kind: 'external';
+      path: string;
+      scopePath: string | null;
+    };
+
+export type TabSurfaceTarget =
+  | { kind: 'web'; url: string }
+  | { kind: 'document'; target: TabDocumentTarget; document: DocumentSurfaceContext }
+  | {
+      kind: 'plugin-workbench';
+      pluginWorkbench: PluginWorkbenchContext;
+    }
+  | { kind: 'agent-conversation'; instanceId: string }
+  | { kind: 'empty'; message: string };

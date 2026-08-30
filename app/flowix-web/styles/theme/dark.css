@@ -37,6 +37,7 @@
 	--accent: oklch(0.310 0.022 var(--neutral-hue));
 
 	--border: oklch(0.300 0.014 var(--neutral-hue));
+	--border-popup: oklch(0.340 0.014 var(--neutral-hue));
 	--input: var(--border);
 	/* 分割线: 越过 --border 一档 (但比亮主题更克制) ── 直接 oklch
 	 * 直定义, L=0.330 (比 --border 0.300 再亮 0.030), ΔL vs bg

@@ -9,6 +9,7 @@ const AGENT_CHUNK_KINDS = new Set<AgentChunk["kind"]>([
   "stream_start",
   "text",
   "reasoning",
+  "context_compaction",
   "tool_call",
   "tool_result",
   "error",

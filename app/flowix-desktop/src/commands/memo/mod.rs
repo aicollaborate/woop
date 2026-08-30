@@ -13,7 +13,7 @@
 //! - [`reads`]   鈥?read-only IPC: list / search / get_memos / read_document /
 //!   mention / todo metadata / version listing.
 //! - [`creates`] 鈥?create / import / template commands, plus single-field
-//!   updates (favorite, unfavorite, set_colors, finalize_filename).
+//!   updates (favorite, unfavorite, set_colors).
 //! - [`versions`] 鈥?memo version history (list / read / create / restore).
 //! - [`deletes`] 鈥?delete commands.
 //!

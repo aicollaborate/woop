@@ -14,7 +14,7 @@
   left: 0;
   z-index: 1050;
   width: 208px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 8px;
   background: var(--card);
   color: var(--agent-foreground);
@@ -68,9 +68,9 @@
  * `.agent-thread-card__composer-doc-search-list` 承担滚动, 让外层
  * 跟随内容自然高, 弹窗 pop-in 动画 (fade + zoom-in) 不被裁切。
  *
- * 旧实现 (accessPopover → 「角色」按钮 → typeSettingsPopover 二级展开)
- * 的 CSS 已删除 ── 现在走单级方案, 点击 composerRoleIcon 直接出这个
- * 弹窗。 */
+ * 现在由 composer add popover 作为一级菜单，悬停「添加笔记」后把本弹窗
+ * 放到右侧作为二级菜单；直接使用 role picker 的旧入口仍由 controller
+ * 保留，便于兼容其它调用方。 */
 .agent-thread-card__composer-role-popover {
   position: fixed;
   top: 0;
@@ -78,7 +78,7 @@
   z-index: 1050;
   width: 280px;
   padding: 0.25rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 8px;
   background: var(--card);
   color: var(--agent-foreground);
@@ -94,6 +94,32 @@
   transition:
     opacity 120ms ease,
     transform 120ms ease;
+}
+
+.agent-thread-card__composer-add-popover {
+  position: fixed;
+  z-index: 1050;
+  width: 168px;
+  padding: 0.25rem;
+  border: 1px solid var(--border-popup);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--agent-foreground);
+  box-shadow: 0 10px 30px color-mix(in oklch, var(--foreground) 16%, transparent);
+}
+
+.agent-thread-card__composer-add-popover[hidden] { display: none; }
+
+.agent-thread-card__composer-add-item {
+  /* Layout, type, color and states come from the settings item above. */
+  gap: 8px;
+}
+
+.agent-thread-card__composer-add-chevron {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
 }
 
 .agent-thread-card__composer-role-popover:not([hidden]) {

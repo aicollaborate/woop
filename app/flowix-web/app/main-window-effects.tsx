@@ -29,6 +29,11 @@ import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-li
 import { createLogger } from '@/lib/logger';
 import { restoreAgentConversationWorkspace } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
+import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
+import {
+  clearWorkspaceDocument,
+  replaceActiveMemoPath,
+} from '@features/workspace/use-cases/workspace-navigation';
 
 const logger = createLogger('main-window-effects');
 
@@ -77,16 +82,28 @@ export function MainWindowEffects() {
         logger.warn('restore workspace failed', { error });
       });
 
-    let previousSelectedMemoId = useMemoStore.getState().selectedMemo?.id ?? null;
+    let previousSelectedMemoId = useMemoStore.getState().selectedMemoId
+      ?? useMemoStore.getState().selectedMemo?.id
+      ?? null;
     return useMemoStore.subscribe((state) => {
-      const selectedMemoId = state.selectedMemo?.id ?? null;
+      const selectedMemoId = state.selectedMemoId ?? state.selectedMemo?.id ?? null;
       if (selectedMemoId === previousSelectedMemoId) return;
       previousSelectedMemoId = selectedMemoId;
       if (selectedMemoId !== null) return;
 
+      // The navigation facade records the failed request before restoring the
+      // previous selection. Without this guard the legacy selection listener
+      // would immediately enqueue a competing clear and erase the failure.
+      const navigationPhase = useWorkspaceStore.getState().navigation.phase;
+      if (navigationPhase === 'loading' || navigationPhase === 'failed') return;
+
       const documentState = useDocumentStore.getState();
       if (documentState.currentDocumentSource !== 'external') {
-        void documentState.clearDocument();
+        // Plugin workbenches deliberately clear memo selection as part of
+        // their navigation transaction. Do not issue a competing clear after
+        // the workbench target has committed.
+        if (useWorkspaceStore.getState().navigation.target.kind === 'plugin-workbench') return;
+        void clearWorkspaceDocument();
       }
     });
   }, []);
@@ -122,7 +139,7 @@ export function MainWindowEffects() {
           handleTagsRenamed,
           handleTagsDeleted,
           replaceActiveMemoPath: (memoId, path) => {
-            useDocumentStore.getState().replaceActiveMemoPath(memoId, path);
+            replaceActiveMemoPath(memoId, path);
           },
           refreshSelectedNotebookMetadata,
           refreshBackgroundTodoCount: (notebookId) => {

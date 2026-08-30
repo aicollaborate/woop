@@ -3,7 +3,7 @@ import type { WindowTab } from '@platform/tauri/client';
 import { DocumentContainer } from '@features/document/components/document-container';
 import {
   ThirdColumnSurfaceHost,
-  resolveThirdColumnSurface,
+  resolveTabSurface,
   type ThirdColumnSurface,
 } from '@features/surface';
 import type { MemoItem } from '@/types/memo-item';
@@ -26,41 +26,73 @@ export function resolveTabContentSurface({
   memoContentProps,
 }: ResolveTabContentSurfaceInput) {
   if (tab.target.kind === 'web') {
-    return resolveThirdColumnSurface({
-      webUrl: tab.target.url,
-      emptyMessage: '',
+    return resolveTabSurface({
+      target: { kind: 'web', url: tab.target.url },
     });
   }
 
   const isExternal = tab.target.kind === 'external_markdown';
   const memoId = tab.target.kind === 'memo' ? tab.target.memoId : null;
-  return resolveThirdColumnSurface({
-    document: {
-      memo,
-      markdown: {
-        kind: 'markdown',
-        instanceKey: contentKey,
-        props: {
-          ...memoContentProps,
-          filePath: memoContentProps.filePath || tab.target.filePath,
-          memoId,
-          notebookId: tab.target.kind === 'memo'
-            ? memoContentProps.notebookId ?? tab.target.notebookId
-            : null,
-          notebookPath: tab.target.kind === 'memo'
-            ? memoContentProps.notebookPath ?? tab.target.notebookPath
-            : null,
-          isExternalDocument: isExternal,
-        },
-      },
-      artifact: memoId
+  const documentPath = memoContentProps.filePath;
+  const notebookId = tab.target.kind === 'memo'
+    ? memoContentProps.notebookId ?? tab.target.notebookId
+    : null;
+  const notebookPath = tab.target.kind === 'memo'
+    ? memoContentProps.notebookPath ?? tab.target.notebookPath
+    : null;
+  return resolveTabSurface({
+    target: {
+      kind: 'document',
+      target: tab.target.kind === 'memo'
         ? {
-            memoId,
-            transitionId: memoContentProps.transitionId ?? undefined,
+            kind: 'memo',
+            memoId: tab.target.memoId,
+            path: tab.target.filePath,
+            notebookId: tab.target.notebookId,
+            notebookPath: tab.target.notebookPath,
           }
-        : undefined,
+        : {
+            kind: 'external',
+            path: tab.target.filePath,
+            scopePath: null,
+          },
+      document: {
+        identity: memoId
+          ? {
+              kind: 'memo' as const,
+              memoId,
+              path: documentPath,
+              notebookId,
+              notebookPath,
+              transitionId: memoContentProps.transitionId ?? null,
+            }
+          : {
+              kind: 'external' as const,
+              path: documentPath,
+              scopePath: memoContentProps.externalScopePath ?? null,
+              transitionId: memoContentProps.transitionId ?? null,
+            },
+        memo,
+        markdown: {
+          kind: 'markdown',
+          instanceKey: contentKey,
+          props: {
+            ...memoContentProps,
+            filePath: documentPath,
+            memoId,
+            notebookId,
+            notebookPath,
+            isExternalDocument: isExternal,
+          },
+        },
+        artifact: memoId
+          ? {
+              memoId,
+              transitionId: memoContentProps.transitionId ?? undefined,
+            }
+          : undefined,
+      },
     },
-    emptyMessage: '',
   });
 }
 

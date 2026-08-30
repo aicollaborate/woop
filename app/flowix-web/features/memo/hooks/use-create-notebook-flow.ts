@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { toast } from '@/lib/toast';
-import { useDocumentStore } from '@features/document';
 import { useI18n } from '@/lib/i18n';
 import { notebookCreateErrorMessage } from '@platform/tauri/errors';
 import { listenToNotebookImportStatus } from '@platform/tauri/client';
@@ -11,6 +10,7 @@ import {
   type NotebookCreationState,
 } from '@features/memo/hooks/create-notebook-flow-state';
 import { useMemoStore, useTagStore, type Notebook } from '@features/memo/store';
+import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
 
 const NOTEBOOK_CREATE_SCAN_TIMEOUT_MS = 30_000;
 
@@ -108,7 +108,7 @@ export function useCreateNotebookFlow({
         memoStore.setSelectedNotebook(nextNotebook);
         memoStore.setSelectedMemo(null);
         memoStore.setMemos([]);
-        useDocumentStore.getState().clearDocument();
+        void clearWorkspaceDocument();
         useTagStore.getState().setSelectedTagId(null);
         onMemoListQueryReset();
         onMemoListLoadingChange(true);

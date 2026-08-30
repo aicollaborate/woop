@@ -445,6 +445,9 @@ export function createAgentThreadCardMessageElement(options: {
     messageView = createAgentMessageViewModel(message, language);
     item = document.createElement("div");
     item.className = `agent-thread-card__message agent-thread-card__message--${message.role}`;
+    if (message.messageType === "context-compaction") {
+      item.classList.add("agent-thread-card__message--context-compaction");
+    }
   } catch (err) {
     logger.error("Failed to prepare message", {
       error: err,
@@ -583,6 +586,16 @@ export function createAgentThreadCardMessageElement(options: {
       });
 
       item.append(header, body);
+    } else if (message.role === "system") {
+      const content = document.createElement("div");
+      content.className = "agent-thread-card__message-content";
+      if (message.messageType === "context-compaction") {
+        content.className = "agent-thread-card__message-context-compaction";
+        content.textContent = translate(language, "agent.contextCompaction");
+      } else {
+        content.textContent = messageView.visibleContent;
+      }
+      item.append(content);
     } else {
       const content = document.createElement("div");
       content.className = "agent-thread-card__message-content";

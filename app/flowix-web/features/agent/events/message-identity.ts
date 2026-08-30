@@ -11,7 +11,7 @@ const CANONICAL_EXTERNAL_AGENTS = new Set<AgentTypeKey>([
 export function canonicalAgentMessageId(
   agentType: AgentTypeKey,
   runId: string,
-  role: "user" | "assistant" | "reasoning" | "tool" | "tool-call" | "error",
+  role: "user" | "assistant" | "reasoning" | "system" | "tool" | "tool-call" | "error",
   sourceMessageId: string | undefined,
 ): string | undefined {
   if (!sourceMessageId || !CANONICAL_EXTERNAL_AGENTS.has(agentType)) {

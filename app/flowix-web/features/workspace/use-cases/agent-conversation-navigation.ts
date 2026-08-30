@@ -1,7 +1,7 @@
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
-import { useDocumentStore } from '@features/document/store/document-store';
 import { useMemoStore } from '@features/memo/store/memo-store';
 import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
+import { closeAgentTarget, openAgentTarget } from './workspace-navigation';
 
 export async function selectAndOpenAgentConversation(
   instanceId: string,
@@ -9,12 +9,13 @@ export async function selectAndOpenAgentConversation(
 ): Promise<void> {
   const normalized = instanceId.trim();
   if (!normalized) return;
-  await useDocumentStore.getState().openAgentConversation(normalized, options);
+
+  await openAgentTarget(normalized, options);
   useWorkspaceRestoreStore.getState().selectAgentConversation(normalized);
 }
 
 export function closeAgentConversationDetail(): void {
-  useDocumentStore.getState().closeAgentConversation();
+  closeAgentTarget();
   useWorkspaceRestoreStore.getState().closeAgentConversationDetail();
 }
 

@@ -3,6 +3,7 @@ import { getToolLabel } from "@features/agent/message/tools";
 import { stripSystemBlock } from "@features/agent/message/system";
 import { isEmptyAssistantMessage } from "@features/agent/message/empty";
 import {
+  extractStandaloneAgentErrorMessage,
   formatAgentErrorMessage,
   formatDeepSeekHarnessReconnectError,
   isDeepSeekHarnessReconnectError,
@@ -123,7 +124,8 @@ function formatExternalAgentErrorMessage(
   language: AppLanguage,
 ): string {
   const upstream = details?.upstreamMessage?.trim();
-  const body = upstream || stripCliFailureWrapper(content.trim());
+  const rawBody = upstream || stripCliFailureWrapper(content.trim());
+  const body = extractStandaloneAgentErrorMessage(rawBody) || rawBody;
   if (!body) return content;
 
   const diagnostics: string[] = [];

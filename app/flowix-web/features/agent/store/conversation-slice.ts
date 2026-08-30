@@ -92,7 +92,7 @@ function normalizeTitle(title: string | null | undefined): string {
 }
 
 export function persistConversationInstance(instance: AgentConversationInstance): void {
-  const { title, ...persisted } = instance;
+  const { title, sessionId: _sessionId, ...persisted } = instance;
   enqueueInstancePersistence(
     instance.instanceId,
     () => agentClient.upsertConversationInstance({
@@ -110,7 +110,7 @@ export function persistConversationInstance(instance: AgentConversationInstance)
 async function persistConversationInstanceAndWait(
   instance: AgentConversationInstance,
 ): Promise<AgentConversationInstance> {
-  const { title, ...persisted } = instance;
+  const { title, sessionId: _sessionId, ...persisted } = instance;
   const backend = await queueInstancePersistence(instance.instanceId, () =>
     agentClient.upsertConversationInstance({
       ...persisted,
@@ -320,6 +320,7 @@ export function createConversationSlice(
             ? normalizeTitle(patch.title)
             : existing?.title ?? "",
         threadId: patch.threadId ?? existing?.threadId ?? null,
+        sessionId: existing?.sessionId ?? null,
         runtimeConfig:
           patch.runtimeConfig !== undefined
             ? patch.runtimeConfig
@@ -384,6 +385,7 @@ export function createConversationSlice(
         agentType: patch.agentType,
         title: existing?.title || normalizeTitle(patch.title),
         threadId: existing?.threadId ?? patch.threadId,
+        sessionId: existing?.sessionId ?? null,
         runtimeConfig: existing?.runtimeConfig ?? patch.runtimeConfig ?? null,
         source: patch.source,
         role: patch.role ?? existing?.role,
@@ -502,6 +504,19 @@ export function createConversationSlice(
         runId: `${localThreadId}-session-resolved`,
         timestamp: Date.now(),
       });
+      // sessionId is a shared provider identity used by every badge surface.
+      // Keep it in the in-memory conversation instance as soon as the runtime
+      // resolves it; the backend remains the source of truth and persistence
+      // still deliberately omits this derived field.
+      if (instance && instance.sessionId !== sessionId) {
+        get().setConversationRegistry((registry) => ({
+          ...registry,
+          instances: {
+            ...registry.instances,
+            [instance.instanceId]: { ...instance, sessionId },
+          },
+        }));
+      }
       return instance?.instanceId ?? null;
     },
     findByThreadId: (threadId) =>

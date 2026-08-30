@@ -191,8 +191,3 @@ export function applyLoadedDocumentContent(
 export function setActiveDocumentPath(identity: DocumentIdentity | null, path: string | null): void {
   setCurrentDocument(identity, path);
 }
-
-// moveDocumentBuffer 取消 ── buffer-registry 双 Map 索引下, 物理 rename
-// 期间 buffer 不会换出, 调用方 (useMemoEvents.syncActiveDocumentPathIfRenamed
-// / useDocumentFinalize.finalizeMemoRename) 改为 IPC 写盘后只切
-// active path, 不再需要搬 buffer。

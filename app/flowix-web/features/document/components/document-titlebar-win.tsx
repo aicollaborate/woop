@@ -11,6 +11,7 @@ import {
   DOCUMENT_TITLEBAR_ICON_BUTTON_WIN,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
+import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
 
 const ICON_BTN = DOCUMENT_TITLEBAR_ICON_BUTTON_WIN;
 
@@ -59,10 +60,9 @@ export function DocumentTitlebarWin({
       : 'empty';
 
   return (
-    <div
-      data-tauri-drag-region
-      data-tab-window-header={windowTabs ? '' : undefined}
-      className="h-9 shrink-0 pl-2 z-[50] flex items-center pr-[126px]"
+    <ThirdColumnTitlebarShell
+      isWindows
+      dataTabWindowHeader={Boolean(windowTabs)}
       style={{ backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
     >
       <div className="flex shrink-0 items-center gap-1">
@@ -74,7 +74,7 @@ export function DocumentTitlebarWin({
             onMouseLeave={onPreviewTriggerLeave}
             aria-label={t("document.titlebar.showSidebar")}
             title={t("document.titlebar.showSidebarTooltip")}
-            className="w-7 h-7 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-[opacity,transform,color] duration-[400ms] animate-in fade-in zoom-in-95"
+            className="w-5 h-5 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-[opacity,transform,color] duration-[400ms] animate-in fade-in zoom-in-95"
           >
             <SidebarToggleIcon className="w-4 h-4" variant="collapsed" />
           </button>
@@ -144,6 +144,6 @@ export function DocumentTitlebarWin({
           />
         )}
       </div>
-    </div>
+    </ThirdColumnTitlebarShell>
   );
 }

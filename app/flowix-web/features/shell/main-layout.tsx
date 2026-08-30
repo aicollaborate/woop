@@ -58,11 +58,22 @@ import { FloatingPrompt, FloatingPromptStack } from '@features/shell/components/
 import {
   ThirdColumnSurfaceHost,
   getThirdColumnSurfaceDefinition,
-  resolveThirdColumnSurface,
+  resolveWorkspaceSurface,
   surfaceSupports,
 } from '@features/surface';
 import type { PluginDescriptor } from '@platform/tauri/client';
 import { closeAgentConversationDetail } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
+import {
+  clearPluginWorkbenchTarget,
+  closePluginWorkbench,
+  dismissNavigationFailure,
+  flushWorkspaceDocument,
+  openPluginWorkbench,
+  reconcileDeletedNotebook,
+  retryLastNavigation,
+  selectNotebook,
+} from '@features/workspace/use-cases/workspace-navigation';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 238;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
@@ -174,9 +185,6 @@ export function MainLayout() {
       setActiveFilter: s.setActiveFilter,
       setActivePluginId: s.setActivePluginId,
       loadMemos: s.loadMemos,
-      setSelectedMemo: s.setSelectedMemo,
-      setSelectedNotebook: s.setSelectedNotebook,
-      setNotebooks: s.setNotebooks,
       triggerRefresh: s.triggerRefresh,
       updateMemoMeta: s.updateMemoMeta,
       setMemoColors: s.setMemoColors,
@@ -186,9 +194,6 @@ export function MainLayout() {
     setActiveFilter,
     setActivePluginId,
     loadMemos,
-    setSelectedMemo,
-    setSelectedNotebook,
-    setNotebooks,
     triggerRefresh,
     updateMemoMeta,
     setMemoColors,
@@ -201,7 +206,6 @@ export function MainLayout() {
     activeMemoSession,
     activeExternalSession,
     isDocumentTransitioning,
-    clearDocument,
   } = useDocumentStore(
     useShallow((s) => ({
       currentDocumentPath: s.currentDocumentPath,
@@ -210,7 +214,6 @@ export function MainLayout() {
       activeMemoSession: s.activeMemoSession,
       activeExternalSession: s.activeExternalSession,
       isDocumentTransitioning: s.isDocumentTransitioning,
-      clearDocument: s.clearDocument,
     })),
   );
 
@@ -251,7 +254,11 @@ export function MainLayout() {
   ));
   const [notebookToDelete, setNotebookToDelete] = useState<Notebook | null>(null);
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
-  const [activePlugin, setActivePlugin] = useState<PluginDescriptor | null>(null);
+  const navigationState = useWorkspaceStore((state) => state.navigation);
+  const workspaceTarget = navigationState.target;
+  const activePlugin = workspaceTarget.kind === 'plugin-workbench'
+    ? workspaceTarget.plugin
+    : null;
   const [noteNavigationPanelWidth, setNoteNavigationPanelWidth] = useState(NOTE_NAVIGATION_PANEL_WIDTH);
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
   const currentDocumentContentRef = useRef('');
@@ -336,6 +343,11 @@ export function MainLayout() {
   }, [isAgentConversationView]);
 
   useEffect(() => {
+    // Notebook changes initiated by the navigation facade already update the
+    // backend before publishing the new selection. Waiting here avoids a
+    // duplicate IPC call and, more importantly, keeps the facade's rollback
+    // decision authoritative.
+    if (useWorkspaceStore.getState().navigation.phase === 'loading') return;
     const notebookId = selectedNotebook?.id ?? null;
     if (syncedNotebookIdRef.current === notebookId) return;
     syncedNotebookIdRef.current = notebookId;
@@ -473,34 +485,31 @@ export function MainLayout() {
   // workbench, so only that branch clears its document when closed.
   const closePluginSurface = useCallback(() => {
     const hadWorkbench = activePlugin !== null;
-    setActivePlugin(null);
-    setActivePluginId(null);
-    if (!hadWorkbench) return;
-    setSelectedMemo(null);
-    void clearDocument().catch((error) => {
+    if (!hadWorkbench) {
+      setActivePluginId(null);
+      return;
+    }
+    void closePluginWorkbench().catch((error) => {
       logger.warn('clear plugin document failed', { error });
     });
-  }, [activePlugin, clearDocument, setActivePluginId, setSelectedMemo]);
+  }, [activePlugin, setActivePluginId]);
 
   useEffect(() => {
     if (!activePlugin) return;
+    // An explicit close/switch is already being handled by the coordinator.
+    // In particular, a save refusal enters `error` while keeping the old
+    // target visible; retrying from this reconciliation effect would create a
+    // tight loop and hide the recoverable error.
+    if (navigationState.phase !== 'committed') return;
     if (activeFilter === 'all' && activePluginId === activePlugin.manifest.id) return;
     closePluginSurface();
-  }, [activeFilter, activePlugin, activePluginId, closePluginSurface]);
+  }, [activeFilter, activePlugin, activePluginId, closePluginSurface, navigationState.phase]);
 
   const currentMemo = currentDocumentPath && currentDocumentSource === 'memo' && activeMemoSession
     ? memos.find((memo) => memo.id === activeMemoSession.memoId)
       ?? (selectedMemo?.id === activeMemoSession.memoId ? selectedMemo : null)
     : null;
   const currentPluginNote = getPluginNoteInfo(currentMemo);
-  // Opening an ordinary memo must also dismiss the workbench. Plugin pointer
-  // memos are deliberately excluded because they render through the plugin
-  // document view instead.
-  useEffect(() => {
-    if (!activePlugin || currentDocumentSource !== 'memo' || currentPluginNote) return;
-    setActivePlugin(null);
-    setActivePluginId(null);
-  }, [activePlugin, currentDocumentSource, currentPluginNote, setActivePluginId]);
   const isExternalDocument = currentDocumentSource === 'external';
   const currentDocumentInstanceKey =
     currentDocumentSource === 'memo' && activeMemoSession
@@ -579,7 +588,9 @@ export function MainLayout() {
       // Mindmap and other artifact tools behave like list filters: update the
       // second column only and preserve the currently open third-column
       // document until the user selects an artifact from the list.
-      setActivePlugin(null);
+      if (workspaceTarget.kind === 'plugin-workbench') {
+        clearPluginWorkbenchTarget();
+      }
       setActiveFilter('all');
       setActivePluginId(plugin.manifest.id);
       setMemoListVisible(true);
@@ -590,17 +601,13 @@ export function MainLayout() {
     // plugin switch cannot leave the previous canvas mounted over the new
     // configuration panel.
     try {
-      await clearDocument();
+      await openPluginWorkbench(plugin);
     } catch (error) {
       logger.warn('open plugin failed to clear document', { error });
       return;
     }
-    setSelectedMemo(null);
-    setActivePlugin(plugin);
-    setActiveFilter('all');
-    setActivePluginId(plugin.manifest.id);
     setMemoListVisible(true);
-  }, [clearDocument, setActiveFilter, setActivePluginId, setMemoListVisible, setSelectedMemo]);
+  }, [setActiveFilter, setActivePluginId, setMemoListVisible, workspaceTarget.kind]);
 
   const handleNavigateBack = useCallback(() => {
     void navigateDocumentHistory('back');
@@ -613,12 +620,13 @@ export function MainLayout() {
   const handleSelectNotebook = useCallback(
     (notebook: Notebook) => {
       if (selectedNotebook?.id === notebook.id) return;
-      closePluginSurface();
-      setSelectedNotebook(notebook);
-      setSelectedMemo(null);
-      triggerRefresh();
+      void selectNotebook(notebook).then(() => {
+        triggerRefresh();
+      }).catch((error) => {
+        logger.warn('select notebook failed', { error });
+      });
     },
-    [closePluginSurface, selectedNotebook?.id, setSelectedMemo, setSelectedNotebook, triggerRefresh]
+    [selectedNotebook?.id, triggerRefresh]
   );
 
   const handleEditNotebook = useCallback(
@@ -646,20 +654,18 @@ export function MainLayout() {
     const target = notebookToDelete;
     if (!target) return;
     try {
+      if (selectedNotebook?.id === target.id) {
+        // Deleting the active notebook is irreversible. Refuse the delete if
+        // its current document cannot be durably flushed first.
+        await flushWorkspaceDocument();
+      }
       const ok = await notebooksClient.delete(target.id);
       if (ok) {
-        toast.success(t('shell.notebook.deleted'));
         const nbList = await notebooksClient.getAll();
-        if (nbList) {
-          setNotebooks(nbList);
-          if (selectedNotebook?.id === target.id) {
-            const nextNotebook = nbList[0] ?? null;
-            setSelectedNotebook(nextNotebook);
-            setSelectedMemo(null);
-            clearDocument();
-            triggerRefresh();
-          }
-        }
+        if (!nbList) throw new Error('Notebook list is unavailable after deletion');
+        await reconcileDeletedNotebook(target.id, nbList);
+        toast.success(t('shell.notebook.deleted'));
+        triggerRefresh();
       } else {
         toast.error(t('shell.notebook.deleteFailed'));
       }
@@ -669,7 +675,7 @@ export function MainLayout() {
     } finally {
       setNotebookToDelete(null);
     }
-  }, [clearDocument, notebookToDelete, selectedNotebook?.id, setNotebooks, setSelectedMemo, setSelectedNotebook, triggerRefresh]);
+  }, [notebookToDelete, selectedNotebook?.id, triggerRefresh]);
 
   // Document titlebar's more → delete menu: hand off to MemoList, which owns
   // the delete-memo confirmation dialog. We use a custom event (same pattern
@@ -689,38 +695,55 @@ export function MainLayout() {
     );
   }, [currentMemo]);
 
-  const thirdColumnSurface = resolveThirdColumnSurface({
-    document: currentDocumentPath
-      ? {
-          memo: currentMemo,
-          markdown: {
-            kind: 'markdown',
-            instanceKey: currentDocumentInstanceKey ?? getDocumentInstanceKey(currentDocumentPath),
-            props: {
-              filePath: currentDocumentPath,
-              memoId: activeMemoSession?.memoId ?? null,
-              notebookId: activeMemoSession?.notebookId ?? null,
-              notebookPath: activeMemoSession?.notebookPath ?? null,
-              transitionId: activeMemoSession?.transitionId ?? activeExternalSession?.transitionId ?? null,
-              isExternalDocument,
-              externalScopePath: activeExternalSession?.scopePath ?? null,
-              searchPanelOpen: isSearchPanelOpen,
-              onSearchPanelOpenChange: setIsSearchPanelOpen,
-              toolbarCollapsed,
-              onToolbarCollapsedChange: setToolbarCollapsed,
-              onMetainfoData: (data) => {
-                currentDocumentContentRef.current = data.memoContent;
-              },
+  const thirdColumnDocument = currentDocumentPath
+    ? {
+        identity: activeMemoSession
+          ? {
+              kind: 'memo' as const,
+              memoId: activeMemoSession.memoId,
+              path: activeMemoSession.path,
+              notebookId: activeMemoSession.notebookId,
+              notebookPath: activeMemoSession.notebookPath,
+              transitionId: activeMemoSession.transitionId,
+            }
+          : {
+              kind: 'external' as const,
+              path: activeExternalSession?.path ?? currentDocumentPath,
+              scopePath: activeExternalSession?.scopePath ?? null,
+              transitionId: activeExternalSession?.transitionId ?? null,
+            },
+        memo: currentMemo,
+        markdown: {
+          kind: 'markdown' as const,
+          instanceKey: currentDocumentInstanceKey ?? getDocumentInstanceKey(currentDocumentPath),
+          props: {
+            filePath: currentDocumentPath,
+            memoId: activeMemoSession?.memoId ?? null,
+            notebookId: activeMemoSession?.notebookId ?? null,
+            notebookPath: activeMemoSession?.notebookPath ?? null,
+            transitionId: activeMemoSession?.transitionId ?? activeExternalSession?.transitionId ?? null,
+            isExternalDocument,
+            externalScopePath: activeExternalSession?.scopePath ?? null,
+            searchPanelOpen: isSearchPanelOpen,
+            onSearchPanelOpenChange: setIsSearchPanelOpen,
+            toolbarCollapsed,
+            onToolbarCollapsedChange: setToolbarCollapsed,
+            onMetainfoData: (data: { memoContent: string }) => {
+              currentDocumentContentRef.current = data.memoContent;
             },
           },
-          artifact: currentPluginNote && activeMemoSession
-            ? {
-                memoId: activeMemoSession.memoId,
-                transitionId: activeMemoSession.transitionId,
-              }
-            : undefined,
-        }
-      : null,
+        },
+        artifact: currentPluginNote && activeMemoSession
+          ? {
+              memoId: activeMemoSession.memoId,
+              transitionId: activeMemoSession.transitionId,
+            }
+          : undefined,
+      }
+    : null;
+  const thirdColumnSurface = resolveWorkspaceSurface({
+    navigation: navigationState,
+    document: thirdColumnDocument,
     pluginWorkbench: activePlugin
       ? {
           plugin: activePlugin,
@@ -729,7 +752,6 @@ export function MainLayout() {
           currentNoteContent: currentDocumentContentRef.current,
         }
       : null,
-    agentConversationId: activeAgentConversationId,
     emptyMessage: t('shell.emptyDocument'),
   });
   const thirdColumnSurfaceDefinition = getThirdColumnSurfaceDefinition(thirdColumnSurface);
@@ -932,7 +954,8 @@ export function MainLayout() {
             {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar
                 instanceId={thirdColumnSurface.instanceId}
-                isSidebarCollapsed={isMemoListHidden}
+                isMiddleColumnCollapsed={isMemoListHidden}
+                isSidebarVisible={noteNavigationVisible}
                 onExpandSidebar={handleToggleMemoList}
                 onSidebarPreviewEnter={handleMemoListPreviewTriggerEnter}
                 onSidebarPreviewLeave={handleMemoListPreviewTriggerLeave}
@@ -950,7 +973,7 @@ export function MainLayout() {
             {/* Content area */}
             <div className="relative flex-1 min-w-0 overflow-hidden">
               <ThirdColumnSurfaceHost surface={thirdColumnSurface} />
-              {isDocumentTransitioning && (
+              {(isDocumentTransitioning || navigationState.phase === 'loading') && (
                 <div
                   className="absolute inset-0 z-40 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_78%,transparent)] backdrop-blur-[1px]"
                   role="status"
@@ -989,6 +1012,7 @@ export function MainLayout() {
       />
 
       <FloatingPromptStack>
+        <NavigationFailurePrompt />
         <AppUpdatePrompt updater={updater} />
         <DshInstallPrompt
           open={dshInstallPromptOpen}
@@ -998,6 +1022,52 @@ export function MainLayout() {
         />
       </FloatingPromptStack>
     </div>
+  );
+}
+
+function NavigationFailurePrompt() {
+  const { t } = useI18n();
+  const navigation = useWorkspaceStore((state) => state.navigation);
+  const [retrying, setRetrying] = useState(false);
+  const failure = navigation.phase === 'failed' ? navigation.failure : null;
+
+  useEffect(() => {
+    setRetrying(false);
+  }, [failure?.requestId]);
+
+  const handleRetry = async () => {
+    if (!failure || retrying) return;
+    setRetrying(true);
+    try {
+      await retryLastNavigation();
+    } catch {
+      // The coordinator publishes the new failure; keep this prompt open.
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <FloatingPrompt
+      open={failure !== null}
+      onClose={dismissNavigationFailure}
+      className="p-4 pr-12"
+    >
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-semibold text-[var(--foreground)]">
+            {t('shell.navigation.failed')}
+          </div>
+          <div className="mt-1 break-words text-xs text-[var(--muted-foreground)]">
+            {failure?.message}
+          </div>
+        </div>
+        <Button type="button" size="sm" disabled={retrying} onClick={() => void handleRetry()}>
+          {retrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          {t('error.retry')}
+        </Button>
+      </div>
+    </FloatingPrompt>
   );
 }
 

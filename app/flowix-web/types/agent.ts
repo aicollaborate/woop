@@ -228,6 +228,7 @@ export type RuntimeConfigPatch = {
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool" | "reasoning" | "end";
+  messageType?: "context-compaction";
   content: string;
   /** Display-only notice kind for provider-specific runtime failures. */
   notice?: "deepseek-harness-reconnect-failed";
@@ -275,6 +276,7 @@ export type AgentChunk =
   | AgentChunkUserMessage
   | AgentChunkText
   | AgentChunkReasoning
+  | AgentChunkContextCompaction
   | AgentChunkToolCall
   | AgentChunkToolResult
   | AgentChunkError
@@ -318,6 +320,22 @@ export interface AgentChunkReasoning {
   run_id?: string;
   message_id?: string;
   source_message_id?: string;
+  message_phase?: "started" | "updated" | "completed";
+  content_mode?: "delta" | "snapshot";
+  source_timestamp?: number;
+  source_sequence?: number;
+  source_subsequence?: number;
+}
+
+export interface AgentChunkContextCompaction {
+  kind: "context_compaction";
+  thread_id: string;
+  id: string;
+  agent_type?: AgentTypeKey;
+  run_id?: string;
+  message_id?: string;
+  source_message_id?: string;
+  codex_turn_id?: string;
   message_phase?: "started" | "updated" | "completed";
   content_mode?: "delta" | "snapshot";
   source_timestamp?: number;
@@ -549,6 +567,7 @@ export type AgentEvent =
     })
   | (AgentEventBase & { kind: "final_message"; text: string })
   | (AgentEventBase & { kind: "reasoning_delta"; text: string })
+  | (AgentEventBase & { kind: "context_compaction"; id: string })
   | (AgentEventBase & {
       kind: "tool_call";
       toolCallId: string;

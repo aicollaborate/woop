@@ -5,10 +5,10 @@ import {
   type MemoHistoryEntry,
 } from '@features/document/store/document-history-store';
 import { useDocumentStore } from '@features/document/store/document-store';
-import { useMemoStore, type Notebook } from '@features/memo/store/memo-store';
-import { notebooks as notebooksClient } from '@platform/tauri/client';
+import { useMemoStore } from '@features/memo/store/memo-store';
 import type { MemoItem } from '@/types/memo-item';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { openExternalTarget, openMemoTarget } from '@features/workspace/use-cases/workspace-navigation';
 
 export type DocumentHistoryDirection = 'back' | 'forward';
 
@@ -68,50 +68,20 @@ function memoFromHistoryEntry(entry: MemoHistoryEntry): MemoItem {
   };
 }
 
-async function ensureNotebook(entry: MemoHistoryEntry): Promise<Notebook | null> {
-  const memoStore = useMemoStore.getState();
-  if (!entry.notebookId) return memoStore.selectedNotebook;
-  if (memoStore.selectedNotebook?.id === entry.notebookId) return memoStore.selectedNotebook;
-
-  let target = memoStore.notebooks.find((notebook) => notebook.id === entry.notebookId) ?? null;
-
-  try {
-    await notebooksClient.setCurrent(entry.notebookId);
-  } catch (error) {
-    console.warn('[document-navigation] Failed to switch notebook:', error);
-    throw error;
-  }
-
-  if (!target) {
-    await useMemoStore.getState().loadNotebooks();
-    target = useMemoStore.getState().notebooks.find((notebook) => notebook.id === entry.notebookId) ?? null;
-  }
-
-  if (target) {
-    useMemoStore.getState().setSelectedNotebook(target);
-  }
-
-  await useMemoStore.getState().loadMemos({ notebookId: entry.notebookId });
-  return target;
-}
-
 async function openMemoHistoryEntry(entry: MemoHistoryEntry): Promise<void> {
-  useMemoStore.getState().setSelectedMemo(memoFromHistoryEntry(entry));
-  const notebook = await ensureNotebook(entry);
-  const path = canonicalPath(entry.path);
   const memo = memoFromHistoryEntry(entry);
-  const memoStore = useMemoStore.getState();
-
-  if (!memoStore.memos.find((item) => item.id === memo.id)) {
-    memoStore.upsertMemo(memo);
-  }
-  memoStore.setSelectedMemo(memo);
-  await useDocumentStore.getState().openMemoDocument({
+  const notebook = entry.notebookId
+    ? useMemoStore.getState().notebooks.find((item) => item.id === entry.notebookId) ?? null
+    : useMemoStore.getState().selectedNotebook;
+  const path = canonicalPath(entry.path);
+  await openMemoTarget({
     memoId: entry.memoId,
     path,
     notebookId: entry.notebookId ?? notebook?.id ?? null,
     notebookPath: entry.notebookPath ?? notebook?.path ?? null,
     history: 'skip',
+    memo,
+    notebook,
   });
 }
 
@@ -131,7 +101,7 @@ async function openHistoryEntry(entry: DocumentHistoryEntry): Promise<void> {
     await selectAndOpenAgentConversation(entry.instanceId, { history: 'skip' });
     return;
   }
-  await useDocumentStore.getState().openExternalDocument(entry.path, {
+  await openExternalTarget(entry.path, {
     history: 'skip',
     scopePath: entry.scopePath,
   });

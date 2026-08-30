@@ -205,10 +205,6 @@ export function StatusBar({
       </div>
       {/* Right column: full-width content area; carries the top border. */}
       <div className="flex-1 min-w-0 flex items-center gap-1 pl-1.5 border-t border-[var(--divider)]">
-        <AgentRuntimeStatusMenu
-          onOpen={onOpenAgentConversationView}
-          workspaceFolderName={agentWorkspacePath || undefined}
-        />
         <button
           type="button"
           className="h-full inline-flex items-center gap-0.5 px-1.5 text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
@@ -219,6 +215,10 @@ export function StatusBar({
           <span>{t('status.todos')}</span>
           <span>{todoCount}</span>
         </button>
+        <AgentRuntimeStatusMenu
+          onOpen={onOpenAgentConversationView}
+          workspaceFolderName={agentWorkspacePath || undefined}
+        />
         <Tooltip content={t('shell.statusBar.noteNavTooltip')} shortcut="panel.noteNavigation.toggle">
           <button
             type="button"

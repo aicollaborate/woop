@@ -1,7 +1,9 @@
 import { joinNotebookMemoPath } from '@/lib/path';
 import { useDocumentStore } from '@features/document';
 import { useMemoStore, type MemoItem, type Notebook } from '@features/memo';
+import { memos as memosClient } from '@platform/tauri/client';
 import { createLogger } from '@/lib/logger';
+import { openExternalTarget, openMemoTarget } from '@features/workspace/use-cases/workspace-navigation';
 
 const logger = createLogger('memo-session');
 
@@ -11,19 +13,17 @@ export function resolveMemoSessionPath(memo: MemoItem, notebook: Notebook | null
 
 export async function openMemoSession(memo: MemoItem, notebook: Notebook | null): Promise<void> {
   const fullPath = resolveMemoSessionPath(memo, notebook);
-  const previousSelectedMemo = useMemoStore.getState().selectedMemo;
-  useMemoStore.getState().setSelectedMemo(memo);
-
   try {
-    await useDocumentStore.getState().openMemoDocument({
+    await openMemoTarget({
       memoId: memo.id,
       path: fullPath,
       notebookId: notebook?.id ?? null,
       notebookPath: notebook?.path ?? null,
+      memo,
+      notebook,
     });
   } catch (error) {
     logger.error('open document failed', { error, memoId: memo.id });
-    useMemoStore.getState().setSelectedMemo(previousSelectedMemo);
   }
 }
 
@@ -38,18 +38,28 @@ let restoringExternalDocumentPath: string | null = null;
  */
 export async function restorePersistedMemoSession(): Promise<void> {
   const memoState = useMemoStore.getState();
-  const memo = memoState.selectedMemo;
-  if (!memo || restoringMemoId === memo.id) return;
+  const memoId = memoState.selectedMemoId ?? memoState.selectedMemo?.id ?? null;
+  if (!memoId || restoringMemoId === memoId) return;
 
   const documentState = useDocumentStore.getState();
   if (documentState.currentDocumentSource === 'external') return;
-  if (documentState.activeMemoSession?.memoId === memo.id) return;
+  if (documentState.activeMemoSession?.memoId === memoId) return;
 
-  restoringMemoId = memo.id;
+  restoringMemoId = memoId;
   try {
+    // The persisted store contains only the identity. Resolve the current
+    // backend entity so filename/properties/plugin metadata are authoritative.
+    const memo = memoState.selectedMemo?.id === memoId
+      ? memoState.selectedMemo
+      : await memosClient.readMemo(memoId);
+    if (!memo) {
+      useMemoStore.getState().setSelectedMemo(null);
+      return;
+    }
+    useMemoStore.getState().setSelectedMemo(memo);
     await openMemoSession(memo, memoState.selectedNotebook);
   } finally {
-    if (restoringMemoId === memo.id) restoringMemoId = null;
+    if (restoringMemoId === memoId) restoringMemoId = null;
   }
 }
 
@@ -61,7 +71,7 @@ export async function restorePersistedMemoSession(): Promise<void> {
 export async function restorePersistedExternalDocument(): Promise<void> {
   const memoState = useMemoStore.getState();
   const persisted = memoState.activeFileBrowserDocument;
-  if (!persisted || memoState.selectedMemo) return;
+  if (!persisted || memoState.selectedMemoId) return;
 
   const documentState = useDocumentStore.getState();
   if (documentState.currentDocumentSource !== null) return;
@@ -74,7 +84,7 @@ export async function restorePersistedExternalDocument(): Promise<void> {
     if (memoState.activeFileBrowserPath !== persisted.scopePath) {
       memoState.setActiveFileBrowserPath(persisted.scopePath);
     }
-    await useDocumentStore.getState().openExternalDocument(persisted.path, {
+    await openExternalTarget(persisted.path, {
       history: 'skip',
       scopePath: persisted.scopePath,
     });

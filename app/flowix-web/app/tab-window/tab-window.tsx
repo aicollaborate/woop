@@ -538,11 +538,10 @@ export function TabWindow() {
     });
   };
   const activeMemoContentProps = activeTab ? {
-    filePath: currentDocumentPath ?? (
-      activeTab.target.kind === 'memo' || activeTab.target.kind === 'external_markdown'
-        ? activeTab.target.filePath
-        : ''
-    ),
+    // The tab target is supplied separately to the resolver. Do not use it as
+    // a fallback here, otherwise a missing/stale document session could be
+    // rendered as if it had already been hydrated.
+    filePath: currentDocumentPath ?? '',
     notebookId: activeMemoSession?.notebookId ?? null,
     notebookPath: activeMemoSession?.notebookPath ?? null,
     transitionId:

@@ -11,6 +11,7 @@ import {
   DOCUMENT_TITLEBAR_ICON_BUTTON_MAC,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
+import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
 
 const NAV_BTN =
   'w-8 h-8 flex enabled:!cursor-pointer disabled:!cursor-not-allowed items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-colors';
@@ -62,10 +63,10 @@ export function DocumentTitlebarMac({
       : 'empty';
 
   return (
-    <div
-      data-tauri-drag-region
-      data-tab-window-header={windowTabs ? '' : undefined}
-      className={`h-12 shrink-0 ${isSidebarHidden ? (noteNavigationVisible ? 'pl-2' : 'pl-[90px]') : 'pl-0'} pr-0 z-[50] flex items-center`}
+    <ThirdColumnTitlebarShell
+      isWindows={false}
+      showTrafficLightSpacer={isSidebarHidden && !noteNavigationVisible}
+      dataTabWindowHeader={Boolean(windowTabs)}
       style={{ backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
     >
       <div className="flex shrink-0 items-center gap-1">
@@ -77,7 +78,7 @@ export function DocumentTitlebarMac({
             onMouseLeave={onPreviewTriggerLeave}
             aria-label={t("document.titlebar.showSidebar")}
             title={t("document.titlebar.showSidebarTooltip")}
-            className="w-8 h-8 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-xl transition-colors"
+            className="w-5 h-5 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-xl transition-colors"
           >
             <SidebarToggleIcon className="w-5 h-5" variant="collapsed" />
           </button>
@@ -147,6 +148,6 @@ export function DocumentTitlebarMac({
           />
         )}
       </div>
-    </div>
+    </ThirdColumnTitlebarShell>
   );
 }

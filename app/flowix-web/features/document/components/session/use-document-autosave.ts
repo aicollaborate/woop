@@ -9,10 +9,10 @@ import {
   hasDocumentUnsavedChanges,
   recordDocumentEdit,
   saveDocumentContent,
-  useDocumentStore,
   type DocumentIdentity,
 } from '@features/document';
 import { translate } from '@/lib/i18n';
+import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { formatDateTime } from '@/lib/utils';
@@ -65,7 +65,6 @@ export function useDocumentAutosave({
   const derivedStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const derivedStatsVersionRef = useRef(0);
   const isMountedRef = useRef(true);
-  const replaceActiveMemoPath = useDocumentStore((store) => store.replaceActiveMemoPath);
 
   const clearSaveTimer = useCallback(() => {
     if (saveTimerRef.current) {
@@ -195,7 +194,6 @@ export function useDocumentAutosave({
     externalScopePath,
     identity,
     memoId,
-    replaceActiveMemoPath,
     setState,
   ]);
   // visibilitychange 强保存的 disk-aware 版本 ── 设计动机见 hook 顶部注释。

@@ -29,6 +29,18 @@ use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 
 const INITIALIZE_METHOD: &str = "initialize";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const CONTEXT_COMPACTION_MESSAGE_TYPE: &str = "context-compaction";
+
+fn is_image_attachment(path: &str) -> bool {
+    matches!(
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif")
+    )
+}
 
 struct Connection {
     _child: Child,
@@ -335,7 +347,18 @@ impl CodexAppServerManager {
             let approval = app_server_approval_policy(message.permission_mode_for_runtime(AGENT_TYPE));
             let sandbox = app_server_sandbox(message.permission_mode_for_runtime(AGENT_TYPE));
             let mut input = vec![json!({ "type": "text", "text": message.llm_content.clone().unwrap_or_else(|| message.content.clone()) })];
-            input.extend(message.image_paths.iter().filter(|path| std::path::Path::new(path).is_file()).map(|path| json!({ "type": "localImage", "path": path })));
+            let mut attached_files = Vec::new();
+            for path in message.image_paths.iter().filter(|path| std::path::Path::new(path).is_file()) {
+                if is_image_attachment(path) {
+                    input.push(json!({ "type": "localImage", "path": path }));
+                } else {
+                    attached_files.push(path.as_str());
+                }
+            }
+            if !attached_files.is_empty() {
+                let paths = attached_files.iter().map(|path| format!("- {path}")).collect::<Vec<_>>().join("\n");
+                input.push(json!({ "type": "text", "text": format!("\n<attached_files>\n{paths}\n</attached_files>") }));
+            }
             let result = self.request("turn/start", json!({
                 "threadId": codex_thread_id,
                 "input": input,
@@ -387,7 +410,16 @@ impl CodexAppServerManager {
         })];
         input.extend(message.image_paths.iter()
             .filter(|path| std::path::Path::new(path).is_file())
+            .filter(|path| is_image_attachment(path))
             .map(|path| json!({ "type": "localImage", "path": path })));
+        let attached_files = message.image_paths.iter()
+            .filter(|path| std::path::Path::new(path).is_file())
+            .filter(|path| !is_image_attachment(path))
+            .map(|path| format!("- {path}"))
+            .collect::<Vec<_>>();
+        if !attached_files.is_empty() {
+            input.push(json!({ "type": "text", "text": format!("\n<attached_files>\n{}\n</attached_files>", attached_files.join("\n")) }));
+        }
         self.request("turn/steer", json!({
             "threadId": active.0,
             "expectedTurnId": active.1,
@@ -1303,7 +1335,28 @@ fn completed_message_chunk(
     item: &Value,
     turn_id: Option<&str>,
 ) -> Option<(AgentChunk, AgentChunkMetadata)> {
-    let text = match item.get("type").and_then(Value::as_str)? {
+    let kind = item.get("type").and_then(Value::as_str)?;
+    if kind == "contextCompaction" {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or("codex-context-compaction")
+            .to_string();
+        let mut metadata = item_metadata(item);
+        metadata.codex_turn_id = turn_id.map(str::to_string);
+        metadata.message_phase = Some("completed");
+        metadata.content_mode = Some("snapshot");
+        return Some((
+            AgentChunk::ContextCompaction {
+                thread_id: thread_id.to_string(),
+                id,
+            },
+            metadata,
+        ));
+    }
+
+    let text = match kind {
         // Relay every completed userMessage item, not just steers. The
         // provider item id turns the optimistic `user-<run>` row into a
         // history-stable identity mid-turn (the frontend adopts it in
@@ -1329,14 +1382,14 @@ fn completed_message_chunk(
     if !has_visible_text(&text) {
         return None;
     }
-    let chunk = if item.get("type").and_then(Value::as_str) == Some("userMessage") {
+    let chunk = if kind == "userMessage" {
         AgentChunk::UserMessage {
             thread_id: thread_id.to_string(),
             id: item.get("id").and_then(Value::as_str).unwrap_or("codex-user").to_string(),
             text,
             timestamp: chrono::Utc::now().timestamp_millis(),
         }
-    } else if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
+    } else if kind == "agentMessage" {
         AgentChunk::Text {
             thread_id: thread_id.to_string(),
             text,
@@ -1539,6 +1592,10 @@ fn app_server_item_message(
             message.is_completed = Some(true);
             message.reasoning = Some(message.content.clone());
         }
+        "contextCompaction" => {
+            message.role = "system".to_string();
+            message.message_type = Some(CONTEXT_COMPACTION_MESSAGE_TYPE.to_string());
+        }
         "commandExecution"
         | "fileChange"
         | "mcpToolCall"
@@ -1572,6 +1629,7 @@ fn app_server_base_message(id: String, timestamp: &str) -> ChatMessage {
     ChatMessage {
         id,
         role: String::new(),
+        message_type: None,
         content: String::new(),
         llm_content: None,
         system_reminder_directory: None,
@@ -1795,6 +1853,28 @@ mod tests {
     }
 
     #[test]
+    fn projects_context_compaction_as_a_system_message() {
+        let message = app_server_item_message(
+            &json!({
+                "id": "compaction-1",
+                "type": "contextCompaction"
+            }),
+            "2026-01-01T00:00:00Z",
+            0,
+            0,
+            Some("turn-1"),
+        )
+        .expect("context compaction");
+
+        assert_eq!(message.role, "system");
+        assert_eq!(
+            message.message_type.as_deref(),
+            Some(CONTEXT_COMPACTION_MESSAGE_TYPE)
+        );
+        assert_eq!(message.codex_turn_id.as_deref(), Some("turn-1"));
+    }
+
+    #[test]
     fn gives_tool_lifecycle_events_the_provider_item_identity() {
         let metadata = item_metadata(&json!({
             "id": "call-1",
@@ -1822,6 +1902,25 @@ mod tests {
         assert_eq!(metadata.source_message_id.as_deref(), Some("message-1"));
         assert_eq!(metadata.message_phase.as_deref(), Some("completed"));
         assert_eq!(metadata.content_mode.as_deref(), Some("snapshot"));
+    }
+
+    #[test]
+    fn projects_completed_context_compaction_with_stable_identity() {
+        let (chunk, metadata) = completed_message_chunk(
+            "thread-1",
+            &json!({ "id": "compaction-1", "type": "contextCompaction" }),
+            Some("turn-1"),
+        )
+        .expect("completed context compaction");
+
+        assert!(matches!(
+            chunk,
+            AgentChunk::ContextCompaction { thread_id, id }
+                if thread_id == "thread-1" && id == "compaction-1"
+        ));
+        assert_eq!(metadata.message_id.as_deref(), Some("compaction-1"));
+        assert_eq!(metadata.codex_turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(metadata.message_phase.as_deref(), Some("completed"));
     }
 
     #[test]

@@ -21,6 +21,13 @@ fn agent_image_extension(mime_type: &str) -> Option<&'static str> {
         "image/jpeg" => Some("jpg"),
         "image/webp" => Some("webp"),
         "image/gif" => Some("gif"),
+        "application/msword" => Some("doc"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/pdf" => Some("pdf"),
+        "application/vnd.ms-excel" => Some("xls"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.ms-powerpoint" => Some("ppt"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
         _ => None,
     }
 }
@@ -131,7 +138,7 @@ pub async fn read_cached_agent_image(path: String) -> Result<Option<String>, Str
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
         Some("gif") => "image/gif",
-        _ => return Err("Unsupported cached image type".to_string()),
+        _ => return Ok(None),
     };
     let bytes = tokio::fs::read(candidate)
         .await

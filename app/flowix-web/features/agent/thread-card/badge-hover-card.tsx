@@ -11,25 +11,14 @@ import type { UsageInfo } from "@/types/agent";
 import type { CodexRuntimeInfo } from "@platform/tauri/client/agent";
 
 interface BadgeHoverCardProps {
-  /**
-   * Flowix-side instance thread id (a temporary local handle, e.g.
-   * `codex-local-agent-inst-<uuid>`). Not shown in the popover — the popover
-   * first row is the provider-side session id resolved lazily via
-   * `onRequestRuntimeInfo`. Only used to:
-   *   1. Track which card the open popover belongs to (resident snapshot),
-   *   2. Detect threadId changes (effect deps + reset logic).
-   */
-  threadId: string;
+  /** Internal identity only; never rendered. */
+  threadId?: string;
+  /** Provider session id already loaded with the conversation instance. */
+  sessionId?: string;
   /** 当前 run 锁定的 LLM model id(由通用 metadata 协议填入) */
   model?: string;
   /** 当前 run 累计 token 用量(undefined 表示未上报) */
   usage?: UsageInfo;
-  /**
-   * Lazily loads the runtime snapshot on hover; the codex requester also
-   * fetches account + rate limits. The returned `sessionId` is the only
-   * value rendered in the popover's first row — the flowix instance
-   * threadId stays internal so users never see the misleading local handle.
-   */
   onRequestRuntimeInfo?: () => Promise<BadgeHoverCardRuntimeInfo | null>;
   codex?: boolean;
   cwd?: string;
@@ -69,15 +58,18 @@ function lastPathSegment(path: string): string {
 
 function hasUsageContent(usage: UsageInfo | undefined): boolean {
   if (!usage) return false;
-  // Aggregate/context metadata alone is not enough for this card: DeepSeek
-  // Harness may persist those fields before its token breakdown is available.
-  // In that case the first hover must still query the SDK.
-  return [
-    usage.input_tokens,
-    usage.cached_input_tokens,
-    usage.output_tokens,
-  ].some(
+  return [usage.input_tokens, usage.cached_input_tokens, usage.output_tokens].some(
     (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+}
+
+function HoverCardSkeleton({ width }: { width: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="agent-thread-card__hover-skeleton"
+      style={{ width }}
+    />
   );
 }
 
@@ -116,32 +108,21 @@ function percentageFromRate(rate: number | undefined): string {
   return rate === undefined ? "" : `${Math.round(rate * 100)}%`;
 }
 
-/** runtime info 懒加载期间的行内骨架块, 替代空值 "-" 占位。 */
-function HoverCardSkeleton({ width }: { width: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="agent-thread-card__hover-skeleton"
-      style={{ width }}
-    />
-  );
-}
-
 /**
  * Agent Thread Card hover Agent 类型徽章弹出的卡片。
  *
- * 通用 metadata 协议字段均通过 props 传入,组件本身不读取 store ──
- * 由父级 (agent-thread-card.tsx) 负责从 useChatStore 抽取并定时刷新。
+ * 通用 metadata 协议字段均通过 props 传入,组件本身不读取 store。
  *
  * 展示会话、模型和 token 明细 + 可选 cwd 行:
- *   1. Provider Session ID + 复制按钮(懒加载, 首帧骨架, 只展示 server-side id)
+ *   1. Provider Session ID + 复制按钮(优先使用持久化值,必要时 hover 解析)
  *   2. Model(可选, 由 run.model 填充)
  *   3. 输入 / 输出 / 缓存命中
  *   4. 空间 (可选, instance.runtimeConfig 解出, 文本溢出走原生 title tooltip)
- *   5. Codex 会员 / 5小时 / 1周 配额 (可选, 仅 codex agent, 懒加载填入)
+ *   5. Codex 会员 / 5小时 / 1周配额(懒加载)
  */
 export function BadgeHoverCard({
   threadId,
+  sessionId,
   model,
   usage,
   onRequestRuntimeInfo,
@@ -153,63 +134,55 @@ export function BadgeHoverCard({
   const [copied, setCopied] = React.useState(false);
   const [displayModel, setDisplayModel] = React.useState(model);
   const [displayUsage, setDisplayUsage] = React.useState(usage);
-  // Provider session id only — never the flowix instance handle. Starts as
-  // null so the first frame renders a skeleton instead of the misleading
-  // local id (`codex-local-agent-inst-<uuid>` and friends).
-  const [displaySessionId, setDisplaySessionId] = React.useState<string | null>(null);
-  const runtimeInfoLoadedRef = React.useRef(hasUsageContent(usage));
-  const sessionIdLoadedRef = React.useRef(false);
-  const accountLoadedRef = React.useRef(false);
+  const [displaySessionId, setDisplaySessionId] = React.useState<string | null>(
+    sessionId ?? null,
+  );
   const [codexInfo, setCodexInfo] = React.useState<CodexRuntimeInfo>();
-  // Default to pending when a requester exists: avoids flashing the local
-  // threadId (or "-") before the first hover-triggered request resolves.
   const [runtimeInfoPending, setRuntimeInfoPending] = React.useState(
     Boolean(onRequestRuntimeInfo),
   );
-  const runtimeInfoRequestRef = React.useRef<Promise<BadgeHoverCardRuntimeInfo | null> | null>(
-    null,
-  );
-  const residentThreadIdRef = React.useRef(threadId);
-  const observedThreadIdRef = React.useRef(threadId);
-  const triggerHoveredRef = React.useRef(false);
-  const hoverCardOpenRef = React.useRef(false);
+  const runtimeInfoLoadedRef = React.useRef(hasUsageContent(usage));
+  const sessionIdLoadedRef = React.useRef(Boolean(sessionId));
+  const accountLoadedRef = React.useRef(false);
+  const runtimeInfoRequestRef = React.useRef<Promise<BadgeHoverCardRuntimeInfo | null> | null>(null);
+  const residentIdentityRef = React.useRef(`${threadId ?? ""}:${sessionId ?? ""}`);
 
   React.useEffect(() => {
-    if (residentThreadIdRef.current !== threadId) {
-      residentThreadIdRef.current = threadId;
+    const nextIdentity = `${threadId ?? ""}:${sessionId ?? ""}`;
+    const nextSessionId = sessionId ?? null;
+    if (residentIdentityRef.current !== nextIdentity) {
+      residentIdentityRef.current = nextIdentity;
       runtimeInfoLoadedRef.current = hasUsageContent(usage);
-      sessionIdLoadedRef.current = false;
+      sessionIdLoadedRef.current = Boolean(sessionId);
       accountLoadedRef.current = false;
-      setCodexInfo(undefined);
-      // Reset to skeleton state for the new thread: if a requester exists,
-      // we want to render skeleton until the new session id lands.
-      setRuntimeInfoPending(Boolean(onRequestRuntimeInfo));
       runtimeInfoRequestRef.current = null;
+      setCodexInfo(undefined);
+      setRuntimeInfoPending(Boolean(onRequestRuntimeInfo));
       setDisplayModel(model);
       setDisplayUsage(usage);
-      setDisplaySessionId(null);
+      setDisplaySessionId(nextSessionId);
       return;
     }
-    // Parent controllers periodically re-render this component. Do not let an
-    // empty projection erase a resident snapshot fetched on the first hover.
     if (!runtimeInfoLoadedRef.current || hasUsageContent(usage)) {
       setDisplayModel(model);
       setDisplayUsage(usage);
     }
-    if (hasUsageContent(usage)) {
-      runtimeInfoLoadedRef.current = true;
+    if (hasUsageContent(usage)) runtimeInfoLoadedRef.current = true;
+    if (sessionId && !displaySessionId) {
+      sessionIdLoadedRef.current = true;
+      setDisplaySessionId(sessionId);
     }
-  }, [model, threadId, usage, onRequestRuntimeInfo]);
+  }, [displaySessionId, model, onRequestRuntimeInfo, sessionId, threadId, usage]);
 
   const requestRuntimeInfo = React.useCallback(() => {
     if (
-      (runtimeInfoLoadedRef.current && sessionIdLoadedRef.current && (!codex || accountLoadedRef.current)) ||
+      (runtimeInfoLoadedRef.current && sessionIdLoadedRef.current &&
+        (!codex || accountLoadedRef.current)) ||
       runtimeInfoRequestRef.current !== null ||
       !onRequestRuntimeInfo
     ) {
       return;
     }
-
     let request: Promise<BadgeHoverCardRuntimeInfo | null>;
     try {
       request = onRequestRuntimeInfo();
@@ -218,14 +191,10 @@ export function BadgeHoverCard({
     }
     runtimeInfoRequestRef.current = request;
     setRuntimeInfoPending(true);
-    const requestThreadId = threadId;
     void request
       .then((info) => {
-        if (residentThreadIdRef.current !== requestThreadId) return;
         if (info === null) return;
-        if (hasUsageContent(info.usage)) {
-          runtimeInfoLoadedRef.current = true;
-        }
+        if (hasUsageContent(info.usage)) runtimeInfoLoadedRef.current = true;
         setDisplayModel(info.model ?? model);
         setDisplayUsage(info.usage);
         if (info.sessionId) {
@@ -238,29 +207,18 @@ export function BadgeHoverCard({
         }
       })
       .catch(() => {
-        // Keep the resident snapshot visible and allow the next hover to retry.
+        // 保留现有快照，下一次 hover 允许重试。
       })
       .finally(() => {
-        // 只有仍是本次请求时才清 pending: threadId 切换可能已重置 ref 并
-        // 发起下一轮请求, 旧请求的收尾不得把新一轮的骨架提前撤掉。
         if (runtimeInfoRequestRef.current === request) {
           runtimeInfoRequestRef.current = null;
           setRuntimeInfoPending(false);
         }
       });
-  }, [model, onRequestRuntimeInfo, threadId]);
-
-  React.useEffect(() => {
-    if (observedThreadIdRef.current === threadId) return;
-    observedThreadIdRef.current = threadId;
-    if (triggerHoveredRef.current || hoverCardOpenRef.current) {
-      requestRuntimeInfo();
-    }
-  }, [requestRuntimeInfo, threadId]);
+  }, [codex, model, onRequestRuntimeInfo]);
 
   const handleOpenChange = React.useCallback(
     (open: boolean) => {
-      hoverCardOpenRef.current = open;
       onOpenChange?.(open);
       if (open) requestRuntimeInfo();
     },
@@ -269,17 +227,15 @@ export function BadgeHoverCard({
 
   const hitRate = cacheHitRate(displayUsage, codex);
   const contextRate = contextUsageRate(displayUsage);
-  // 懒加载在途时, 仍为空的 value 显示骨架块; 请求结束(或无请求能力)后回退 "-"。
+  const displayCwd = cwd ? lastPathSegment(cwd) : "";
   const sessionIdPending = runtimeInfoPending && displaySessionId === null;
   const modelPending = runtimeInfoPending && !displayModel;
-  const tokensPending =
-    runtimeInfoPending &&
+  const tokensPending = runtimeInfoPending &&
     !formatTokenCount(displayUsage?.input_tokens) &&
     !formatTokenCount(displayUsage?.output_tokens);
   const cachePending = runtimeInfoPending && hitRate === undefined;
   const contextPending = runtimeInfoPending && contextRate === undefined;
   const codexPending = runtimeInfoPending && !codexInfo;
-  const displayCwd = cwd ? lastPathSegment(cwd) : "";
   const quotaWindows = codex
     ? Object.values(codexInfo?.rateLimits?.rateLimitsByLimitId ?? {})
         .flatMap((limit) => [limit.primary, limit.secondary])
@@ -292,17 +248,9 @@ export function BadgeHoverCard({
     const remaining = `${Math.max(0, 100 - window.usedPercent)}%`;
     if (!window.resetsAt) return remaining;
     const resetAt = new Date(window.resetsAt * 1000);
-    if (window.windowDurationMins === 300) {
-      return `${remaining} ${resetAt.toLocaleTimeString(language, {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })}`;
-    }
-    return `${remaining} ${resetAt.toLocaleDateString(language, {
-      month: "long",
-      day: "numeric",
-    })}`;
+    return `${remaining} ${window.windowDurationMins === 300
+      ? resetAt.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", hour12: false })
+      : resetAt.toLocaleDateString(language, { month: "long", day: "numeric" })}`;
   };
 
   const handleCopy = React.useCallback(async () => {
@@ -326,13 +274,7 @@ export function BadgeHoverCard({
         <span
           aria-hidden="true"
           className="agent-thread-card__badge-hover-trigger"
-          onPointerEnter={() => {
-            triggerHoveredRef.current = true;
-            requestRuntimeInfo();
-          }}
-          onPointerLeave={() => {
-            triggerHoveredRef.current = false;
-          }}
+          onPointerEnter={requestRuntimeInfo}
         />
       </HoverCardTrigger>
       <HoverCardContent
@@ -342,19 +284,14 @@ export function BadgeHoverCard({
         className="w-[14.4rem] rounded-lg px-3 py-2.5"
       >
         <div className="flex flex-col gap-1.5">
-          {/* Provider Session ID 行: 只展示服务端真实 id, 不展示 flowix
-              本地 instance handle (例如 codex-local-agent-inst-<uuid>)。
-              首帧在请求器存在时显示骨架, request 回来后填入 sessionId。 */}
+          {/* Provider Session ID 行: 只展示 provider-owned id, 不展示本地
+              Flowix thread id。 */}
           <div className="flex items-center gap-2">
             <span
               className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]"
               title={displaySessionId ?? ""}
             >
-              {sessionIdPending ? (
-                <HoverCardSkeleton width="8rem" />
-              ) : (
-                displaySessionId || "-"
-              )}
+              {sessionIdPending ? <HoverCardSkeleton width="8rem" /> : displaySessionId || "-"}
             </span>
             <button
               type="button"
@@ -398,14 +335,10 @@ export function BadgeHoverCard({
               {t("editor.threadCard.inputOutputTokens")}
             </span>
             <span className="text-right font-mono tabular-nums text-[var(--foreground)]">
-              {tokensPending ? (
-                <HoverCardSkeleton width="3.5rem" />
-              ) : (
-                <>
-                  {formatTokenCount(displayUsage?.input_tokens) || "-"} /{" "}
-                  {formatTokenCount(displayUsage?.output_tokens) || "-"} tok
-                </>
-              )}
+              {tokensPending ? <HoverCardSkeleton width="3.5rem" /> : <>
+                {formatTokenCount(displayUsage?.input_tokens) || "-"} /{" "}
+                {formatTokenCount(displayUsage?.output_tokens) || "-"} tok
+              </>}
             </span>
           </div>
 
@@ -417,9 +350,7 @@ export function BadgeHoverCard({
               className="agent-thread-card__cache-hit-value"
               aria-label={percentageFromRate(hitRate) || "-"}
             >
-              {cachePending ? (
-                <HoverCardSkeleton width="1.75rem" />
-              ) : (
+              {cachePending ? <HoverCardSkeleton width="1.75rem" /> : (
                 <span className="font-mono tabular-nums text-[var(--foreground)]">
                   {percentageFromRate(hitRate) || "-"}
                 </span>
@@ -435,9 +366,7 @@ export function BadgeHoverCard({
               className="agent-thread-card__cache-hit-value"
               aria-label={percentageFromRate(contextRate) || "-"}
             >
-              {contextPending ? (
-                <HoverCardSkeleton width="1.75rem" />
-              ) : (
+              {contextPending ? <HoverCardSkeleton width="1.75rem" /> : (
                 <span className="font-mono tabular-nums text-[var(--foreground)]">
                   {percentageFromRate(contextRate) || "-"}
                 </span>
@@ -472,11 +401,7 @@ export function BadgeHoverCard({
                   {t("editor.threadCard.codexPlan")}
                 </span>
                 <span className="text-right font-mono tabular-nums text-[var(--foreground)]">
-                  {codexPending ? (
-                    <HoverCardSkeleton width="3rem" />
-                  ) : (
-                    codexInfo?.account?.planType ?? "-"
-                  )}
+                  {codexPending ? <HoverCardSkeleton width="3rem" /> : codexInfo?.account?.planType ?? "-"}
                 </span>
               </div>
               <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">

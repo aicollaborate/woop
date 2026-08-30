@@ -3,12 +3,11 @@
  *
  * Why this exists
  * ---------------
- * The document has 5 independent mechanisms that can trigger a save:
+ * The document has 4 independent mechanisms that can trigger a save:
  *   1. handleChange debounced timer (1s)
  *   2. sessionCloser (user navigates to another memo)
- *   3. finalizeMemoRename (memo renamed)
- *   4. document.visibilitychange (tab hidden)
- *   5. window.beforeunload (app closing)
+ *   3. document.visibilitychange (tab hidden)
+ *   4. window.beforeunload (app closing)
  *
  * Before this refactor each of these called memosClient.writeDocument
  * directly. The IPC + CAS pattern is one-shot, so when two of these fired
@@ -25,8 +24,7 @@
  *   one, then runs the pending one (with the latest expectedContent read
  *   from the caller at that moment via `readExpected`).
  * - Exposes `scheduleSave` for fire-and-forget callers, and `flushSave`
- *   for callers that need to wait for the chain to settle (closer,
- *   finalize).
+ *   for callers that need to wait for the chain to settle (session closer).
  *
  * Buffer ownership
  * ----------------

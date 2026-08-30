@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PlusIcon } from '@phosphor-icons/react';
+import { Loader2 } from 'lucide-react';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
@@ -145,6 +146,9 @@ export function AgentConversationList() {
   // the persisted history into an empty list while the shared store rehydrates.
   useEffect(() => {
     let active = true;
+    // lifecycleVersion can trigger a fresh backend snapshot after the view
+    // has already been mounted. Keep the list honest during that request too.
+    setIsLoading(true);
     void agentClient.listConversationInstancesPage(0, CONVERSATION_PAGE_SIZE)
       .then(({ items, hasMore: nextHasMore }) => {
         if (!active) return;
@@ -401,7 +405,7 @@ export function AgentConversationList() {
     <section className="relative flex h-full min-h-0 flex-1 flex-col bg-[var(--card)]" aria-label={t('memo.navigation.conversations')}>
       {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
           左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
-      <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
+      <div className="flex items-center justify-between px-3.5 pb-2 gap-2">
           <div className="flex min-w-0 flex-1 items-center">
             <MemoNavigationDropdown
               title={t('memo.navigation.conversations')}
@@ -449,10 +453,11 @@ export function AgentConversationList() {
                   disabled={!currentNotebookId}
                   aria-label={t('agent.chat.newThread')}
                   title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <PlusIcon
                     className="h-4 w-4 transition-[filter] duration-150 group-hover:brightness-105"
+                    weight="bold"
                     aria-hidden="true"
                   />
                 </button>
@@ -488,7 +493,16 @@ export function AgentConversationList() {
             }
           }}
         >
-          {isLoading ? null : scopedConversations.length === 0 ? (
+          {isLoading ? (
+            <div
+              className="flex min-h-0 flex-1 items-center justify-center gap-2 px-4 text-center text-sm text-[var(--muted-foreground)]"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" aria-hidden="true" />
+              <span>{t('status.agent.loadingConversations')}</span>
+            </div>
+          ) : scopedConversations.length === 0 ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-[var(--muted-foreground)]">
               {t('status.agent.noConversations')}
             </div>

@@ -41,6 +41,7 @@ import {
   ComposerController,
   ComposerDraftController,
   ComposerImageController,
+  ComposerAddMenuController,
   type AgentThreadCardInputImage,
   getAgentThreadCardUserHistoryMessagesFromMessages,
 } from "@features/agent/thread-card/composer";
@@ -158,6 +159,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private externalAgentSettings: ExternalAgentSettingsController;
   private externalSettingsLoadedTypeKey: AgentTypeKey | null = null;
   private agentRolePicker: AgentRolePickerController;
+  private composerAddMenu: ComposerAddMenuController;
   private isCreating = false;
   private isDestroyed = false;
   // Guards late async completions (thread creation / role loading) from
@@ -313,6 +315,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       getFirstUserMessageText: () => this.firstUserMessageText(),
       getDefaultTitle: () => defaultThreadTitle(this.typeKey),
       getThreadId: () => this.threadId,
+      getSessionId: () => this.instance?.sessionId ?? null,
       getInstanceId: () => this.instanceId,
       getTypeKey: () => this.typeKey,
       getCwd: () => this.cwd,
@@ -336,7 +339,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.sendButtonMount = domParts.sendButtonMount;
     this.input.addEventListener("focus", this.boundHandleInputFocus);
 
-    const { codexSettingsPopover, composerRolePopover } = domParts;
+    const { codexSettingsPopover, composerRolePopover, composerAddPopover } = domParts;
     this.externalAgentSettings = new ExternalAgentSettingsController({
       popover: codexSettingsPopover,
       getTypeKey: () => this.typeKey,
@@ -378,6 +381,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       updateRole: (role) => this.updateAgentRole(role),
       consumeOutsidePointer: consumeEditorPopoverDismissPointer,
       injectMemoReference: (ref) => this.injectMemoReference(ref),
+      triggerManagedExternally: true,
     });
     this.fullscreenLayout = new FullscreenLayoutController({
       dom: this.dom,
@@ -408,6 +412,15 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
           ),
         );
       },
+    });
+    this.composerAddMenu = new ComposerAddMenuController({
+      trigger: this.composerRoleIcon,
+      popover: composerAddPopover,
+      rolePopover: composerRolePopover,
+      rolePicker: this.agentRolePicker,
+      images: this.composerImages,
+      t: (key) => this.t(key),
+      isDestroyed: () => this.isDestroyed,
     });
     this.runtime = new AgentThreadCardRuntimeController({
       getCurrentThreadId: () => this.threadId,
@@ -1653,6 +1666,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.runtime.dispose();
     this.externalAgentSettings.dispose();
     this.agentRolePicker.dispose();
+    this.composerAddMenu.dispose();
     this.fullscreenLayout.dispose();
     this.composerImages.dispose();
   }

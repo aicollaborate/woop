@@ -44,6 +44,18 @@
   color: var(--foreground);
 }
 
+.markdown-editor .agent-thread-card__message--system {
+  padding: 2px 0;
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__message-context-compaction {
+  align-self: flex-start;
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 1.4;
+  font-style: italic;
+}
+
 .markdown-editor .agent-thread-card__message-actions {
   display: flex;
   position: relative;

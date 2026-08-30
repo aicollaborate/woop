@@ -480,6 +480,7 @@ function areMessagesRenderEquivalent(
 
   return JSON.stringify({
     content: left.content,
+    messageType: left.messageType,
     notice: left.notice,
     errorDetails: left.errorDetails,
     isLoading: left.isLoading ?? false,
@@ -497,6 +498,7 @@ function areMessagesRenderEquivalent(
       left.role === "end" && !left.content ? left.timestamp : undefined,
   }) === JSON.stringify({
     content: right.content,
+    messageType: right.messageType,
     notice: right.notice,
     errorDetails: right.errorDetails,
     isLoading: right.isLoading ?? false,
@@ -581,6 +583,7 @@ export function areMessagesEquivalent(
       id: message.id,
       role: message.role,
       content: message.content,
+      messageType: message.messageType,
       notice: message.notice,
       errorDetails: message.errorDetails,
       isLoading: message.isLoading ?? false,
@@ -598,6 +601,7 @@ export function areMessagesEquivalent(
       id: other.id,
       role: other.role,
       content: other.content,
+      messageType: other.messageType,
       notice: other.notice,
       errorDetails: other.errorDetails,
       isLoading: other.isLoading ?? false,

@@ -9,9 +9,6 @@ import { cn } from '@/lib/utils';
 import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
 import { useMemoStore, useTagStore } from '@features/memo';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
-import { AgentIcon } from '@features/agent/components/agent-icon';
-import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
-import { getAgentType, pickFirstAvailableAgent } from '@/lib/agent-types';
 import { TagMentionName } from '@features/editor/extensions/tag-mention/tag-mention-label';
 import {
   DropdownMenu,
@@ -91,8 +88,12 @@ export function MemoNavigationSubmenu({
       <button
         type="button"
         className={cn(
-          'flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm text-[var(--foreground)] outline-none hover:bg-[var(--muted)]',
-          (open || active) && 'bg-[var(--muted)]',
+          'flex h-7 w-full cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2 text-sm text-[var(--foreground)] outline-none',
+          active
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+            : open
+              ? 'bg-[var(--muted)]'
+              : 'hover:bg-[var(--muted)]',
         )}
         onClick={() => {
           onClick?.();
@@ -136,7 +137,7 @@ export function MemoNavigationSubmenu({
                     key={item.id}
                     type="button"
                     title={item.secondary ? `${item.label} · ${item.secondary}` : item.label}
-                    className="mention-note-item hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none"
+                    className="mention-note-item !h-7 !min-h-7 !rounded-lg !py-0 !pl-[6px] !pr-2 hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
                       onSelect?.(item.id);
@@ -210,16 +211,8 @@ export function MemoNavigationDropdown({
   const tags = useTagStore((state) => state.tags);
   const loadTags = useTagStore((state) => state.loadTags);
   const accessConfig = useAgentAccessStore((state) => state.config);
-  const statusByType = useAgentRuntimeStore((state) => state.statusByType);
   const [openSubmenu, setOpenSubmenu] = useState<'tags' | 'references' | null>(null);
   const selectedNotebookId = selectedNotebook?.id ?? null;
-  const detectedAgentKey = pickFirstAvailableAgent(statusByType);
-  const detectedAgent = detectedAgentKey ? getAgentType(detectedAgentKey) : null;
-  const detectedAgentName = detectedAgent
-    ? detectedAgent.nameKey
-      ? t(detectedAgent.nameKey as Parameters<typeof t>[0])
-      : detectedAgent.name
-    : t('memo.navigation.conversations');
 
   useEffect(() => {
     if (!selectedNotebookId) return;
@@ -270,7 +263,7 @@ export function MemoNavigationDropdown({
           aria-label={ariaLabel}
           title={titleTooltip}
           className={cn(
-            'group flex max-w-full min-w-0 items-center gap-0.5 overflow-hidden rounded-md py-0.5 pl-1 pr-2 transition-colors',
+            'group flex max-w-full min-w-0 items-center gap-0.5 overflow-hidden rounded-md py-0.5 pl-0 pr-2 transition-colors',
             className,
           )}
         >
@@ -288,8 +281,10 @@ export function MemoNavigationDropdown({
         <DropdownMenuItem
           onClick={() => handleNavigate('all')}
           className={cn(
-            'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
-            isActive('all') && 'bg-[var(--muted)]',
+            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
+            isActive('all')
+              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+              : 'hover:bg-[var(--muted)]',
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
@@ -298,31 +293,31 @@ export function MemoNavigationDropdown({
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem
+          onClick={() => handleNavigate('agents')}
+          className={cn(
+            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
+            isActive('agents')
+              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+              : 'hover:bg-[var(--muted)]',
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" aria-hidden="true" />
+            <span>{t('memo.navigation.conversations')}</span>
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
           onClick={() => handleNavigate('todos')}
           className={cn(
-            'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
-            isActive('todos') && 'bg-[var(--muted)]',
+            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
+            isActive('todos')
+              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+              : 'hover:bg-[var(--muted)]',
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
             <ListTodo className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{t('memo.list.filterTasks')}</span>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => handleNavigate('agents')}
-          className={cn(
-            'flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]',
-            isActive('agents') && 'bg-[var(--muted)]',
-          )}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            {detectedAgent ? (
-              <AgentIcon typeKey={detectedAgent.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
-            ) : (
-              <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" aria-hidden="true" />
-            )}
-            <span>{detectedAgentName}</span>
           </span>
         </DropdownMenuItem>
         <MemoNavigationSubmenu

@@ -54,6 +54,7 @@
 	/* border: L 从原 0.928 提到 0.946 — 原值偏深, 在白底上读作
 	 * "深灰描边"; 与 rock 一致后, ΔL vs bg = 0.040, 读作"浅纸痕". */
 	--border: oklch(0.946 0.006 var(--neutral-hue));
+	--border-popup: oklch(0.920 0.006 var(--neutral-hue));
 	--input: var(--border);
 	/* 分割线: 越过 --border 一档 ── 直接 oklch 直定义, L=0.932
 	 * (比 --border 0.946 再深 0.014), ΔL vs bg ≈ 0.056 (比 baseline

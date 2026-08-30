@@ -35,8 +35,8 @@ import {
 import { useTagStore } from '@features/memo/store/tag-store';
 import { NotebookIcon } from '@features/memo/components/notebook-icon';
 import type { MemoItem } from '@/types/memo-item';
-import { useDocumentStore } from '@features/document/store/document-store';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { selectNotebook } from '@features/workspace/use-cases/workspace-navigation';
 import {
   type AgentConversationInstance,
 } from '@features/agent/store/agent-conversation-types';
@@ -534,13 +534,9 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const setActiveFilter = useMemoStore((s) => s.setActiveFilter);
-  const setSelectedNotebook = useMemoStore((s) => s.setSelectedNotebook);
-  const setSelectedMemo = useMemoStore((s) => s.setSelectedMemo);
-  const loadMemos = useMemoStore((s) => s.loadMemos);
   const createMemo = useMemoStore((s) => s.createMemo);
   const handleMemoCreated = useMemoStore((s) => s.handleMemoCreated);
   const setSelectedTagId = useTagStore((s) => s.setSelectedTagId);
-  const clearDocument = useDocumentStore((s) => s.clearDocument);
 
   // 标签不在全局 store (只在 memo-list 局部 useState), 这里按需拉一次.
   // 切 notebook 不会让旧 tag 消失 — 后端 derived_tags() 返回跨 notebook 全集.
@@ -586,14 +582,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
       onClose();
       return;
     }
-    setSelectedNotebook(notebook);
-    setSelectedMemo(null);
-    clearDocument();
-    const state = useMemoStore.getState();
-    await loadMemos({
-      notebookId: notebook.id,
-      filter: state.activeFilter,
-    });
+    await selectNotebook(notebook);
     onClose();
   };
 

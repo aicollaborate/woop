@@ -42,7 +42,7 @@ export function BlockActionMenu({
       aria-label="Block actions"
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="fixed z-[1500] bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg p-1"
+      className="fixed z-[1500] bg-[var(--card)] border border-[var(--border-popup)] rounded-lg shadow-lg p-1"
       style={{ ...style, outline: 'none' }}
     >
       <div ref={scrollerRef}>

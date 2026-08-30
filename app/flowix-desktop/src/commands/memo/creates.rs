@@ -4,8 +4,7 @@
 //   - new memo creation (add_document)
 //   - external document import (import_external_document_to_memo)
 //   - memo templates (list / save / delete / create-from)
-//   - single-field metadata updates (favorite / unfavorite / set_colors /
-//     finalize_filename)
+//   - single-field metadata updates (favorite / unfavorite / set_colors)
 // These were grouped as one section in the original memo.rs because they all
 // go through `sync_metadata_only_global` + `emit_updated_after_write`; the
 // helpers handle the disk/index/event fan-out.
@@ -425,13 +424,6 @@ pub fn update_memo_db(
             .is_ok();
     }
     false
-}
-
-#[tauri::command]
-pub fn finalize_memo_filename(id: String, state: State<AppState>, app: AppHandle) -> bool {
-    // Filename finalization is handled by write/update paths; keep this as a no-op IPC.
-    let _ = (id, state, app);
-    true
 }
 
 #[tauri::command]

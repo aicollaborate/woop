@@ -72,6 +72,7 @@
 	/* 描边: L=0.945 + chroma 0.005 ── 比 mist (0.92) 浅, ΔL vs bg = 0.040;
 	 * 在白底上读作"几乎透明的纸痕", 仅元素相邻时感知。 */
 	--border: oklch(0.945 0.005 var(--neutral-hue));
+	--border-popup: oklch(0.920 0.005 var(--neutral-hue));
 	--input: var(--border);
 	/* 分割线: 与 light / mist / rock 同档 (L=0.932, 比 --border 深
 	 * 0.013) ── 跨主题切换时分割线权重一致, 在近白暖纸面上 ΔL vs bg

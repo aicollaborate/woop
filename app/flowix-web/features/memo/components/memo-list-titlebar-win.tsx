@@ -44,9 +44,9 @@ export function MemoListTitlebarWin({
             type="button"
             onClick={onCollapseMemoList}
             aria-label={t("memo.list.collapseMemoList")}
-            className="w-7 h-7 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+            className="w-5 h-5 flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
           >
-            <SidebarToggleIcon className="w-4 h-4" />
+            <SidebarToggleIcon className="w-5 h-5" />
           </button>
         </Tooltip>
       </div>

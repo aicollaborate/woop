@@ -19,11 +19,11 @@
  *     同步通过 Tauri 事件总线承担 (跟 `external-markdown-opened` 同形)。
  */
 
-import { memos as memosClient, notebooks as notebooksClient } from '@platform/tauri/client';
-import { useDocumentStore } from '@features/document';
+import { memos as memosClient } from '@platform/tauri/client';
 import { useMemoStore, type MemoItem, type Notebook } from '@features/memo';
 import { resolveAbsolutePath } from '@platform/open-target/path-helper';
 import type { ResolvedOpenTarget } from '@platform/open-target/types';
+import { openMemoTarget } from '@features/workspace/use-cases/workspace-navigation';
 
 /**
  * 把 ResolvedOpenTarget 喂给 document-store。 跨 notebook 时先切 notebook,
@@ -34,7 +34,6 @@ import type { ResolvedOpenTarget } from '@platform/open-target/types';
  */
 export async function openNoteByTarget(resolved: ResolvedOpenTarget): Promise<void> {
   const store = useMemoStore.getState();
-  const documentStore = useDocumentStore.getState();
 
   const memoItem: MemoItem = {
     id: resolved.memoId,
@@ -52,65 +51,20 @@ export async function openNoteByTarget(resolved: ResolvedOpenTarget): Promise<vo
     isOpen: true,
   };
 
-  // 1. 跨 notebook 切换
+  // The navigation facade owns notebook switching, list hydration, memo
+  // selection, document opening, commit, and rollback.
   const targetNotebook: Notebook | null = store.notebooks.find(
     (nb) => nb.id === resolved.notebookId,
   ) ?? null;
 
-  if (store.selectedNotebook?.id !== resolved.notebookId) {
-    try {
-      // Tauri IPC: 把 current_notebook_id 切到目标, 后端 switch_notebook_and_rebuild
-      // 走 watcher rebind + 索引 rebuild, 但不切文档 (避免闪烁)。
-      await notebooksClient.setCurrent(resolved.notebookId);
-      // store 也要同步 selectedNotebook, 后续 selectedMemo 跟列表对齐
-      if (targetNotebook) {
-        store.setSelectedNotebook(targetNotebook);
-      } else {
-        // 后端合法但前端 store 还没拿到, 触发一次 loadNotebooks
-        await store.loadNotebooks();
-        const reloaded = useMemoStore.getState().notebooks.find(
-          (nb) => nb.id === resolved.notebookId,
-        );
-        if (reloaded) {
-          useMemoStore.getState().setSelectedNotebook(reloaded);
-        }
-      }
-      // 先写入目标 memo, 让随后 loadMemos 以目标 id 对齐 selectedMemo。
-      // 否则跨 notebook 时旧 selectedMemo 不在新列表中, loadMemos 会短暂置空,
-      // MemoList 的清空文档副作用可能插队到真正的打开流程里。
-      useMemoStore.getState().setSelectedMemo(memoItem);
-      // 重新拉 memos (新 notebook 的列表)
-      await useMemoStore.getState().loadMemos({ notebookId: resolved.notebookId });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[openByTarget] switch notebook failed:', err);
-      throw err;
-    }
-  }
-
-  // 2. upsertMemo + setSelectedMemo
-  //    ── 顺序约束: setSelectedMemo **必须早于** openMemoDocument, 关闭
-  //    enqueueTransition 异步窗口期间 activeMemoSession.memoId 滞后的
-  //    "reopen 旧 memo" race (见 noteReference fix)。
-  const latest = useMemoStore.getState();
-  if (!latest.memos.find((m) => m.id === memoItem.id)) {
-    latest.upsertMemo(memoItem);
-  }
-  latest.setSelectedMemo(memoItem);
-
-  // 3. openMemoDocument ── document-store 内部走 enqueueTransition 串行化
-  try {
-    await documentStore.openMemoDocument({
-      memoId: resolved.memoId,
-      path: resolveAbsolutePath(resolved),
-      notebookId: resolved.notebookId,
-      notebookPath: resolved.notebookPath,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('[openByTarget] openMemoDocument failed:', err);
-    throw err;
-  }
+  await openMemoTarget({
+    memoId: resolved.memoId,
+    path: resolveAbsolutePath(resolved),
+    notebookId: resolved.notebookId,
+    notebookPath: resolved.notebookPath,
+    memo: memoItem,
+    notebook: targetNotebook,
+  });
 }
 
 /**

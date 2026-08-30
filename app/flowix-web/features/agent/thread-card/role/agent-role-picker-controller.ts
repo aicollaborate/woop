@@ -64,6 +64,8 @@ export interface AgentRolePickerControllerOptions {
    * 在 agent 回合里反查 memo body)。
    */
   injectMemoReference: (ref: MemoRef) => void;
+  /** The trigger can be owned by an outer (level-1) add menu. */
+  triggerManagedExternally?: boolean;
 }
 
 export class AgentRolePickerController {
@@ -92,6 +94,12 @@ export class AgentRolePickerController {
   private noteSearchSeq = 0;
   private noteSearchTimer: ReturnType<typeof setTimeout> | null = null;
   private noteSearchLoading = false;
+  private noteSearchComposing = false;
+  private submenuMode = false;
+  private submenuAnchor: HTMLElement | null = null;
+  private triggerManagedExternally: boolean;
+  /** Repaint only the results list; never replace the IME-owned search input. */
+  private refreshVisibleNoteGroups: (() => void) | null = null;
 
   constructor(options: AgentRolePickerControllerOptions) {
     this.trigger = options.trigger;
@@ -104,6 +112,7 @@ export class AgentRolePickerController {
     this.updateRole = options.updateRole;
     this.consumeOutsidePointer = options.consumeOutsidePointer;
     this.injectMemoReference = options.injectMemoReference;
+    this.triggerManagedExternally = options.triggerManagedExternally ?? false;
     this.positionController = createAnchoredPopoverController({
       isOpen: () => this.open,
       isDestroyed: () => this.isDestroyed(),
@@ -115,7 +124,9 @@ export class AgentRolePickerController {
       observe: () => [this.trigger, this.popover],
     });
 
-    this.trigger.addEventListener("click", this.handleTriggerClick);
+    if (!this.triggerManagedExternally) {
+      this.trigger.addEventListener("click", this.handleTriggerClick);
+    }
   }
 
   get isOpen(): boolean {
@@ -129,6 +140,10 @@ export class AgentRolePickerController {
   setOpen(open: boolean): void {
     if (this.open === open) return;
     this.open = open;
+    if (!open) {
+      this.submenuMode = false;
+      this.submenuAnchor = null;
+    }
     this.popover.hidden = !open;
     this.syncTriggerOpenState();
 
@@ -140,6 +155,7 @@ export class AgentRolePickerController {
       this.positionController.start();
       document.addEventListener("pointerdown", this.handleOutsidePointer, true);
     } else {
+      this.refreshVisibleNoteGroups = null;
       this.positionController.stop();
       document.removeEventListener(
         "pointerdown",
@@ -152,6 +168,12 @@ export class AgentRolePickerController {
 
   toggle(): void {
     this.setOpen(!this.open);
+  }
+
+  openFromParent(anchor: HTMLElement = this.trigger): void {
+    this.submenuMode = true;
+    this.submenuAnchor = anchor;
+    this.setOpen(true);
   }
 
   /** 外部 (例如 store 订阅) 想刷新弹窗内容时调用 ── 弹窗隐藏时直接 no-op。 */
@@ -204,7 +226,9 @@ export class AgentRolePickerController {
     this.positionController.dispose();
     this.cancelPendingNoteSearch();
     document.removeEventListener("pointerdown", this.handleOutsidePointer, true);
-    this.trigger.removeEventListener("click", this.handleTriggerClick);
+    if (!this.triggerManagedExternally) {
+      this.trigger.removeEventListener("click", this.handleTriggerClick);
+    }
     this.popover.remove();
   }
 
@@ -274,15 +298,16 @@ export class AgentRolePickerController {
         this.isLoadingRoleOptions = false;
         this.refreshIcon();
         if (this.open && !this.popover.hidden) {
-          this.renderOptionsList();
+          this.refreshVisibleNoteGroups?.();
           this.positionController.schedule();
         }
       });
   }
 
   private renderOptionsList(): void {
+    this.refreshVisibleNoteGroups = null;
     this.popover.replaceChildren();
-    // 单一入口: 搜索框 + 双分组 (文档 / 角色) 列表。
+    // 单一入口: 双分组 (文档 / 角色) 列表 + 底部搜索框。
     // 搜索 active 时跨两组按 title 过滤; 无命中组整体隐藏 header。
     this.popover.append(this.renderUnifiedSection());
   }
@@ -290,7 +315,7 @@ export class AgentRolePickerController {
   /**
    * 搜索框 + 双分组 section ── 与原来「常用语 + 选择角色」共享同一套视觉节奏:
    *   - 搜索框 + 一组空状态 + 一组列表 复用同一个 role-item 样式
-   *   - 分隔线 ── 搜索框与第一组之间、组与组之间, 走真 <hr> 元素
+   *   - 分隔线 ── 列表与搜索框之间、组与组之间, 走真 <hr> 元素
    *     (跟文档标题栏 "…more" 下拉菜单里 <hr> 同源 ── DROPDOWN_DIVIDER_SKIN)
    *   - 笔记命中按 query 命中度由后端排好序, 角色组按记忆顺序展示
    *   - 全无命中时显示统一的「未找到」占位
@@ -371,7 +396,7 @@ export class AgentRolePickerController {
       }
 
       // 渲染分组 ── 仅在多组之间插 <hr> 分隔线; 单组时不需要组内分隔
-      // (搜索框与第一组之间的 <hr> 在 renderUnifiedSection 末尾统一追加)。
+      // (列表与搜索框之间的 <hr> 在 renderUnifiedSection 末尾统一追加)。
       for (let i = 0; i < groupFragments.length; i++) {
         if (i > 0) {
           groupsContainer.append(this.createSectionDivider());
@@ -379,14 +404,33 @@ export class AgentRolePickerController {
         groupsContainer.append(groupFragments[i]);
       }
     };
+    this.refreshVisibleNoteGroups = rerenderGroups;
 
-    search.addEventListener("input", () => {
+    search.addEventListener("input", (event) => {
+      const inputEvent = event as InputEvent;
+      // Some WebViews expose the underlined IME candidate through the input
+      // value before compositionend (and may deliver compositionstart late).
+      // `isComposing` is the authoritative signal for this event.
+      if (this.noteSearchComposing || inputEvent.isComposing) return;
       this.noteFilter = search.value;
+      // IME emits input events for unfinished composition text. Do not query
+      // or repaint while the candidate string is still being composed.
       this.scheduleNoteSearch(this.noteFilter);
       rerenderGroups();
       // 内容高度变化后重新定位, 让 popover 相对 trigger 重新锚定
       // (虽然 ResizeObserver 也应该触发, 但显式 schedule 兼容
       //  jsdom 等无 ResizeObserver 环境 + 兜底首次渲染抖动)。
+      this.positionController.schedule();
+    });
+    search.addEventListener("compositionstart", () => {
+      this.noteSearchComposing = true;
+      this.cancelPendingNoteSearch();
+    });
+    search.addEventListener("compositionend", () => {
+      this.noteSearchComposing = false;
+      this.noteFilter = search.value;
+      this.scheduleNoteSearch(this.noteFilter);
+      rerenderGroups();
       this.positionController.schedule();
     });
     search.addEventListener("keydown", (event) => {
@@ -412,10 +456,11 @@ export class AgentRolePickerController {
     });
 
     rerenderGroups();
-    // 拼接: 搜索框 ── 分隔线 ── 列表容器 ── 列表容器内部已有组间分隔线
-    frag.append(search);
-    frag.append(this.createSectionDivider());
+    // 搜索框固定在底部。二级菜单的底边与一级菜单项对齐，因此列表
+    // 增长/收缩只会向上扩展，不会让搜索框随结果数量上下抖动。
     frag.append(groupsContainer);
+    frag.append(this.createSectionDivider());
+    frag.append(search);
 
     // 打开弹窗时自动聚焦搜索框 + 触发一次空查询 (取最近更新 / 索引好的笔记, 给用户一个起点)
     requestAnimationFrame(() => {
@@ -714,7 +759,7 @@ export class AgentRolePickerController {
           this.noteHits = items;
           this.noteSearchLoading = false;
           if (this.open && !this.popover.hidden) {
-            this.renderOptionsList();
+            this.refreshVisibleNoteGroups?.();
             this.positionController.schedule();
           }
         })
@@ -724,7 +769,7 @@ export class AgentRolePickerController {
           this.noteSearchLoading = false;
           this.noteHits = [];
           if (this.open && !this.popover.hidden) {
-            this.renderOptionsList();
+            this.refreshVisibleNoteGroups?.();
             this.positionController.schedule();
           }
         });
@@ -749,6 +794,22 @@ export class AgentRolePickerController {
     }
 
     const anchorRect = this.trigger.getBoundingClientRect();
+    if (this.submenuMode) {
+      const padding = ROLE_POPOVER_VIEWPORT_PADDING_PX;
+      const submenuRect = (this.submenuAnchor ?? this.trigger).getBoundingClientRect();
+      const width = this.popover.getBoundingClientRect().width || ROLE_POPOVER_WIDTH_PX;
+      const height = this.popover.getBoundingClientRect().height || ROLE_POPOVER_MAX_HEIGHT_PX;
+      // The submenu should touch the hovered level-1 item; the shared border
+      // edge provides the visual separation without an extra gap.
+      const rightLeft = submenuRect.right;
+      const left = rightLeft + width <= window.innerWidth - padding
+        ? rightLeft
+        : submenuRect.left - width;
+      const top = submenuRect.bottom - height;
+      this.popover.style.left = `${Math.max(padding, Math.min(left, window.innerWidth - width - padding))}px`;
+      this.popover.style.top = `${Math.max(padding, Math.min(top, window.innerHeight - height - padding))}px`;
+      return;
+    }
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const padding = ROLE_POPOVER_VIEWPORT_PADDING_PX;

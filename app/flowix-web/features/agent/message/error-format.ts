@@ -96,6 +96,22 @@ export function formatAgentErrorMessage(content: string): string {
   return `(LLM 暂时不可用，原因: ${message})`;
 }
 
+/**
+ * Extract the readable message from a standalone JSON error envelope.
+ *
+ * Codex app-server can put an upstream failure in `error.message` as a JSON
+ * string, for example `{"detail":"..."}`. Keep this helper limited to a
+ * complete JSON object so ordinary assistant text that merely mentions JSON
+ * is left untouched.
+ */
+export function extractStandaloneAgentErrorMessage(
+  content: string,
+): string | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  return extractJsonErrorMessage(trimmed);
+}
+
 /** 取 `text` 里首个 `{...}` JSON 对象的 error message; 解析失败返回 null。 */
 function extractJsonErrorMessage(text: string): string | null {
   const json = extractFirstJsonObject(text);

@@ -57,6 +57,7 @@ function isDataChunk(kind: AgentEvent["kind"]): boolean {
     kind === "text_delta" ||
     kind === "user_message" ||
     kind === "reasoning_delta" ||
+    kind === "context_compaction" ||
     kind === "final_message" ||
     kind === "tool_call" ||
     kind === "tool_result"
@@ -73,6 +74,7 @@ function shouldEnsureRunActive(event: AgentEvent): boolean {
     event.kind === "text_delta" ||
     event.kind === "final_message" ||
     event.kind === "reasoning_delta" ||
+    event.kind === "context_compaction" ||
     event.kind === "tool_call" ||
     event.kind === "tool_result"
   );
@@ -211,6 +213,11 @@ export function createStreamEventDispatcher(
         streamingBuffer.appendReasoning(event.threadId, event.text);
         return;
       }
+      case "context_compaction":
+        // Compaction is a timeline marker and must appear before any later
+        // assistant output; flush buffered text before inserting it.
+        streamingBuffer.flushSync();
+        break;
       case "final_message":
       case "tool_call":
       case "tool_result":

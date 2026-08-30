@@ -11,6 +11,7 @@ export interface AgentComposerDomParts {
   composerImages: HTMLDivElement;
   composerActions: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
+  composerAddPopover: HTMLDivElement;
   input: HTMLTextAreaElement;
   codexSettingsPopover: HTMLDivElement;
   composerRolePopover: HTMLDivElement;
@@ -125,13 +126,17 @@ export function createAgentComposerDom(
   composerRolePopover.className = 'agent-thread-card__composer-role-popover';
   composerRolePopover.setAttribute('role', 'menu');
   composerRolePopover.hidden = true;
+  const composerAddPopover = document.createElement('div');
+  composerAddPopover.className = 'agent-thread-card__composer-add-popover';
+  composerAddPopover.setAttribute('role', 'menu');
+  composerAddPopover.hidden = true;
   composerActions.append(composerRoleIcon);
   // DOM 顺序 ── composerActions (role icon) 放在 input 之前, 让非全屏
   // flex (默认 row, DOM 顺序 = 视觉顺序) 状态下 role icon 显示在 input
   // 左侧, 跟全屏态 grid 布局 `grid-column: 1` 把 actions 显式钉在第一列
   // ── 视觉位置对齐。 send button 仍以 sendButtonMount 收尾, 留在最右。
   composer.append(composerImages, composerActions, input, sendButtonMount);
-  document.body.append(codexSettingsPopover, composerRolePopover);
+  document.body.append(codexSettingsPopover, composerAddPopover, composerRolePopover);
   // 空区域点击聚焦 ── 见上方 COMPOSER_FOCUS_INTERACTIVE_SELECTOR 注释。
   // 注意: 用 pointerdown 而非 click ── click 触发时浏览器已经先 focus
   // 到 body, 后续 focus() 会被某些 webview 忽略 (focus 漂移到按钮)。
@@ -144,6 +149,7 @@ export function createAgentComposerDom(
     input,
     codexSettingsPopover,
     composerRolePopover,
+    composerAddPopover,
     sendButtonMount,
   };
 }
@@ -152,5 +158,6 @@ export function disposeAgentComposerDom(parts: AgentComposerDomParts): void {
   parts.composer.removeEventListener('pointerdown', handleComposerPointerDown);
   parts.codexSettingsPopover.remove();
   parts.composerRolePopover.remove();
+  parts.composerAddPopover.remove();
   parts.composer.remove();
 }

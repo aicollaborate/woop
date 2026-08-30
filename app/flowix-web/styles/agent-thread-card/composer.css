@@ -483,6 +483,18 @@
   object-fit: cover;
 }
 
+.markdown-editor .agent-thread-card__composer-attachment-name {
+  display: block;
+  max-width: 112px;
+  overflow: hidden;
+  padding: 8px 6px;
+  color: var(--text-secondary, #666);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .markdown-editor .agent-thread-card__composer-image-remove {
   position: absolute;
   inset: 0;

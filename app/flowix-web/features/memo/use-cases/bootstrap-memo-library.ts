@@ -12,7 +12,9 @@ import { useMemoStore, type Notebook } from '@features/memo/store/memo-store';
 let bootstrapPromise: Promise<Notebook | null> | null = null;
 
 async function performBootstrap(): Promise<Notebook | null> {
-  const persistedNotebookId = useMemoStore.getState().selectedNotebook?.id ?? null;
+  const persistedNotebookId = useMemoStore.getState().selectedNotebookId
+    ?? useMemoStore.getState().selectedNotebook?.id
+    ?? null;
   const notebooks = await notebookRepository.list();
   const store = useMemoStore.getState();
 

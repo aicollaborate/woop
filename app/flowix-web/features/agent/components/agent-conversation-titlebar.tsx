@@ -14,8 +14,8 @@ import {
 } from '@features/document/components/document-titlebar-shared';
 import { DEFAULT_AGENT_TYPE_KEY, getAgentType } from '@/lib/agent-types';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
-import { useDocumentStore } from '@features/document';
 import { openNoteByMemoId } from '@features/memo/use-cases/open-by-target';
+import { openExternalTarget } from '@features/workspace/use-cases/workspace-navigation';
 import { getAgentConversationPresentation } from '@features/agent/conversation-presentation';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
@@ -23,6 +23,7 @@ import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/run
 import { getResolvedExternalSessionId } from '@features/agent/services/external-agent-runtime-service';
 import { createRuntimeInfoRequester } from '@features/agent/thread-card/runtime/runtime-info-requester';
 import { toast } from '@/lib/toast';
+import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,9 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
   const externalThreadId = productThreadId
     ? getResolvedExternalSessionId(productThreadId) ?? productThreadId
     : '';
+  const providerSessionId = instance?.sessionId ?? (
+    productThreadId ? getResolvedExternalSessionId(productThreadId) : null
+  );
   const canArchive =
     (agent.capabilities.supportsThreadArchive ?? false) && externalThreadId !== '';
 
@@ -101,7 +105,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
     const open = source?.memoId
       ? openNoteByMemoId(source.memoId)
       : source?.documentPath
-        ? useDocumentStore.getState().openExternalDocument(source.documentPath)
+        ? openExternalTarget(source.documentPath)
         : Promise.resolve();
     void open.catch(() => toast.error(t('status.agent.originUnavailable')));
   }, [instance, presentation, t]);
@@ -132,10 +136,22 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
     >
       <span className="agent-thread-card__badge-hover-wrapper shrink-0">
         <BadgeHoverCard
-          threadId={externalThreadId}
+          threadId={productThreadId || undefined}
+          sessionId={providerSessionId ?? undefined}
           model={badgeData.model}
           usage={badgeData.usage}
-          onRequestRuntimeInfo={createRuntimeInfoRequester(instance.agentType, () => instance.threadId)}
+          onRequestRuntimeInfo={createRuntimeInfoRequester(
+            instance.agentType,
+            () => useAgentSessionStore.getState().getInstance(instanceId)?.threadId,
+            () => {
+              const current = useAgentSessionStore.getState().getInstance(instanceId);
+              return current?.sessionId ?? (
+                current?.threadId
+                  ? getResolvedExternalSessionId(current.threadId)
+                  : null
+              );
+            },
+          )}
           codex={instance.agentType === 'codex'}
           cwd={runtimeCwd}
         />
@@ -199,7 +215,8 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
 
 export function AgentConversationTitlebar({
   instanceId,
-  isSidebarCollapsed,
+  isMiddleColumnCollapsed,
+  isSidebarVisible,
   onExpandSidebar,
   onSidebarPreviewEnter,
   onSidebarPreviewLeave,
@@ -209,7 +226,8 @@ export function AgentConversationTitlebar({
   onNavigateForward,
 }: {
   instanceId: string;
-  isSidebarCollapsed: boolean;
+  isMiddleColumnCollapsed: boolean;
+  isSidebarVisible: boolean;
   onExpandSidebar: () => void;
   onSidebarPreviewEnter?: () => void;
   onSidebarPreviewLeave?: () => void;
@@ -225,17 +243,13 @@ export function AgentConversationTitlebar({
     'flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-35';
 
   return (
-    <div
-      data-tauri-drag-region
-      className={`agent-conversation-titlebar z-[50] flex shrink-0 select-none items-center ${
-        isWindows
-          ? 'h-9 pl-2 pr-[126px]'
-          : `h-12 pr-0 ${isSidebarCollapsed ? 'pl-[90px]' : 'pl-0'}`
-      }`}
-      style={{ backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
+    <ThirdColumnTitlebarShell
+      isWindows={isWindows}
+      showTrafficLightSpacer={isMiddleColumnCollapsed && !isSidebarVisible}
+      className="agent-conversation-titlebar"
     >
       <div className="flex shrink-0 items-center gap-1">
-        {isSidebarCollapsed && (
+        {isMiddleColumnCollapsed && (
           <button
             type="button"
             onClick={onExpandSidebar}
@@ -243,8 +257,8 @@ export function AgentConversationTitlebar({
             onMouseLeave={onSidebarPreviewLeave}
             aria-label={t('document.titlebar.showSidebar')}
             title={t('document.titlebar.showSidebarTooltip')}
-            className={`flex shrink-0 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] [-webkit-app-region:no-drag] ${
-              isWindows ? 'h-7 w-7 rounded-lg' : 'h-8 w-8 rounded-xl'
+            className={`flex h-5 w-5 shrink-0 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] [-webkit-app-region:no-drag] ${
+              isWindows ? 'rounded-lg' : 'rounded-xl'
             }`}
           >
             <SidebarToggleIcon
@@ -279,6 +293,6 @@ export function AgentConversationTitlebar({
       <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch">
         <AgentConversationHeader instanceId={instanceId} />
       </div>
-    </div>
+    </ThirdColumnTitlebarShell>
   );
 }

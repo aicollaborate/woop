@@ -148,6 +148,8 @@ export interface AgentConversationInstance {
   /** Product title projected from threads.title; null before a thread exists. */
   threadTitle: string | null;
   threadId: string | null;
+  /** Provider-owned session id read from the durable provider binding. */
+  sessionId?: string | null;
   runtimeConfig?: string | null;
   /** Backend-owned cwd; omitted from conversation upsert requests. */
   readonly frozenCwd?: string | null;
@@ -157,7 +159,7 @@ export interface AgentConversationInstance {
   updatedAt: number;
 }
 
-export type AgentConversationInstanceUpsert = Omit<AgentConversationInstance, 'threadTitle' | 'runtimeConfig'> & {
+export type AgentConversationInstanceUpsert = Omit<AgentConversationInstance, 'threadTitle' | 'sessionId' | 'runtimeConfig'> & {
   /** Initial title used when the upsert creates the product thread. */
   initialTitle: string;
   runtimeConfig?: string | null;

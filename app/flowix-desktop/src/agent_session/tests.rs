@@ -14,6 +14,7 @@ mod tests {
         ChatMessage {
             id: id.to_string(),
             role: role.to_string(),
+            message_type: None,
             content: content.to_string(),
             llm_content: None,
             system_reminder_directory: None,
@@ -222,6 +223,34 @@ mod tests {
                 .await
                 .unwrap()
                 .as_deref(),
+            Some("019f-test-canonical-session")
+        );
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: "inst-codex-session".to_string(),
+                agent_type: "codex".to_string(),
+                initial_title: "Product database title".to_string(),
+                thread_id: Some("codex-local-card-1".to_string()),
+                runtime_config: None,
+                source: AgentConversationSource {
+                    kind: "dedicated".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                    notebook_id: None,
+                },
+                role: None,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+        let instance = manager
+            .get_agent_conversation_instance("inst-codex-session")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            instance.session_id.as_deref(),
             Some("019f-test-canonical-session")
         );
         let listed = manager.list_external_threads("codex").await.unwrap();

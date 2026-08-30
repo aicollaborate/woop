@@ -128,4 +128,19 @@ describe("DeepSeek Harness reconnect error display", () => {
       ),
     ).toBe("5 hour usage limit reached");
   });
+
+  it("extracts detail from a standalone Codex JSON error", () => {
+    expect(
+      getAgentMessageVisibleContent(
+        errorMessage({
+          id: "assistant-codex-error",
+          content:
+            '{"detail":"The \'inherit\' model is not supported when using Codex with a ChatGPT account."}',
+        }),
+        "zh-CN",
+      ),
+    ).toBe(
+      "The 'inherit' model is not supported when using Codex with a ChatGPT account.",
+    );
+  });
 });

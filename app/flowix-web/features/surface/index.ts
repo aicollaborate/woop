@@ -2,14 +2,19 @@ export {
   ThirdColumnSurfaceHost,
   getThirdColumnSurfaceDefinition,
   surfaceSupports,
-  thirdColumnSurfaceRegistry,
   type ThirdColumnSurfaceDefinition,
 } from './registry';
-export { resolveThirdColumnSurface } from './resolver';
+export { resolveTabSurface, resolveWorkspaceSurface } from './resolver';
 export type {
-  ResolveThirdColumnSurfaceInput,
+  DocumentSurfaceContext,
+  DocumentSurfaceIdentity,
+  PluginWorkbenchContext,
+  ResolveTabSurfaceInput,
+  ResolveWorkspaceSurfaceInput,
   ThirdColumnSurface,
   ThirdColumnSurfaceCapability,
   ThirdColumnSurfaceChrome,
   ThirdColumnSurfaceKind,
+  TabSurfaceTarget,
+  TabDocumentTarget,
 } from './types';

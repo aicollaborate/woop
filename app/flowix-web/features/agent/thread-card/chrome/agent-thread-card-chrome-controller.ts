@@ -25,6 +25,7 @@ export interface AgentThreadCardChromeControllerOptions {
   getFirstUserMessageText: () => string | undefined;
   getDefaultTitle: () => string;
   getThreadId: () => string | null;
+  getSessionId: () => string | null;
   getInstanceId: () => string | null;
   getTypeKey: () => AgentTypeKey;
   getCwd: () => string | null;
@@ -64,6 +65,7 @@ export class AgentThreadCardChromeController {
       badgeName: options.badgeName,
       hoverCardMount: options.badgeHoverCardMount,
       getThreadId: options.getThreadId,
+      getSessionId: options.getSessionId,
       getThreadState: options.getThreadState,
       getTypeKey: options.getTypeKey,
       getCwd: options.getCwd,

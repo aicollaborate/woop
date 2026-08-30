@@ -168,7 +168,7 @@ function ContextMenuContent({ children, className, style }: ContextMenuContentPr
 			// these values once the element's true size is known.
 			style={{ left: position?.x ?? 0, top: position?.y ?? 0, ...style }}
 			className={cn(
-				"fixed z-[1500] min-w-[160px] bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-1 animate-in fade-in-0 zoom-in-95",
+				"fixed z-[1500] min-w-[160px] bg-[var(--card)] border border-[var(--border-popup)] rounded-lg shadow-lg py-1 animate-in fade-in-0 zoom-in-95",
 				className
 			)}
 		>

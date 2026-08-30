@@ -22,6 +22,8 @@ export interface AgentConversationInstance {
   agentType: AgentTypeKey;
   title: string;
   threadId: string | null;
+  /** Provider session id loaded with the conversation instance. */
+  sessionId?: string | null;
   runtimeConfig?: RuntimeConfig | null;
   /** Observability only. The backend is the sole writer and runtime authority. */
   readonly frozenCwd?: string | null;

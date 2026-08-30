@@ -545,7 +545,6 @@ pub fn run() {
             commands::memo::creates::add_document,
             commands::memo::creates::import_external_document_to_memo,
             commands::memo::creates::update_memo_db,
-            commands::memo::creates::finalize_memo_filename,
             commands::memo::creates::favorite_memo,
             commands::memo::creates::unfavorite_memo,
             commands::memo::creates::set_memo_colors,

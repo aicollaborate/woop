@@ -52,7 +52,18 @@ impl ThreadManager {
             "SELECT
                 i.id, i.agent, ti.title, ti.id, i.config_json,
                 legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id,
+                COALESCE(
+                    CASE i.agent
+                        WHEN 'codex' THEN (SELECT external_id FROM threads_codex WHERE thread_id = ti.id)
+                        WHEN 'deepseek-harness' THEN (SELECT external_id FROM threads_dsh WHERE thread_id = ti.id)
+                        WHEN 'opencode' THEN (SELECT external_id FROM threads_opencode WHERE thread_id = ti.id)
+                        WHEN 'hermes' THEN (SELECT external_id FROM threads_hermes WHERE thread_id = ti.id)
+                        WHEN 'claude' THEN (SELECT external_id FROM threads_claude WHERE thread_id = ti.id)
+                    END,
+                    (SELECT external_session_id FROM thread_external_sessions
+                     WHERE thread_id = ti.id AND runtime = i.agent)
+                )
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
@@ -80,7 +91,18 @@ impl ThreadManager {
             "SELECT
                 i.id, i.agent, ti.title, ti.id, i.config_json,
                 legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id,
+                COALESCE(
+                    CASE i.agent
+                        WHEN 'codex' THEN (SELECT external_id FROM threads_codex WHERE thread_id = ti.id)
+                        WHEN 'deepseek-harness' THEN (SELECT external_id FROM threads_dsh WHERE thread_id = ti.id)
+                        WHEN 'opencode' THEN (SELECT external_id FROM threads_opencode WHERE thread_id = ti.id)
+                        WHEN 'hermes' THEN (SELECT external_id FROM threads_hermes WHERE thread_id = ti.id)
+                        WHEN 'claude' THEN (SELECT external_id FROM threads_claude WHERE thread_id = ti.id)
+                    END,
+                    (SELECT external_session_id FROM thread_external_sessions
+                     WHERE thread_id = ti.id AND runtime = i.agent)
+                )
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
@@ -151,7 +173,18 @@ impl ThreadManager {
             "SELECT
                 i.id, i.agent, ti.title, ti.id, i.config_json,
                 legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id,
+                COALESCE(
+                    CASE i.agent
+                        WHEN 'codex' THEN (SELECT external_id FROM threads_codex WHERE thread_id = ti.id)
+                        WHEN 'deepseek-harness' THEN (SELECT external_id FROM threads_dsh WHERE thread_id = ti.id)
+                        WHEN 'opencode' THEN (SELECT external_id FROM threads_opencode WHERE thread_id = ti.id)
+                        WHEN 'hermes' THEN (SELECT external_id FROM threads_hermes WHERE thread_id = ti.id)
+                        WHEN 'claude' THEN (SELECT external_id FROM threads_claude WHERE thread_id = ti.id)
+                    END,
+                    (SELECT external_session_id FROM thread_external_sessions
+                     WHERE thread_id = ti.id AND runtime = i.agent)
+                )
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
@@ -181,7 +214,18 @@ impl ThreadManager {
             "SELECT
                 i.id, i.agent, ti.title, ti.id, i.config_json,
                 legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
-                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id,
+                COALESCE(
+                    CASE i.agent
+                        WHEN 'codex' THEN (SELECT external_id FROM threads_codex WHERE thread_id = ti.id)
+                        WHEN 'deepseek-harness' THEN (SELECT external_id FROM threads_dsh WHERE thread_id = ti.id)
+                        WHEN 'opencode' THEN (SELECT external_id FROM threads_opencode WHERE thread_id = ti.id)
+                        WHEN 'hermes' THEN (SELECT external_id FROM threads_hermes WHERE thread_id = ti.id)
+                        WHEN 'claude' THEN (SELECT external_id FROM threads_claude WHERE thread_id = ti.id)
+                    END,
+                    (SELECT external_session_id FROM thread_external_sessions
+                     WHERE thread_id = ti.id AND runtime = i.agent)
+                )
              FROM agent_instances i
              JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
@@ -386,7 +430,18 @@ impl ThreadManager {
                 "SELECT
                     i.id, i.agent, ti.title, ti.id, i.config_json,
                     legacy.frozen_cwd, i.source, i.document_path, i.memo_id,
-                    i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id
+                    i.role_memo_id, i.role_name, i.created_at, i.updated_at, i.notebook_id,
+                    COALESCE(
+                        CASE i.agent
+                            WHEN 'codex' THEN (SELECT external_id FROM threads_codex WHERE thread_id = ti.id)
+                            WHEN 'deepseek-harness' THEN (SELECT external_id FROM threads_dsh WHERE thread_id = ti.id)
+                            WHEN 'opencode' THEN (SELECT external_id FROM threads_opencode WHERE thread_id = ti.id)
+                            WHEN 'hermes' THEN (SELECT external_id FROM threads_hermes WHERE thread_id = ti.id)
+                            WHEN 'claude' THEN (SELECT external_id FROM threads_claude WHERE thread_id = ti.id)
+                        END,
+                        (SELECT external_session_id FROM thread_external_sessions
+                         WHERE thread_id = ti.id AND runtime = i.agent)
+                    )
                  FROM agent_instances i
                  LEFT JOIN threads_index ti ON ti.instance_id = i.id
                  LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
@@ -742,6 +797,7 @@ impl ThreadManager {
             agent_type: row.get(1)?,
             thread_title: row.get(2)?,
             thread_id: row.get(3)?,
+            session_id: row.get(14)?,
             runtime_config: row.get(4)?,
             frozen_cwd: row.get(5)?,
             source,

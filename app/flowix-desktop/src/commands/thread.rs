@@ -268,7 +268,9 @@ pub async fn codex_thread_session_id(
         .get_external_session(&thread_id, "codex")
         .await
         .map_err(|e| e.to_string())?;
-    Ok(session.or(Some(thread_id)))
+    // The hover card must only expose the provider-owned id persisted in the
+    // database. Never substitute Flowix's product thread id here.
+    Ok(session)
 }
 
 #[tauri::command]

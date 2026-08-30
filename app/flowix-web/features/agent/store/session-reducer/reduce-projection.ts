@@ -18,6 +18,7 @@ import {
   applyRunUsage,
 } from "@features/agent/store/run-lifecycle";
 import { closeLoadingToolRows } from "@features/agent/store/thread-runtime-state";
+import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-order";
 import {
   emptyProjection,
   projectionToLive,
@@ -50,6 +51,8 @@ export function reduceProjection(
       return applyTextDeltaToProjection(projection, event);
     case "reasoning_delta":
       return applyReasoningDeltaToProjection(projection, event);
+    case "context_compaction":
+      return applyContextCompactionToProjection(projection, event);
     case "final_message":
       return applyFinalMessageToProjection(projection, event);
     case "tool_call":
@@ -155,6 +158,28 @@ function applyReasoningDeltaToProjection(
       assistantId: next.pendingAssistantId,
       reasoningId: next.pendingReasoningId,
     },
+  };
+}
+
+function applyContextCompactionToProjection(
+  p: ThreadProjection,
+  event: AgentEvent & { kind: "context_compaction" },
+): ThreadProjection {
+  const message = {
+    id: event.id,
+    role: "system" as const,
+    content: "",
+    messageType: "context-compaction" as const,
+    timestamp: new Date(event.sourceTimestamp ?? event.timestamp).toISOString(),
+    sourceTimestamp: event.sourceTimestamp,
+    sourceSequence: event.sourceSequence,
+    sourceSubsequence: event.sourceSubsequence,
+    codexTurnId: event.codexTurnId,
+  };
+  if (p.messages.some((item) => item.id === message.id)) return p;
+  return {
+    ...p,
+    messages: insertAgentMessageBySourceOrder(p.messages, message),
   };
 }
 

@@ -193,7 +193,7 @@
  *   2. 列表容器 (只承担 layout 间距, 不渲染视觉) */
 
 /* 搜索框 ── 无边框 / 无背景 / 无搜索 icon, 字号跟角色项一致。
- *  与搜索框与列表之间的分隔线 ── 改用真 <hr> 元素 (见下方
+ *  与列表之间的分隔线 ── 改用真 <hr> 元素 (见下方
  *  __note-search-divider), 跟 "…more" 下拉菜单里 <hr> 同源,
  *  不再在 input 自身上画 border-bottom, 避免给输入框增加一
  *  条不可控的额外边界。 */
@@ -202,7 +202,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px 8px;
-  margin: 0 0 4px 0;
+  margin: 4px 0 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -410,10 +410,9 @@
   content: "";
 }
 
-/* runtime info 懒加载在途时, 未就绪的 value 以脉冲骨架块占位 (替代 "-")。 */
+/* runtime info 懒加载在途时, 未就绪的 value 以脉冲骨架块占位。 */
 .agent-thread-card__hover-skeleton {
   display: inline-block;
-  /* 对齐行内文本的视觉中线, 避免基线对齐导致骨架在行内偏上。 */
   vertical-align: middle;
   height: 0.6rem;
   flex: 0 0 auto;
@@ -429,7 +428,7 @@
   }
 
   50% {
-    opacity: 1;
+    opacity: 0.9;
   }
 }
 

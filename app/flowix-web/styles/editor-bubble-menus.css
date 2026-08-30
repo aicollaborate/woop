@@ -255,7 +255,7 @@
   min-height: 10rem;
   max-height: 20rem;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 0.5rem;
   background: var(--card);
   color: var(--foreground);
@@ -387,7 +387,7 @@
   max-height: var(--mention-note-max-height, 288px);
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 0.5rem;
   background: var(--card);
   color: var(--foreground);

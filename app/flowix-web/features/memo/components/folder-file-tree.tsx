@@ -29,6 +29,7 @@ import {
 import { FileTypeIcon } from '@features/memo/components/file-type-icon';
 import { useI18n } from '@/lib/i18n';
 import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
+import { openExternalTarget } from '@features/workspace/use-cases/workspace-navigation';
 
 const TREE_EDGE_GUTTER = 6;
 const ITEM_INLINE_PADDING = 6;
@@ -91,7 +92,6 @@ export function FolderFileTree({
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const setActiveFileBrowserPath = useMemoStore((s) => s.setActiveFileBrowserPath);
   const setActiveFileBrowserDocument = useMemoStore((s) => s.setActiveFileBrowserDocument);
-  const setSelectedMemo = useMemoStore((s) => s.setSelectedMemo);
   const accessConfig = useAgentAccessStore((s) => s.config);
   const setDefaultFiles = useAgentAccessStore((s) => s.setDefaultFiles);
   const notebookId = selectedNotebook?.id;
@@ -130,11 +130,9 @@ export function FolderFileTree({
   const visibleNodes = useMemo(() => flattenVisibleTree(tree), [tree]);
 
   const openDocument = useCallback((item: DocTreeItem) => {
-    // 资料文档不是 memo。清掉 selectedMemo，避免重启时 memo 恢复逻辑
-    // 抢先打开旧笔记；文档路径本身在 open 成功后写入持久化 store。
-    setSelectedMemo(null);
-    void useDocumentStore.getState()
-      .openExternalDocument(item.fullPath, { scopePath: folderPath })
+    // Selection clearing and rollback belong to the navigation transaction;
+    // the persisted file target is still written only after commit.
+    void openExternalTarget(item.fullPath, { scopePath: folderPath })
       .then(() => {
         setActiveFileBrowserDocument({ path: item.fullPath, scopePath: folderPath });
       })
@@ -142,7 +140,7 @@ export function FolderFileTree({
         // 文档切换失败时保留原来的持久化选择，避免下次启动恢复到
         // 实际没有打开成功的文件。
       });
-  }, [folderPath, setActiveFileBrowserDocument, setSelectedMemo]);
+  }, [folderPath, setActiveFileBrowserDocument]);
 
   const handleDelete = useCallback(async (item: DocTreeItem) => {
     const ok = await files.delete(item.fullPath, folderPath);

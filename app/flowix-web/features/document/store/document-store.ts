@@ -380,11 +380,8 @@ export const useDocumentStore = create<DocumentStore>()(
       });
     },
     closeAgentConversation: () => {
-      set((state) => (
-        state.activeAgentConversationId
-          ? { activeAgentConversationId: null }
-          : state
-      ));
+      if (!get().activeAgentConversationId) return;
+      set({ activeAgentConversationId: null });
     },
     clearDocument: async () => {
       return enqueueTransition(async () => {

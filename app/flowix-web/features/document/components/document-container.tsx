@@ -25,7 +25,6 @@ import {
 } from '@features/document/components/session/document-utils';
 import { useDocumentContent } from '@features/document/components/session/use-document-content';
 import { useDocumentAutosave } from '@features/document/components/session/use-document-autosave';
-import { useDocumentFinalize } from '@features/document/components/session/use-document-finalize';
 import { useExternalDocumentChangeWatch } from '@features/document/components/session/use-external-document-change-watch';
 import { useMemoDocumentChangeWatch } from '@features/document/components/session/use-memo-document-change-watch';
 import { LazyDocumentEditor } from '@features/document/components/lazy-document-editor';
@@ -35,11 +34,11 @@ import type { MarkdownEditorHandle } from '@features/editor/markdown-editor';
 import { isEditableTextFilePath, isImageFilePath } from '@features/editor/code-file';
 import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
+import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
 
 export function DocumentContainer({
   filePath,
   memoId = null,
-  notebookId = null,
   notebookPath = null,
   transitionId = null,
   onMetainfoData,
@@ -71,13 +70,10 @@ export function DocumentContainer({
   const editorHandleRef = useRef<MarkdownEditorHandle | null>(null);
   // 切片订阅: 替代原来的 `useMemoStore()` 全量订阅 —— 任何 set 都会让本组件重渲,
   // 包括 doc 内容 / charCount 这些高频变化。切到 selector 后, 只在用到的
-  // 字段 (selectedNotebook + 4 个 action) 变化时才重渲。 activeMemo 单独
-  // 用 useShallow 走 memoId selector, 避免按 memo 数组长度变化而重渲。
-  const upsertMemo = useMemoStore((store) => store.upsertMemo);
+  // 仅订阅当前 memo 实体，避免按 memo 数组长度变化而重渲。
   const activeMemo = useMemoStore(useCallback((store) => {
     return findMemoById(store, memoId);
   }, [memoId]));
-  const openMemoDocument = useDocumentStore((store) => store.openMemoDocument);
   const {
     state,
     setState,
@@ -108,18 +104,6 @@ export function DocumentContainer({
     setState,
     reloadDocument,
     flushPendingContent: flushPendingEditorChanges,
-  });
-  const { finalizeMemoRename } = useDocumentFinalize({
-    filePath,
-    memoId,
-    notebookId,
-    notebookPath,
-    isExternalDocument,
-    clearSaveTimer,
-    saveDoc,
-    setState,
-    upsertMemo,
-    openMemoDocument,
   });
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [propertiesContentSnapshot, setPropertiesContentSnapshot] = useState<string | null>(null);
@@ -330,7 +314,7 @@ export function DocumentContainer({
       try {
         const success = await useMemoStore.getState().deleteMemo(memoId);
         if (success) {
-          await useDocumentStore.getState().clearDocument();
+          await clearWorkspaceDocument();
           toast.success(t('document.ghost.removed'));
         } else {
           toast.error(t('document.ghost.deleteFailed'));
@@ -391,7 +375,6 @@ export function DocumentContainer({
             onEditorScroll={(scrollTop) => setState(prev => ({ ...prev, isScrolled: scrollTop > 90 }))}
             onEditingFinished={() => {
               flushPendingEditorChanges();
-              finalizeMemoRename();
             }}
             autoFocus={state.isNewlyCreated}
             editorStorageUpdatedAt={state.updatedAtDate ?? (activeMemo?.updatedAt ? new Date(activeMemo.updatedAt) : null)}

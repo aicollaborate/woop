@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRuntimeInfoRequester } from "./runtime-info-requester";
 
 const mocks = vi.hoisted(() => ({
   getCodexSessionId: vi.fn(),
   getCodexRuntimeInfo: vi.fn(),
+  getDeepSeekHarnessSessionId: vi.fn(),
   getOpenCodeSessionId: vi.fn(),
   sessionUsage: vi.fn(),
 }));
@@ -12,12 +13,17 @@ vi.mock("@platform/tauri/client", () => ({
   agent: {
     getCodexSessionId: mocks.getCodexSessionId,
     getCodexRuntimeInfo: mocks.getCodexRuntimeInfo,
+    getDeepSeekHarnessSessionId: mocks.getDeepSeekHarnessSessionId,
     getOpenCodeSessionId: mocks.getOpenCodeSessionId,
   },
   deepseekHarness: { sessionUsage: mocks.sessionUsage },
 }));
 
 describe("createRuntimeInfoRequester", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns undefined for agent types without a runtime provider", () => {
     expect(createRuntimeInfoRequester("claude", () => "thread-1")).toBeUndefined();
   });
@@ -52,29 +58,48 @@ describe("createRuntimeInfoRequester", () => {
     await expect(request?.()).resolves.toBeNull();
     threadId = "thread-2";
     mocks.sessionUsage.mockResolvedValue({
-      sessionId: "dsh-session-2",
       model: "deepseek-chat",
       usage: { input_tokens: 12 },
     });
+    mocks.getDeepSeekHarnessSessionId.mockResolvedValue("dsh-session-2");
     await expect(request?.()).resolves.toEqual({
       sessionId: "dsh-session-2",
       model: "deepseek-chat",
       usage: { input_tokens: 12 },
     });
     expect(mocks.sessionUsage).toHaveBeenCalledWith("thread-2");
+    expect(mocks.getDeepSeekHarnessSessionId).toHaveBeenCalledWith("thread-2");
   });
 
   it("maps codex session id and runtime info into the card payload", async () => {
-    mocks.getCodexSessionId.mockResolvedValue("sess-1");
     const info = { account: { planType: "plus" }, usage: { input_tokens: 1 } };
     mocks.getCodexRuntimeInfo.mockResolvedValue(info);
-    const request = createRuntimeInfoRequester("codex", () => "thread-1");
+    const request = createRuntimeInfoRequester(
+      "codex",
+      () => "thread-1",
+      () => "sess-1",
+    );
     await expect(request?.()).resolves.toEqual({
       sessionId: "sess-1",
       usage: { input_tokens: 1 },
       codex: info,
     });
-    expect(mocks.getCodexSessionId).toHaveBeenCalledWith("thread-1");
+    expect(mocks.getCodexSessionId).not.toHaveBeenCalled();
     expect(mocks.getCodexRuntimeInfo).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("resolves a provider session when the shared session field is not hydrated yet", async () => {
+    mocks.getCodexSessionId.mockResolvedValue("resolved-session-1");
+    const info = { account: { planType: "plus" }, usage: null };
+    mocks.getCodexRuntimeInfo.mockResolvedValue(info);
+    const request = createRuntimeInfoRequester("codex", () => "local-thread-1");
+
+    await expect(request?.()).resolves.toEqual({
+      sessionId: "resolved-session-1",
+      usage: {},
+      codex: info,
+    });
+    expect(mocks.getCodexSessionId).toHaveBeenCalledWith("local-thread-1");
+    expect(mocks.getCodexRuntimeInfo).toHaveBeenCalledWith("resolved-session-1");
   });
 });

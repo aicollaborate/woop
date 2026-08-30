@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types";
 import type { MessageDisplayBudgetRole } from "@features/agent/message/display-limits";
 import {
+  createAgentThreadCardMessageElement,
   renderAgentThreadCardBudgetedMarkdown,
   type AgentThreadCardMessageDisplayContext,
 } from "@features/agent/thread-card/messages/message-item-renderer";
@@ -149,5 +150,34 @@ describe("renderAgentThreadCardBudgetedMarkdown incremental DOM injection", () =
     // 同一 text 再次完成: 不应重建 (节点引用不变)
     render(s, "reasoning", "final answer\n\n", { isCompleted: true });
     expect(s.content.querySelector("p")).toBe(pAfterFirst);
+  });
+});
+
+describe("context compaction message rendering", () => {
+  it("renders plain italic text without an icon or card wrapper", () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "compaction-1",
+        role: "system",
+        messageType: "context-compaction",
+        content: "",
+        timestamp: new Date().toISOString(),
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+
+    expect(result?.element.classList.contains(
+      "agent-thread-card__message--context-compaction",
+    )).toBe(true);
+    const content = result?.element.querySelector(
+      ".agent-thread-card__message-context-compaction",
+    );
+    expect(content?.textContent).toBe("上下文已自动压缩");
+    expect(content?.querySelector("svg")).toBeNull();
+    expect(content?.classList.contains("agent-thread-card__message-content")).toBe(false);
   });
 });

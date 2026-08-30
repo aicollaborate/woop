@@ -18,6 +18,9 @@ pub struct ThreadInfo {
 pub struct ChatMessage {
     pub id: String,
     pub role: String,
+    /// Provider-specific display type for non-conversational timeline items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_type: Option<String>,
     pub content: String,
     pub llm_content: Option<String>,
     pub system_reminder_directory: Option<String>,
@@ -120,6 +123,10 @@ pub struct AgentConversationInstance {
     /// conversation yet.
     pub thread_title: Option<String>,
     pub thread_id: Option<String>,
+    /// Provider-owned session id, when the conversation has been bound to one.
+    /// This is read from the provider branch table together with the instance
+    /// so presentation layers do not need to resolve it on demand.
+    pub session_id: Option<String>,
     pub runtime_config: Option<String>,
     /// Backend-owned working directory frozen on the first external-agent run.
     /// It is deliberately not part of `UpsertAgentConversationInstance`, so a

@@ -6,9 +6,6 @@ import { StarFourIcon } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { useMemoStore } from '@features/memo';
 import { useI18n } from '@/lib/i18n';
-import { getAgentType, pickFirstAvailableAgent } from '@/lib/agent-types';
-import { useAgentRuntimeStore } from '@features/agent/store/agent-runtime-store';
-import { AgentIcon } from '@features/agent/components/agent-icon';
 
 interface NavFilterButtonsProps {
   totalMemoCount: number;
@@ -16,7 +13,7 @@ interface NavFilterButtonsProps {
   onSelectFilter?: () => void;
 }
 
-// 顶部过滤器 (全部 / 对话 / 待办) ── 从 NoteNavigationPanel 拆出。
+// 顶部过滤器 (笔记 / 对话 / 待办) ── 从 NoteNavigationPanel 拆出。
 // 三个按钮各自把 selectedTagId 清空并切 activeFilter; counts 由父级
 // (经 TagTree 的 loadTags -> onCountsChange 上抛) 传入。
 // activeFilter / setSelectedTagId / setActiveFilter 直接订阅 store,
@@ -30,14 +27,6 @@ export function NavFilterButtons({
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const setActiveFilter = useMemoStore((s) => s.setActiveFilter);
-  const statusByType = useAgentRuntimeStore((s) => s.statusByType);
-  const detectedAgentKey = pickFirstAvailableAgent(statusByType);
-  const detectedAgent = detectedAgentKey ? getAgentType(detectedAgentKey) : null;
-  const detectedAgentName = detectedAgent
-    ? detectedAgent.nameKey
-      ? t(detectedAgent.nameKey as Parameters<typeof t>[0])
-      : detectedAgent.name
-    : t('memo.navigation.conversations');
   // 文件夹浏览是和全部 / 对话 / 待办 / 标签并列的一个入口。浏览资料时
   // activeFilter 为 all 只是中间列的数据兜底，不能让“全部”也显示选中。
   const isFilterActive = (filter: typeof activeFilter) =>
@@ -62,7 +51,7 @@ export function NavFilterButtons({
   };
 
   return (
-    // 过滤器 (全部/对话/待办) ── 占顶部, 与下方标签组以分隔线分开。
+    // 过滤器 (笔记/对话/待办) ── 占顶部, 与下方标签组以分隔线分开。
     <div className="space-y-0.5 pt-2">
       <div
         role="button"
@@ -94,6 +83,34 @@ export function NavFilterButtons({
       <div
         role="button"
         tabIndex={0}
+        onClick={handleShowAgentMemos}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleShowAgentMemos();
+          }
+        }}
+        className={cn(
+          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
+          isFilterActive('agents')
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+        )}
+        style={{ paddingLeft: 6 }}
+        aria-pressed={isFilterActive('agents')}
+      >
+        <span className="mr-2 shrink-0 opacity-90">
+          <StarFourIcon
+            className="h-3.5 w-3.5"
+            weight="regular"
+            color={isFilterActive('agents') ? 'var(--primary-foreground)' : 'currentColor'}
+          />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{t('memo.navigation.conversations')}</span>
+      </div>
+      <div
+        role="button"
+        tabIndex={0}
         onClick={handleShowTaskMemos}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -117,43 +134,6 @@ export function NavFilterButtons({
         <span className={cn('ml-2 shrink-0 tabular-nums text-xs', isFilterActive('todos') ? 'text-[var(--primary-foreground)]/75' : 'text-[var(--muted-foreground)]')}>
           {todoMemoCount}
         </span>
-      </div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={handleShowAgentMemos}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            handleShowAgentMemos();
-          }
-        }}
-        className={cn(
-          'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
-          isFilterActive('agents')
-            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
-        )}
-        style={{ paddingLeft: 6 }}
-        aria-pressed={isFilterActive('agents')}
-      >
-        <span className="mr-2 shrink-0 opacity-90">
-          {detectedAgent ? (
-            <AgentIcon
-              typeKey={detectedAgent.key}
-              alt=""
-              className="h-3.5 w-3.5 object-contain"
-              color={isFilterActive('agents') ? 'var(--primary-foreground)' : undefined}
-            />
-          ) : (
-            <StarFourIcon
-              className="h-3.5 w-3.5"
-              weight="regular"
-              color={isFilterActive('agents') ? 'var(--primary-foreground)' : 'currentColor'}
-            />
-          )}
-        </span>
-        <span className="min-w-0 flex-1 truncate">{detectedAgentName}</span>
       </div>
     </div>
   );

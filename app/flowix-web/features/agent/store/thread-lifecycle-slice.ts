@@ -18,6 +18,7 @@ import { replayExternalEventsForThread } from "@features/agent/store/external-ev
 import { useDocumentStore } from "@features/document/store/document-store";
 import { useWorkspaceRestoreStore } from "@features/workspace/store/workspace-restore-store";
 import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
+import { closeAgentTarget } from "@features/workspace/use-cases/workspace-navigation";
 
 type SessionSet = (
   updater: (state: LifecycleContext) => Partial<LifecycleContext> | LifecycleContext,
@@ -215,7 +216,7 @@ function closeConversationIfActive(threadId: string): void {
   const session = useAgentSessionStore.getState();
   const instance = session.getInstance(activeInstanceId);
   if (instance?.threadId !== threadId) return;
-  doc.closeAgentConversation();
+  closeAgentTarget();
   useWorkspaceRestoreStore.getState().clearAgentConversation(activeInstanceId);
 }
 

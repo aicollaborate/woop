@@ -5,6 +5,46 @@ export type AgentThreadCardInputImage = CachedAgentImage;
 const MAX_COMPOSER_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COMPOSER_IMAGE_COUNT = 5;
 
+export const COMPOSER_ATTACHMENT_ACCEPT = [
+  "image/*", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx",
+].join(",");
+
+const SUPPORTED_ATTACHMENT_MIME_TYPES = new Set([
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+
+function isSupportedAttachment(file: File): boolean {
+  return Boolean(getAttachmentMimeType(file));
+}
+
+function getAttachmentMimeType(file: File): string | null {
+  const mimeType = file.type.toLowerCase();
+  if (mimeType.startsWith("image/") || SUPPORTED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+    return mimeType;
+  }
+  const extension = file.name.toLowerCase().split(".").pop();
+  const byExtension: Record<string, string> = {
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pdf: "application/pdf",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  };
+  return (extension && byExtension[extension]) || null;
+}
+
+function isImageAttachment(file: { mimeType: string }): boolean {
+  return file.mimeType.toLowerCase().startsWith("image/");
+}
+
 export interface ComposerImageControllerOptions {
   input: HTMLTextAreaElement;
   container: HTMLElement;
@@ -34,7 +74,9 @@ export class ComposerImageController {
     this.images = options.initialImages.slice(0, MAX_COMPOSER_IMAGE_COUNT);
     options.input.addEventListener("paste", this.handlePaste);
     this.render();
-    for (const image of this.images) void this.loadPreview(image);
+    for (const image of this.images) {
+      if (isImageAttachment(image)) void this.loadPreview(image);
+    }
   }
 
   get readyImages(): AgentThreadCardInputImage[] {
@@ -47,6 +89,26 @@ export class ComposerImageController {
 
   get hasPending(): boolean {
     return this.pending > 0;
+  }
+
+  /** Add picker-selected attachments through the same cache path as pasted images. */
+  addFiles(files: File[]): void {
+    const eligibleFiles = files.filter((file) => {
+      if (!isSupportedAttachment(file)) return false;
+      if (file.size <= MAX_COMPOSER_IMAGE_BYTES) return true;
+      this.options.onLimitExceeded("size");
+      return false;
+    });
+    const availableSlots = Math.max(
+      0,
+      MAX_COMPOSER_IMAGE_COUNT - this.images.length - this.pending,
+    );
+    if (eligibleFiles.length > availableSlots) {
+      this.options.onLimitExceeded("count");
+    }
+    for (const file of eligibleFiles.slice(0, availableSlots)) {
+      void this.cache(file);
+    }
   }
 
   clearAfterSubmit(): void {
@@ -75,21 +137,7 @@ export class ComposerImageController {
     // Clipboard image payloads often also contain a generated filename as text.
     // Prevent that text from being inserted; genuine text-only paste stays native.
     event.preventDefault();
-    const eligibleFiles = files.filter((file) => {
-      if (file.size <= MAX_COMPOSER_IMAGE_BYTES) return true;
-      this.options.onLimitExceeded("size");
-      return false;
-    });
-    const availableSlots = Math.max(
-      0,
-      MAX_COMPOSER_IMAGE_COUNT - this.images.length - this.pending,
-    );
-    if (eligibleFiles.length > availableSlots) {
-      this.options.onLimitExceeded("count");
-    }
-    for (const file of eligibleFiles.slice(0, availableSlots)) {
-      void this.cache(file);
-    }
+    this.addFiles(files);
   };
 
   private async cache(file: File): Promise<void> {
@@ -97,7 +145,7 @@ export class ComposerImageController {
     this.options.onStateChange();
     try {
       const content = await readFileAsDataUrl(file);
-      const cached = await agent.cacheImage(content, file.type);
+      const cached = await agent.cacheImage(content, getAttachmentMimeType(file) ?? file.type);
       if (this.disposed) {
         void agent.deleteCachedImage(cached.path).catch(() => undefined);
         return;
@@ -171,7 +219,15 @@ export class ComposerImageController {
         event.stopPropagation();
         this.remove(image);
       });
-      if (preview) card.append(preview);
+      if (preview) {
+        card.append(preview);
+      } else if (!isImageAttachment(image)) {
+        const name = document.createElement("span");
+        name.className = "agent-thread-card__composer-attachment-name";
+        name.textContent = image.name;
+        name.title = image.name;
+        card.append(name);
+      }
       card.append(remove);
       return card;
     });
