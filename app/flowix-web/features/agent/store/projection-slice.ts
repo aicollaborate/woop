@@ -70,7 +70,7 @@ export function createProjectionSlice(
           if (event.kind === "stream_end" || event.kind === "error") {
             const cached = codexLiveTurns[event.threadId];
             if (cached?.runId === event.runId) {
-              codexLiveTurns[event.threadId] = { ...cached, status: "awaiting_snapshot", updatedAt: Date.now() };
+              codexLiveTurns[event.threadId] = { ...cached, status: "completed", updatedAt: Date.now() };
             }
           } else {
             // Tool events do not repeat the turn id; keep the last one seen

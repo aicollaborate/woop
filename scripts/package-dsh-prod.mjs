@@ -9,11 +9,23 @@ const version = process.env.FLOWIX_DSH_VERSION || 'dsh.01'
 if (!/^dsh\.(?:0[1-9]|[1-9][0-9]*)$/u.test(version)) {
   throw new Error(`invalid DSH package version ${version}; expected dsh.01, dsh.02, ...`)
 }
-const sourceManifestUrl = process.env.FLOWIX_DSH_SOURCE_MANIFEST || 'https://download.flowix-memo.com/dsh/macos/latest.json'
+const bundleRoot = resolve(repo, '.build/dsh-runtime-bundle')
 const out = resolve(repo, '.build/releases/dsh')
 const stage = resolve(repo, '.build/dsh-prod-stage')
-const manifest = await (await fetch(sourceManifestUrl)).json()
-if (!manifest.platforms) throw new Error(`invalid DSH source manifest: ${sourceManifestUrl}`)
+const nodeEntitlements = resolve(repo, 'scripts/dsh-node.entitlements.plist')
+const requiredNodeEntitlements = [
+  'com.apple.security.cs.allow-jit',
+  'com.apple.security.cs.allow-unsigned-executable-memory',
+  'com.apple.security.cs.disable-executable-page-protection',
+]
+const signingIdentity = process.env.APPLE_SIGNING_IDENTITY?.trim() || (process.env.FLOWIX_DSH_ADHOC_SIGNING === '1' ? '-' : '')
+if (!existsSync(nodeEntitlements)) throw new Error(`DSH Node entitlements are missing: ${nodeEntitlements}`)
+if (!signingIdentity) {
+  throw new Error('DSH macOS packaging requires APPLE_SIGNING_IDENTITY; use FLOWIX_DSH_ADHOC_SIGNING=1 only for local testing')
+}
+if (!existsSync(bundleRoot)) {
+  throw new Error(`local DSH runtime bundles are missing: ${bundleRoot}; run npm run dsh:build:prod first`)
+}
 
 await rm(out, { recursive: true, force: true })
 await rm(stage, { recursive: true, force: true })
@@ -22,16 +34,13 @@ const platforms = {}
 
 for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   const platform = target.endsWith('arm64') ? 'darwin-aarch64' : 'darwin-x86_64'
-  const source = manifest.platforms[platform]
-  if (!source?.url) throw new Error(`source DSH artifact missing for ${platform}`)
+  const sourceRoot = resolve(bundleRoot, target)
+  if (!existsSync(resolve(sourceRoot, 'runtime-build.json'))) {
+    throw new Error(`local DSH runtime bundle is missing for ${target}; run npm run dsh:build:prod under matching Node 24`)
+  }
   const targetRoot = resolve(stage, target)
   await mkdir(targetRoot, { recursive: true })
-  const response = await fetch(source.url)
-  if (!response.ok) throw new Error(`download DSH carrier failed: ${response.status}`)
-  const archive = resolve(stage, `${target}.tar.gz`)
-  await writeFile(archive, Buffer.from(await response.arrayBuffer()))
-  run('tar', ['-xzf', archive, '-C', targetRoot])
-  await rm(archive, { force: true })
+  await cp(sourceRoot, targetRoot, { recursive: true })
 
   const profile = resolve(targetRoot, 'profile/flowix')
   await mkdir(resolve(profile, 'node_modules'), { recursive: true })
@@ -46,21 +55,42 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   await rm(resolve(targetRoot, 'dsh-runtime-dev.json'), { force: true })
   await rm(resolve(targetRoot, '.dev-dsh-home'), { recursive: true, force: true })
 
-  const metadata = JSON.parse(await readFile(resolve(targetRoot, 'dsh-runtime.json'), 'utf8'))
+  const runtimeBuild = JSON.parse(await readFile(resolve(targetRoot, 'runtime-build.json'), 'utf8'))
+  const pnpmEntrypoint = resolve(targetRoot, 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs')
+  if (!existsSync(pnpmEntrypoint)) throw new Error(`DSH Node bundle private pnpm entrypoint is missing: ${pnpmEntrypoint}`)
+  const metadataPath = resolve(targetRoot, 'dsh-runtime.json')
+  const metadata = existsSync(metadataPath) ? JSON.parse(await readFile(metadataPath, 'utf8')) : {
+    schemaVersion: 2,
+    product: 'flowix-dsh',
+    protocolVersion: 1,
+    target,
+    includesUi: false,
+    runtimeType: 'node-bundle',
+    nodeExecutable: 'node/node',
+    pnpmEntrypoint: 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs',
+    nodeVersion: runtimeBuild.nodeVersion,
+    nodeAbi: runtimeBuild.nodeAbi,
+    pnpmVersion: runtimeBuild.pnpmVersion,
+  }
   metadata.version = version
   metadata.entrypoint = 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'
   metadata.cliEntrypoint = metadata.entrypoint
   metadata.buildId = createHash('sha256').update(`${version}:${target}:${JSON.stringify(metadata)}:${Date.now()}`).digest('hex').slice(0, 24)
-  await writeFile(resolve(targetRoot, 'dsh-runtime.json'), `${JSON.stringify(metadata, null, 2)}\n`)
+  await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`)
 
-  const healthHome = resolve(targetRoot, '.health-home')
-  await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
-  await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true })
-  run(resolve(targetRoot, 'node/node'), [resolve(targetRoot, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
-    DSH_HOME: healthHome,
-    DSH_PROFILE_DIR: profile,
-  })
-  await rm(healthHome, { recursive: true, force: true })
+  const nodePath = resolve(targetRoot, 'node/node')
+  signAndVerifyNode(nodePath, target)
+
+  if (process.env.FLOWIX_DSH_SKIP_HEALTH !== '1') {
+    const healthHome = resolve(targetRoot, '.health-home')
+    await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
+    await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true })
+    runTargetNode(target, nodePath, [resolve(targetRoot, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
+      DSH_HOME: healthHome,
+      DSH_PROFILE_DIR: profile,
+    })
+    await rm(healthHome, { recursive: true, force: true })
+  }
   const filename = `Flowix-DSH_${version}_${target}.tar.gz`
   const archivePath = resolve(out, filename)
   run('tar', ['-czf', archivePath, '-C', targetRoot, '.'])
@@ -83,4 +113,42 @@ function run(command, args, extraEnv = {}) {
   const result = spawnSync(command, args, { cwd: repo, env: { ...process.env, ...extraEnv }, stdio: 'inherit' })
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
+}
+
+function runTargetNode(target, nodePath, args, extraEnv = {}) {
+  // The macOS package is built for both architectures. On Apple Silicon,
+  // execute the x64 smoke test through Rosetta instead of accidentally
+  // validating only the arm64 artifact.
+  if (process.platform === 'darwin' && process.arch === 'arm64' && target.endsWith('macos-x64')) {
+    run('arch', ['-x86_64', nodePath, ...args], extraEnv)
+    return
+  }
+  run(nodePath, args, extraEnv)
+}
+
+function signAndVerifyNode(nodePath, target) {
+  const signArgs = ['--force', '--options', 'runtime', '--entitlements', nodeEntitlements]
+  if (signingIdentity !== '-') signArgs.push('--timestamp')
+  signArgs.push('--sign', signingIdentity, nodePath)
+  run('codesign', signArgs)
+
+  run('codesign', ['--verify', '--strict', '--verbose=2', nodePath])
+  const details = spawnSync('codesign', ['-d', '--entitlements', ':-', nodePath], {
+    cwd: repo,
+    encoding: 'utf8',
+  })
+  const output = `${details.stdout ?? ''}\n${details.stderr ?? ''}`
+  const missing = requiredNodeEntitlements.filter(key => !hasTrueEntitlement(output, key))
+  if (details.error || details.status !== 0 || missing.length > 0) {
+    throw new Error(`DSH Node JIT entitlement verification failed for ${target}; missing=${missing.join(',')}; details=${output.trim()}`)
+  }
+
+  // This deliberately runs without --jitless. It catches the exact failure
+  // that would otherwise surface only after a user installs the archive.
+  runTargetNode(target, nodePath, ['-e', 'if (process.arch.length === 0) process.exit(1)'])
+}
+
+function hasTrueEntitlement(output, key) {
+  const escaped = key.replaceAll('.', '\\.')
+  return new RegExp(`<key>${escaped}</key>\\s*<true\\s*/>`, 'u').test(output)
 }

@@ -23,6 +23,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-process = { workspace = true }
+tauri-plugin-updater = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

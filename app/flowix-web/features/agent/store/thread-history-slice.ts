@@ -205,6 +205,13 @@ export function createThreadHistorySlice(
         if (!isRequestCurrent(threadId, requestEpoch)) return;
         const messages = filterRenderableHistoryMessages(page.messages);
         const cached = agentType === "codex" ? get().codexLiveTurns[threadId] : undefined;
+        const lastRun = get().threadProjections[threadId]?.runs.lastRun;
+        const completedRunId =
+          cached?.status === "completed"
+            ? cached.runId
+            : !cached && lastRun?.status === "completed"
+              ? lastRun.runId
+              : undefined;
         const { isOlderHistorySnapshot, historyRevision, reconcileHistorySnapshot } =
           await loadHistorySync();
         get().setThreadProjection(threadId, (projection) => {
@@ -216,27 +223,26 @@ export function createThreadHistorySlice(
           ) {
             return projection;
           }
-          const reconciled = cached
-            // The persisted page is the history base; the cached run is only
-            // a live tail overlay. Both running and awaiting_snapshot states
-            // use the same merge contract; completion status only controls
-            // when the cache may be cleared below.
-            ? mergeMessagesForThreadRender({
-                history: messages,
-                live: cached.messages,
-                agentType,
-              })
-            : reconcileHistorySnapshot({
-                agentType,
-                current: projection.messages,
-                snapshot: {
-                  messages,
-                  revision: historyRevision(page.snapshotSequence),
-                  oldestCursor: page.oldestSequence,
-                  hasMore: page.hasMore,
-                },
-                reason: "open",
-              }).messages;
+          const reconciled =
+            cached?.status === "running"
+              ? mergeMessagesForThreadRender({
+                  history: messages,
+                  live: cached.messages,
+                  agentType,
+                })
+              : reconcileHistorySnapshot({
+                  agentType,
+                  current: projection.messages,
+                  snapshot: {
+                    messages,
+                    revision: historyRevision(page.snapshotSequence),
+                    oldestCursor: page.oldestSequence,
+                    hasMore: page.hasMore,
+                  },
+                  reason: completedRunId ? "run_completed" : "open",
+                  runId: completedRunId,
+                  turnId: cached?.turnId,
+                }).messages;
           const pagination = {
             initialStatus: "ready",
             oldestSequence: page.oldestSequence,
@@ -260,7 +266,7 @@ export function createThreadHistorySlice(
         });
         if (
           agentType === "codex" &&
-          cached?.status === "awaiting_snapshot" &&
+          cached?.status === "completed" &&
           historyCoversLiveTurn(messages, cached.messages)
         ) {
           get().clearCodexLiveTurn(threadId, cached.runId);

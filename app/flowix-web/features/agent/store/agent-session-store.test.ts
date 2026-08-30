@@ -81,6 +81,47 @@ describe("useAgentSessionStore", () => {
     });
   });
 
+  it("keeps the completed Codex live turn available until history takes over", () => {
+    const threadId = "codex-thread";
+    const runId = "codex-run";
+    const dispatch = useAgentSessionStore.getState().dispatch;
+    const base = {
+      agentType: "codex" as const,
+      threadId,
+      runId,
+      timestamp: 0,
+    };
+
+    dispatch({ kind: "stream_start", ...base });
+    dispatch({
+      kind: "user_message",
+      ...base,
+      id: "item-user",
+      text: "question",
+      codexTurnId: "turn-1",
+      messagePhase: "completed",
+      contentMode: "snapshot",
+    });
+    dispatch({
+      kind: "text_delta",
+      ...base,
+      timestamp: 1,
+      messageId: "item-assistant",
+      codexTurnId: "turn-1",
+      text: "answer",
+      messagePhase: "updated",
+      contentMode: "delta",
+    });
+    dispatch({ kind: "stream_end", ...base, timestamp: 2, reason: null });
+
+    const live = useAgentSessionStore.getState().codexLiveTurns[threadId];
+    expect(live?.status).toBe("completed");
+    expect(live?.messages.map((message) => message.id)).toEqual([
+      "item-user",
+      "item-assistant",
+    ]);
+  });
+
   it("dispatch is no-op for unknown event kinds (no projection churn)", () => {
     const before = useAgentSessionStore.getState();
     before.dispatch({

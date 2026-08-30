@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "product": "flowix-dsh",
-  "version": "1.0.4",
+  "version": "dsh.01",
   "protocolVersion": 1,
   "minFlowixVersion": "1.2.8",
   "platforms": {

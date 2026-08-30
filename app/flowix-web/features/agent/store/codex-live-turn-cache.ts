@@ -6,7 +6,8 @@ export interface CodexLiveTurnCache {
   /** Codex turn id once any event of the run carried it; anchors the slice. */
   turnId?: string;
   messages: ChatMessage[];
-  status: "running" | "awaiting_snapshot";
+  /** Running data is an overlay; completed data is waiting to be replaced by history. */
+  status: "running" | "completed";
   updatedAt: number;
 }
 
