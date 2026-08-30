@@ -13,3 +13,11 @@
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* DeepSeek and the other monochrome agent marks use the dark theme's softened
+ * foreground color instead of pure white. Keep this override on the rendered
+ * element so it also wins over a light-theme fallback color supplied through
+ * an inline custom prop. */
+[data-theme="dark"] .agent-icon--masked {
+  background-color: var(--foreground);
+}

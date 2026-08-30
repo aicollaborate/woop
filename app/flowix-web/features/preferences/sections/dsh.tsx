@@ -19,7 +19,7 @@ import { useI18n, type I18nKey } from '@/lib/i18n';
 import { errorMessage } from '@/lib/error-message';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import iconDeepseek from '@/assets/icon-deepseek.svg';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import { deepseekHarness } from '@platform/tauri/client';
 import type { DeepSeekHarnessPlugin, DeepSeekHarnessPluginCatalog } from '@platform/tauri/client';
 import { dshIntegration, type DshIntegrationStatus } from '@platform/tauri/client';
@@ -198,7 +198,7 @@ function DshDevRuntimeNotice({ onContinue }: { onContinue: () => void }) {
     <div className="flex flex-1 items-center justify-center px-1 py-2">
       <div className="w-full max-w-xl rounded-2xl border border-[var(--divider)] bg-[var(--card)] p-8 text-center shadow-sm">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
-          <img src={iconDeepseek} alt="" className="h-8 w-8 object-contain" />
+          <AgentIcon typeKey="deepseek-harness" alt="" className="h-8 w-8" />
         </div>
         <h3 className="mt-5 text-lg font-semibold text-[var(--foreground)]">Dev 本地 DSH</h3>
         <p className="mt-2 text-sm text-[var(--muted-foreground)]">
@@ -249,7 +249,7 @@ function DshInstallPage({
     <div className="flex flex-1 items-center justify-center px-1 py-2">
       <div className="w-full max-w-xl rounded-2xl border border-[var(--divider)] bg-[var(--card)] p-8 text-center shadow-sm">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] text-[var(--primary)]">
-          <img src={iconDeepseek} alt="" className="h-8 w-8 object-contain" />
+          <AgentIcon typeKey="deepseek-harness" alt="" className="h-8 w-8" />
         </div>
         <h3 className="mt-5 text-lg font-semibold text-[var(--foreground)]">
           {t('preferences.dsh.setup.title')}

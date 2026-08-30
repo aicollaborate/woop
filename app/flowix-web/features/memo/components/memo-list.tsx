@@ -85,7 +85,7 @@ function normalizeNotebookIconId(icon: string | null | undefined): string | null
 }
 
 const HEADER_ICON_BTN_CLASS =
-  'h-8 w-8 justify-center rounded-full p-0 border border-[var(--border)] ' +
+  'h-8 w-8 justify-center rounded-xl p-0 border border-[var(--border)] ' +
   'hover:bg-[var(--muted)] hover:text-[var(--primary)] text-[var(--foreground)]';
 
 const DROPDOWN_SECTION_LABEL_CLASS =
@@ -980,7 +980,7 @@ export function MemoList() {
           <Tooltip content={t("memo.list.newMemoTooltip")} shortcut="memo.create">
             <Button
               size="icon"
-              className="h-8 w-8 justify-center bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 rounded-full p-0 border border-transparent"
+              className="h-8 w-8 justify-center bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 rounded-xl p-0 border border-transparent"
               onClick={handleCreateMemo}
             >
               <SquarePen className="w-4 h-4 text-[var(--primary-foreground)]" />

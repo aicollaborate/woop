@@ -134,7 +134,7 @@ export function NotebookIconMenu({
             src={productLogo}
             alt=""
             aria-hidden="true"
-            className="h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
+            className="product-icon h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
           />
           <span
             aria-hidden="true"

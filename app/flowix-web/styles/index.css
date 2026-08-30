@@ -48,6 +48,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 中间列顶部的产品图标: 深色模式使用单色白版，保留 PNG 的透明背景。 */
+[data-theme="dark"] .product-icon {
+	filter: brightness(0) invert(0.82);
+}
+
 /* 资料文件树的子树展开/收起: 用 grid 行高从 0fr 过渡到 1fr,
  * 这样收起时子节点不会瞬间从 DOM 消失, 高度和内容能一起顺滑收回。 */
 .folder-file-tree__subtree {

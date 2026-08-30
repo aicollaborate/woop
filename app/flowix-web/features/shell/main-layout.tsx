@@ -30,7 +30,6 @@ import { WindowsTitlebarControls } from '@shared/window-titlebar-controls';
 import { toast } from '@/lib/toast';
 import iconCodex from '@/assets/codex.svg';
 import iconClaudeCode from '@/assets/icon-claude-code.svg';
-import iconDeepseek from '@/assets/icon-deepseek.svg';
 import iconFlowixAgent from '@/assets/flowix-agent.svg';
 import iconOpenCode from '@/assets/icon-opencode.svg';
 import { canonicalPath, getDocumentInstanceKey } from '@/lib/path';
@@ -54,6 +53,7 @@ import { useUserSettingsStore } from '@features/preferences/store/user-settings-
 import { useCliLinkStatusStore } from '@features/preferences/store';
 import { useAppUpdater, type AppUpdaterState } from '@features/shell/hooks/use-app-updater';
 import { getPluginNoteInfo } from '@features/plugin';
+import { AgentIcon } from '@features/agent/components/agent-icon';
 import { FloatingPrompt, FloatingPromptStack } from '@features/shell/components/floating-prompt';
 import {
   ThirdColumnSurfaceHost,
@@ -1335,7 +1335,7 @@ function DshInstallPrompt({
               <section className="w-1/3 shrink-0" aria-hidden={slide !== 'download'}>
                 <DialogHeader className="mb-0">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[color-mix(in_oklch,var(--primary)_12%,transparent)]">
-                    <img src={iconDeepseek} alt="" className="h-7 w-7 object-contain" />
+                    <AgentIcon typeKey="deepseek-harness" alt="" className="h-7 w-7" />
                   </div>
                   <DialogTitle className="mt-3 text-base">
                     {t('preferences.dsh.setup.promptTitle')}

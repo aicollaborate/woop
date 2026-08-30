@@ -3,6 +3,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 
 import { getAgentType } from '@/lib/agent-types';
+import { isThemeAdaptiveAgentIcon } from '@features/agent/components/agent-icon';
 
 const CUSTOM_BLOCK_RE = /^::([a-z][a-z0-9-]*)(\{[^\n]*\})?[ \t]*(?:\r?\n|$)/i;
 const ATTR_RE = /([A-Za-z][\w]*)="((?:\\"|\\\\|[^"])*)"/g;
@@ -63,11 +64,20 @@ function renderStaticCard(dom: HTMLElement, kind: string, attrsSource: string) {
     const agent = document.createElement('div');
     agent.className = 'mobile-static-block__agent';
 
-    const agentIcon = document.createElement('img');
+    const agentIcon = isThemeAdaptiveAgentIcon(agentType.key)
+      ? document.createElement('span')
+      : document.createElement('img');
     agentIcon.className = 'mobile-static-block__agent-icon';
-    agentIcon.src = agentType.icon;
-    agentIcon.alt = '';
-    agentIcon.draggable = false;
+    if (isThemeAdaptiveAgentIcon(agentType.key)) {
+      agentIcon.classList.add('agent-icon', 'agent-icon--masked');
+      agentIcon.style.setProperty('--agent-icon-src', `url("${agentType.icon}")`);
+      agentIcon.setAttribute('aria-hidden', 'true');
+    } else {
+      const image = agentIcon as HTMLImageElement;
+      image.src = agentType.icon;
+      image.alt = '';
+      image.draggable = false;
+    }
 
     const agentName = document.createElement('span');
     agentName.className = 'mobile-static-block__agent-name';
