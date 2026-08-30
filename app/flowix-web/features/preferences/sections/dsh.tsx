@@ -571,7 +571,11 @@ function PluginsTab() {
       {/* WKWebView 下外层滚动容器吃不到底部间距, 在列表自身留 pb-10 兜底 */}
       <div className="space-y-2 pb-10">
         {loadError && <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-3.5 py-3 text-xs text-red-600">{t('preferences.dsh.plugins.loadError')}: {loadError}</p>}
-        {catalog === null && loadError === null && <p className="text-xs text-[var(--muted-foreground)]">{t('preferences.dsh.plugins.loading')}</p>}
+        {catalog === null && loadError === null && (
+          <div className="flex h-[100px] items-center justify-center text-center text-xs text-[var(--muted-foreground)]">
+            {t('preferences.dsh.plugins.loading')}
+          </div>
+        )}
         {groups.map(({ key, title, plugins }) => {
           const visiblePlugins = plugins.filter(({ id, name, toggleable }) =>
             id !== '@deepseek-ai/dsh-base'

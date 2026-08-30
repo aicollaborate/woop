@@ -59,9 +59,9 @@ export function TemplatesSection() {
       <SectionHeader title={t('preferences.templates.title')} />
 
       {loading ? (
-        <p className="py-6 text-sm text-[var(--muted-foreground)]">
+        <div className="flex h-[100px] items-center justify-center text-center text-sm text-[var(--muted-foreground)]">
           {t('preferences.templates.loading')}
-        </p>
+        </div>
       ) : templates.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <FileText className="mb-4 h-12 w-12 text-[var(--muted-foreground)]" />

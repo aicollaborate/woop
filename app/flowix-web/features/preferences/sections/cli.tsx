@@ -99,51 +99,57 @@ export function CliSection() {
       <SectionHeader title={t('preferences.cli.title')} />
       <div className="space-y-2">
         <div className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-[var(--muted-foreground)]">
-                {t('preferences.cli.binary')}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <code className="text-sm text-[var(--foreground)]">flowix</code>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                  {!loading && !status?.needsInstall && (
-                    <Check className="size-3.5 text-[var(--success)]" />
-                  )}
-                  <span>{statusText}</span>
-                  {status?.binDir && (
-                    <code className="rounded bg-[var(--muted)] px-1.5 py-0.5 text-[var(--foreground)]">
-                      {status.binDir}
-                    </code>
-                  )}
+          {loading ? (
+            <div className="flex h-[100px] items-center justify-center text-center text-xs text-[var(--muted-foreground)]">
+              {statusText}
+            </div>
+          ) : (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-[var(--muted-foreground)]">
+                  {t('preferences.cli.binary')}
                 </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <code className="text-sm text-[var(--foreground)]">flowix</code>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                    {!status?.needsInstall && (
+                      <Check className="size-3.5 text-[var(--success)]" />
+                    )}
+                    <span>{statusText}</span>
+                    {status?.binDir && (
+                      <code className="rounded bg-[var(--muted)] px-1.5 py-0.5 text-[var(--foreground)]">
+                        {status.binDir}
+                      </code>
+                    )}
+                  </div>
+                </div>
+                {error && (
+                  <p className="mt-1 text-xs text-[var(--destructive)]">
+                    {error}
+                  </p>
+                )}
+                {status?.needsInstall && !error && (
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {t('preferences.cli.installHint')}
+                  </p>
+                )}
               </div>
-              {error && (
-                <p className="mt-1 text-xs text-[var(--destructive)]">
-                  {error}
-                </p>
-              )}
-              {status?.needsInstall && !error && (
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  {t('preferences.cli.installHint')}
-                </p>
+              {status?.needsInstall && (
+                <Button
+                  className="px-3"
+                  onClick={() => void installPath()}
+                  disabled={installing}
+                >
+                  {installing ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                  ) : (
+                    <Download data-icon="inline-start" />
+                  )}
+                  {t('preferences.cli.install')}
+                </Button>
               )}
             </div>
-            {status?.needsInstall && (
-              <Button
-                className="px-3"
-                onClick={() => void installPath()}
-                disabled={installing}
-              >
-                {installing ? (
-                  <Loader2 data-icon="inline-start" className="animate-spin" />
-                ) : (
-                  <Download data-icon="inline-start" />
-                )}
-                {t('preferences.cli.install')}
-              </Button>
-            )}
-          </div>
+          )}
         </div>
 
         <div className="divide-y divide-[var(--divider)]">

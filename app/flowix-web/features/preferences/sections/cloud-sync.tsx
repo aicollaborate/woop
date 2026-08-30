@@ -130,9 +130,9 @@ export function CloudSyncSection() {
             {loadError}
           </p>
         ) : (
-          <p className="text-sm text-[var(--muted-foreground)]">
+          <div className="flex h-[100px] items-center justify-center text-center text-sm text-[var(--muted-foreground)]">
             {t('preferences.cloud.loading')}
-          </p>
+          </div>
         )}
       </div>
     );

@@ -1274,7 +1274,11 @@ export function AgentSection({
   }
 
   if (!localConfig) {
-    return <div className="text-sm text-[var(--muted-foreground)]">{t('preferences.agent.loading')}</div>;
+    return (
+      <div className="flex h-[100px] items-center justify-center text-center text-sm text-[var(--muted-foreground)]">
+        {t('preferences.agent.loading')}
+      </div>
+    );
   }
 
   const defaults = modelDirectory
