@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
@@ -21,8 +21,9 @@ if (result.status !== 0) {
 }
 const entries = result.stdout.split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean)
 const required = [
-  /(?:dsh-host(?:\.exe)?|host\/dsh-host\.cjs)$/iu,
   /(?:dsh-host(?:\.exe)?-rg|node\/node(?:\.exe)?)$/iu,
+  /runtime\/node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js$/iu,
+  /runtime\/node_modules\/@deepseek-ai\/dsh-sdk-jsonrpc-server\//iu,
   /dsh-runtime\.json$/iu,
   /dsh-flowix-memory\//iu,
   /profile\/flowix\/package\.json$/iu,
@@ -90,12 +91,12 @@ if (runtimeMetadata.runtimeType === 'node-bundle'
   throw new Error('dsh-runtime.json is missing Node bundle launch metadata')
 }
 const isNodeBundle = runtimeMetadata.runtimeType === 'node-bundle'
-const hostName = isNodeBundle ? 'host/dsh-host.cjs' : process.platform === 'win32' ? 'dsh-host.exe' : 'dsh-host'
-const hostEntry = entries.find((entry) => entry === `./${hostName}` || entry === hostName)
-if (hostEntry === undefined) throw new Error(`DSH archive does not contain ${hostName}`)
+if (isNodeBundle && entries.some((entry) => /(?:^|\/)host\/dsh-host\.cjs$/iu.test(entry))) {
+  throw new Error('DSH archive must not contain the obsolete dsh-host.cjs entrypoint')
+}
 
 // `dsh:package` consumes a prebuilt target binary. Extract the complete
-// archive and exercise the runtime/profile boundary, not just host.initialize;
+// archive and exercise the runtime/profile boundary, not just file presence;
 // otherwise a stale or pruned profile can pass release verification and fail
 // only when the user sends the first message.
 const temporaryRoot = verifiedStage ? resolve(verifiedStage) : await mkdtemp(join(tmpdir(), 'flowix-dsh-package-'))
@@ -113,8 +114,7 @@ try {
       throw new Error(`cannot extract DSH archive: ${extracted.stderr || extracted.status}`)
     }
   }
-  const hostPath = join(temporaryRoot, hostName)
-  const nodePath = isNodeBundle ? join(temporaryRoot, runtimeMetadata.nodeExecutable) : hostPath
+  const nodePath = isNodeBundle ? join(temporaryRoot, runtimeMetadata.nodeExecutable) : join(temporaryRoot, 'bin', 'dsh')
   await chmod(nodePath, 0o755)
   if (isNodeBundle) {
     const nodeIdentity = spawnSync(nodePath, ['-p', 'JSON.stringify({version:process.version,abi:process.versions.modules})'], { encoding: 'utf8' })
@@ -166,6 +166,7 @@ try {
   const dshHome = join(temporaryRoot, '.health-dsh-home')
   const sessionRoot = join(temporaryRoot, '.health-sessions')
   await mkdir(dshHome, { recursive: true })
+  await cp(join(temporaryRoot, 'profile', 'flowix'), join(dshHome, 'profiles', 'flowix'), { recursive: true, force: true })
   await writeFile(join(dshHome, 'settings.yaml'), 'llm-pi-ai:\n  providers: {}\n')
   await writeFile(join(dshHome, '.credentials.yaml'), 'DSH_API_KEY: health-check\n', { mode: 0o600 })
   // On Apple Silicon, launching an x64 Mach-O directly from Node can hang
@@ -174,59 +175,45 @@ try {
   const launchCommand = process.platform === 'darwin' && process.arch === 'arm64' && runtimeMetadata.target === 'node24-macos-x64'
     ? 'arch'
     : nodePath
-  const launchArgs = launchCommand === 'arch' ? ['-x86_64', nodePath, hostPath] : isNodeBundle ? [hostPath] : []
+  const entrypoint = join(temporaryRoot, runtimeMetadata.entrypoint)
+  const launchArgs = launchCommand === 'arch'
+    ? ['-x86_64', nodePath, entrypoint, '--profile', 'flowix']
+    : isNodeBundle ? [entrypoint, '--profile', 'flowix'] : []
   probe = startJsonRpcProbe(launchCommand, launchArgs, {
     env: {
       ...process.env,
       FLOWIX_DSH_ROOT: temporaryRoot,
+      FLOWIX_DSH_APPSERVER_STDIO: '1',
       FLOWIX_DSH_SESSION_ROOT: sessionRoot,
       DSH_HOME: dshHome,
       DSH_SETTINGS_PATH: join(dshHome, 'settings.yaml'),
       DSH_CREDENTIALS_PATH: join(dshHome, '.credentials.yaml'),
+      DSH_PROFILE_DIR: join(dshHome, 'profiles', 'flowix'),
     },
   })
-  const result = await probe.request('host.initialize', { protocolVersion: 1 })
-  if (result?.protocolVersion !== 1) throw new Error('DSH host protocol version mismatch')
-  const capabilities = Array.isArray(result?.capabilities) ? result.capabilities : []
-  for (const capability of ['model-catalog', 'model-discovery', 'plugin-catalog', 'runtime-profile']) {
-    if (!capabilities.includes(capability)) {
-      throw new Error(`DSH host is outdated: missing ${capability} capability`)
-    }
+  const initialized = await probe.request('initialize', {
+    protocolVersion: 1,
+    clientInfo: { name: 'flowix-package-health-check', version: runtimeMetadata.version },
+    capabilities: {},
+  })
+  if (initialized?.protocolVersion !== 1 || initialized?.serverInfo?.name !== 'dsh-appserver') {
+    throw new Error(`DSH App Server initialize check failed: ${JSON.stringify(initialized)}`)
   }
-  if (typeof result?.buildId !== 'string' || result.buildId.trim() === '') {
-    throw new Error('DSH host health check did not return a buildId')
-  }
-  if (result.buildId !== runtimeMetadata.buildId) {
-    throw new Error(`DSH buildId mismatch: metadata=${runtimeMetadata.buildId}, host=${result.buildId}`)
-  }
-  const threadId = 'flowix-package-health-check'
-  await probe.request('runtime.ensure', {
-    threadId,
-    sessionId: 'flowix-package-health-session',
+  const thread = await probe.request('thread/start', {
+    flowixThreadId: 'flowix-package-health-check',
     cwd: temporaryRoot,
     workspacePaths: [],
     provider: 'openai',
-    providerName: 'package-health-check',
-    apiProtocol: 'openai-completions',
-    apiKeyEnv: 'DSH_API_KEY',
-    baseUrl: 'http://127.0.0.1:9/v1',
     model: 'health-check-model',
     agentPreset: 'minimal',
     permissionMode: 'read-only',
   }, 30_000)
-  const bridge = await probe.request('runtime.bridge.capabilities', { threadId }, 30_000)
-  if (!Array.isArray(bridge?.capabilities)
-    || !bridge.capabilities.includes('runtime-events')
-    || !bridge.capabilities.includes('session-control')) {
-    throw new Error('DSH runtime bridge is missing baseline capabilities')
+  const threadId = thread?.thread?.id
+  if (typeof threadId !== 'string' || threadId.trim() === '') {
+    throw new Error(`DSH App Server thread/start check failed: ${JSON.stringify(thread)}`)
   }
-  const models = await probe.request('settings.models.describe', {}, 30_000)
-  if (typeof models?.revision !== 'number' || models?.providers === null
-    || typeof models?.providers !== 'object' || Array.isArray(models.providers)) {
-    throw new Error('DSH model settings bridge returned an invalid descriptor')
-  }
-  await probe.request('runtime.dispose', { threadId }, 15_000)
-  await probe.request('host.shutdown', {}, 15_000)
+  await probe.request('thread/close', { threadId }, 15_000)
+  await probe.request('shutdown', {}, 15_000)
   await probe.close()
 } catch (error) {
   console.error(`ERROR: DSH host health check could not run: ${error}`)

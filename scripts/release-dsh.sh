@@ -56,6 +56,7 @@ done < <(find "$OUT_DIR" -maxdepth 1 -type f -name 'Flowix-DSH_*' -print)
 
 # Stable channels are platform-specific, matching Flowix's updater layout.
 # A partial release updates only the covered platform channels.
+declare -A PUBLISHED_GROUPS=()
 for target in ${FLOWIX_DSH_TARGETS//,/ }; do
   case "$target" in
     node24-macos-*) group="macos" ;;
@@ -68,8 +69,10 @@ for target in ${FLOWIX_DSH_TARGETS//,/ }; do
     echo "release-dsh.sh: platform manifest is missing: $manifest" >&2
     exit 1
   fi
+  [[ -n "${PUBLISHED_GROUPS[$group]:-}" ]] && continue
   "$WRANGLER" r2 object put "$BUCKET/dsh/$group/latest.json" \
     --file "$manifest" --remote
+  PUBLISHED_GROUPS[$group]=1
   echo "    manifest: https://download.flowix-memo.com/dsh/$group/latest.json"
 done
 

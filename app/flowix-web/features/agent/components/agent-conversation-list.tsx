@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { PlusIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, PencilSimpleIcon, PlusIcon, StarIcon, TrashSimpleIcon } from '@phosphor-icons/react';
 import { Loader2 } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
 import type { AgentConversationInstance } from '@features/agent/store/agent-conversation-types';
 import { normalizeBackendInstance } from '@features/agent/store/conversation-slice';
@@ -19,6 +20,7 @@ import { AGENT_TYPES, getAgentType, isAgentTypeSelectable } from '@/lib/agent-ty
 import type { AgentTypeKey } from '@/types/agent';
 import { formatTimeAgo } from '@/lib/format-time-ago';
 import { createLogger } from '@/lib/logger';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
@@ -32,6 +34,9 @@ import {
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
 import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
+import { Input } from '@shared/ui/input';
+import { Button } from '@shared/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@shared/ui/dialog';
 
 /**
  * The "Conversations" navigation view. It deliberately lists conversation
@@ -140,6 +145,99 @@ export function AgentConversationList() {
   // 是会话级瞬态状态, 刷新即丢失 (需求里"前端状态"对应)。
   // 灰色小圆点显示条件: !running && justEndedIds.has(instanceId)。
   const [justEndedIds, setJustEndedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [favoriteIds, setFavoriteIds] = useState<ReadonlySet<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('flowix:favorite-conversations') ?? '[]');
+      return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<AgentConversationInstance | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+
+  const toggleFavorite = useCallback((instanceId: string) => {
+    setFavoriteIds((current) => {
+      const next = new Set(current);
+      if (next.has(instanceId)) next.delete(instanceId);
+      else next.add(instanceId);
+      try { window.localStorage.setItem('flowix:favorite-conversations', JSON.stringify([...next])); } catch { /* storage is optional */ }
+      return next;
+    });
+    setOpenMenuId(null);
+  }, []);
+
+  const renameConversation = useCallback((instance: AgentConversationInstance) => {
+    setRenameTarget(instance);
+    setRenameDraft(instance.title?.trim() || '');
+    setOpenMenuId(null);
+  }, []);
+
+  const submitRename = useCallback(async () => {
+    if (!renameTarget || !renameDraft.trim()) return;
+    const nextTitle = renameDraft.trim();
+    const target = renameTarget;
+    try {
+      setRenameSaving(true);
+      const renamePromise = useAgentSessionStore.getState().renameAgentConversation({
+        instanceId: target.instanceId,
+        threadId: target.threadId,
+        title: nextTitle,
+        typeKey: target.agentType,
+      });
+      // The backend list is refreshed by renameThread, but that request can
+      // briefly return the old snapshot. Update this list's durable snapshot
+      // too so the renamed title is visible immediately and cannot be
+      // overwritten by the merge on the next render.
+      setPersistedInstances((current) => {
+        const existing = current[target.instanceId];
+        if (!existing) return current;
+        return {
+          ...current,
+          [target.instanceId]: {
+            ...existing,
+            title: nextTitle,
+            updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
+          },
+        };
+      });
+      setRenameTarget(null);
+      setRenameSaving(false);
+      await renamePromise;
+    } catch {
+      setPersistedInstances((current) => {
+        const existing = current[target.instanceId];
+        if (!existing) return current;
+        return {
+          ...current,
+          [target.instanceId]: { ...existing, title: target.title, updatedAt: target.updatedAt },
+        };
+      });
+      toast.error(t('agent.chat.conversation.renameFailed'));
+    } finally {
+      setRenameSaving(false);
+    }
+  }, [renameDraft, renameTarget, t]);
+
+  const removeConversation = useCallback(async (instance: AgentConversationInstance, action: 'archive' | 'delete') => {
+    const message = action === 'delete' ? t('agent.chat.conversation.deleteConfirm') : undefined;
+    if (message && !window.confirm(message)) return;
+    try {
+      const session = useAgentSessionStore.getState();
+      if (instance.threadId) {
+        await (action === 'archive' ? session.archiveThread(instance.threadId) : session.deleteThread(instance.threadId));
+      } else {
+        session.removeInstance(instance.instanceId);
+      }
+      setOpenMenuId(null);
+      toast.success(t(action === 'archive' ? 'status.agent.archiveSuccess' : 'status.agent.deleteSuccess'));
+    } catch {
+      toast.error(t(action === 'archive' ? 'status.agent.archiveFailed' : 'status.agent.deleteFailed'));
+    }
+  }, [t]);
 
   // The list owns a durable snapshot from the backend. Zustand remains useful
   // for live rows created in this window, but a webview reload must never turn
@@ -316,6 +414,15 @@ export function AgentConversationList() {
     ? scopedConversations.filter((instance) => instance.agentType === effectiveFilter)
     : scopedConversations;
 
+  const favoriteConversations = useMemo(
+    () => visibleConversations.filter((instance) => favoriteIds.has(instance.instanceId)),
+    [visibleConversations, favoriteIds],
+  );
+  const nonFavoriteConversations = useMemo(
+    () => visibleConversations.filter((instance) => !favoriteIds.has(instance.instanceId)),
+    [visibleConversations, favoriteIds],
+  );
+
   // 按日期分桶 (基于 createdAt)。visibleConversations 已按 createdAt DESC 排好,
   // 逐条归入桶即保持桶内顺序; 只渲染非空桶, 桶间用 mt-3 分隔。
   const conversationGroups = useMemo(() => {
@@ -330,7 +437,7 @@ export function AgentConversationList() {
       last7Days: [],
       earlier: [],
     };
-    for (const instance of visibleConversations) {
+    for (const instance of nonFavoriteConversations) {
       const ts = instance.createdAt;
       if (ts >= startOfToday) buckets.today.push(instance);
       else if (ts >= startOfYesterday) buckets.yesterday.push(instance);
@@ -340,7 +447,11 @@ export function AgentConversationList() {
     return (['today', 'yesterday', 'last7Days', 'earlier'] as ConversationGroupKey[])
       .map((key) => ({ key, items: buckets[key] }))
       .filter((group) => group.items.length > 0);
-  }, [visibleConversations]);
+  }, [nonFavoriteConversations]);
+
+  const conversationSections = favoriteConversations.length > 0
+    ? [{ key: 'favorites' as const, items: favoriteConversations }, ...conversationGroups]
+    : conversationGroups;
 
   const displayName = (type: (typeof AGENT_TYPES)[number]): string =>
     type.nameKey ? t(type.nameKey as Parameters<typeof t>[0]) : type.name;
@@ -508,10 +619,10 @@ export function AgentConversationList() {
             </div>
           ) : (
             <div className="flex flex-col gap-1">
-              {conversationGroups.map((group, index) => (
+              {conversationSections.map((group, index) => (
                 <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
                   <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
-                    {t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
+                    {group.key === 'favorites' ? t('agent.chat.conversation.favorites') : t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
                   </h3>
                   {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
                   <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
@@ -520,18 +631,19 @@ export function AgentConversationList() {
                     const selected = instance.instanceId === selectedInstanceId;
                     const running = isAgentConversationRunning(instance, conversationRunIndex);
                     return (
-                      <button
+                      <div
                         key={instance.instanceId}
-                        type="button"
-                        onClick={() => void revealConversation(instance)}
-                        title={t('status.agent.openConversation')}
                         className={cn(
-                          'flex h-9 w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors',
-                          selected
-                            ? 'bg-[var(--muted)] text-[var(--foreground)]'
-                            : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+                          'group relative flex h-9 w-full items-center rounded-lg text-left transition-colors',
+                          selected ? 'bg-[var(--muted)]' : 'hover:bg-[var(--muted)]',
                         )}
                       >
+                        <button
+                          type="button"
+                          onClick={() => void revealConversation(instance)}
+                          title={t('status.agent.openConversation')}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[var(--foreground)]"
+                        >
                         <span className={cn(
                           'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
                           running && 'agent-conversation-list__icon--running',
@@ -552,7 +664,41 @@ export function AgentConversationList() {
                           // 灰色: 刚跑完、本次会话内用户还没点进去过
                           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]" />
                         ) : null}
-                      </button>
+                        </button>
+                        <DropdownMenu
+                          open={openMenuId === instance.instanceId}
+                          onOpenChange={(open) => setOpenMenuId(open ? instance.instanceId : null)}
+                          className="absolute right-0 top-1/2 z-10 -translate-y-1/2"
+                        >
+                          <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
+                            <button
+                              type="button"
+                              aria-label={t('agent.chat.conversation.more')}
+                              className={cn(
+                                'mr-1 rounded bg-[var(--muted)] p-1 text-[var(--muted-foreground)] opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-[var(--foreground)] focus-visible:opacity-100',
+                                openMenuId === instance.instanceId && 'opacity-100',
+                              )}
+                            >
+                              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-[160px] space-y-0.5 px-1 py-1.5">
+                            <DropdownMenuItem onClick={() => toggleFavorite(instance.instanceId)} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
+                              <StarIcon className="h-4 w-4" weight={favoriteIds.has(instance.instanceId) ? 'fill' : 'regular'} />
+                              {favoriteIds.has(instance.instanceId) ? t('agent.chat.conversation.unfavorite') : t('agent.chat.conversation.favorite')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => renameConversation(instance)} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
+                              <PencilSimpleIcon className="h-4 w-4" /> {t('agent.chat.conversation.rename')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => void removeConversation(instance, 'archive')} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
+                              <ArchiveIcon className="h-4 w-4" /> {t('document.agent.archiveConversation')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => void removeConversation(instance, 'delete')} className="gap-2 rounded-md px-2 py-1.5 text-[var(--destructive)] hover:bg-[var(--muted)]">
+                              <TrashSimpleIcon className="h-4 w-4" /> {t('document.agent.deleteConversation')}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     );
                   })}
                 </div>
@@ -573,6 +719,36 @@ export function AgentConversationList() {
           )}
         />
       </div>
+      <Dialog open={renameTarget !== null} onOpenChange={(open) => !open && !renameSaving && setRenameTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('agent.chat.conversation.rename')}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRename();
+            }}
+            className="space-y-4"
+          >
+            <Input
+              autoFocus
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              placeholder={t('agent.chat.conversation.renamePrompt')}
+              disabled={renameSaving}
+            />
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setRenameTarget(null)} disabled={renameSaving}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" disabled={renameSaving || !renameDraft.trim()}>
+                {t('document.version.confirm')}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

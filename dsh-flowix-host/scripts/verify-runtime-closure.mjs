@@ -8,6 +8,7 @@ if (!process.argv[2] || !existsSync(bundle)) throw new Error('usage: node verify
 const runtimeModules = join(bundle, 'runtime/node_modules')
 const roots = [
   '@deepseek-ai/dsh',
+  '@deepseek-ai/dsh-sdk-jsonrpc-server',
   '@deepseek-ai/dsh-sdk-protocol',
   '@deepseek-ai/dsh-shell',
   '@deepseek-ai/dsh-subagent-in-process-driver',
@@ -34,7 +35,6 @@ for (const path of [
   if (!existsSync(path)) failures.push(`required private runtime file is missing: ${path}`)
 }
 for (const forbidden of [
-  'runtime/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server',
   'runtime/node_modules/@flowix/dsh-flowix-bridge',
   'host/dsh-host.cjs',
 ]) {

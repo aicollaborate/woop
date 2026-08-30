@@ -61,6 +61,7 @@ function requiredEnv(name, allowMissing = false) {
 
 const base = stripCommentKeys(readJson(baseConfigPath));
 const productionOverride = stripCommentKeys(readJson(productionConfigPath));
+const allowUnsignedMac = process.env.FLOWIX_ALLOW_UNSIGNED === "1";
 if (!cargoVersion || cargoVersion !== base.version || cargoVersion !== packageVersion) {
   throw new Error(
     `Flowix version mismatch: Cargo=${cargoVersion ?? "<missing>"}, ` +
@@ -109,8 +110,8 @@ if (targetPlatform === "win32") {
   if (production.bundle.windows) {
     delete production.bundle.windows.certificateThumbprint;
   }
-  const signingIdentity = requiredEnv("APPLE_SIGNING_IDENTITY");
-  const teamId = requiredEnv("APPLE_TEAM_ID");
+  const signingIdentity = requiredEnv("APPLE_SIGNING_IDENTITY", allowUnsignedMac);
+  const teamId = requiredEnv("APPLE_TEAM_ID", allowUnsignedMac);
   if (signingIdentity) {
     production.bundle.macOS.signingIdentity = signingIdentity;
   } else {

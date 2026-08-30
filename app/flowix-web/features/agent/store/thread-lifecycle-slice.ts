@@ -341,7 +341,12 @@ export function createThreadLifecycleSlice(
       }));
       try {
         await agentClient.updateThreadTitle(threadId, nextTitle, type.key);
-        await reloadThreadListForType(get, type.key);
+        // The title and conversation instances are already updated
+        // optimistically above. Provider history reloads can wake an external
+        // runtime and take several seconds, so they must not block saving.
+        void reloadThreadListForType(get, type.key).catch((error) => {
+          console.error("Failed to refresh thread list after rename:", error);
+        });
       } catch (error) {
         get().setSessionMeta((meta) => ({
           ...meta,

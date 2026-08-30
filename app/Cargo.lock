@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "flowix-cli"
-version = "1.2.8"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",

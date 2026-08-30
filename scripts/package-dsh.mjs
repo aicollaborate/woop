@@ -24,7 +24,7 @@ const platforms = {}
 for (const target of targets) {
   const { platform } = targetInfo(target)
   const bundleSource = resolve(repo, `.build/dsh-runtime-bundle/${target}`)
-  const isNodeBundle = existsSync(resolve(bundleSource, 'host/dsh-host.cjs'))
+  const isNodeBundle = existsSync(resolve(bundleSource, 'node/node'))
   if (!isNodeBundle) {
     throw new Error(`missing managed DSH bundle for ${target}; run npm run dsh:build:prod -- --target=${target}`)
   }
@@ -48,7 +48,7 @@ for (const target of targets) {
     includesUi: false,
     runtimeType: 'node-bundle',
       nodeExecutable: platform === 'windows' ? 'node/node.exe' : 'node/node',
-      entrypoint: 'host/dsh-host.cjs',
+      entrypoint: 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
       cliEntrypoint: 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
       pnpmEntrypoint: 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs',
       nodeVersion: bundleBuild.nodeVersion,
@@ -93,15 +93,16 @@ const manifest = {
 await writeFile(resolve(releaseRoot, 'dsh-latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(`created ${resolve(releaseRoot, 'dsh-latest.json')}`)
 
+const groupedPlatforms = {}
 for (const [platform, artifact] of Object.entries(platforms)) {
-  const group = platform.startsWith('darwin-')
-    ? 'macos'
-    : platform.startsWith('windows-')
-      ? 'windows'
-      : platform.startsWith('linux-')
-        ? 'linux'
-        : platform
-  const platformManifest = { ...manifest, platforms: { [platform]: artifact } }
+  const group = platform.startsWith('darwin-') ? 'macos'
+    : platform.startsWith('windows-') ? 'windows'
+      : platform.startsWith('linux-') ? 'linux' : platform
+  groupedPlatforms[group] ??= {}
+  groupedPlatforms[group][platform] = artifact
+}
+for (const [group, grouped] of Object.entries(groupedPlatforms)) {
+  const platformManifest = { ...manifest, platforms: grouped }
   const output = resolve(releaseRoot, 'platforms', group, 'latest.json')
   await mkdir(resolve(releaseRoot, 'platforms', group), { recursive: true })
   await writeFile(output, `${JSON.stringify(platformManifest, null, 2)}\n`)

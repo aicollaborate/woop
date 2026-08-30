@@ -55,14 +55,6 @@ const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: u64 = 100_000;
 const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-const REQUIRED_HOST_CAPABILITIES: &[&str] = &[
-    "model-catalog",
-    "model-discovery",
-    "plugin-catalog",
-    "runtime-profile",
-    "credentials-management",
-    "model-settings-management",
-];
 static DSH_UPDATE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static DSH_DOWNLOAD_ABORT: OnceLock<Mutex<Option<AbortHandle>>> = OnceLock::new();
 static DSH_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1069,6 +1061,20 @@ fn write_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     }
 }
 
+fn copy_profile_tree(source: &Path, target: &Path) -> Result<(), String> {
+    if source.is_dir() {
+        fs::create_dir_all(target).map_err(|e| format!("create DSH profile directory: {e}"))?;
+        for entry in fs::read_dir(source).map_err(|e| format!("read DSH profile directory: {e}"))? {
+            let entry = entry.map_err(|e| format!("read DSH profile entry: {e}"))?;
+            copy_profile_tree(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|e| format!("create DSH profile parent: {e}"))?; }
+        fs::copy(source, target).map_err(|e| format!("copy DSH profile file: {e}"))?;
+    }
+    Ok(())
+}
+
 fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
     let root = &launch.root;
     let session_root = root.join(format!(".health-check-{}", uuid::Uuid::new_v4()));
@@ -1078,6 +1084,10 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
     fs::create_dir_all(&dsh_home).map_err(|e| format!("create DSH health-check home: {e}"))?;
     let settings_path = dsh_home.join("settings.yaml");
     let credentials_path = dsh_home.join(".credentials.yaml");
+    copy_profile_tree(
+        &root.join("profile").join(DEFAULT_PROFILE),
+        &dsh_home.join("profiles").join(DEFAULT_PROFILE),
+    )?;
     fs::write(&settings_path, b"llm-pi-ai:\n  providers: {}\n")
         .map_err(|e| format!("write DSH health-check settings: {e}"))?;
     write_private_file(&credentials_path, b"DSH_API_KEY: health-check\n")
@@ -1091,6 +1101,8 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
         .env("DSH_SETTINGS_PATH", &settings_path)
         .env("DSH_CREDENTIALS_PATH", &credentials_path)
         .env("FLOWIX_DSH_ROOT", root)
+        .env("FLOWIX_DSH_APPSERVER_STDIO", "1")
+        .env("DSH_PROFILE_DIR", dsh_home.join("profiles").join(DEFAULT_PROFILE))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1120,77 +1132,53 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
             &mut stdin,
             &line_rx,
             1,
-            "host.initialize",
-            serde_json::json!({ "protocolVersion": DSH_PROTOCOL_VERSION }),
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": DSH_PROTOCOL_VERSION,
+                "clientInfo": { "name": "flowix-install-health-check", "version": env!("CARGO_PKG_VERSION") },
+                "capabilities": {}
+            }),
         )?;
-        if !health::initialize_is_healthy(
-            &initialize,
-            DSH_PROTOCOL_VERSION,
-            REQUIRED_HOST_CAPABILITIES,
-        ) {
-            return Err("DSH host.initialize health check failed".to_string());
+        let initialized = initialize
+            .get("result")
+            .ok_or("DSH App Server initialize returned no result")?;
+        if initialized.get("protocolVersion").and_then(serde_json::Value::as_u64) != Some(DSH_PROTOCOL_VERSION)
+            || initialized.get("serverInfo").and_then(|value| value.get("name")).and_then(serde_json::Value::as_str) != Some("dsh-appserver") {
+            return Err("DSH App Server initialize health check failed".to_string());
         }
-        let thread_id = "flowix-install-health-check";
-        rpc_health_request(
+        let thread = rpc_health_request(
             &mut stdin,
             &line_rx,
             2,
-            "runtime.ensure",
+            "thread/start",
             serde_json::json!({
-                "threadId": thread_id,
-                "sessionId": "flowix-install-health-session",
+                "flowixThreadId": "flowix-install-health-check",
                 "cwd": root,
                 "workspacePaths": [],
                 "provider": "openai",
-                "providerName": "install-health-check",
-                "apiProtocol": "openai-completions",
-                "apiKeyEnv": "DSH_API_KEY",
-                "baseUrl": "http://127.0.0.1:9/v1",
                 "model": "health-check-model",
                 "agentPreset": "minimal",
                 "permissionMode": "read-only"
             }),
         )?;
-        let bridge = rpc_health_request(
+        let thread_id = thread
+            .get("result")
+            .and_then(|value| value.get("thread"))
+            .and_then(|value| value.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or("DSH App Server thread/start returned no threadId")?;
+        rpc_health_request(
             &mut stdin,
             &line_rx,
             3,
-            "runtime.bridge.capabilities",
+            "thread/close",
             serde_json::json!({ "threadId": thread_id }),
         )?;
-        let bridge_capabilities_ok = bridge
-            .get("result")
-            .and_then(|value| value.get("capabilities"))
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|capabilities| {
-                [
-                    "runtime-events",
-                    "session-control",
-                    "credentials-management",
-                    "model-settings-management",
-                ]
-                .iter()
-                .all(|required| {
-                    capabilities
-                        .iter()
-                        .any(|capability| capability.as_str() == Some(required))
-                })
-            });
-        if !bridge_capabilities_ok {
-            return Err("DSH runtime bridge health check failed".to_string());
-        }
         rpc_health_request(
             &mut stdin,
             &line_rx,
             4,
-            "runtime.dispose",
-            serde_json::json!({ "threadId": thread_id }),
-        )?;
-        rpc_health_request(
-            &mut stdin,
-            &line_rx,
-            5,
-            "host.shutdown",
+            "shutdown",
             serde_json::json!({}),
         )?;
         Ok(())

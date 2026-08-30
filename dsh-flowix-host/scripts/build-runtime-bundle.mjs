@@ -65,9 +65,9 @@ await rm(join(runtime, 'src'), { recursive: true, force: true })
 // after deploy; the closure verifier explicitly treats them as optional for
 // this headless distribution.
 await removeClientUiPackages(runtime)
-// Flowix speaks only the dsh-appserver Thread/Turn protocol. Remove the stock
-// SDK JSON-RPC surface even when it arrives transitively through dsh-base.
-await rm(join(runtime, 'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server'), { recursive: true, force: true })
+// Keep the upstream SDK JSON-RPC package in the runtime closure for DSH's
+// internal carrier/runtime compatibility. The Flowix profile disables its
+// plugin entry, so dsh-appserver remains the only active stdin/stdout owner.
 await rm(join(runtime, 'node_modules/@flowix/dsh-flowix-bridge'), { recursive: true, force: true })
 
 await copyTree(resolve(repo, 'dsh-flowix-memory'), join(runtime, 'node_modules/dsh-flowix-memory'))
