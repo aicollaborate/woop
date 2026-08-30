@@ -501,7 +501,7 @@ export function AgentConversationDetail({
 
   if (!instance) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
+      <div className="flex h-full items-center justify-center bg-[var(--editor-block-bg,var(--document-bg))] text-sm text-[var(--muted-foreground)]">
         {t('status.agent.conversationNotFound')}
       </div>
     );
