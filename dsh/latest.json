@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
   "product": "flowix-dsh",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "protocolVersion": 1,
-  "minFlowixVersion": "1.2.1",
+  "minFlowixVersion": "1.2.8",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://download.flowix-memo.com/dsh/v1.0.1/Flowix-DSH_1.0.1_node24-macos-arm64.tar.gz?sha256=4efc554fca3e72957d5322dc6e3e744d71995aeda79004d1893e4cfd54950d0b",
-      "sha256": "4efc554fca3e72957d5322dc6e3e744d71995aeda79004d1893e4cfd54950d0b",
-      "sizeBytes": 57793710,
-      "buildId": "FL1D30BA"
+      "url": "https://download.flowix-memo.com/dsh/v1.0.4/Flowix-DSH_1.0.4_node24-macos-arm64.tar.gz?sha256=9deb1048849c615444ff3f21237b74ad42f871b8e5e027703f8be7cf70839a17",
+      "sha256": "9deb1048849c615444ff3f21237b74ad42f871b8e5e027703f8be7cf70839a17",
+      "sizeBytes": 81529910,
+      "buildId": "431f7158f5b0339392ae9494"
     },
     "darwin-x86_64": {
-      "url": "https://download.flowix-memo.com/dsh/v1.0.1/Flowix-DSH_1.0.1_node24-macos-x64.tar.gz?sha256=df8d5a656ea7581fc1b4a98e291bb9da563bc0d35cafb1fdc97295b0b5ee8aba",
-      "sha256": "df8d5a656ea7581fc1b4a98e291bb9da563bc0d35cafb1fdc97295b0b5ee8aba",
-      "sizeBytes": 60267240,
-      "buildId": "FL1D30BA"
+      "url": "https://download.flowix-memo.com/dsh/v1.0.4/Flowix-DSH_1.0.4_node24-macos-x64.tar.gz?sha256=91d1b7a042d6d2ea5c9831dab2616383ffd956ceaf52a08266d369545adc1b63",
+      "sha256": "91d1b7a042d6d2ea5c9831dab2616383ffd956ceaf52a08266d369545adc1b63",
+      "sizeBytes": 84638039,
+      "buildId": "82e53738e9e11b530927734b"
     }
   }
 }
