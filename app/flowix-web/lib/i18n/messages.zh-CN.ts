@@ -107,6 +107,7 @@ const zhCN = {
     "preferences.general.preferredLanguage.title": "AI 回复语言",
     "preferences.general.preferredLanguage.description":
       "AI 回复时优先使用的语言",
+    "preferences.general.showConversationEntry.title": "是否展示对话",
     "preferences.general.about": "关于 Flowix",
     "preferences.general.currentVersion": "当前版本",
     "preferences.general.loading": "加载中",

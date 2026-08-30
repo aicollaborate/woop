@@ -114,6 +114,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.general.preferredLanguage.title": "AI response language",
     "preferences.general.preferredLanguage.description":
       "Preferred language for AI responses",
+    "preferences.general.showConversationEntry.title": "Show conversations",
     "preferences.general.about": "About Flowix",
     "preferences.general.currentVersion": "Current version",
     "preferences.general.loading": "Loading",

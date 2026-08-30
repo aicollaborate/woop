@@ -142,7 +142,7 @@ pub fn app_session_history_request(
 }
 
 pub fn models_catalog_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/read", "params": {} })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "models/catalog", "params": {} })
 }
 
 pub fn plugins_catalog_request(id: u64) -> Value {

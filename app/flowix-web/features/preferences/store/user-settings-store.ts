@@ -102,6 +102,7 @@ function mergeSettings(base: UserSettings, updates: UserSettingsUpdate): UserSet
       ...personalize,
       responseLength: normalizeResponseLength(personalize.responseLength),
       preferredLanguage: normalizePreferredLanguage(personalize.preferredLanguage),
+      showConversationEntry: personalize.showConversationEntry !== false,
     },
     format: { ...base.format, ...(updates.format ?? {}) },
     theme,
@@ -188,6 +189,7 @@ function sanitizeSettings(settings: UserSettings): UserSettings {
       responseLength: normalizeResponseLength(settings.personalize.responseLength),
       preferredLanguage: normalizePreferredLanguage(settings.personalize.preferredLanguage),
       selectedTags: settings.personalize.selectedTags,
+      showConversationEntry: settings.personalize.showConversationEntry !== false,
     },
     format: {
       fontFamily: normalizeActiveFontFamily(settings.format.fontFamily),

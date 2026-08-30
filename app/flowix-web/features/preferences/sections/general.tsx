@@ -34,6 +34,7 @@ interface GeneralSectionProps {
     selectedTags: string[];
     responseLength: string;
     preferredLanguage: string;
+    showConversationEntry: boolean;
   };
   language: AppLanguage;
   region: Region;
@@ -44,6 +45,7 @@ interface GeneralSectionProps {
       selectedTags: string[];
       responseLength: string;
       preferredLanguage: string;
+      showConversationEntry: boolean;
     }>;
     language?: AppLanguage;
     memoCardVariant?: MemoCardVariant;
@@ -288,6 +290,29 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
           />
         </div>
       </Field>
+
+      <FieldRow title={t('preferences.general.showConversationEntry.title')}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={settings.showConversationEntry}
+          aria-label={t('preferences.general.showConversationEntry.title')}
+          onClick={() => updateSettings({
+            personalize: { showConversationEntry: !settings.showConversationEntry },
+          })}
+          className={cn(
+            'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+            settings.showConversationEntry ? 'bg-[var(--primary)]' : 'bg-[var(--muted)]',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
+              settings.showConversationEntry ? 'translate-x-5' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </FieldRow>
 
       <SectionHeader title={t('preferences.general.personalization')} />
 

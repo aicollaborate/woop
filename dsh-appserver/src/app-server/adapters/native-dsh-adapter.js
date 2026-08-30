@@ -387,6 +387,24 @@ export class NativeDshAdapter {
     return { revision: descriptor.revision, providers: user.providers && typeof user.providers === 'object' && !Array.isArray(user.providers) ? user.providers : {}, applies: descriptor.applies }
   }
 
+  /** Return configured routes in the provider-array shape used by clients. */
+  catalogModels() {
+    const configuration = this.describeModels()
+    return {
+      providers: Object.entries(configuration.providers).map(([provider, profile]) => ({
+        provider,
+        ...(typeof profile?.displayName === 'string' ? { displayName: profile.displayName } : {}),
+        ...(typeof profile?.baseUrl === 'string' ? { baseUrl: profile.baseUrl } : {}),
+        takesApiKey: true,
+        models: Array.isArray(profile?.models)
+          ? profile.models.filter(model => model && typeof model.id === 'string')
+          : typeof profile?.model === 'string' && profile.model
+            ? [{ id: profile.model }]
+            : [],
+      })),
+    }
+  }
+
   async discoverModels(request = {}) {
     const llm = this.ctx.get?.('llm')
     if (!llm?.discoverModels) throw new Error('DSH LLM discovery service is unavailable')

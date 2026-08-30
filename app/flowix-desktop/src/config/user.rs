@@ -40,6 +40,12 @@ pub struct PersonalizeConfig {
     pub preferred_language: String,
     #[serde(default)]
     pub selected_tags: Vec<String>,
+    #[serde(default = "default_show_conversation_entry")]
+    pub show_conversation_entry: bool,
+}
+
+fn default_show_conversation_entry() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

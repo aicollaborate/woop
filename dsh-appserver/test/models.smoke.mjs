@@ -33,6 +33,9 @@ const server = new NativeJsonRpcServer({
 })
 await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize' })
 assert.deepEqual((await server.dispatch({ jsonrpc: '2.0', id: 2, method: 'model/config/read' })).result.providers, providers)
+assert.deepEqual((await server.dispatch({ jsonrpc: '2.0', id: 2.5, method: 'models/catalog' })).result.providers[0], {
+  provider: 'deepseek', takesApiKey: true, models: [{ id: 'deepseek-chat' }],
+})
 assert.deepEqual((await server.dispatch({ jsonrpc: '2.0', id: 3, method: 'model/list', params: { prefix: 'test' } })).result.models[0].id, 'test-model')
 const configured = await server.dispatch({ jsonrpc: '2.0', id: 4, method: 'model/config/upsert', params: { route: 'local', profile: { model: 'local-model' }, expectedRevision: 3 } })
 assert.equal(configured.result.providers.local.model, 'local-model')

@@ -13,12 +13,12 @@ use futures::{
 use reqwest::{blocking::Client as BlockingClient, Client};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -29,7 +29,6 @@ mod archive;
 mod cleanup;
 mod download;
 mod environment;
-mod health;
 mod manifest;
 mod publish;
 mod verify;
@@ -1094,6 +1093,12 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
         .map_err(|e| format!("write DSH health-check credentials: {e}"))?;
     let mut command = Command::new(&launch.executable);
     command.args(&launch.args);
+    // Node-bundle releases launch the official DSH CLI directly.  Unlike the
+    // legacy embedded host, that CLI requires an explicit profile selection;
+    // without it the process exits before App Server can answer initialize.
+    if launch.cli_entrypoint.is_some() {
+        command.args(["--profile", DEFAULT_PROFILE]);
+    }
     let mut child = command
         .envs(managed_child_environment(root))
         .env("FLOWIX_DSH_SESSION_ROOT", &session_root)
@@ -1105,9 +1110,20 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
         .env("DSH_PROFILE_DIR", dsh_home.join("profiles").join(DEFAULT_PROFILE))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("start DSH health check: {e}"))?;
+    let stderr = Arc::new(Mutex::new(String::new()));
+    if let Some(mut stream) = child.stderr.take() {
+        let captured = Arc::clone(&stderr);
+        std::thread::spawn(move || {
+            let mut output = String::new();
+            let _ = stream.read_to_string(&mut output);
+            if let Ok(mut value) = captured.lock() {
+                *value = output;
+            }
+        });
+    }
     let result = (|| -> Result<(), String> {
         let mut stdin = child
             .stdin
@@ -1129,8 +1145,10 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
             }
         });
         let initialize = rpc_health_request(
+            &mut child,
             &mut stdin,
             &line_rx,
+            &stderr,
             1,
             "initialize",
             serde_json::json!({
@@ -1147,8 +1165,10 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
             return Err("DSH App Server initialize health check failed".to_string());
         }
         let thread = rpc_health_request(
+            &mut child,
             &mut stdin,
             &line_rx,
+            &stderr,
             2,
             "thread/start",
             serde_json::json!({
@@ -1168,15 +1188,19 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
             .and_then(serde_json::Value::as_str)
             .ok_or("DSH App Server thread/start returned no threadId")?;
         rpc_health_request(
+            &mut child,
             &mut stdin,
             &line_rx,
+            &stderr,
             3,
             "thread/close",
             serde_json::json!({ "threadId": thread_id }),
         )?;
         rpc_health_request(
+            &mut child,
             &mut stdin,
             &line_rx,
+            &stderr,
             4,
             "shutdown",
             serde_json::json!({}),
@@ -1190,8 +1214,10 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
 }
 
 fn rpc_health_request(
+    child: &mut Child,
     stdin: &mut impl Write,
     lines: &mpsc::Receiver<Result<String, String>>,
+    stderr: &Arc<Mutex<String>>,
     id: u64,
     method: &str,
     params: serde_json::Value,
@@ -1209,9 +1235,29 @@ fn rpc_health_request(
     let deadline = Instant::now() + HEALTH_CHECK_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let line = lines
-            .recv_timeout(remaining)
-            .map_err(|_| format!("DSH {method} health check timed out"))??;
+        let line = lines.recv_timeout(remaining).map_err(|error| {
+            let diagnostic = stderr
+                .lock()
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("; stderr={value}"))
+                .unwrap_or_default();
+            match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    format!("DSH {method} health check timed out{diagnostic}")
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    let status = child
+                        .try_wait()
+                        .ok()
+                        .flatten()
+                        .map(|value| format!(" ({value})"))
+                        .unwrap_or_default();
+                    format!("DSH {method} health check process exited{status}{diagnostic}")
+                }
+            }
+        })??;
         let frame: serde_json::Value = serde_json::from_str(line.trim())
             .map_err(|e| format!("parse DSH {method} health check: {e}"))?;
         if frame.get("id").and_then(serde_json::Value::as_u64) != Some(id) {

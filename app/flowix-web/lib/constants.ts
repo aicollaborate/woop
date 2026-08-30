@@ -52,6 +52,8 @@ export interface PersonalizeConfig {
   responseLength: string;
   preferredLanguage: string;
   selectedTags: string[];
+  /** Whether the conversations entry is shown in the main navigation sidebar. */
+  showConversationEntry: boolean;
 }
 
 export interface FormatConfig {
@@ -220,6 +222,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     responseLength: 'standard',
     preferredLanguage: 'Simplified Chinese',
     selectedTags: [],
+    showConversationEntry: true,
   },
   format: {
     fontFamily: FONT_FAMILY_OPTIONS[0].value,
