@@ -40,8 +40,8 @@ use download::{normalized_sha256, partial_download_path, response_resumes};
 use environment::dsh_plugin_environment;
 pub use environment::managed_child_environment;
 use manifest::{
-    fetch_manifest, manifest_url, validate_manifest_version, version_is_at_least, DshArtifact,
-    DshManifest,
+    dsh_version_is_at_least, fetch_manifest, flowix_version_is_at_least, manifest_url,
+    validate_manifest_version, DshArtifact, DshManifest,
 };
 use publish::safe_bundle_path;
 use verify::verify_artifact;
@@ -447,7 +447,7 @@ fn install_runtime_inner(
     }
     validate_manifest_version(&manifest.version)?;
     if let Some(minimum) = manifest.min_flowix_version.as_deref() {
-        if !version_is_at_least(crate::runtime_log::APP_VERSION, minimum)? {
+        if !flowix_version_is_at_least(crate::runtime_log::APP_VERSION, minimum)? {
             return Err(format!(
                 "DSH {} requires Flowix >= {}, current Flowix is {}",
                 manifest.version,
@@ -464,7 +464,7 @@ fn install_runtime_inner(
 
     let root = dsh_root();
     if let Some(current) = current_installation() {
-        if version_is_at_least(&current.version, &manifest.version)?
+        if dsh_version_is_at_least(&current.version, &manifest.version)?
             && (current.version != manifest.version || current_artifact_matches(&current, artifact))
         {
             emit_progress(app, "up-to-date", 0, None, false);
@@ -1303,11 +1303,14 @@ fn runtime_target_key() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        archive::safe_archive_path, validate_manifest_version, version_is_at_least, DshArtifact,
-        DshManifest,
+        archive::safe_archive_path, dsh_version_is_at_least, validate_manifest_version,
     };
-    use std::collections::HashMap;
     use std::path::Path;
+
+    #[cfg(unix)]
+    use super::{DshArtifact, DshManifest};
+    #[cfg(unix)]
+    use std::collections::HashMap;
 
     #[cfg(unix)]
     #[test]
@@ -1350,10 +1353,10 @@ mod tests {
 
     #[test]
     fn compares_dsh_versions_before_downloading() {
-        assert!(version_is_at_least("1.2.0", "1.1.9").unwrap());
-        assert!(!version_is_at_least("1.2.0", "1.2.1").unwrap());
-        assert!(version_is_at_least("1.2.0", "1.2.0").unwrap());
-        assert!(version_is_at_least("1.2.0", "bad-version").is_err());
+        assert!(dsh_version_is_at_least("1.2.0", "1.1.9").unwrap());
+        assert!(!dsh_version_is_at_least("1.2.0", "1.2.1").unwrap());
+        assert!(dsh_version_is_at_least("1.2.0", "1.2.0").unwrap());
+        assert!(dsh_version_is_at_least("1.2.0", "bad-version").is_err());
     }
 
     #[test]

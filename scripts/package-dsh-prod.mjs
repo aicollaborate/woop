@@ -5,7 +5,10 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
-const version = process.env.FLOWIX_DSH_VERSION || '1.0.4'
+const version = process.env.FLOWIX_DSH_VERSION || 'dsh.01'
+if (!/^dsh\.(?:0[1-9]|[1-9][0-9]*)$/u.test(version)) {
+  throw new Error(`invalid DSH package version ${version}; expected dsh.01, dsh.02, ...`)
+}
 const sourceManifestUrl = process.env.FLOWIX_DSH_SOURCE_MANIFEST || 'https://download.flowix-memo.com/dsh/macos/latest.json'
 const out = resolve(repo, '.build/releases/dsh')
 const stage = resolve(repo, '.build/dsh-prod-stage')
@@ -64,7 +67,7 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   const bytes = await readFile(archivePath)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   platforms[platform] = {
-    url: `https://download.flowix-memo.com/dsh/v${version}/${filename}?sha256=${sha256}`,
+    url: `https://download.flowix-memo.com/dsh/${version}/${filename}?sha256=${sha256}`,
     sha256, sizeBytes: bytes.length, buildId: metadata.buildId,
   }
   console.log(`created ${archivePath} (${sha256})`)
