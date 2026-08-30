@@ -73,7 +73,7 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   console.log(`created ${archivePath} (${sha256})`)
 }
 
-const output = { schemaVersion: 1, product: 'flowix-dsh', version, protocolVersion: 1, minFlowixVersion: '1.2.8', platforms }
+const output = { schemaVersion: 1, product: 'flowix-dsh', version, protocolVersion: 1, minFlowixVersion: '1.2.9', platforms }
 await writeFile(resolve(out, 'dsh-latest.json'), `${JSON.stringify(output, null, 2)}\n`)
 await mkdir(resolve(out, 'platforms/macos'), { recursive: true })
 await writeFile(resolve(out, 'platforms/macos/latest.json'), `${JSON.stringify(output, null, 2)}\n`)

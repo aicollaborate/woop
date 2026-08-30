@@ -1,7 +1,7 @@
 {
   "name": "flowix",
   "private": true,
-  "version": "1.2.8",
+  "version": "1.2.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,7 @@
     "cli:build:prod": "node scripts/build-cli.mjs",
     "cli:build:prod:macos": "node scripts/build-cli.mjs --macos",
     "dsh:build:dev": "node scripts/build-dsh-dev.mjs",
+    "dsh:package:local": "node scripts/package-dsh-local.mjs",
     "tauri:dev": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.conf.dev.json",
     "tauri:dev:win": "node scripts/tauri-dev.mjs app/flowix-desktop/tauri.windows.dev.conf.json",
     "tauri:build:prod": "node scripts/build-tauri-production.mjs",
