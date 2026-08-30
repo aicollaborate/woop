@@ -11,9 +11,13 @@ use rusqlite::{params, Connection};
 use super::error::ThreadError;
 
 pub(super) const THREAD_DB_SCHEMA_VERSION: i64 = 8;
+pub(super) const WAL_AUTOCHECKPOINT_PAGES: i64 = 4000;
+pub(super) const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 64 * 1024 * 1024;
 
 impl super::store::ThreadManager {
     pub(super) fn run_migrations(conn: &mut Connection) -> Result<(), ThreadError> {
+        // These pragmas configure the current connection, so they must be
+        // applied on every open even when the schema is already current.
         conn.execute_batch(
             "
             -- WAL lets high-frequency external-CLI event writes proceed
@@ -22,6 +26,25 @@ impl super::store::ThreadManager {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA foreign_keys = ON;
+            ",
+        )?;
+        conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
+        conn.pragma_update(None, "journal_size_limit", WAL_JOURNAL_SIZE_LIMIT_BYTES)?;
+
+        let current_version: i64 =
+            conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if current_version == THREAD_DB_SCHEMA_VERSION {
+            return Ok(());
+        }
+        if current_version > THREAD_DB_SCHEMA_VERSION {
+            return Err(ThreadError::UnsupportedSchemaVersion {
+                found: current_version,
+                supported: THREAD_DB_SCHEMA_VERSION,
+            });
+        }
+
+        conn.execute_batch(
+            "
 
             CREATE TABLE IF NOT EXISTS threads (
                 thread_id TEXT PRIMARY KEY,

@@ -66,6 +66,13 @@ impl ThreadManager {
         })
     }
 
+    /// Flush and truncate the WAL during graceful application shutdown.
+    pub(crate) fn checkpoint_wal(&self) -> Result<(), ThreadError> {
+        let conn = self.lock_conn();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
     /// 把同步 rusqlite 的工作丢到 tokio 阻塞线程池, 不卡 async worker。每个 async 公开
     /// 方法包一层 `_inner` 同步实现经此 helper 调度。`f` 与返回值须 Send + 'static
     /// (调用方负责把 `&str` 等 ref 参数先克隆成 owned 再 move 进闭包)。

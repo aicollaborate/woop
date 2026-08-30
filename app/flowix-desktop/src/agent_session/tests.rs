@@ -1120,6 +1120,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn current_schema_skips_historical_event_backfill() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        drop(ThreadManager::new(db_path.clone()).expect("create current database"));
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open current database");
+        conn.execute(
+            "INSERT INTO threads (thread_id, agent_id, title, created_at, updated_at)
+             VALUES ('current-version-thread', 'codex', 'Current', 1, 1)",
+            [],
+        )
+        .expect("insert thread");
+        conn.execute(
+            "INSERT INTO agent_external_events (
+                runtime, thread_id, event_kind, normalized_json, created_at
+             ) VALUES (
+                'codex', 'current-version-thread', NULL, '{\"kind\":\"text\"}', 1
+             )",
+            [],
+        )
+        .expect("insert sentinel event");
+        drop(conn);
+
+        drop(ThreadManager::new(db_path.clone()).expect("reopen current database"));
+
+        let conn = rusqlite::Connection::open(&db_path).expect("inspect current database");
+        let event_kind: Option<String> = conn
+            .query_row(
+                "SELECT event_kind FROM agent_external_events
+                 WHERE thread_id = 'current-version-thread'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read sentinel event");
+        assert_eq!(
+            event_kind, None,
+            "current schemas must skip legacy backfills"
+        );
+    }
+
+    #[test]
+    fn newer_thread_schema_is_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("thread.db");
+        let conn = rusqlite::Connection::open(&db_path).expect("open database");
+        conn.pragma_update(
+            None,
+            "user_version",
+            crate::agent_session::migrations::THREAD_DB_SCHEMA_VERSION + 1,
+        )
+        .expect("set future schema version");
+        drop(conn);
+
+        let error = match ThreadManager::new(db_path) {
+            Ok(_) => panic!("future schema must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            crate::agent_session::error::ThreadError::UnsupportedSchemaVersion {
+                found,
+                supported
+            } if found == supported + 1
+        ));
+    }
+
     #[tokio::test]
     async fn legacy_claude_binding_is_backfilled_without_moving_events() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1148,6 +1215,12 @@ mod tests {
             ],
         )
         .expect("seed legacy Claude binding");
+        conn.pragma_update(
+            None,
+            "user_version",
+            crate::agent_session::migrations::THREAD_DB_SCHEMA_VERSION - 1,
+        )
+        .expect("mark database as pre-provider-branch schema");
         drop(conn);
 
         let migrated = Arc::new(ThreadManager::new(db_path).expect("rerun migrations"));

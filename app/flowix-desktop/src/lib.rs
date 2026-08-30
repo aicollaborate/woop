@@ -20,6 +20,7 @@ mod dsh;
 mod events;
 mod lock_utils;
 mod memo_events;
+mod maintenance;
 mod open_target;
 mod plugin;
 mod process_window;

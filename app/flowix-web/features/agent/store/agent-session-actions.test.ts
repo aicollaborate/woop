@@ -274,6 +274,10 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       thread_id: codexThreadId,
       run_id: "run-codex-completed",
     });
+    // Simulate switching from A to B before A finishes. A's detail releases
+    // thread interest and is no longer the active runtime thread, but its
+    // resident projection must still trigger completion reconciliation.
+    useChatStore.getState().setActiveAgentThread("codex", undefined);
     emitChunk({
       kind: "stream_end",
       thread_id: codexThreadId,

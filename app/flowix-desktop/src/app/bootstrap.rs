@@ -248,6 +248,11 @@ pub fn run() {
                 plugin_runs: crate::plugin::PluginRunCoordinator::default(),
             };
             app.manage(app_state);
+            crate::maintenance::spawn_startup_maintenance(
+                app.package_info().version.to_string(),
+                user_config_dir_for_device.clone(),
+                thread_manager_for_state.clone(),
+            );
             commands::cloud::start_cloud_sync_polling(app.handle().clone());
             if let Ok(Some(refresh_token)) = user_config_for_state.load_cloud_refresh_token() {
                 let cloud_sync = cloud_sync_for_state.clone();
@@ -778,12 +783,20 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::ExitRequested { .. } => {
             stop_external_agent_children(app, "exit");
+            checkpoint_thread_database(app, "exit");
         }
         tauri::RunEvent::Exit => {
             stop_external_agent_children(app, "final exit");
+            checkpoint_thread_database(app, "final exit");
         }
         _ => {}
     }
+}
+
+fn checkpoint_thread_database(app: &tauri::AppHandle, phase: &str) {
+    let state = app.state::<AppState>();
+    tracing::debug!("running shutdown maintenance: {phase}");
+    crate::maintenance::run_shutdown_maintenance(&state.thread_manager);
 }
 
 /// 退出路径上等待 5 个 CLI manager `stop_all` 的总时长上界。

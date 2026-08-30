@@ -636,8 +636,22 @@ export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
     chunk,
     state.sessionMeta.externalSessionResolutions,
   );
+  const projection = state.threadProjections[canonicalThreadId];
+  const runId =
+    chunk.run_id ?? projection?.runs.lastRun?.runId;
+  const hasResidentRun = !!projection && (
+    !chunk.run_id ||
+    projection.runs.activeRunId === chunk.run_id ||
+    projection.runs.lastRun?.runId === chunk.run_id
+  );
   const ownsThread =
     hasThreadInterest(canonicalThreadId) ||
+    // A conversation can be switched away from while its run is still
+    // streaming. The card then releases its interest, but the canonical
+    // projection remains resident and still needs the completion snapshot
+    // reconciliation; otherwise reopening the card can show the last
+    // persisted (older) turn while the provider is catching up.
+    hasResidentRun ||
     Object.values(state.sessionMeta.activeThreadIds).some(
       (threadId) =>
         threadId === canonicalThreadId ||
@@ -652,8 +666,6 @@ export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
     state.sessionMeta.threadTypes[canonicalThreadId] ??
     state.sessionMeta.threadTypes[chunk.thread_id] ??
     state.sessionMeta.activeAgentTypeKey;
-  const runId =
-    chunk.run_id ?? state.threadProjections[canonicalThreadId]?.runs.lastRun?.runId;
   if (runId) {
     if (agentType === "opencode") return;
     // Let the stream-end render settle first. The persisted history can lag

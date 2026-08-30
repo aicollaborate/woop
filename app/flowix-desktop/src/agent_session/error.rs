@@ -16,4 +16,6 @@ pub enum ThreadError {
     },
     #[error("thread store join error: {0}")]
     Join(String),
+    #[error("thread database schema version {found} is newer than supported version {supported}")]
+    UnsupportedSchemaVersion { found: i64, supported: i64 },
 }

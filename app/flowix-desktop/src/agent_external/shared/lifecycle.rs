@@ -212,6 +212,12 @@ pub async fn persist_external_chunk_for_thread_with_metadata(
     raw_json: Option<&str>,
     metadata: &AgentChunkMetadata,
 ) {
+    // Provider-owned histories are read from their external data source. The
+    // local journal is retained only for Claude, whose product history still
+    // depends on it.
+    if agent_type != "claude" {
+        return;
+    }
     let payload_json = match chunk_payload_json(chunk, agent_type, run_id, metadata) {
         Some(payload) => payload,
         None => return,
