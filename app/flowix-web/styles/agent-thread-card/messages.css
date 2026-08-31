@@ -345,13 +345,21 @@
 }
 
 .markdown-editor .agent-thread-card__command-details {
+  all: revert;
+  display: block;
+  box-sizing: border-box;
   max-width: 100%;
   margin: 4px 0 0;
   overflow: auto;
-  color: var(--muted-foreground);
-  font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.markdown-editor .agent-thread-card__command-details > code {
+  all: revert;
+  display: block;
+  white-space: inherit;
+  overflow-wrap: inherit;
 }
 
 .markdown-editor .agent-thread-card__command-collapse-row {

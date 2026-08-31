@@ -30,6 +30,11 @@ import {
   createChevronIcon,
   createToolIcon,
 } from "@features/agent/thread-card/agent-thread-card-icons";
+import {
+  getShiki,
+  loadHighlighter,
+  loadLanguage,
+} from "@features/editor/extensions/codeblock-shiki/shiki/shiki-highlighter";
 
 type AgentMessage = ThreadState["messages"][number];
 
@@ -199,6 +204,57 @@ function directChildDisplayToggle(parent: HTMLElement): HTMLButtonElement | null
     }
   }
   return null;
+}
+
+/**
+ * Highlight the expanded command with the same Shiki token colors used by
+ * editor code blocks. The plain text is rendered synchronously first so a
+ * lazy grammar/WASM load never delays the tool message itself.
+ */
+async function highlightAgentCommandDetails(
+  details: HTMLPreElement,
+  source: string,
+): Promise<void> {
+  try {
+    await loadHighlighter();
+    await loadLanguage("shellscript");
+    const highlighter = getShiki();
+    if (!highlighter || details.dataset.commandSource !== source) return;
+
+    const cssTheme = typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement)
+        .getPropertyValue("--shiki-theme")
+        .trim()
+      : "";
+    const fallbackTheme = document.documentElement.classList.contains("dark")
+      ? "github-dark"
+      : "github-light";
+    const theme = highlighter.getLoadedThemes().includes(cssTheme || fallbackTheme)
+      ? (cssTheme || fallbackTheme)
+      : highlighter.getLoadedThemes()[0];
+    if (!theme) return;
+
+    const lines = highlighter.codeToTokensBase(source, {
+      lang: "shellscript",
+      theme,
+    });
+    const code = document.createElement("code");
+    code.className = "agent-thread-card__command-code";
+
+    lines.forEach((line, lineIndex) => {
+      line.forEach((token) => {
+        const span = document.createElement("span");
+        span.textContent = token.content;
+        if (token.color) span.style.color = token.color;
+        code.append(span);
+      });
+      if (lineIndex < lines.length - 1) code.append(document.createTextNode("\n"));
+    });
+
+    details.replaceChildren(code);
+  } catch {
+    // Keep the synchronous plain-text fallback if Shiki cannot load.
+  }
 }
 
 /**
@@ -500,8 +556,11 @@ export function createAgentThreadCardMessageElement(options: {
 
         const details = document.createElement("pre");
         details.className = "agent-thread-card__command-details";
-        details.textContent = agentCommandListToText(command);
+        const commandText = agentCommandListToText(command);
+        details.textContent = commandText;
+        details.dataset.commandSource = commandText;
         details.hidden = !isExpanded;
+        void highlightAgentCommandDetails(details, commandText);
 
         const collapseRow = document.createElement("div");
         collapseRow.className = "agent-thread-card__command-collapse-row";
