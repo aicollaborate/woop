@@ -500,7 +500,7 @@ export function FolderFileTree({
   return (
     <div className="relative flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]">
       {/* 标题行 ── 标题右侧下拉菜单用于在访达中显示当前资料文件夹。 */}
-      <div className="flex items-center justify-between pl-2 pr-3.5 pb-2 gap-2">
+      <div className="flex items-center justify-between px-3 pb-2 gap-2">
         <div className="min-w-0 flex-1">
           <MemoNavigationDropdown
             title={closeLabel}
