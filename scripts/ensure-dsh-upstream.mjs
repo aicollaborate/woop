@@ -11,6 +11,9 @@ const source = configuredSource
 const lock = JSON.parse(await readFile(resolve(repo, 'dsh/upstream.lock.json'), 'utf8'))
 
 if (configuredSource) {
+  if (process.env.FLOWIX_DSH_REQUIRE_PINNED === '1') {
+    throw new Error('FLOWIX_DSH_UPSTREAM_ROOT is not allowed for a pinned DSH production build')
+  }
   if (!existsSync(resolve(source, 'package.json'))) {
     throw new Error(`FLOWIX_DSH_UPSTREAM_ROOT does not contain a DSH checkout: ${source}`)
   }

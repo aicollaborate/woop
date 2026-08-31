@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { createDshRuntimeMetadata, DSH_PNPM_VERSION } from './dsh-runtime-metadata.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
@@ -64,23 +65,14 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   const pnpmEntrypoint = resolve(targetRoot, 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs')
   if (!existsSync(pnpmEntrypoint)) throw new Error(`DSH Node bundle private pnpm entrypoint is missing: ${pnpmEntrypoint}`)
   const metadataPath = resolve(targetRoot, 'dsh-runtime.json')
-  const metadata = existsSync(metadataPath) ? JSON.parse(await readFile(metadataPath, 'utf8')) : {
-    schemaVersion: 2,
-    product: 'flowix-dsh',
-    protocolVersion: 1,
+  const metadata = createDshRuntimeMetadata({
     target,
-    includesUi: false,
-    runtimeType: 'node-bundle',
+    version,
     nodeExecutable: 'node/node',
-    pnpmEntrypoint: 'tools/pnpm/node_modules/pnpm/bin/pnpm.mjs',
     nodeVersion: runtimeBuild.nodeVersion,
     nodeAbi: runtimeBuild.nodeAbi,
-    pnpmVersion: runtimeBuild.pnpmVersion,
-  }
-  metadata.version = version
-  metadata.entrypoint = 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'
-  metadata.cliEntrypoint = metadata.entrypoint
-  metadata.buildId = createHash('sha256').update(`${version}:${target}:${JSON.stringify(metadata)}:${Date.now()}`).digest('hex').slice(0, 24)
+    pnpmVersion: runtimeBuild.pnpmVersion || DSH_PNPM_VERSION,
+  })
   await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`)
 
   const nodePath = resolve(targetRoot, 'node/node')

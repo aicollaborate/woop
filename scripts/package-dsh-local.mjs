@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, relative, resolve } from 'node:path'
+import { createDshRuntimeMetadata } from './dsh-runtime-metadata.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const upstream = resolve(repo, '.build/upstream/deepseek-harness')
@@ -49,6 +50,7 @@ for (const entry of await readdir(resolve(upstream, 'vendor'), { withFileTypes: 
 
 await mkdir(bundle, { recursive: true })
 await cp(runtime, resolve(bundle, 'runtime'), { recursive: true, force: true })
+await mkdir(resolve(bundle, 'node'), { recursive: true })
 await cp(process.execPath, resolve(bundle, 'node/node.exe'))
 await copyTree(resolve(repo, 'dsh-appserver'), resolve(bundle, 'profile/flowix/node_modules/dsh-appserver'))
 await copyTree(resolve(repo, 'dsh-flowix-memory'), resolve(bundle, 'profile/flowix/node_modules/dsh-flowix-memory'))
@@ -60,31 +62,22 @@ await writeFile(resolve(bundle, 'profile/flowix/package.json'), `${JSON.stringif
 }, null, 2)}\n`)
 await cp(resolve(repo, 'scripts/dsh-dev-profile.patch.yml'), resolve(bundle, 'profile/flowix/cordis.patch.yml'))
 
-const metadata = {
-  schemaVersion: 2,
-  product: 'flowix-dsh',
-  version,
-  protocolVersion: 1,
+const metadata = createDshRuntimeMetadata({
   target: 'node24-windows-x64',
-  includesUi: false,
-  runtimeType: 'node-bundle',
+  version,
   nodeExecutable: 'node/node.exe',
-  entrypoint: 'runtime/lib/bin.js',
-  cliEntrypoint: 'runtime/lib/bin.js',
   nodeVersion: process.version,
   nodeAbi: process.versions.modules,
+  includePnpm: false,
   localBuild: true,
-  profileBundles: ['@deepseek-ai/dsh-base', 'dsh-appserver', 'dsh-flowix-memory'],
-}
-const buildId = createHash('sha256').update(JSON.stringify(metadata)).digest('hex').slice(0, 24)
-metadata.buildId = buildId
+})
 await writeFile(resolve(bundle, 'dsh-runtime.json'), `${JSON.stringify(metadata, null, 2)}\n`)
 
 const profile = resolve(bundle, 'profile/flowix')
 const healthHome = resolve(output, '.health-dsh-home')
 await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
 await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true, force: true })
-run(process.execPath, [resolve(bundle, 'runtime/lib/bin.js'), '--profile', 'flowix', '--dump-config'], {
+run(process.execPath, [resolve(bundle, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
   DSH_HOME: healthHome,
   DSH_PROFILE_DIR: profile,
   FLOWIX_DSH_ROOT: bundle,
@@ -109,7 +102,7 @@ const manifest = {
       sha256,
       signature,
       sizeBytes: bytes.length,
-      buildId,
+      buildId: metadata.buildId,
     },
   },
 }
