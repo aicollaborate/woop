@@ -30,7 +30,7 @@ use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 const INITIALIZE_METHOD: &str = "initialize";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const CONTEXT_COMPACTION_MESSAGE_TYPE: &str = "context-compaction";
-const MIN_PAGINATED_CODEX_VERSION: &str = "0.151.0";
+const MIN_PAGINATED_CODEX_VERSION: &str = "0.150.0";
 
 fn is_image_attachment(path: &str) -> bool {
     matches!(
@@ -1794,10 +1794,10 @@ mod tests {
     #[test]
     fn compares_codex_cli_versions_numerically() {
         let minimum = parse_codex_version(MIN_PAGINATED_CODEX_VERSION).unwrap();
-        assert!(parse_codex_version("0.151.0").unwrap() >= minimum);
+        assert!(parse_codex_version("0.150.0").unwrap() >= minimum);
         assert!(parse_codex_version("0.152.0").unwrap() > minimum);
-        assert!(parse_codex_version("0.150.99").unwrap() < minimum);
-        assert_eq!(parse_codex_version("0.151.0-beta.1").unwrap(), minimum);
+        assert!(parse_codex_version("0.149.99").unwrap() < minimum);
+        assert_eq!(parse_codex_version("0.150.0-beta.1").unwrap(), minimum);
         assert!(parse_codex_version("not-a-version").is_none());
     }
 

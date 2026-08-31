@@ -1,21 +1,23 @@
 {
   "schemaVersion": 1,
   "product": "flowix-dsh",
-  "version": "dsh.01",
+  "version": "1.1.0",
   "protocolVersion": 1,
-  "minFlowixVersion": "1.2.8",
+  "minFlowixVersion": "1.3.0",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://download.flowix-memo.com/dsh/v1.0.4/Flowix-DSH_1.0.4_node24-macos-arm64.tar.gz?sha256=9deb1048849c615444ff3f21237b74ad42f871b8e5e027703f8be7cf70839a17",
-      "sha256": "9deb1048849c615444ff3f21237b74ad42f871b8e5e027703f8be7cf70839a17",
-      "sizeBytes": 81529910,
-      "buildId": "431f7158f5b0339392ae9494"
+      "url": "https://download.flowix-memo.com/dsh/1.1.0/Flowix-DSH_1.1.0_node24-macos-arm64.tar.gz?sha256=3d24138a16b2a3cea9f894a71bb5595d0136f4bb4fc564b4f009a96e9a6848d6",
+      "sha256": "3d24138a16b2a3cea9f894a71bb5595d0136f4bb4fc564b4f009a96e9a6848d6",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNmpPZTRNUzlYZFpWdzc2cjFLSnp4YlA0OWNTMkZGQXViVmRUNWtYOFhQaW4yOUl3TDBGTjd1M3FzeUlHYWV4VmdiSHpzeTVVMlFsTkhnUkVPaDZuTlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTkwNjIzCWZpbGU6Rmxvd2l4LURTSF8xLjEuMF9ub2RlMjQtbWFjb3MtYXJtNjQudGFyLmd6Cm5VaFRLUlNzU0kwNWpRcDVYRXV5d29GbEZ2bVpmei9aVFBsKzN0MnFpQWsrdit5clhOSmhuclFDU2hyamxuNWl1Ry9ORWJzTE1mZXhYU2hWcUVjVkFnPT0K",
+      "sizeBytes": 84923541,
+      "buildId": "009f2a33a915e1c48446d833"
     },
     "darwin-x86_64": {
-      "url": "https://download.flowix-memo.com/dsh/v1.0.4/Flowix-DSH_1.0.4_node24-macos-x64.tar.gz?sha256=91d1b7a042d6d2ea5c9831dab2616383ffd956ceaf52a08266d369545adc1b63",
-      "sha256": "91d1b7a042d6d2ea5c9831dab2616383ffd956ceaf52a08266d369545adc1b63",
-      "sizeBytes": 84638039,
-      "buildId": "82e53738e9e11b530927734b"
+      "url": "https://download.flowix-memo.com/dsh/1.1.0/Flowix-DSH_1.1.0_node24-macos-x64.tar.gz?sha256=72f72eda2c0d08ef6d4407052b8a654185d97879a569a8c2a3836e5d018b6926",
+      "sha256": "72f72eda2c0d08ef6d4407052b8a654185d97879a569a8c2a3836e5d018b6926",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNmxFMVhid2JoU2VHUUtxR1lIaFRFanFwdGFzK0luYVVmRkFFdUpvYkdXY2dXejVPcnE4dTVjbGNjbDVHSmFvRHVqb1hrWlZuOVZhbHZpTFpPV0o2VEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTkwNjYyCWZpbGU6Rmxvd2l4LURTSF8xLjEuMF9ub2RlMjQtbWFjb3MteDY0LnRhci5negpNTnYrTTB3UThXOVN6Z0FtS2I0MnpZWUZWVldtUksxRlFkNnFwdHkrazNqazV5eFVUSUhiazR1TWZWbDgrTGhKRnZnU1pkc2JNM2VaMTdLN2s2cnRCUT09Cg==",
+      "sizeBytes": 87688766,
+      "buildId": "9b15da816fd6a237ad45fb54"
     }
   }
 }

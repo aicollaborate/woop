@@ -23,7 +23,7 @@ if (result.status !== 0) process.exit(result.status ?? 1)
 
 const signaturePath = `${artifact}.sig`
 if (!existsSync(signaturePath)) throw new Error(`signer did not create ${signaturePath}`)
-// Tauri's manifest stores the complete .sig payload as base64. This keeps
-// the format safe when the signature contains newlines.
-const signature = (await readFile(signaturePath)).toString('base64')
+// The .sig file is already the base64-encoded Minisign/Tauri signature
+// payload expected by the updater manifest. Do not encode it a second time.
+const signature = (await readFile(signaturePath, 'utf8')).trim()
 process.stdout.write(`${signature}\n`)

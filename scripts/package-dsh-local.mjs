@@ -11,7 +11,7 @@ const bundle = resolve(output, 'node24-windows-x64')
 const runtime = resolve(output, 'runtime')
 const release = resolve(repo, '.build/releases/dsh-local')
 const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
-const minFlowixVersion = process.env.FLOWIX_VERSION || '1.2.6'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.0'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
 if (!semverPattern.test(version)) {

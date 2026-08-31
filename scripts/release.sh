@@ -98,15 +98,20 @@ fi
 find_artifact() {
   local target="$1"
   local search_root
+  local artifact_pattern
+  case "$target" in
+    *apple-darwin) artifact_pattern='Flowix.app.tar.gz' ;;
+    *windows-msvc) artifact_pattern="Flowix_${VERSION}_*-setup.exe" ;;
+    *linux-gnu) artifact_pattern="Flowix_${VERSION}_*.AppImage.tar.gz" ;;
+    *) return 1 ;;
+  esac
   for search_root in \
     "$CARGO_TARGET_DIR/$target/release/bundle" \
     "$CARGO_TARGET_DIR/release/bundle"; do
     [[ -d "$search_root" ]] || continue
     candidate="$(find "$search_root" -type f \( \
-      -name '*.app.tar.gz' -o \
-      -name '*-setup.exe' -o \
-      -name '*.AppImage.tar.gz' \
-    \) ! -name '*.sig' -name "Flowix_${VERSION}_*" -print | sort | tail -n 1)"
+      -name "$artifact_pattern" \
+    \) ! -name '*.sig' -print | sort | tail -n 1)"
     if [[ -n "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0

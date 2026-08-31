@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
 const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
-const minFlowixVersion = process.env.FLOWIX_VERSION || '1.2.6'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.0'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 if (!semverPattern.test(version)) {
   throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.1.0`)
