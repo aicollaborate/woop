@@ -59,7 +59,8 @@ static DSH_DOWNLOAD_ABORT: OnceLock<Mutex<Option<AbortHandle>>> = OnceLock::new(
 static DSH_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static DSH_DOWNLOAD_PROGRESS: OnceLock<Mutex<Option<DshDownloadProgress>>> = OnceLock::new();
 
-/// DSH updates trust the HTTPS-served latest.json manifest and its SHA-256.
+/// DSH updates trust the HTTPS-served latest.json manifest, SHA-256, and the
+/// same Minisign signature used by the Tauri updater.
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -461,6 +462,14 @@ fn install_runtime_inner(
         .platforms
         .get(target)
         .ok_or_else(|| format!("no DSH package is available for {target}"))?;
+    if artifact.signature.as_deref().is_none()
+        || artifact
+            .signature
+            .as_deref()
+            .is_some_and(|signature| signature.trim().is_empty())
+    {
+        return Err("DSH update manifest has no artifact signature".to_string());
+    }
 
     let root = dsh_root();
     if let Some(current) = current_installation() {
@@ -1426,6 +1435,7 @@ mod tests {
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            signature: None,
             size_bytes: None,
             build_id: Some("same-build".to_string()),
         };
@@ -1496,6 +1506,7 @@ mod tests {
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            signature: None,
             size_bytes: None,
             build_id: Some("test-build".to_string()),
         };
@@ -1537,6 +1548,7 @@ mod tests {
         let artifact = DshArtifact {
             url: "https://example.test/dsh.tar.gz".to_string(),
             sha256: "0".repeat(64),
+            signature: None,
             size_bytes: None,
             build_id: Some("test-build".to_string()),
         };

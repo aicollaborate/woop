@@ -5,9 +5,14 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const repo = resolve(import.meta.dirname, '..')
-const version = process.env.FLOWIX_DSH_VERSION || 'dsh.01'
-if (!/^dsh\.(?:0[1-9]|[1-9][0-9]*)$/u.test(version)) {
-  throw new Error(`invalid DSH package version ${version}; expected dsh.01, dsh.02, ...`)
+const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.2.6'
+const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
+if (!semverPattern.test(version)) {
+  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.1.0`)
+}
+if (!semverPattern.test(minFlowixVersion)) {
+  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.2.6`)
 }
 const bundleRoot = resolve(repo, '.build/dsh-runtime-bundle')
 const out = resolve(repo, '.build/releases/dsh')
@@ -96,14 +101,15 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   run('tar', ['-czf', archivePath, '-C', targetRoot, '.'])
   const bytes = await readFile(archivePath)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const signature = signUpdaterArtifact(archivePath)
   platforms[platform] = {
     url: `https://download.flowix-memo.com/dsh/${version}/${filename}?sha256=${sha256}`,
-    sha256, sizeBytes: bytes.length, buildId: metadata.buildId,
+    sha256, signature, sizeBytes: bytes.length, buildId: metadata.buildId,
   }
   console.log(`created ${archivePath} (${sha256})`)
 }
 
-const output = { schemaVersion: 1, product: 'flowix-dsh', version, protocolVersion: 1, minFlowixVersion: '1.2.9', platforms }
+const output = { schemaVersion: 1, product: 'flowix-dsh', version, protocolVersion: 1, minFlowixVersion, platforms }
 await writeFile(resolve(out, 'dsh-latest.json'), `${JSON.stringify(output, null, 2)}\n`)
 await mkdir(resolve(out, 'platforms/macos'), { recursive: true })
 await writeFile(resolve(out, 'platforms/macos/latest.json'), `${JSON.stringify(output, null, 2)}\n`)
@@ -124,6 +130,19 @@ function runTargetNode(target, nodePath, args, extraEnv = {}) {
     return
   }
   run(nodePath, args, extraEnv)
+}
+
+function signUpdaterArtifact(file) {
+  const signer = resolve(repo, 'scripts/sign-updater-artifact.mjs')
+  const result = spawnSync(process.execPath, [signer, file], {
+    cwd: repo,
+    env: process.env,
+    stdio: ['inherit', 'pipe', 'inherit'],
+    encoding: 'utf8',
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) process.exit(result.status ?? 1)
+  return result.stdout.trim()
 }
 
 function signAndVerifyNode(nodePath, target) {

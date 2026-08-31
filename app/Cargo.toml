@@ -41,6 +41,7 @@ sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
 semver = "1"
+minisign-verify = "0.2"
 clap = { version = "4.5", features = ["std"] }
 clap_complete = "4.5"
 shell-words = "1.1"

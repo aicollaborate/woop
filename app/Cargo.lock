@@ -1260,6 +1260,7 @@ dependencies = [
  "image",
  "libc",
  "machine-uid",
+ "minisign-verify",
  "nanoid",
  "notify",
  "objc2",

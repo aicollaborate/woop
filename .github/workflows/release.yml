@@ -4,24 +4,21 @@ name: Release
 #   - push of a tag matching v* (e.g. v1.0.3)
 #   - manual workflow_dispatch (for ad-hoc dry runs)
 #
-# Flowix and standalone DSH products are built from the same tag workflow,
-# but remain separate artifacts. Flowix installers never embed DSH; the DSH
-# matrix publishes signed archives and one merged manifest after all targets.
-# Flowix artifacts stay in a GitHub draft here. This workflow does not update
-# https://flowix-memo.com/latest.json; the explicit local `npm run
-# release:updater` flow remains the only production updater publication path.
+# Flowix artifacts are built and kept in a GitHub draft here. This workflow
+# does not update the R2 updater endpoints; the explicit local
+# `npm run release:updater` flow remains the only production updater
+# publication path.
 #
 # Required secrets (set in repo Settings → Secrets and variables):
 #   GITHUB_TOKEN                      - provided automatically by Actions
-#   CLOUDFLARE_API_TOKEN              - R2 upload token for DSH publishing
-#   CLOUDFLARE_ACCOUNT_ID             - Cloudflare account used by R2
-#
 # Required for notarized macOS release artifacts:
 #   APPLE_SIGNING_IDENTITY, APPLE_TEAM_ID
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD
 #   APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_PRIVATE_KEY
 # Required for signed Windows release artifacts:
 #   WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, WINDOWS_CERT_THUMBPRINT, WINDOWS_TIMESTAMP_URL
+# Required for signed Flowix updater artifacts (macOS + Windows):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 on:
   workflow_dispatch:
@@ -121,13 +118,8 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
-      - name: Build and sign Flowix CLI sidecar
+      - name: Build Flowix CLI sidecar
         shell: bash
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           npm run cli:build:prod -- --target=${{ matrix.target }}
 
@@ -161,6 +153,8 @@ jobs:
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           case "${{ matrix.target }}" in
             *apple-darwin) platform=darwin ;;
@@ -185,6 +179,8 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
         with:
           tagName: v__VERSION__

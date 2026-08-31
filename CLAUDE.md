@@ -20,7 +20,7 @@ npm run dev:mobile -- --port 1421 # 仅移动端前端预览 (localhost:1421)，
 npm run tauri build      # 生产构建
 npm run cli:build:dev    # CLI debug build
 npm run cli:build:prod   # CLI production build for the current platform
-npm run dsh:build:dev    # Download the DSH CLI carrier and build the local dev runtime
+npm run dsh:build:dev    # Build the local dev runtime from the pinned DSH source
 npm run tauri:build:prod # Flowix production bundle + updater artifacts
 pkill -f "node.*vite" 2>/dev/null   # 端口冲突时
 sudo xcode-select -r                 # 首次运行
@@ -184,7 +184,7 @@ bash scripts/apple-signing/sign-and-notarize.sh
 4. `xcrun stapler staple` 钉 ticket，并再次验证 stapler + Gatekeeper
 5. 打印 SHA-256 + 最终 DMG 路径
 
-CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和外层 `.app`，再生成 DMG。DMG 生成后禁止重新签或修改 `.app`，否则公证的将不是最终实际分发内容。
+CLI staging binary 在 Tauri 打包前准备；Tauri 随后负责封装并签名 nested CLI 和外层 `.app`，再生成 DMG。DMG 生成后禁止重新签或修改 `.app`，否则公证的将不是最终实际分发内容。
 
 
 ### 4 个 env var 各自去哪
@@ -202,7 +202,7 @@ CLI staging binary 在 Tauri 打包前签名；Tauri 随后封装 nested CLI 和
 |---|---|
 | **CARGO_TARGET_DIR** | `scripts/build-cli.mjs` 把它设到 `$REPO_ROOT/.build/cargo-target`，**不是** `app/flowix-desktop/target/release`。`sign-and-notarize.sh` 内部已经按这个路径找 |
 | **Tauri 自带 notarization 跳过** | Tauri 读 `APPLE_PASSWORD` env var 才走内部 notarize。我们不设，Tauri warn 但不拒；手动 `notarytool submit` 在 `sign-and-notarize.sh` 里完成 |
-| **codesign private key 永远不存 Keychain 之外** | `~/.flowix-signing/devid.key` 是唯一副本；`.gitignore` 已把 `*.p12` / `*.key` / `*.csr` / `developerID_application.*` 加进去 |
+| **updater 私钥** | macOS 本地由 `com.flowix.minisign.private-key` Keychain 条目提供；发布脚本不会把私钥写入仓库或磁盘 |
 | **已发布 DMG 的签名 cert 寿命** | 6 个月 Developer ID Application cert（Apple 写死，不能 1 年） |
 
 ### 半年后续 cert（renewal）
@@ -607,9 +607,8 @@ flowix-main/
 │   ├── gen-icon.mjs                      # 生成图标
 │   ├── prepare-tauri-production-config.mjs  # env var → tauri.macos.production.local.json
 │   ├── build-tauri-production.mjs       # cli:build + prepare + tauri build 的编排
-│   ├── sign-cli.sh                       # 打包前签 flowix-cli staging sidecar；裸 Mach-O 不单独公证
 │   ├── verify-macos-release.sh            # 从最终 DMG 验证权限、架构、签名、公证与 Gatekeeper
-│   ├── release.sh / upload-release.sh / rename-dmg.sh  # CI / 发版辅助
+│   ├── release.sh                         # 构建产物校验、R2 发布与网站部署
 │   └── apple-signing/                    # Developer ID + notarization 流水线
 │       ├── gen-csr.sh
 │       ├── make-p12.sh

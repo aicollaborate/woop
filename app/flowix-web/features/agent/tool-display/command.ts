@@ -18,6 +18,30 @@ export interface AgentCommandList {
   items: AgentCommandItem[];
 }
 
+/**
+ * Convert a parsed command list into a lossless text representation for the
+ * compact preview and the expanded details view.
+ *
+ * The renderer intentionally uses `raw` here instead of rebuilding a command
+ * from tokens: `raw` keeps the complete argument payload, while the compact
+ * command list renderer is allowed to truncate long commands for layout.
+ */
+export function agentCommandListToText(data: AgentCommandList): string {
+  return data.items
+    .map((item) => {
+      const prefix = item.op ? `${item.op} ` : "";
+      const raw = item.raw.trim();
+      const fallback = [
+        ...item.env,
+        item.command,
+        ...item.args,
+      ].join(" ");
+      return `${prefix}${raw || fallback}`.trim();
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 interface CommandToken {
   text: string;
   quoted: boolean;
@@ -277,4 +301,3 @@ export function parseAgentCommandInput(
   if (!command) return null;
   return parseCommandString(command);
 }
-

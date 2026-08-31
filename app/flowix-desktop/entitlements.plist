@@ -7,7 +7,6 @@
 
       用于 `tauri.conf.production.json` 的 `bundle.macOS.entitlements` 字段;
       由 codesign 使用 runtime options 和本 entitlements 文件完成签名。
-      见 `scripts/sign-cli.sh`。
 
       v4 rationale:
       - allow-jit / allow-unsigned-executable-memory ── embedded JavaScript

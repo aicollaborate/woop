@@ -14,10 +14,10 @@
 //
 // `platforms` only ever contains the rows we received. This is what makes
 // partial releases safe: each platform's updater hits a manifest whose top-
-// level `version` matches the artifact's actual version, so Tauri never
-// advertises a newer version than the binary the user will actually download.
+// level `version` matches the artifact's actual version. The artifact and its
+// adjacent `.sig` file are the signed Flowix updater package; DSH is not part
+// of this manifest or signing flow.
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -42,10 +42,13 @@ for (const row of rows) {
   if (!fs.existsSync(artifact)) {
     throw new Error(`build-updater-manifest: artifact is missing: ${artifact}`);
   }
-  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(artifact)).digest('hex');
+  const signaturePath = `${artifact}.sig`;
+  if (!fs.existsSync(signaturePath)) {
+    throw new Error(`build-updater-manifest: updater signature is missing: ${signaturePath}`);
+  }
   platforms[platform] = {
     url: `${publicBase}/${prefix}/${name}`,
-    sha256,
+    signature: fs.readFileSync(signaturePath, 'utf8').trim(),
   };
 }
 

@@ -55,6 +55,7 @@ sha2 = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 semver = { workspace = true }
+minisign-verify = { workspace = true }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

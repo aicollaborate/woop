@@ -10,11 +10,15 @@ const output = resolve(repo, '.build/dsh-local-package')
 const bundle = resolve(output, 'node24-windows-x64')
 const runtime = resolve(output, 'runtime')
 const release = resolve(repo, '.build/releases/dsh-local')
-const version = process.env.FLOWIX_DSH_VERSION || 'dsh.01'
-const minFlowixVersion = process.env.FLOWIX_VERSION || '1.2.9'
+const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.2.6'
+const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
-if (!/^dsh\.(?:0[1-9]|[1-9][0-9]*)$/u.test(version)) {
-  throw new Error(`invalid DSH package version ${version}; expected dsh.01, dsh.02, ...`)
+if (!semverPattern.test(version)) {
+  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.1.0`)
+}
+if (!semverPattern.test(minFlowixVersion)) {
+  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.2.6`)
 }
 if (!existsSync(resolve(upstream, 'package.json'))) {
   throw new Error(`local DSH upstream source is missing: ${upstream}`)
@@ -92,6 +96,7 @@ const archive = resolve(release, filename)
 run('tar', ['-czf', relative(repo, archive), '-C', bundle, '.'])
 const bytes = await readFile(archive)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
+const signature = signUpdaterArtifact(archive)
 const manifest = {
   schemaVersion: 1,
   product: 'flowix-dsh',
@@ -102,6 +107,7 @@ const manifest = {
     'windows-x86_64': {
       url: `https://download.flowix-memo.com/dsh/${version}/${filename}?sha256=${sha256}`,
       sha256,
+      signature,
       sizeBytes: bytes.length,
       buildId,
     },
@@ -127,4 +133,17 @@ function run(command, args, extraEnv = {}) {
   const result = spawnSync(command, args, { cwd: repo, env: { ...process.env, ...extraEnv }, stdio: 'inherit' })
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
+}
+
+function signUpdaterArtifact(file) {
+  const signer = resolve(repo, 'scripts/sign-updater-artifact.mjs')
+  const result = spawnSync(process.execPath, [signer, file], {
+    cwd: repo,
+    env: process.env,
+    stdio: ['inherit', 'pipe', 'inherit'],
+    encoding: 'utf8',
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) process.exit(result.status ?? 1)
+  return result.stdout.trim()
 }

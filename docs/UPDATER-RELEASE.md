@@ -6,9 +6,10 @@ Flowix ships per-platform update manifests and static website downloads:
   the in-app updater. Each one advertises exactly one release platform
   group's binaries and pins its own top-level `version`.
 - **Version-prefixed R2 artifacts** (`v<version>/...`) that the manifests point
-  at. These are immutable per release. The client trusts the HTTPS-served
-  manifest and verifies the downloaded artifact against the manifest's
-  SHA-256 value.
+  at. These are immutable per release. Flowix updater archives are signed with
+  the Tauri updater key; the client verifies the `.sig` value from the HTTPS
+  manifest before installation. The standalone DSH runtime is also checked
+  with SHA-256 and the same Tauri/Minisign signature before installation.
 
 Per-platform updater manifests live on R2 (under `${FLOWIX_R2_PUBLIC_BASE}/${FLOWIX_R2_UPDATER_PREFIX}/`) so each release can overwrite the stable URL without rebuilding flowix-home. The split exists so that macOS and Windows can ship on independent cadences —
 macOS can publish `1.3.0` while Windows stays on `1.2.4` without confusing
@@ -38,8 +39,10 @@ group manifest will fail the update check rather than silently offering nothing.
 
 `scripts/release.sh` infers the release scope from `FLOWIX_TARGETS`:
 
-- **Full or partial release** — the script writes and uploads only the covered
-  per-platform manifests, then rebuilds the website's static download links.
+- **Full release** — writes/uploads all covered per-platform manifests and
+  rebuilds/deploys the flowix-home website.
+- **Partial release** — writes/uploads only the covered per-platform manifests;
+  the website is not rebuilt or deployed.
 
 ## Environment overrides
 
@@ -69,12 +72,18 @@ bash scripts/release.sh
 ```
 
 Both flows upload the per-group manifest to the matching stable R2 path so the
-in-app updater picks up the new version immediately. The website's download
-links are maintained in its templates and deployed with flowix-home.
+in-app updater picks up the new version immediately. Full releases also deploy
+the website's download links through flowix-home.
 
-For Windows, the artifact is the Tauri NSIS `*-setup.exe`. The client downloads
-that installer, checks its SHA-256, starts it with `/UPDATE`, and exits so the
-installer can replace the running application and relaunch it.
+For macOS, the updater artifact is the Tauri `.app.tar.gz` archive; the DMG is
+published separately for website downloads. For Windows, the updater artifact
+is the Tauri NSIS `*-setup.exe`. Both updater artifacts have adjacent `.sig`
+files and are installed by `tauri-plugin-updater`; the Windows NSIS package
+continues to use its `/UPDATE` replacement flow.
+
+Production Flowix builds require `TAURI_SIGNING_PRIVATE_KEY` (and optionally
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). `FLOWIX_ALLOW_UNSIGNED=1` is reserved
+for local builds and disables updater artifact generation.
 
 ## Verifying a manifest locally
 

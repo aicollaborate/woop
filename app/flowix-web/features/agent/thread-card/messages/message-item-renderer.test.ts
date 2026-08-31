@@ -181,3 +181,86 @@ describe("context compaction message rendering", () => {
     expect(content?.classList.contains("agent-thread-card__message-content")).toBe(false);
   });
 });
+
+describe("tool command message rendering", () => {
+  it("renders a command as one line and toggles full details", () => {
+    let expanded = false;
+    const setDisplayExpanded = vi.fn((_messageId: string, value: boolean) => {
+      expanded = value;
+    });
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "tool-1",
+        role: "tool",
+        content: "",
+        timestamp: new Date().toISOString(),
+        toolName: "shell",
+        toolInput: { command: "npm run build && npm test" },
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => expanded,
+      setDisplayExpanded,
+    });
+
+    const element = result?.element;
+    expect(element?.classList.contains(
+      "agent-thread-card__message--tool-command",
+    )).toBe(true);
+    const previewRow = element?.querySelector<HTMLDivElement>(
+      ".agent-thread-card__command-preview-row",
+    );
+    const details = element?.querySelector<HTMLPreElement>(
+      ".agent-thread-card__command-details",
+    );
+    const expand = element?.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__command-toggle",
+    );
+    const collapseRow = element?.querySelector<HTMLDivElement>(
+      ".agent-thread-card__command-collapse-row",
+    );
+
+    expect(previewRow?.hidden).toBe(false);
+    expect(details?.hidden).toBe(true);
+    expect(collapseRow?.hidden).toBe(true);
+    expect(previewRow?.textContent).toContain("npm run build");
+
+    expand?.click();
+    expect(setDisplayExpanded).toHaveBeenCalledWith("tool-1", true);
+    expect(previewRow?.hidden).toBe(true);
+    expect(details?.hidden).toBe(false);
+    expect(details?.textContent).toBe("npm run build\n&& npm test");
+    expect(collapseRow?.hidden).toBe(false);
+
+    collapseRow?.querySelector<HTMLButtonElement>("button")?.click();
+    expect(setDisplayExpanded).toHaveBeenLastCalledWith("tool-1", false);
+    expect(previewRow?.hidden).toBe(false);
+    expect(details?.hidden).toBe(true);
+  });
+
+  it("keeps non-command tools as the existing compact summary", () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "tool-2",
+        role: "tool",
+        content: "",
+        timestamp: new Date().toISOString(),
+        toolName: "read",
+        toolInput: { path: "/tmp/example.txt" },
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+
+    expect(result?.element.querySelector(
+      ".agent-thread-card__command-preview-row",
+    )).toBeNull();
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-tool-summary",
+    )?.textContent).toBe("example.txt");
+  });
+});

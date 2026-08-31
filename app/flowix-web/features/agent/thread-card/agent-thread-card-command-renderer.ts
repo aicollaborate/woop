@@ -1,6 +1,7 @@
 import { translate, type AppLanguage } from "@/lib/i18n";
 import { truncateToolMessageForDisplay } from "@features/agent/message/display-limits";
 import {
+  agentCommandListToText,
   basenameCommandNameForDisplay,
   type AgentCommandItem,
   type AgentCommandList,
@@ -8,6 +9,17 @@ import {
 
 const THREAD_CARD_COMMAND_MAX_ITEMS = 6;
 const THREAD_CARD_COMMAND_MAX_INLINE_ARGS = 16;
+
+export function createAgentThreadCardCommandPreview(
+  data: AgentCommandList,
+): HTMLDivElement {
+  const preview = document.createElement("div");
+  preview.className = "agent-thread-card__command-preview";
+  const text = agentCommandListToText(data);
+  preview.textContent = text;
+  preview.title = text;
+  return preview;
+}
 // 命令名是路径 (powershell.exe / rg 等可执行文件) 时, 卡片只展示末尾文件名。
 // 路径检测: 含 / 或 \ 一律视为路径 ── 简单的硬性条件, 覆盖:
 //   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe → powershell.exe

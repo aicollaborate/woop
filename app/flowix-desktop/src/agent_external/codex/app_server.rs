@@ -30,6 +30,7 @@ use crate::agent_wire::{AgentChunk, AgentUserMessage, RunInfo};
 const INITIALIZE_METHOD: &str = "initialize";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const CONTEXT_COMPACTION_MESSAGE_TYPE: &str = "context-compaction";
+const MIN_PAGINATED_CODEX_VERSION: &str = "0.151.0";
 
 fn is_image_attachment(path: &str) -> bool {
     matches!(
@@ -108,6 +109,7 @@ impl CodexAppServerManager {
         }
 
         preflight_codex()?;
+        verify_paginated_codex_version().await?;
         let mut command = build_codex_entrypoint();
         command
             .args(["app-server", "--listen", "stdio://"])
@@ -682,7 +684,12 @@ impl CodexAppServerManager {
                         "itemsView": "full"
                     }),
                 )
-                .await?;
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Codex paginated history requires Codex CLI {MIN_PAGINATED_CODEX_VERSION} or newer. Update with `npm install -g @openai/codex@latest --force --include=optional`. App Server error: {error}"
+                    )
+                })?;
             turns.extend(
                 result
                     .get("data")
@@ -834,6 +841,42 @@ impl CodexAppServerManager {
             .await?;
         Ok(())
     }
+}
+
+async fn verify_paginated_codex_version() -> Result<(), String> {
+    let output = build_codex_entrypoint()
+        .arg("--version")
+        .output()
+        .await
+        .map_err(|error| format!("Unable to read Codex CLI version: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let text = if stdout.trim().is_empty() {
+        stderr.trim()
+    } else {
+        stdout.trim()
+    };
+    let version = text
+        .split_whitespace()
+        .find_map(|part| parse_codex_version(part.trim_start_matches('v')))
+        .ok_or_else(|| format!("Unable to parse Codex CLI version from `{text}`"))?;
+    let minimum = parse_codex_version(MIN_PAGINATED_CODEX_VERSION)
+        .expect("minimum Codex version must be valid");
+    if version < minimum {
+        return Err(format!(
+            "Flowix paginated history requires Codex CLI {MIN_PAGINATED_CODEX_VERSION} or newer (installed: {text}). Update with `npm install -g @openai/codex@latest --force --include=optional`."
+        ));
+    }
+    Ok(())
+}
+
+fn parse_codex_version(value: &str) -> Option<(u64, u64, u64)> {
+    let stable = value.split('-').next()?;
+    let mut parts = stable.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
 }
 
 #[async_trait::async_trait]
@@ -1747,6 +1790,16 @@ fn paginate_app_server_turns(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compares_codex_cli_versions_numerically() {
+        let minimum = parse_codex_version(MIN_PAGINATED_CODEX_VERSION).unwrap();
+        assert!(parse_codex_version("0.151.0").unwrap() >= minimum);
+        assert!(parse_codex_version("0.152.0").unwrap() > minimum);
+        assert!(parse_codex_version("0.150.99").unwrap() < minimum);
+        assert_eq!(parse_codex_version("0.151.0-beta.1").unwrap(), minimum);
+        assert!(parse_codex_version("not-a-version").is_none());
+    }
 
     #[test]
     fn projects_known_tool_items_to_stable_flowix_names() {

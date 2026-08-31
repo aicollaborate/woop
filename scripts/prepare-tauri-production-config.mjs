@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { applyTauriSigningKey } from "./resolve-tauri-signing-key.mjs";
+
+applyTauriSigningKey();
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const tauriDir = path.join(repoRoot, "app", "flowix-desktop");
@@ -16,7 +19,19 @@ const cargoManifest = fs.readFileSync(path.join(repoRoot, "app", "Cargo.toml"), 
 const cargoVersion = /^version\s*=\s*"([^"]+)"/mu.exec(cargoManifest)?.[1];
 const packageVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 
-const allowUnsignedWindows = process.env.FLOWIX_ALLOW_UNSIGNED_WINDOWS === "1";
+const allowUnsigned = process.env.FLOWIX_ALLOW_UNSIGNED === "1";
+const allowUnsignedWindows =
+  allowUnsigned || process.env.FLOWIX_ALLOW_UNSIGNED_WINDOWS === "1";
+const hasUpdaterSigningKey = Boolean(
+  process.env.TAURI_SIGNING_PRIVATE_KEY?.trim() ||
+    process.env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim(),
+);
+if (!allowUnsigned && !hasUpdaterSigningKey) {
+  throw new Error(
+    "TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required for signed Flowix updater artifacts. " +
+      "Set FLOWIX_ALLOW_UNSIGNED=1 only for local unsigned packages.",
+  );
+}
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -61,7 +76,7 @@ function requiredEnv(name, allowMissing = false) {
 
 const base = stripCommentKeys(readJson(baseConfigPath));
 const productionOverride = stripCommentKeys(readJson(productionConfigPath));
-const allowUnsignedMac = process.env.FLOWIX_ALLOW_UNSIGNED === "1";
+const allowUnsignedMac = allowUnsigned;
 if (!cargoVersion || cargoVersion !== base.version || cargoVersion !== packageVersion) {
   throw new Error(
     `Flowix version mismatch: Cargo=${cargoVersion ?? "<missing>"}, ` +
@@ -83,6 +98,11 @@ if (targetPlatform === "win32") {
 
 const production = mergeConfig(mergeConfig(base, platformOverride), productionOverride);
 production.bundle ??= {};
+if (allowUnsigned) {
+  // Local builds may omit updater artifacts; signed production Flowix builds
+  // keep this enabled and require TAURI_SIGNING_PRIVATE_KEY.
+  production.bundle.createUpdaterArtifacts = false;
+}
 
 if (targetPlatform === "win32") {
   production.bundle.targets = ["nsis"];
@@ -125,6 +145,10 @@ if (targetPlatform === "win32") {
   production.bundle.macOS.entitlements = "entitlements.plist";
   production.bundle.macOS.hardenedRuntime = true;
 } else {
+  // The base config targets NSIS for the Windows release. Linux must opt in
+  // to AppImage explicitly; otherwise it cannot produce the updater archive
+  // consumed by the release collector.
+  production.bundle.targets = ["appimage"];
   if (production.bundle.windows) {
     delete production.bundle.windows.certificateThumbprint;
   }
@@ -133,6 +157,24 @@ if (targetPlatform === "win32") {
     delete production.bundle.macOS.providerShortName;
   }
 }
+
+// The updater manifest is signed per Flowix desktop release. DSH has its own
+// runtime manifest and verifies both SHA-256 and the same Tauri/Minisign
+// signature; it must not inherit this endpoint configuration.
+const updaterEndpointEnv = {
+  darwin: "FLOWIX_UPDATER_ENDPOINT_MACOS",
+  win32: "FLOWIX_UPDATER_ENDPOINT_WINDOWS",
+  linux: "FLOWIX_UPDATER_ENDPOINT_LINUX",
+}[targetPlatform];
+const updaterEndpointDefault = {
+  darwin: "https://download.flowix.cc/updater/macos/latest.json",
+  win32: "https://download.flowix.cc/updater/windows/latest.json",
+  linux: "https://download.flowix.cc/updater/linux/latest.json",
+}[targetPlatform];
+const updaterEndpoint = process.env[updaterEndpointEnv]?.trim() || updaterEndpointDefault;
+production.plugins ??= {};
+production.plugins.updater ??= {};
+production.plugins.updater.endpoints = [updaterEndpoint];
 
 fs.writeFileSync(outputPath, `${JSON.stringify(production, null, 2)}\n`);
 console.log(path.relative(repoRoot, outputPath));

@@ -25,6 +25,7 @@ mod open_target;
 mod plugin;
 mod process_window;
 mod runtime_log;
+mod update_security;
 mod system_data;
 mod watcher;
 mod window_chrome;

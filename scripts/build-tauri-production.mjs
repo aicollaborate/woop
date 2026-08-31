@@ -3,8 +3,10 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter } from 'node:path'
 import path from 'node:path'
+import { applyTauriSigningKey } from './resolve-tauri-signing-key.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
+applyTauriSigningKey()
 const npmEntrypoint = process.env.npm_execpath
 const tauriEntrypoint = path.resolve(repoRoot, 'node_modules/@tauri-apps/cli/tauri.js')
 const cargoTargetDir = path.resolve(process.env.CARGO_TARGET_DIR || path.resolve(repoRoot, '.build/cargo-target'))
@@ -24,6 +26,20 @@ if (!['win32', 'darwin', 'linux'].includes(targetPlatform)) {
 }
 if (!npmEntrypoint) {
   throw new Error('Production build must be started through npm run tauri:build:prod')
+}
+if (
+  process.env.FLOWIX_ALLOW_UNSIGNED !== '1'
+  && !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()
+  && !process.env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()
+) {
+  throw new Error(
+    'TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required for signed Flowix updater artifacts. '
+    + 'Set FLOWIX_ALLOW_UNSIGNED=1 only for local unsigned packages.',
+  )
+}
+if (process.env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()
+  && !existsSync(process.env.TAURI_SIGNING_PRIVATE_KEY_PATH)) {
+  throw new Error(`Tauri signing key path does not exist: ${process.env.TAURI_SIGNING_PRIVATE_KEY_PATH}`)
 }
 
 const cargoManifest = readFileSync(path.resolve(repoRoot, 'app/Cargo.toml'), 'utf8')
@@ -77,18 +93,34 @@ for (const target of tauriTargets) {
 
 const freshArtifacts = collectFiles(cargoTargetDir)
   .filter(file => statSync(file).mtimeMs >= buildStartedAt - 2_000)
+const requireUpdaterArtifacts = process.env.FLOWIX_ALLOW_UNSIGNED !== '1'
 if (targetPlatform === 'win32') {
-  requireArtifact(
+  const installer = requireArtifact(
     freshArtifacts,
     file => file.endsWith('-setup.exe') && file.includes(`${path.sep}bundle${path.sep}nsis${path.sep}`),
     'NSIS installer',
   )
+  if (requireUpdaterArtifacts) {
+    requireArtifact(freshArtifacts, file => file === `${installer}.sig`, 'NSIS updater signature')
+  }
 } else if (targetPlatform === 'darwin') {
   for (const target of MACOS_TARGETS) {
     const targetFiles = freshArtifacts.filter(file => file.includes(`${path.sep}${target}${path.sep}`))
     requireArtifact(targetFiles, file => file.endsWith('.dmg'), `${target} DMG`)
-    // Unsigned builds publish the installer itself; the desktop client trusts
-    // the selected URL from latest.json and installs this artifact directly.
+    if (requireUpdaterArtifacts) {
+      const updater = requireArtifact(targetFiles, file => file.endsWith('.app.tar.gz'), `${target} updater archive`)
+      requireArtifact(targetFiles, file => file === `${updater}.sig`, `${target} updater signature`)
+    }
+  }
+} else if (targetPlatform === 'linux') {
+  requireArtifact(freshArtifacts, file => file.endsWith('.AppImage'), 'AppImage')
+  if (requireUpdaterArtifacts) {
+    const updater = requireArtifact(
+      freshArtifacts,
+      file => file.endsWith('.AppImage.tar.gz'),
+      'AppImage updater archive',
+    )
+    requireArtifact(freshArtifacts, file => file === `${updater}.sig`, 'AppImage updater signature')
   }
 }
 

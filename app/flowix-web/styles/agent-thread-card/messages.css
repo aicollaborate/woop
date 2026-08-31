@@ -294,6 +294,78 @@
   overflow: hidden;
 }
 
+.markdown-editor .agent-thread-card__command-preview-row {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+}
+
+.markdown-editor .agent-thread-card__command-preview-row[hidden],
+.markdown-editor .agent-thread-card__command-details[hidden],
+.markdown-editor .agent-thread-card__command-collapse-row[hidden] {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__command-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__command-toggle,
+.markdown-editor .agent-thread-card__command-collapse-toggle {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.markdown-editor .agent-thread-card__command-toggle:hover,
+.markdown-editor .agent-thread-card__command-collapse-toggle:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 10%, transparent);
+  color: var(--foreground);
+}
+
+.markdown-editor .agent-thread-card__command-toggle .agent-thread-card__chevron-icon,
+.markdown-editor .agent-thread-card__command-collapse-toggle .agent-thread-card__chevron-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.markdown-editor .agent-thread-card__command-details {
+  max-width: 100%;
+  margin: 4px 0 0;
+  overflow: auto;
+  color: var(--muted-foreground);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-editor .agent-thread-card__command-collapse-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.markdown-editor .agent-thread-card__command-toggle:focus-visible,
+.markdown-editor .agent-thread-card__command-collapse-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--foreground) 45%, transparent);
+  outline-offset: 1px;
+}
+
 .markdown-editor .agent-thread-card__message-tool-icon {
   display: block;
   width: 14px;

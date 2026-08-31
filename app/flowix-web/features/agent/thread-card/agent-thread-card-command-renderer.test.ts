@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createAgentThreadCardCommandPreview,
   createAgentThreadCardCommandList,
 } from './agent-thread-card-command-renderer';
 import type { AgentCommandItem } from '@features/agent/tool-display';
@@ -109,5 +110,31 @@ describe('agent-thread-card command renderer — path basename', () => {
     const argText = findSpan(list, 'agent-thread-card__command-args-inline');
     expect(argText.textContent).toBe(args.join(' '));
     expect(argText.title).toBe(args.join(' '));
+  });
+});
+
+describe('agent-thread-card command renderer — compact preview', () => {
+  it('keeps the complete parsed command available as a tooltip', () => {
+    const preview = createAgentThreadCardCommandPreview({
+      items: [
+        {
+          command: 'npm',
+          args: ['run', 'build'],
+          env: [],
+          raw: 'npm run build',
+        },
+        {
+          op: '&&',
+          command: 'npm',
+          args: ['test'],
+          env: [],
+          raw: 'npm test',
+        },
+      ],
+    });
+
+    expect(preview.className).toBe('agent-thread-card__command-preview');
+    expect(preview.textContent).toBe('npm run build\n&& npm test');
+    expect(preview.title).toBe(preview.textContent);
   });
 });

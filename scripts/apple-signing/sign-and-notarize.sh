@@ -119,8 +119,8 @@ fi
 
 # ---- 2-4. Per-target: verify the final DMG, notarize + staple, verify again ----
 # 方案 B: macOS 出 ARM + Intel 两个独立 DMG, 每个 target 各走一遍签名 + notarize。
-# `build-cli.mjs` signs the staging sidecar, then Tauri signs the nested code and
-# outer app before creating the DMG. Do not mutate the .app after that point:
+# `build-cli.mjs` prepares the staging sidecar, then Tauri signs the nested code
+# and outer app before creating the DMG. Do not mutate the .app after that point:
 # doing so would leave the already-created DMG stale.
 if [ -n "${DMG_PATH:-}" ]; then
   echo "WARN: DMG_PATH is set but dual-target mode signs both aarch64 + x64; DMG_PATH ignored." >&2

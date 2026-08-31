@@ -8,14 +8,17 @@ import {
   createAgentMessageViewModel,
   shouldRenderAgentMessage,
 } from "@features/agent/message";
-import { parseAgentCommandInput } from "@features/agent/tool-display";
+import {
+  agentCommandListToText,
+  parseAgentCommandInput,
+} from "@features/agent/tool-display";
 import {
   attachAgentThreadCardMathCopyHandlers,
   prepareAgentThreadCardMath,
   renderAgentThreadCardMarkdownToHtml,
 } from "@features/agent/thread-card/agent-thread-card-markdown";
 import {
-  createAgentThreadCardCommandList,
+  createAgentThreadCardCommandPreview,
   createAgentThreadCardMessageFallback,
 } from "@features/agent/thread-card/agent-thread-card-command-renderer";
 import {
@@ -480,7 +483,70 @@ export function createAgentThreadCardMessageElement(options: {
         head.append(icon, name);
         const body = document.createElement("div");
         body.className = "agent-thread-card__message-tool-body";
-        body.append(createAgentThreadCardCommandList(command));
+        let isExpanded = getDisplayExpanded(message);
+        const previewRow = document.createElement("div");
+        previewRow.className = "agent-thread-card__command-preview-row";
+        const preview = createAgentThreadCardCommandPreview(command);
+        const expandToggle = document.createElement("button");
+        expandToggle.type = "button";
+        expandToggle.className = "agent-thread-card__command-toggle";
+        expandToggle.setAttribute("aria-expanded", String(isExpanded));
+        expandToggle.setAttribute(
+          "aria-label",
+          translate(language, "agent.tool.expand"),
+        );
+        expandToggle.title = translate(language, "agent.tool.expand");
+        expandToggle.append(createChevronIcon("down"));
+
+        const details = document.createElement("pre");
+        details.className = "agent-thread-card__command-details";
+        details.textContent = agentCommandListToText(command);
+        details.hidden = !isExpanded;
+
+        const collapseRow = document.createElement("div");
+        collapseRow.className = "agent-thread-card__command-collapse-row";
+        collapseRow.hidden = !isExpanded;
+        const collapseToggle = document.createElement("button");
+        collapseToggle.type = "button";
+        collapseToggle.className =
+          "agent-thread-card__command-collapse-toggle";
+        collapseToggle.setAttribute("aria-expanded", String(isExpanded));
+        collapseToggle.setAttribute(
+          "aria-label",
+          translate(language, "agent.tool.collapse"),
+        );
+        collapseToggle.title = translate(language, "agent.tool.collapse");
+        collapseToggle.append(createChevronIcon("up"));
+        collapseRow.append(collapseToggle);
+
+        const updateExpandedState = (nextExpanded: boolean) => {
+          setDisplayExpanded(message.id, nextExpanded);
+          isExpanded = nextExpanded;
+          previewRow.hidden = nextExpanded;
+          details.hidden = !nextExpanded;
+          collapseRow.hidden = !nextExpanded;
+          expandToggle.setAttribute("aria-expanded", String(nextExpanded));
+          collapseToggle.setAttribute("aria-expanded", String(nextExpanded));
+        };
+
+        expandToggle.onclick = (event) => {
+          event.stopPropagation();
+          updateExpandedState(true);
+        };
+        expandToggle.onmousedown = (event) => {
+          event.stopPropagation();
+        };
+        collapseToggle.onclick = (event) => {
+          event.stopPropagation();
+          updateExpandedState(false);
+        };
+        collapseToggle.onmousedown = (event) => {
+          event.stopPropagation();
+        };
+
+        previewRow.hidden = isExpanded;
+        previewRow.append(preview, expandToggle);
+        body.append(previewRow, details, collapseRow);
         item.append(head, body);
       } else {
         item.append(icon, name);

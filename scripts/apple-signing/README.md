@@ -104,8 +104,8 @@ The script will:
 5. Print the SHA-256 of the verified .dmg
 
 The app is never modified after the DMG is created. The CLI staging binary is
-signed before bundling; Tauri then seals the nested CLI and outer app before it
-creates the final DMG.
+prepared before bundling; Tauri then seals the nested CLI and outer app before
+it creates the final DMG.
 
 ## What you should NEVER paste into a chat
 
