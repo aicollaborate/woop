@@ -23,6 +23,7 @@ interface NotebookIconMenuProps {
   /** 打开偏好设置窗口; 可传入偏好 tab id (如 'theme' / 'dsh' / 'mcp' / 'aiAgent')。 */
   onOpenPreferences: (tab?: string) => void;
   buttonClassName?: string;
+  productIconClassName?: string;
 }
 
 // hover 打开下拉窗的延迟: 指针悬停多久后展示菜单。
@@ -73,6 +74,7 @@ export function NotebookIconMenu({
   onToggleNoteNavigation,
   onOpenPreferences,
   buttonClassName,
+  productIconClassName,
 }: NotebookIconMenuProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -134,7 +136,10 @@ export function NotebookIconMenu({
             src={productLogo}
             alt=""
             aria-hidden="true"
-            className="product-icon h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100"
+            className={cn(
+              'product-icon h-[18px] w-[18px] shrink-0 rounded opacity-75 transition-opacity group-hover:opacity-100',
+              productIconClassName,
+            )}
           />
           <span
             aria-hidden="true"

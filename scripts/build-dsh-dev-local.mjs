@@ -19,7 +19,10 @@ const bundle = resolve(repo, '.build/dsh-runtime-dev', target)
 const runtime = resolve(bundle, 'runtime')
 const profile = resolve(bundle, 'profile/flowix')
 const pnpmVersion = '11.7.0'
-const corepackCommand = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
+const corepackCommand = process.platform === 'win32' ? process.execPath : 'corepack'
+const corepackArgs = process.platform === 'win32'
+  ? [resolve(dirname(process.execPath), 'node_modules/corepack/dist/corepack.js')]
+  : []
 
 process.env.CI = 'true'
 process.env.NODE_ENV = 'development'
@@ -29,18 +32,18 @@ if (!existsSync(resolve(upstream, 'package.json'))) {
 }
 
 if (!existsSync(resolve(upstream, 'node_modules/.modules.yaml'))) {
-  await run(corepackCommand, [`pnpm@${pnpmVersion}`, 'install', '--frozen-lockfile', '--prod=false'], upstream)
+  await run(corepackCommand, [...corepackArgs, `pnpm@${pnpmVersion}`, 'install', '--frozen-lockfile', '--prod=false'], upstream)
 }
 
 const cliMarker = resolve(upstream, 'apps/cli/lib/bin.js')
 if (!existsSync(cliMarker) || process.env.FLOWIX_DSH_REBUILD_LIBS === '1') {
-  await run(corepackCommand, [`pnpm@${pnpmVersion}`, 'run', 'build:lib:host'], upstream)
+  await run(corepackCommand, [...corepackArgs, `pnpm@${pnpmVersion}`, 'run', 'build:lib:host'], upstream)
 }
 
 await rm(bundle, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 await mkdir(bundle, { recursive: true })
 await rm(runtime, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-await run(corepackCommand, [
+await run(corepackCommand, [...corepackArgs,
   `pnpm@${pnpmVersion}`, '--filter', '@deepseek-ai/dsh', 'deploy', '--legacy', '--prod',
   '--config.node-linker=hoisted', '--config.auto-install-peers=false', runtime,
 ], upstream)

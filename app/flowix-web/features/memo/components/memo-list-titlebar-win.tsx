@@ -26,15 +26,16 @@ export function MemoListTitlebarWin({
   return (
     <div
       data-tauri-drag-region
-      className="relative h-9 px-2 shrink-0 flex items-center justify-between gap-1"
+      className="relative h-9 px-3 shrink-0 flex items-center justify-between gap-1"
     >
-      <div className="ml-1 flex items-center">
+      <div className="flex items-center">
         {!noteNavigationVisible && selectedNotebook && (
           <NotebookIconMenu
             noteNavigationVisible={noteNavigationVisible}
             onToggleNoteNavigation={onToggleNoteNavigation}
             onOpenPreferences={onOpenPreferences}
             buttonClassName="h-6 w-6"
+            productIconClassName="-translate-x-[3px]"
           />
         )}
       </div>

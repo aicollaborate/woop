@@ -6,6 +6,7 @@
 //   FLOWIX_R2_PUBLIC_BASE     public origin for artifact URLs (no trailing slash)
 //   FLOWIX_R2_PREFIX          R2 key prefix under which artifacts were uploaded
 //   FLOWIX_RELEASE_OUT        artifact staging directory
+//   FLOWIX_RELEASE_NOTES      optional human-facing release notes
 //
 // Inputs (positional argv):
 //   <platform>|<artifact-name>   one per built target. Multiple rows may share
@@ -26,6 +27,7 @@ const version = process.env.FLOWIX_VERSION;
 const publicBase = process.env.FLOWIX_R2_PUBLIC_BASE?.replace(/\/$/u, '');
 const prefix = process.env.FLOWIX_R2_PREFIX?.replace(/^\/+|\/+$/gu, '');
 const releaseOut = process.env.FLOWIX_RELEASE_OUT;
+const releaseNotes = process.env.FLOWIX_RELEASE_NOTES?.trim() || `Flowix ${version}`;
 const rows = process.argv.slice(1);
 
 if (!out || !version || !publicBase || prefix === undefined || !releaseOut) {
@@ -54,7 +56,7 @@ for (const row of rows) {
 
 const manifest = {
   version,
-  notes: `Flowix ${version}`,
+  notes: releaseNotes,
   pub_date: new Date().toISOString(),
   platforms,
 };
