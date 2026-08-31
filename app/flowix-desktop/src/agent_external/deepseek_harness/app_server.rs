@@ -42,6 +42,9 @@ impl AppServerClient {
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>, String> {
         let mut process = Command::new(command);
+        // DSH runs as a background stdio service and must not allocate a
+        // visible console when Flowix starts it on Windows.
+        crate::process_window::hide_command_window(&mut process);
         process.args(args).env_clear().envs(env).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = process.spawn().map_err(|error| format!("start dsh-appserver: {error}"))?;
         let stdin = child.stdin.take().ok_or("dsh-appserver stdin unavailable")?;

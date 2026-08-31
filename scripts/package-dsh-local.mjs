@@ -48,8 +48,31 @@ for (const entry of await readdir(resolve(upstream, 'vendor'), { withFileTypes: 
   }
 }
 
+// `pnpm deploy --prod` omits workspace packages that are only referenced as
+// peer/dev dependencies. DSH's profile loader still imports those packages at
+// runtime, so copy every built upstream workspace package into the flat deploy
+// tree as well. Without this, the archive installs successfully but fails on
+// first boot with a cascade of "Cannot find package @deepseek-ai/..." errors.
+const workspacePackages = await findWorkspacePackages(resolve(upstream, 'packages'))
+for (const { packageRoot, packageName } of workspacePackages) {
+  const destination = resolve(runtime, 'node_modules', ...packageName.split('/'))
+  // Keep packages already materialized by `pnpm deploy`; only fill the
+  // workspace/peer dependency holes that deploy intentionally leaves out.
+  if (existsSync(resolve(destination, 'package.json'))) continue
+  await rm(destination, { recursive: true, force: true })
+  await copyWorkspacePackage(packageRoot, destination)
+}
+const copiedWorkspacePackages = workspacePackages.filter(({ packageName }) =>
+  existsSync(resolve(runtime, 'node_modules', ...packageName.split('/'), 'package.json')),
+)
+console.log(`verified ${copiedWorkspacePackages.length} DSH workspace packages in the deploy tree`)
+
 await mkdir(bundle, { recursive: true })
-await cp(runtime, resolve(bundle, 'runtime'), { recursive: true, force: true })
+await cp(runtime, resolve(bundle, 'runtime'), {
+  recursive: true,
+  force: true,
+  filter: source => !source.split(/[\\/]/u).includes('.pnpm'),
+})
 await mkdir(resolve(bundle, 'node'), { recursive: true })
 await cp(process.execPath, resolve(bundle, 'node/node.exe'))
 await copyTree(resolve(repo, 'dsh-appserver'), resolve(bundle, 'profile/flowix/node_modules/dsh-appserver'))
@@ -77,7 +100,7 @@ const profile = resolve(bundle, 'profile/flowix')
 const healthHome = resolve(output, '.health-dsh-home')
 await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
 await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true, force: true })
-run(process.execPath, [resolve(bundle, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
+runHealthCheck(process.execPath, [resolve(bundle, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
   DSH_HOME: healthHome,
   DSH_PROFILE_DIR: profile,
   FLOWIX_DSH_ROOT: bundle,
@@ -86,6 +109,9 @@ run(process.execPath, [resolve(bundle, metadata.entrypoint), '--profile', 'flowi
 await mkdir(release, { recursive: true })
 const filename = `Flowix-DSH_${version}_node24-windows-x64.tar.gz`
 const archive = resolve(release, filename)
+// The hoisted deploy tree has real top-level node_modules entries; pnpm's
+// virtual-store copy is only install metadata and is not needed by Node at
+// runtime. Excluding it keeps the updater archive practical on Windows.
 run('tar', ['-czf', relative(repo, archive), '-C', bundle, '.'])
 const bytes = await readFile(archive)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -120,6 +146,54 @@ async function copyTree(source, destination) {
     dereference: true,
     filter: value => !value.split(/[\\/]/u).includes('node_modules'),
   })
+}
+
+async function copyWorkspacePackage(source, destination) {
+  await mkdir(destination, { recursive: true })
+  await cp(resolve(source, 'package.json'), resolve(destination, 'package.json'))
+  const lib = resolve(source, 'lib')
+  if (!existsSync(lib)) throw new Error(`built workspace package is missing lib output: ${source}`)
+  await cp(lib, resolve(destination, 'lib'), { recursive: true, force: true })
+}
+
+async function findWorkspacePackages(root) {
+  const packages = []
+  const visit = async directory => {
+    const packageJson = resolve(directory, 'package.json')
+    if (existsSync(packageJson)) {
+      const manifest = JSON.parse(await readFile(packageJson, 'utf8'))
+      const packageName = manifest.name
+      const entrypoint = typeof manifest.main === 'string' ? resolve(directory, manifest.main) : null
+      if (typeof packageName === 'string' && packageName.startsWith('@deepseek-ai/') && (!entrypoint || existsSync(entrypoint))) {
+        packages.push({ packageRoot: directory, packageName })
+      }
+      return
+    }
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== 'node_modules') {
+        await visit(resolve(directory, entry.name))
+      }
+    }
+  }
+  await visit(root)
+  return packages
+}
+
+function runHealthCheck(command, args, extraEnv = {}) {
+  const result = spawnSync(command, args, {
+    cwd: repo,
+    env: { ...process.env, ...extraEnv },
+    encoding: 'utf8',
+    stdio: ['inherit', 'pipe', 'pipe'],
+  })
+  process.stdout.write(result.stdout ?? '')
+  process.stderr.write(result.stderr ?? '')
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+  if (result.error) throw result.error
+  if (result.status !== 0) process.exit(result.status ?? 1)
+  if (/Cannot find package|failed to import loader entry/iu.test(output)) {
+    throw new Error('DSH runtime health check reported unresolved package imports')
+  }
 }
 
 function run(command, args, extraEnv = {}) {

@@ -23,7 +23,7 @@ pub(crate) fn resolve_codex_cwd(
 pub(crate) fn build_codex_entrypoint() -> Command {
     let codex = resolve_codex_binary();
     let resolved = std::fs::canonicalize(&codex).unwrap_or_else(|_| codex.clone());
-    match resolved
+    let mut command = match resolved
         .extension()
         .and_then(|extension| extension.to_str())
     {
@@ -38,7 +38,11 @@ pub(crate) fn build_codex_entrypoint() -> Command {
             crate::agent_external::node::ensure_node_on_path(&mut command);
             command
         }
-    }
+    };
+    // Codex is a background stdio service. In particular, npm's `codex.cmd`
+    // shim otherwise creates a visible console window on Windows.
+    crate::process_window::hide_command_window(&mut command);
+    command
 }
 
 /// Verify that a JavaScript-distributed Codex CLI has a compatible Node
