@@ -169,8 +169,7 @@
  * nowrap 单行摘要。长命令 (例如 zsh/git 命令) 会因此把消息区撑出横向
  * 溢出；仅在第三列 AgentConversationDetail 中改为可断行。 */
 .markdown-editor.agent-conversation-detail .agent-thread-card__message--tool,
-.markdown-editor.agent-conversation-detail .agent-thread-card__message--tool-command,
-.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-head,
+.markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-content,
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-line,
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-list,
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-item {
@@ -197,6 +196,15 @@
   white-space: nowrap;
 }
 
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__message-tool-summary {
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
 /* 命令名保持可读；工具名称按内容包裹，过长时再限制最大宽度，避免撑开消息区。 */
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-name {
   flex: 0 1 auto;
@@ -210,7 +218,10 @@
 }
 
 .markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-name {
-  flex: 0 1 auto;
+  /* 工具名是参数摘要左侧的稳定锚点，不参与 sibling 的负空间分配。
+   * 否则长参数会把它压到接近 0px，overflow:hidden 最终只露出半个字；
+   * 参数摘要自身已设置 min-width:0 + ellipsis，应由它承担收缩。 */
+  flex: 0 0 auto;
   min-width: 0;
   width: fit-content;
   max-width: 10rem;

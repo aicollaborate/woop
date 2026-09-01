@@ -23,13 +23,12 @@ impl DeepSeekHarnessManager {
         } else {
             config.provider_id.trim()
         };
-        let request = protocol::models_discover_request(
+        let request = protocol::model_discover_request(
             host.next_request_id(),
             Some(route),
             &config.api_url,
             &config.api_protocol,
             Some(config.effective_api_key(route)).filter(|value| !value.is_empty()),
-            &config.api_key_env,
         );
         match host.request(request).await {
             Ok(_) => TestConnectionResult {

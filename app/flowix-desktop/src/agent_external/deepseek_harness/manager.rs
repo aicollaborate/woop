@@ -54,9 +54,7 @@ pub struct DeepSeekHarnessManager {
     sessions: SessionRegistry,
     pub(crate) user_config: Arc<UserConfigStore>,
     pub(crate) session_root: PathBuf,
-    /// Harness child processes are keyed by the DSH credential reference.
-    /// Secret values remain in the DSH credentials service and never become
-    /// part of the registry key or child environment.
+    /// One restartable DSH App Server is shared by this Flowix instance.
     pub(crate) hosts: HostRegistry,
     pub(crate) runs: RunCoordinator,
     pub(crate) lifecycle_gate: tokio::sync::Mutex<()>,
@@ -196,9 +194,6 @@ impl DeepSeekHarnessManager {
             resolve_runtime_config(&configured, message.model_for_runtime(AGENT_TYPE))?;
         let agent_preset = normalize_agent_preset(message.mode_for_runtime(AGENT_TYPE));
         let permission = normalize_permission(message.permission_mode_for_runtime(AGENT_TYPE));
-        self.runs
-            .bind_host(thread_id, run_id, runtime_config.host_key())
-            .await;
         // Reuse the already-running shared host for the cheap status probe.
         // In particular, do not resolve a model config or call runtime.ensure
         // while a turn may still be using this thread's runtime.
@@ -339,13 +334,12 @@ impl DeepSeekHarnessManager {
         &self,
         runtime_config: &HarnessRuntimeConfig,
     ) -> Result<HostLease, String> {
-        let host_key = runtime_config.host_key();
         let credential = runtime_config
             .api_key
             .as_deref()
             .map(|secret| (runtime_config.api_key_env.as_str(), secret));
         self.hosts
-            .ensure(&host_key, &self.host_launch_spec(), credential)
+            .ensure(&self.host_launch_spec(), credential)
             .await
     }
 
@@ -686,7 +680,7 @@ impl DeepSeekHarnessManager {
         let stream_end_emitted = target.stream_end_emitted;
         let hosts = self
             .hosts
-            .cancellation_targets(target.host_key.as_deref())
+            .cancellation_targets()
             .await;
         for host in hosts {
             let request = protocol::app_turn_interrupt_request(host.next_request_id(), &target.session_id);
@@ -825,32 +819,6 @@ mod tests {
             normalize_permission(Some("workspace-write")),
             "workspace-write"
         );
-    }
-
-    #[test]
-    fn host_cache_key_is_a_stable_non_secret_fingerprint() {
-        let first = HarnessRuntimeConfig {
-            provider: "openai".to_string(),
-            provider_name: "GLM".to_string(),
-            api_protocol: "openai-completions".to_string(),
-            api_key_env: "FLOWIX_DSH_API_KEY".to_string(),
-            base_url: "https://example.test/v1".to_string(),
-            model: "glm".to_string(),
-            api_key: Some("secret-a".to_string()),
-        };
-        let same = HarnessRuntimeConfig {
-            api_key: Some("secret-a".to_string()),
-            ..first.clone()
-        };
-        let other = HarnessRuntimeConfig {
-            api_key: Some("secret-b".to_string()),
-            ..first.clone()
-        };
-
-        assert_eq!(first.host_key(), same.host_key());
-        assert_eq!(first.host_key(), other.host_key());
-        assert!(!first.host_key().contains("secret-a"));
-        assert_eq!(first.host_key(), "credential-ref:FLOWIX_DSH_API_KEY");
     }
 
     #[test]

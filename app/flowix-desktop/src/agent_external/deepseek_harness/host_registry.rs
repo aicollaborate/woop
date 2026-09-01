@@ -186,7 +186,6 @@ impl HostRegistry {
 
     pub(crate) async fn ensure(
         &self,
-        _key: &str,
         spec: &HostLaunchSpec,
         credential: Option<(&str, &str)>,
     ) -> Result<HostLease, String> {
@@ -247,10 +246,10 @@ impl HostRegistry {
     }
 
     pub(crate) async fn shared(&self, spec: &HostLaunchSpec) -> Result<HostLease, String> {
-        self.ensure("shared", spec, None).await
+        self.ensure(spec, None).await
     }
 
-    pub(crate) async fn cancellation_targets(&self, _key: Option<&str>) -> Vec<Arc<dyn DshClient>> {
+    pub(crate) async fn cancellation_targets(&self) -> Vec<Arc<dyn DshClient>> {
         self.state
             .lock()
             .await
@@ -386,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_ensure_is_single_flight_across_keys() {
+    async fn concurrent_ensure_is_single_flight_for_shared_host() {
         let factory = Arc::new(FakeFactory {
             spawns: AtomicUsize::new(0),
         });
@@ -394,8 +393,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let spec = spec(temp.path().to_path_buf());
         let (a, b) = tokio::join!(
-            registry.ensure("route-a", &spec, None),
-            registry.ensure("route-b", &spec, None)
+            registry.ensure(&spec, None),
+            registry.ensure(&spec, None)
         );
         assert!(Arc::ptr_eq(&a.unwrap().client(), &b.unwrap().client()));
         assert_eq!(factory.spawns.load(Ordering::SeqCst), 1);
@@ -409,9 +408,9 @@ mod tests {
         let registry = HostRegistry::new(factory.clone());
         let temp = tempfile::tempdir().unwrap();
         let spec = spec(temp.path().to_path_buf());
-        let first = registry.ensure("route", &spec, None).await.unwrap();
+        let first = registry.ensure(&spec, None).await.unwrap();
         first.shutdown().await;
-        let second = registry.ensure("route", &spec, None).await.unwrap();
+        let second = registry.ensure(&spec, None).await.unwrap();
         assert!(!Arc::ptr_eq(&first.client(), &second.client()));
         assert_eq!(registry.shutdown_all().await, 1);
         assert_eq!(factory.spawns.load(Ordering::SeqCst), 2);
@@ -473,7 +472,7 @@ mod tests {
         let spec = spec(temp.path().to_path_buf());
 
         assert!(registry
-            .ensure("route", &spec, Some(("DSH_TEST_KEY", "secret")))
+            .ensure(&spec, Some(("DSH_TEST_KEY", "secret")))
             .await
             .is_err());
         assert!(factory.client.lock().unwrap().as_ref().unwrap().is_closed());

@@ -9,6 +9,9 @@ import {
   ExternalTitlebarBadge,
   MemoActions,
   DOCUMENT_TITLEBAR_ICON_BUTTON_WIN,
+  AgentThreadCardFullscreenExitButton,
+  AgentThreadCardFullscreenIdentity,
+  useAgentThreadCardFullscreenActive,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
 import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
@@ -53,6 +56,7 @@ export function DocumentTitlebarWin({
   windowTabs,
 }: DocumentTitlebarProps) {
   const { t } = useI18n();
+  const isAgentThreadCardFullscreen = useAgentThreadCardFullscreenActive();
   const documentState: DocumentState = currentMemo
     ? 'memo'
     : externalFilePath
@@ -63,7 +67,8 @@ export function DocumentTitlebarWin({
     <ThirdColumnTitlebarShell
       isWindows
       dataTabWindowHeader={Boolean(windowTabs)}
-      style={{ backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
+      className={isAgentThreadCardFullscreen ? 'agent-thread-card-fullscreen-titlebar' : ''}
+      style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
     >
       <div className="flex shrink-0 items-center gap-1">
         {isSidebarHidden && (
@@ -79,6 +84,7 @@ export function DocumentTitlebarWin({
             <SidebarToggleIcon className="w-4 h-4" variant="collapsed" />
           </button>
         )}
+        <AgentThreadCardFullscreenExitButton className="agent-thread-card-fullscreen-exit-btn" />
         {showNavigationButtons && (
           <>
             <Tooltip content={t("document.titlebar.backTooltip")} shortcut="history.back">
@@ -106,6 +112,8 @@ export function DocumentTitlebarWin({
           </>
         )}
       </div>
+
+      <AgentThreadCardFullscreenIdentity />
 
       {windowTabs && (
         <div className="mr-1 flex h-8 min-w-0 flex-1" data-tauri-drag-region>

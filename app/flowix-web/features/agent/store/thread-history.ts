@@ -638,9 +638,19 @@ export function replaceCompletedRunWithHistory(
   const history = hydrateHistoricalMessages(historical, agentType);
   if (history.length === 0) return existing;
   const anchorId = completedRunUserMessageId(agentType, runId);
+  const lastIndex = (
+    messages: ChatMessage[],
+    predicate: (message: ChatMessage) => boolean,
+  ): number => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (predicate(messages[index])) return index;
+    }
+    return -1;
+  };
   const turnUserAnchor = (messages: ChatMessage[]): number =>
     turnId
-      ? messages.findIndex(
+      ? lastIndex(
+          messages,
           (message) =>
             message.role === "user" && message.codexTurnId === turnId,
         )
@@ -661,7 +671,8 @@ export function replaceCompletedRunWithHistory(
     const existingUser = existing[existingAnchor];
     const existingUserKey = existingUser && userMessageVisibleKey(existingUser);
     if (existingUserKey) {
-      historyAnchor = history.findIndex(
+      historyAnchor = lastIndex(
+        history,
         (message) => userMessageVisibleKey(message) === existingUserKey,
       );
     }

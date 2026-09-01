@@ -99,7 +99,7 @@ export class DshAppServer {
           ...(HARNESS_INFO === null ? {} : { harness: HARNESS_INFO }),
           capabilities: {
             threads: true, turns: true, fork: true, history: true, interrupt: true,
-            models: { list: true, configure: true, delete: true },
+            models: { catalog: true, discover: true, configure: true, delete: true },
             credentials: { read: true, write: true },
             flowix: { jobs: true, usage: true, plugins: true, profile: true },
             approvals: { request: true, policy: ['ask', 'never'], decisions: ['accept', 'decline', 'cancel'] },

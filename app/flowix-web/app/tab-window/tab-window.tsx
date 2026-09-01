@@ -606,7 +606,7 @@ export function TabWindow() {
 
   return (
     <div
-      className="flex h-screen w-screen flex-col overflow-hidden text-[var(--foreground)]"
+      className="tab-window-shell flex h-screen w-screen flex-col overflow-hidden text-[var(--foreground)]"
       style={{ backgroundColor: 'var(--document-bg)' }}
       onDragOver={handleTabDragOver}
       onDrop={handleTabDrop}

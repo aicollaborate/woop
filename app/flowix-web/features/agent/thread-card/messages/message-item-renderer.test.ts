@@ -182,8 +182,8 @@ describe("context compaction message rendering", () => {
   });
 });
 
-describe("tool command message rendering", () => {
-  it("renders a command as one line and toggles full details", () => {
+describe("unified tool message rendering", () => {
+  it("uses the common tool row and toggles overflowing command text in place", async () => {
     let expanded = false;
     const setDisplayExpanded = vi.fn((_messageId: string, value: boolean) => {
       expanded = value;
@@ -205,41 +205,56 @@ describe("tool command message rendering", () => {
     });
 
     const element = result?.element;
-    expect(element?.classList.contains(
-      "agent-thread-card__message--tool-command",
+    if (element) document.body.append(element);
+    expect(element?.classList.contains("agent-thread-card__message--tool"))
+      .toBe(true);
+    expect(element?.classList.contains("agent-thread-card__message--tool-command"))
+      .toBe(false);
+    const iconWrap = element?.querySelector<HTMLSpanElement>(
+      ".agent-thread-card__message-tool-icon-wrap",
+    );
+    expect(element?.firstElementChild).toBe(iconWrap);
+    expect(iconWrap?.tagName).toBe("SPAN");
+    expect(iconWrap?.firstElementChild?.tagName).toBe("svg");
+    expect(iconWrap?.firstElementChild?.classList.contains(
+      "agent-thread-card__message-tool-icon",
     )).toBe(true);
-    const previewRow = element?.querySelector<HTMLDivElement>(
-      ".agent-thread-card__command-preview-row",
+    const content = element?.querySelector<HTMLDivElement>(
+      ".agent-thread-card__message-tool-content",
     );
-    const details = element?.querySelector<HTMLPreElement>(
-      ".agent-thread-card__command-details",
+    const summary = element?.querySelector<HTMLSpanElement>(
+      ".agent-thread-card__message-tool-summary",
     );
-    const expand = element?.querySelector<HTMLButtonElement>(
-      ".agent-thread-card__command-toggle",
-    );
-    const collapseRow = element?.querySelector<HTMLDivElement>(
-      ".agent-thread-card__command-collapse-row",
+    if (summary) {
+      Object.defineProperty(summary, "clientWidth", { value: 100 });
+      Object.defineProperty(summary, "scrollWidth", { value: 240 });
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const toggle = element?.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__message-tool-toggle",
     );
 
-    expect(previewRow?.hidden).toBe(false);
-    expect(details?.hidden).toBe(true);
-    expect(collapseRow?.hidden).toBe(true);
-    expect(previewRow?.textContent).toContain("npm run build");
+    expect(summary?.textContent).toBe("npm run build\n&& npm test");
+    expect(content?.classList.contains(
+      "agent-thread-card__message-tool-content--expanded",
+    )).toBe(false);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
-    expand?.click();
+    toggle?.click();
     expect(setDisplayExpanded).toHaveBeenCalledWith("tool-1", true);
-    expect(previewRow?.hidden).toBe(true);
-    expect(details?.hidden).toBe(false);
-    expect(details?.textContent).toBe("npm run build\n&& npm test");
-    expect(collapseRow?.hidden).toBe(false);
+    expect(content?.classList.contains(
+      "agent-thread-card__message-tool-content--expanded",
+    )).toBe(true);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
-    collapseRow?.querySelector<HTMLButtonElement>("button")?.click();
+    toggle?.click();
     expect(setDisplayExpanded).toHaveBeenLastCalledWith("tool-1", false);
-    expect(previewRow?.hidden).toBe(false);
-    expect(details?.hidden).toBe(true);
+    expect(content?.classList.contains(
+      "agent-thread-card__message-tool-content--expanded",
+    )).toBe(false);
   });
 
-  it("keeps non-command tools as the existing compact summary", () => {
+  it("keeps short non-command tools as a compact row without a toggle", () => {
     const result = createAgentThreadCardMessageElement({
       message: {
         id: "tool-2",
@@ -257,10 +272,73 @@ describe("tool command message rendering", () => {
     });
 
     expect(result?.element.querySelector(
-      ".agent-thread-card__command-preview-row",
-    )).toBeNull();
-    expect(result?.element.querySelector(
       ".agent-thread-card__message-tool-summary",
     )?.textContent).toBe("example.txt");
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-tool-toggle",
+    )).toBeNull();
+  });
+
+  it("uses the same expansion control for overflowing non-command tools", async () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "tool-3",
+        role: "tool",
+        content: "",
+        timestamp: new Date().toISOString(),
+        toolName: "read",
+        toolDisplay: { kind: "file", summary: "first line\nsecond line" },
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+    if (result?.element) document.body.append(result.element);
+
+    const summary = result?.element.querySelector<HTMLElement>(
+      ".agent-thread-card__message-tool-summary",
+    );
+    expect(summary?.textContent).toBe("first line\nsecond line");
+    if (summary) {
+      Object.defineProperty(summary, "clientWidth", { value: 100 });
+      Object.defineProperty(summary, "scrollWidth", { value: 180 });
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-tool-toggle",
+    )).not.toBeNull();
+  });
+
+  it("does not show a toggle when a command fits on one line", async () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "tool-4",
+        role: "tool",
+        content: "",
+        timestamp: new Date().toISOString(),
+        toolName: "shell",
+        toolInput: { command: "pwd" },
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+    if (result?.element) document.body.append(result.element);
+    const summary = result?.element.querySelector<HTMLElement>(
+      ".agent-thread-card__message-tool-summary",
+    );
+    if (summary) {
+      Object.defineProperty(summary, "clientWidth", { value: 100 });
+      Object.defineProperty(summary, "scrollWidth", { value: 30 });
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-tool-toggle",
+    )).toBeNull();
   });
 });

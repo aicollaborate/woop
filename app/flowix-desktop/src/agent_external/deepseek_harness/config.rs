@@ -44,11 +44,6 @@ pub struct HarnessRuntimeConfig {
     pub(crate) model: String,
     pub(crate) api_key: Option<String>,
 }
-impl HarnessRuntimeConfig {
-    pub(crate) fn host_key(&self) -> String {
-        format!("credential-ref:{}", self.api_key_env)
-    }
-}
 
 pub fn resolve_runtime_config(
     config: &AiModelConfig,
@@ -88,11 +83,6 @@ pub fn resolve_runtime_config(
         "deepseek" => ("openai-completions", Some("https://api.deepseek.com/v1")),
         "openrouter" => ("openai-completions", Some("https://openrouter.ai/api/v1")),
         "ollama" => ("openai-completions", Some("http://127.0.0.1:11434/v1")),
-        "google" | "gemini" => {
-            return Err(format!(
-            "DeepSeek Harness does not yet support Google/Gemini provider route {provider_route}"
-        ))
-        }
         _ => ("openai-completions", None),
     };
     let api_protocol = if config.api_protocol.trim().is_empty() {
@@ -157,20 +147,7 @@ fn normalize_provider(provider: &str) -> String {
         .flat_map(char::to_lowercase)
         .collect()
 }
-pub(crate) fn catalog_provider_id(provider: &str) -> Option<&'static str> {
-    match normalize_provider(provider).as_str() {
-        "anthropic" | "claude" => Some("anthropic"),
-        "deepseek" => Some("deepseek"),
-        "openrouter" => Some("openrouter"),
-        "ollama" => Some("ollama"),
-        "openai"
-        | "openairesponses"
-        | "openairesponsesapi"
-        | "responsesapi"
-        | "openaichatcompletions" => Some("openai"),
-        _ => None,
-    }
-}
+
 pub(crate) fn normalize_permission(value: Option<&str>) -> &'static str {
     match value.map(str::trim) {
         Some("danger-full-access" | "yolo") => "danger-full-access",
@@ -229,7 +206,10 @@ mod tests {
     fn invalid_and_obsolete_routes_fail_closed() {
         assert!(resolve_runtime_config(&route("", "DeepSeek", "m"), None).is_err());
         assert!(resolve_runtime_config(&route("flowix", "DeepSeek", "m"), None).is_err());
-        assert!(resolve_runtime_config(&route("google-route", "Gemini", "m"), None).is_err());
+        let mut google = route("google-route", "Gemini", "m");
+        google.api_url = "https://generativelanguage.googleapis.com/v1beta".into();
+        google.api_protocol = "google-generative-ai".into();
+        assert!(resolve_runtime_config(&google, None).is_ok());
     }
 
     #[test]

@@ -260,116 +260,74 @@
 .markdown-editor .agent-thread-card__message--tool {
   display: flex;
   flex-wrap: nowrap;
-  align-items: center;
+  /* 图标容器固定为 18px，工具名/摘要首行也固定为 18px；
+   * 用顶部对齐保证它们共享同一条首行轨道。baseline 会以各自
+   * 的字体基线计算位置，配合 18.9px 的默认实际行高容易出现约 1px 偏移。 */
+  align-items: flex-start;
   gap: 6px;
   padding: 4px 0;
   background: transparent;
   color: var(--muted-foreground);
   font-size: calc(var(--app-font-size, 15px) * 0.9);
-  line-height: 1.4;
+  line-height: 18px;
 }
 
-.markdown-editor .agent-thread-card__message--tool-command {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  column-gap: 8px;
-  /* 命令块是多行容器 (含 head + body + 多条 command-line),
-   * 不能继承父级 --tool 的 1.4 (那是给单行摘要用的) ──
-   * 显式声明 1.7 = __message-content 的行高, 让 command-name / args
-   * 与正文 p 的行节奏一致, 视觉上不"压扁"。 */
-  line-height: 1.7;
-}
-
-.markdown-editor .agent-thread-card__message-tool-head {
+.markdown-editor .agent-thread-card__message-tool-content {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.markdown-editor .agent-thread-card__message-tool-body {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.markdown-editor .agent-thread-card__command-preview-row {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  max-width: 100%;
-  gap: 6px;
-}
-
-.markdown-editor .agent-thread-card__command-preview-row[hidden],
-.markdown-editor .agent-thread-card__command-details[hidden],
-.markdown-editor .agent-thread-card__command-collapse-row[hidden] {
-  display: none;
-}
-
-.markdown-editor .agent-thread-card__command-preview {
+  position: relative;
   flex: 1 1 auto;
+  align-items: baseline;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
-  color: var(--muted-foreground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: 4px;
+  line-height: 18px;
 }
 
-.markdown-editor .agent-thread-card__command-toggle,
-.markdown-editor .agent-thread-card__command-collapse-toggle {
+.markdown-editor .agent-thread-card__message-tool-toggle {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: 4px;
   padding: 0;
   background: transparent;
   color: var(--muted-foreground);
+  line-height: 18px;
   cursor: pointer;
 }
 
-.markdown-editor .agent-thread-card__command-toggle:hover,
-.markdown-editor .agent-thread-card__command-collapse-toggle:hover {
+.markdown-editor .agent-thread-card__message-tool-toggle:hover {
   background: color-mix(in srgb, var(--muted-foreground) 10%, transparent);
   color: var(--foreground);
 }
 
-.markdown-editor .agent-thread-card__command-toggle .agent-thread-card__chevron-icon,
-.markdown-editor .agent-thread-card__command-collapse-toggle .agent-thread-card__chevron-icon {
-  width: 14px;
-  height: 14px;
+.markdown-editor .agent-thread-card__message-tool-toggle .agent-thread-card__chevron-icon {
+  width: 13px;
+  height: 13px;
+  transition: transform 150ms ease;
 }
 
-.markdown-editor .agent-thread-card__command-details {
-  all: revert;
-  display: block;
-  box-sizing: border-box;
-  max-width: 100%;
-  margin: 4px 0 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__message-tool-toggle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 1;
+  background: var(--background);
 }
 
-.markdown-editor .agent-thread-card__command-details > code {
-  all: revert;
-  display: block;
-  white-space: inherit;
-  overflow-wrap: inherit;
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__message-tool-toggle
+  .agent-thread-card__chevron-icon {
+  transform: rotate(180deg);
 }
 
-.markdown-editor .agent-thread-card__command-collapse-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
-}
-
-.markdown-editor .agent-thread-card__command-toggle:focus-visible,
-.markdown-editor .agent-thread-card__command-collapse-toggle:focus-visible {
+.markdown-editor .agent-thread-card__message-tool-toggle:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--foreground) 45%, transparent);
   outline-offset: 1px;
 }
@@ -382,8 +340,16 @@
   color: var(--muted-foreground);
 }
 
-.markdown-editor .agent-thread-card__message--tool-command .agent-thread-card__message-tool-icon {
-  transform: translateY(2px);
+/* 工具图标占用与首行一致的 18px 轨道。外层固定高度并自行居中，
+ * 避免直接放置 14px SVG 时受多行参数/基线布局影响而上下偏移。 */
+.markdown-editor .agent-thread-card__message-tool-icon-wrap {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  flex: 0 0 auto;
+  line-height: 18px;
 }
 
 /* 工具名视觉规格: __message-tool-name + __command-name 共享 ──
@@ -395,6 +361,7 @@
   flex: 0 0 auto;
   color: var(--foreground);
   font-weight: 500;
+  line-height: 18px;
 }
 
 .markdown-editor .agent-thread-card__message-tool-concrete-name {
@@ -421,8 +388,21 @@
   color: var(--muted-foreground);
   font-family: var(--font-sans);
   font-size: calc(var(--app-font-size, 15px) * 0.9); /* text-xs */
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__message-tool-summary {
+  display: block;
+  padding-right: 24px;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 18px;
+  text-overflow: clip;
 }
 
 .markdown-editor .agent-thread-card__command-list {
@@ -432,6 +412,7 @@
   overflow: hidden;
   margin: 0;
   padding: 0;
+  line-height: 18px;
   /* 字体: 与工具描述信息统一为 sans (默认), 删除原先的 mono, 让命令列表跟其它工具描述在视觉上无法区分 */
 }
 
@@ -448,6 +429,7 @@
   overflow: hidden;
   margin: 0;
   padding: 1px 0;
+  line-height: 18px;
 }
 
 .markdown-editor .agent-thread-card__command-line {
@@ -457,6 +439,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
+  line-height: 18px;
   /* 字体/字号/行高 全部走 inherit (跟工具描述信息统一 sans 视觉) */
 }
 
@@ -466,6 +449,7 @@
 .markdown-editor .agent-thread-card__command-env,
 .markdown-editor .agent-thread-card__command-more {
   color: var(--muted-foreground);
+  line-height: 18px;
 }
 
 .markdown-editor .agent-thread-card__command-args-inline {

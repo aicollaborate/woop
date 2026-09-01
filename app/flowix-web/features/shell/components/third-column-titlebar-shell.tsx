@@ -25,7 +25,7 @@ export function ThirdColumnTitlebarShell({
     <div
       data-tauri-drag-region
       data-tab-window-header={dataTabWindowHeader ? '' : undefined}
-      className={`z-[50] flex shrink-0 select-none items-center pl-4 ${
+      className={`z-[50] flex shrink-0 select-none items-center pl-2 ${
         isWindows ? 'h-9 pr-[126px]' : 'h-12'
       } ${className}`}
       style={style}

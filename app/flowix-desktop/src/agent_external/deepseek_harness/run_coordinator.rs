@@ -10,14 +10,12 @@ struct ActiveRun {
     run_id: String,
     session_id: String,
     stream_end_emitted: Arc<AtomicBool>,
-    host_key: Option<String>,
 }
 
 pub(crate) struct RunTarget {
     pub(crate) run_id: String,
     pub(crate) session_id: String,
     pub(crate) stream_end_emitted: Arc<AtomicBool>,
-    pub(crate) host_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -46,7 +44,6 @@ impl RunCoordinator {
                 run_id: run_id.into(),
                 session_id: session_id.unwrap_or_default().into(),
                 stream_end_emitted,
-                host_key: None,
             },
         );
         Ok(())
@@ -66,10 +63,6 @@ impl RunCoordinator {
         })
         .await;
     }
-    pub(crate) async fn bind_host(&self, thread_id: &str, run_id: &str, host_key: String) {
-        self.update(thread_id, run_id, |run| run.host_key = Some(host_key))
-            .await;
-    }
     pub(crate) async fn bind_session(&self, thread_id: &str, run_id: &str, session_id: &str) {
         self.update(thread_id, run_id, |run| run.session_id = session_id.into())
             .await;
@@ -86,7 +79,6 @@ impl RunCoordinator {
                     run_id: run.run_id.clone(),
                     session_id: run.session_id.clone(),
                     stream_end_emitted: run.stream_end_emitted.clone(),
-                    host_key: run.host_key.clone(),
                 }
             })
         })
@@ -192,9 +184,8 @@ mod tests {
         runs.register("t", "r2", None, Arc::new(AtomicBool::new(false)))
             .await
             .unwrap();
-        runs.bind_host("t", "r1", "wrong".into()).await;
         runs.bind_session("t", "r1", "wrong").await;
         let target = runs.target("t", None).await.unwrap();
-        assert!(target.host_key.is_none());
+        assert_eq!(target.session_id, "");
     }
 }

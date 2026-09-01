@@ -221,6 +221,24 @@
   user-select: none;
 }
 
+/* Fullscreen Thread Cards use the third-column titlebar as their chrome, so
+ * the embedded card header is removed and its grid track is collapsed. */
+.markdown-editor
+  .agent-thread-card--fullscreen
+  > .agent-thread-card__container {
+  grid-template-rows: 0 1fr auto;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__header {
+  visibility: hidden;
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 /* NodeSelection 选中态 ── 覆盖 editor.css:729 的全局 .ProseMirror-selectednode
  * (outline: 2px; outline-offset: 2px; 给 image/videoAttachment 等用)。
  *

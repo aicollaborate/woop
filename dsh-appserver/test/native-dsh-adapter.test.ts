@@ -169,4 +169,24 @@ describe('NativeDshAdapter thread launch', () => {
       cacheReadTokens: 11, cacheWriteTokens: 0, contextTokens: null, contextWindow: 1000000,
     })
   })
+
+  it('returns one readable tool message for persisted call and result events', async () => {
+    const events = [
+      { type: 'turn/start', seq: 1, data: { turn: 1 } },
+      { type: 'user/message', seq: 2, data: { id: 'u1', content: [{ type: 'text', text: 'inspect' }] } },
+      { type: 'tool/call', seq: 3, data: { turn: 1, step: 1, callId: 'call-1', name: 'read', arguments: '{"file_path":"a.txt"}' } },
+      { type: 'tool/result', seq: 4, data: { turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'call-1' }, content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'alpha' }] }], role: 'user', id: 'r1' } } },
+    ]
+    const adapter = new NativeDshAdapter({
+      on: () => () => {}, agents: { get: () => undefined }, sessions: { get: () => undefined },
+      get: (name: string) => name === 'sessionPersistence' ? { inspect: async () => ({ events }) } : undefined,
+    })
+
+    const result = await adapter.sessionHistory('session-1')
+    expect(result.messages.filter(message => message.role === 'tool')).toHaveLength(1)
+    expect(result.messages[1]).toMatchObject({
+      id: 'call-1', content: 'alpha', toolData: 'alpha',
+      toolInput: { file_path: 'a.txt' }, isCompleted: true,
+    })
+  })
 })

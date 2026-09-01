@@ -1,12 +1,45 @@
-import { assistantChunkText, itemFromEvent, messageFromEvent, projectNotifications, projectTurns, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
+import { assistantChunkText, itemFromEvent, projectHistoryMessages, projectNotifications, projectTurns, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
 
 // Native adapter for Flowix's bundled DeepSeek Harness runtime.
 // It deliberately imports no Flowix bridge package. The host supplies a Cordis ctx.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
+
+/**
+ * dsh-llm-pi-ai deliberately exposes the complete provider directory through
+ * DSH's `llm` service, but `llm.listModels()` is only callable for an active
+ * adapter route. Dormant built-in routes therefore need the same pi-ai model
+ * catalog that dsh-llm-pi-ai uses internally. Resolve it from the managed
+ * runtime executable rather than assuming that the profile copy has its own
+ * node_modules tree (the profile intentionally contains only Flowix bundles).
+ */
+async function loadBuiltinPiAiCatalog() {
+  const candidates = []
+  let current = process.argv[1] ? dirname(process.argv[1]) : dirname(new URL(import.meta.url).pathname)
+  for (let depth = 0; depth < 10; depth += 1) {
+    candidates.push(join(current, 'node_modules/@earendil-works/pi-ai/dist/providers/all.js'))
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  try {
+    return await import('@earendil-works/pi-ai/providers/all')
+  } catch (_) {
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(candidate)) return await import(pathToFileURL(candidate).href)
+      } catch (_) {
+        // Try the next managed-runtime location. Test/source environments do
+        // not necessarily install the runtime's production dependencies.
+      }
+    }
+  }
+  return null
+}
 
 export class NativeDshAdapter {
   constructor(ctx) {
@@ -291,10 +324,11 @@ export class NativeDshAdapter {
       const name = event.data?.name || event.data?.toolName
       if (callId && name) toolNames.set(String(callId), String(name))
     }
-    const messages = all
-      .filter(event => Number(event.seq) <= ceiling && Number(event.seq) < before)
-      .map(event => messageFromEvent(id, event, toolNames))
-      .filter(Boolean)
+    const messages = projectHistoryMessages(
+      id,
+      all.filter(event => Number(event.seq) <= ceiling),
+      toolNames,
+    ).filter(message => Number(message.sourceSeq) < before)
     const pageLimit = Math.min(200, Math.max(1, Number(limit) || 50))
     const page = messages.slice(-pageLimit)
     return {
@@ -443,20 +477,91 @@ export class NativeDshAdapter {
   }
 
   /** Return configured routes in the provider-array shape used by clients. */
-  catalogModels() {
+  async catalogModels() {
     const configuration = this.describeModels()
-    return {
-      providers: Object.entries(configuration.providers).map(([provider, profile]) => ({
+    const configured = Object.entries(configuration.providers).map(([provider, profile]) => ({
         provider,
         ...(typeof profile?.displayName === 'string' ? { displayName: profile.displayName } : {}),
-        ...(typeof profile?.baseUrl === 'string' ? { baseUrl: profile.baseUrl } : {}),
-        takesApiKey: true,
+        ...(typeof (profile?.baseURL ?? profile?.baseUrl) === 'string'
+          ? { baseUrl: profile.baseURL ?? profile.baseUrl }
+          : {}),
+        takesApiKey: provider !== 'ollama',
         models: Array.isArray(profile?.models)
           ? profile.models.filter(model => model && typeof model.id === 'string')
           : typeof profile?.model === 'string' && profile.model
             ? [{ id: profile.model }]
             : [],
-      })),
+      }))
+
+    // Read the provider directory through DSH's public llm service. This is
+    // the registry assembled by llm-pi-ai (built-ins plus configured routes),
+    // so the app-server does not need to import a package from a particular
+    // bundle/profile path. Keep configured routes as an overlay as a safety
+    // net: custom routes must remain visible even on older runtimes.
+    try {
+      const llm = this.ctx.get?.('llm')
+      if (!llm?.listConfigurableProviders || !llm?.listModels) throw new Error('DSH LLM provider directory is unavailable')
+      const entries = await llm.listConfigurableProviders()
+      const configuredRoutes = new Set(configured.map(provider => provider.provider))
+      const builtinCatalog = await loadBuiltinPiAiCatalog()
+      const builtinProviders = new Map(
+        (builtinCatalog?.builtinProviders?.() ?? []).map(provider => [provider.id, provider]),
+      )
+      // The configurable-provider directory is shared by DSH plugins. Keep
+      // this endpoint scoped to llm-pi-ai's installed provider catalog, while
+      // retaining any already-configured non-pi-ai route as an overlay below.
+      // This prevents dsh-llm-deepseek's `deepseek-official` route from being
+      // presented as an llm-pi-ai provider with an empty model list.
+      const catalogEntries = builtinCatalog
+        ? entries.filter(entry => builtinProviders.has(entry.provider) || configuredRoutes.has(entry.provider))
+        : entries
+      const providers = await Promise.all(catalogEntries.map(async entry => {
+        const builtin = builtinProviders.get(entry.provider)
+        let models = []
+        // An active route is authoritative: it includes a user's configured
+        // model directory and custom route metadata. Dormant built-ins have no
+        // adapter registration, so asking llm.listModels() for them throws.
+        if (configuredRoutes.has(entry.provider)) {
+          try { models = await llm.listModels(entry.provider) } catch (_) { models = [] }
+        }
+        if (models.length === 0 && builtinCatalog?.getBuiltinModels) {
+          models = builtinCatalog.getBuiltinModels(entry.provider) ?? []
+        }
+        const firstModel = models[0]
+        const takesApiKey = builtin?.auth?.apiKey !== undefined
+          ? true
+          : entry.provider === 'ollama'
+            ? false
+            : true
+        return {
+          provider: entry.provider,
+          // dsh-llm-pi-ai currently uses the route id as the directory's
+          // displayName for built-ins. Prefer pi-ai's human-readable provider
+          // name while preserving the explicit name of custom routes.
+          displayName: builtin?.name || entry.displayName || entry.provider,
+          ...(firstModel?.baseUrl ? { baseUrl: firstModel.baseUrl } : {}),
+          ...(firstModel?.api ? { api: firstModel.api } : {}),
+          // The public configurable-provider directory intentionally omits
+          // credential details. Keep a conservative default; keyless
+          // providers can still be used by leaving the field empty and the
+          // runtime will perform the definitive validation.
+          takesApiKey,
+          models: models.map(model => ({
+            id: model.id,
+            ...(model.name ? { name: model.name } : {}),
+            ...(model.api ? { api: model.api } : {}),
+            ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}),
+            ...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
+            ...(Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+          })),
+        }
+      }))
+      const seen = new Set(providers.map(provider => provider.provider))
+      return { providers: [...providers, ...configured.filter(provider => !seen.has(provider.provider))] }
+    } catch (_) {
+      // Older/test runtimes may not expose pi-ai as a package. Configured
+      // routes still provide the exact legacy behavior in that case.
+      return { providers: configured }
     }
   }
 

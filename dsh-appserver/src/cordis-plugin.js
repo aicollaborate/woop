@@ -2,9 +2,13 @@ import { DshAppServer } from './app-server/server.js'
 import { createHttpTransport } from './app-server/transports/http.js'
 
 export const name = 'dsh-appserver'
-// Model settings/discovery are optional capabilities. Resolve them at request
-// time so the core Thread/Turn server can still boot in minimal DSH profiles.
-export const inject = ['agents', 'sessions']
+// Model settings/discovery are optional capabilities. Credentials and approval
+// are different: the app-server advertises credential management and always
+// checks approval during setup, so wait for both services before accepting the
+// first JSON-RPC request. Without this dependency a just-started host can
+// answer `initialize` and then race `credential/set`, yielding the misleading
+// "DSH credentials service is unavailable" error.
+export const inject = ['agents', 'sessions', 'credentials', 'approval']
 
 export default function dshAppServer(ctx, config = {}) {
   if (!ctx.get?.('approval')) throw new Error('dsh-appserver requires the native DSH approval service')

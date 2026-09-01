@@ -141,8 +141,8 @@ pub fn app_session_history_request(
     })
 }
 
-pub fn models_catalog_request(id: u64) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "method": "models/catalog", "params": {} })
+pub fn model_catalog_request(id: u64) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/catalog", "params": {} })
 }
 
 pub fn plugins_catalog_request(id: u64) -> Value {
@@ -178,22 +178,25 @@ pub fn model_settings_remove_request(id: u64, route: &str, expected_revision: u6
     json!({ "jsonrpc": "2.0", "id": id, "method": "model/config/remove", "params": { "route": route, "expectedRevision": expected_revision } })
 }
 
-pub fn models_discover_request(
+pub fn model_discover_request(
     id: u64,
     provider: Option<&str>,
     base_url: &str,
     api: &str,
     api_key: Option<&str>,
-    api_key_env: &str,
 ) -> Value {
-    let mut params = json!({ "baseUrl": base_url, "api": api, "apiKeyEnv": api_key_env });
+    // dsh-llm's discovery contract spells this field `baseURL` (capital URL).
+    // Keep the wire name aligned with LlmModelDiscoveryRequest; `baseUrl` is
+    // silently ignored by the runtime and makes non-catalog providers look
+    // like a no-op when the user clicks Test or Save.
+    let mut params = json!({ "baseURL": base_url, "api": api });
     if let Some(provider) = provider {
         params["provider"] = json!(provider);
     }
     if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
         params["apiKey"] = json!(api_key);
     }
-    json!({ "jsonrpc": "2.0", "id": id, "method": "models/discover", "params": params })
+    json!({ "jsonrpc": "2.0", "id": id, "method": "model/discover", "params": params })
 }
 
 pub fn response_result(message: &Value) -> Option<Result<Value, String>> {
@@ -555,6 +558,33 @@ fn u32_field(value: &Value, key: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DeepSeekHarnessProviderSettings;
+
+    #[test]
+    fn model_discovery_uses_llm_base_url_wire_name() {
+        let request = model_discover_request(
+            7,
+            Some("acme-gateway"),
+            "https://gateway.example/v1",
+            "openai-completions",
+            Some("probe-key"),
+        );
+        assert_eq!(request["params"]["baseURL"], "https://gateway.example/v1");
+        assert!(request["params"].get("baseUrl").is_none());
+        assert_eq!(request["params"]["provider"], "acme-gateway");
+        assert_eq!(request["params"]["api"], "openai-completions");
+        assert_eq!(request["params"]["apiKey"], "probe-key");
+        assert!(request["params"].get("apiKeyEnv").is_none());
+    }
+
+    #[test]
+    fn model_settings_upsert_keeps_profile_under_expected_route() {
+        let profile = DeepSeekHarnessProviderSettings::default();
+        let request = model_settings_upsert_request(8, "acme-gateway", &profile, 3);
+        assert_eq!(request["method"], "model/config/upsert");
+        assert_eq!(request["params"]["route"], "acme-gateway");
+        assert_eq!(request["params"]["expectedRevision"], 3);
+    }
 
     #[test]
     fn maps_host_delta_to_agent_chunk() {

@@ -102,10 +102,10 @@ try {
   const evilRoute = await client.request('model/config/upsert', { route: '__proto__', profile })
   check('model/config/upsert rejects prototype route', evilRoute.error !== undefined, evilRoute.error?.message)
 
-  const discover = await client.request('model/list', { provider: 'deepseek' })
+  const discover = await client.request('model/discover', { provider: 'deepseek' })
   // pi-ai ships an offline catalog for the deepseek route, so discovery needs
   // neither network nor credentials.
-  check('model/list discovers catalog models',
+  check('model/discover discovers catalog models',
     Array.isArray(discover.result?.models) && discover.result.models.length > 0,
     discover.error?.message ?? `${discover.result?.models?.length} models`)
 
@@ -207,10 +207,6 @@ try {
   check('session/dispose closes thread', dispose.result?.disposed === true, dispose.result)
 
   // ── legacy aliases ──────────────────────────────────────────────────────
-  const legacyCaps = await client.request('flowix.bridge.capabilities', {})
-  check('flowix.bridge.capabilities alias', Array.isArray(legacyCaps.result?.capabilities), legacyCaps.error?.message ?? 'ok')
-  const legacyModels = await client.request('models/describe', {})
-  check('models/describe alias', legacyModels.result?.revision !== undefined, legacyModels.error?.message ?? 'ok')
 
   // ── crash-restart durability (same DSH_HOME, fresh process) ────────────
   child.kill('SIGKILL')

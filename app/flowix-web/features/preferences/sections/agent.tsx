@@ -20,8 +20,9 @@ import {
 } from '@shared/ui/select';
 import { Button } from '@shared/ui/button';
 import { Field, SectionHeader, FIELD_INPUT_CLASS } from '@features/preferences/sections/primitives';
-import { Loader2, Check, XCircle, Plus, Trash2, Pencil } from 'lucide-react';
+import { Loader2, Plus, Trash2, Pencil } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { toast } from '@/lib/toast';
 import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { catalogProviderForConfiguredModel } from './model-provider';
 import { useRegionStore } from '@/lib/i18n';
@@ -155,7 +156,7 @@ const PROVIDER_MODEL_OPTIONS: Record<string, readonly string[]> = {
 const PROVIDER_DEFAULTS: Record<string, Pick<AgentConfig, 'model' | 'apiUrl'>> = {
   'MiniMax Coding Plan': {
     model: PROVIDER_MODEL_OPTIONS['MiniMax Coding Plan'][0],
-    apiUrl: 'https://api.minimaxi.com/v1/',
+    apiUrl: 'https://api.minimaxi.com/anthropic',
   },
   'GLM Coding Plan': {
     model: PROVIDER_MODEL_OPTIONS['GLM Coding Plan'][0],
@@ -173,7 +174,7 @@ const PROVIDER_DEFAULTS: Record<string, Pick<AgentConfig, 'model' | 'apiUrl'>> =
 };
 
 const PROVIDER_BASE_URL_HINTS: Record<string, string> = {
-  'MiniMax Coding Plan': 'https://api.minimaxi.com/v1/',
+  'MiniMax Coding Plan': 'https://api.minimaxi.com/anthropic',
   'GLM Coding Plan': 'https://open.bigmodel.cn/api/coding/paas/v4',
   'OpenAI Responses API': 'https://api.openai.com/v1',
   'OpenAI Chat Completions': 'https://api.openai.com/v1',
@@ -420,35 +421,17 @@ export function AgentSection({
   const [providerConfigs, setProviderConfigs] = useState<AgentConfig[]>([]);
   /** 最近一次成功落盘时的快照, 用于判断 dirty。 */
   const [savedConfig, setSavedConfig] = useState<AgentConfig | null>(null);
-  /** Save button state machine. Adds `testing` (probe before write) and
-   *  `testFailed` (probe rejected, didn't write) on top of the original
-   *  idle / saving / saved. */
-  const [saveStatus, setSaveStatus] = useState<
-    'idle' | 'testing' | 'saving' | 'saved' | 'testFailed'
-  >('idle');
-  /** Independent "Test connection" button state machine. Shares
-   *  `lastTestResult` with the save flow so the user always sees a
-   *  consistent picture: if Save just probed successfully, the test
-   *  button reflects the same green checkmark. */
-  const [testStatus, setTestStatus] = useState<
-    'idle' | 'testing' | 'success' | 'failed'
-  >('idle');
-  const [lastTestResult, setLastTestResult] = useState<TestConnectionResult | null>(
-    null,
-  );
-  /** Snapshot of the form at the moment of the last successful probe.
-   *  Used to skip re-probing on Save when the user hasn't touched the
-   *  form since the last green test. Compared via `JSON.stringify` —
-   *  same trick used for `isDirty` (form is small, perf irrelevant). */
-  const [lastTestedSnapshot, setLastTestedSnapshot] = useState<string | null>(null);
+  /** Save and test are independent operations; completion and errors use toast. */
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   /** 加载阶段出错时记录, 用错误态 UI 替代"加载中..."。 */
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelCatalog, setModelCatalog] = useState<DeepSeekHarnessModelCatalog | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<DeepSeekHarnessModel[]>([]);
   const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
   const [modelDiscoveryError, setModelDiscoveryError] = useState<string | null>(null);
+  const discoveryRequestRef = useRef(0);
   const [modelManagementBusy, setModelManagementBusy] = useState(false);
-  const [modelManagementError, setModelManagementError] = useState<string | null>(null);
   const [showModelForm, setShowModelForm] = useState(false);
   const [modelFormMode, setModelFormMode] = useState<CustomProviderFormMode | null>(null);
   /** Selecting "Custom…" swaps the normal model form for the inline
@@ -576,7 +559,7 @@ export function AgentSection({
         setLocalConfig(merged);
         setSavedConfig(merged);
         setProviderConfigs(listed?.map((entry) => entry.model) ?? []);
-        setSaveStatus("idle");
+        setIsSaving(false);
       } catch (err) {
         console.error("[AgentSection] Failed to reload ai_config:", err);
       }
@@ -592,43 +575,24 @@ export function AgentSection({
     localConfig !== null &&
     savedConfig !== null &&
     JSON.stringify(localConfig) !== JSON.stringify(savedConfig);
-  /** Either side is mid-flight (probing or saving) → disable *both*
-   *  buttons to prevent concurrent in-flight probes / writes. */
-  const isBusy =
-    saveStatus === 'testing' ||
-    saveStatus === 'saving' ||
-    testStatus === 'testing';
-
-  /**
-   * Coalesce all op-state machine values into a single priority-ranked
-   * status. The bottom action area renders one inline message based on
-   * this — so the user only ever sees *one* status at a time, never a
-   * split "saved" + "failed" across two zones.
-   *
-   * Priority (high → low):
-   *   testing — probe in flight (save-triggered or standalone)
-   *   saving  — write in flight
-   *   failed  — last probe rejected (covers `saveStatus='testFailed'`
-   *             and `testStatus='failed'`; both end up showing the same
-   *             inline error)
-   *   idle    — everything else. The inline area shows the most recent
-   *             persisted result based on `lastTestResult` (success /
-   *             failed) or `isDirty` (unsaved hint). This keeps the
-   *             success / failure notes visible until the user types
-   *             something — no flicker from auto-clearing timers.
-   */
-  type OpStatus = 'testing' | 'saving' | 'failed' | 'idle';
-  const opStatus: OpStatus = (() => {
-    if (saveStatus === 'testing' || testStatus === 'testing') return 'testing';
-    if (saveStatus === 'saving') return 'saving';
-    if (saveStatus === 'testFailed' || testStatus === 'failed') return 'failed';
-    return 'idle';
-  })();
+  const currentCatalogProvider = modelDirectory && localConfig
+    ? modelCatalog?.providers.find((entry) => entry.provider === localConfig.provider)
+    : undefined;
+  const currentConfiguredProvider = modelDirectory && localConfig
+    ? providerConfigs.find((config) =>
+        (config.providerId?.trim() || config.provider) === localConfig.provider,
+      )
+    : undefined;
+  /** Disable both actions while either asynchronous operation is running. */
+  const isBusy = isSaving || isTesting;
   const currentProviderLabel = (() => {
     const provider = localConfig?.provider;
     if (!provider) return '';
     if (modelDirectory && localConfig?.providerId?.trim()) {
-      return localConfig.displayName?.trim() || localConfig.providerId;
+      return localConfig.displayName?.trim()
+        || currentCatalogProvider?.displayName
+        || currentConfiguredProvider?.displayName
+        || localConfig.providerId;
     }
     const catalogEntry = modelCatalog?.providers.find(
       (entry) => entry.provider === provider,
@@ -646,61 +610,28 @@ export function AgentSection({
     if (!localConfig) return;
 
     // Model-management forms keep the directory update as a final pure
-    // transformation. Build that effective config before validation/probing;
-    // otherwise a newly added model is tested against the old directory and
-    // Harness correctly reports it as an unknown model.
+    // transformation. Build that effective config before validation so a
+    // newly added model is persisted together with its provider route.
     const configToSave = modelDirectory && modelFormMode
       ? addModelToConfig(localConfig, modelFormMode, savedConfig ?? undefined)
       : localConfig;
     const formSnapshot = JSON.stringify(localConfig);
 
-    // 1. Local pre-flight: catches the obvious mistakes (missing key,
-    //    bad URL scheme, empty provider/model) without a network round-trip.
-    //
-    //    Errors surface in the inline status area only — no toast.
-    //    We funnel the local message through the same `lastTestResult`
-    //    channel as remote failures, so the renderer only needs one
-    //    rendering path.
+    // Local pre-flight: catches the obvious mistakes (missing key, bad URL
+    // scheme, empty provider/model) without a network round-trip. Saving a
+    // setting must not be blocked by provider availability; use Test for that.
     const localErr = validateBeforeSave(configToSave, t);
     if (localErr) {
-      setLastTestResult({
-        ok: false,
-        latencyMs: 0,
-        modelId: configToSave.model,
-        summary: '',
-        error: { kind: 'bad_config', message: localErr },
-      });
-      setSaveStatus('testFailed');
-      setTestStatus('failed');
+      setIsSaving(false);
+      setIsTesting(false);
+      toast.error(localErr);
       return;
     }
 
-    // 2. Connectivity probe — skip when the form hasn't changed since
-    //    the last successful test (user clicked Test then immediately
-    //    clicked Save, no edits in between).
-    const skipProbe = testStatus === 'success' && lastTestedSnapshot === formSnapshot;
-    let probe = lastTestResult;
-    if (!skipProbe) {
-      setSaveStatus('testing');
-      const probed = await runProbe(configToSave, formSnapshot);
-      // `runProbe` returns null only when the IPC itself threw (network
-      // to the Tauri host, command missing, ...). `testStatus` is already
-      // in `failed` and the inline area reflects the error. Reset
-      // saveStatus so the Save button isn't permanently stuck at "Testing…".
-      if (!probed) {
-        setSaveStatus('idle');
-        return;
-      }
-      probe = probed;
-      if (!probe.ok) {
-        setSaveStatus('testFailed');
-        // Inline area already shows `formatErrorKind`; no toast.
-        return;
-      }
-    }
-
-    // 3. Probe passed (or skipped) — commit.
-    setSaveStatus('saving');
+    // Commit independently of network connectivity. This makes Save usable
+    // for a new provider, an offline endpoint, and a key that will be tested
+    // later, while preserving the explicit Test connection action.
+    setIsSaving(true);
     try {
 			const appendModel = modelDirectory && modelFormMode?.kind === 'add';
 			if (appendModel && configStore.add) {
@@ -720,63 +651,50 @@ export function AgentSection({
       const stillClean = formSnapshot === JSON.stringify(localConfigRef.current);
       if (listed) setProviderConfigs(listed.map((entry) => entry.model));
       setSavedConfig(persistedConfig);
+      setIsTesting(false);
       if (modelDirectory && stillClean) {
         setLocalConfig(persistedConfig);
         setShowModelForm(false);
         setModelFormMode(null);
       }
+      toast.success(t('preferences.agent.saved'));
       // If the user typed during the in-flight save, the form has moved
       // past `snapshot` — the saved-on-disk state no longer matches the
-      // form, so we skip the "saved" celebration and go straight to
-      // `idle` (which will then show the unsaved hint).
-      if (stillClean) {
-        setSaveStatus('saved');
-        // No auto-clear: stays visible until the next operation.
-      } else {
-        setSaveStatus('idle');
-        setTestStatus('idle');
-      }
+      // form, so we go straight to `idle` (which will then show the unsaved
+      // hint). The toast still confirms the snapshot that was persisted.
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setSaveStatus('idle');
-      // 同步清 testStatus,避免 skip 路径进去后 testStatus='success' 残留
-      // 误导(上一次测试通过了,但这次保存本身失败了)
-      setTestStatus('idle');
-      // Funnel the IPC write error through the same inline channel.
-      setLastTestResult({
-        ok: false,
-        latencyMs: 0,
-        modelId: localConfig.model,
-        summary: '',
-        error: { kind: 'other', message: msg },
-      });
+      // 保存失败时清理测试状态，避免上一次测试成功的状态残留。
+      setIsTesting(false);
+      toast.error(`${t('preferences.agent.saveFailed')}: ${msg}`);
       console.error('[AgentSection] Failed to save ai_config:', err);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleTest = async () => {
     if (!localConfig) return;
-    setTestStatus('testing');
-    await runProbe(localConfig, JSON.stringify(localConfig));
-    // runProbe already updates testStatus / lastTestResult; nothing else
-    // to do here. We keep the test status visible until the user changes
-    // the form (which `updateField` / `updateProvider` doesn't clear
-    // automatically — see "stale result" caveat in the section comments).
+    setIsTesting(true);
+    try {
+      await runProbe(localConfig, JSON.stringify(localConfig));
+    } finally {
+      setIsTesting(false);
+    }
+    // runProbe shows the result through the shared toast.
   };
 
   /**
-   * Shared probe entry point. Updates both `testStatus` and the shared
-   * `lastTestResult` / `lastTestedSnapshot` so callers (Test button, Save
-   * button) paint a consistent picture.
+   * Shared probe entry point. Success/failure is shown
+   * through the shared toast component.
    *
    * Returns the result on success, or `null` when the IPC itself threw
-   * (in which case `testStatus` is left in `failed` and a toast was fired).
+   * through the shared toast. The caller owns the in-flight flag.
    *
    * **Stale-result guard**: if the form changed *between* the call into
    * `runProbe` and the probe resolving, we drop the result. Without this,
    * the user could see a green "Success (230ms)" badge attached to a form
-   * that's no longer the one we just verified — and worse, `skipProbe` on
-   * the next Save would trust the stale snapshot.
+   * that's no longer the one we just verified.
    */
   const runProbe = async (
     cfg: AgentConfig,
@@ -788,24 +706,19 @@ export function AgentSection({
       if (snapshot !== JSON.stringify(localConfigRef.current)) {
         return null;
       }
-      setLastTestResult(result);
-      setLastTestedSnapshot(snapshot);
       if (result.ok) {
-        setTestStatus('success');
-        // No auto-clear: the success badge should stay visible until the
-        // user types something (which clears `testStatus` via the
-        // `updateField` / `updateProvider` / `updateApiKey` helpers) or
-        // performs another operation. A 3s timer used to flicker the
-        // badge away while the user was still reading the latency.
+        toast.success(t('preferences.agent.testSuccess', { ms: result.latencyMs }));
       } else {
-        setTestStatus('failed');
+        const errorKind = formatErrorKind(result.error?.kind, t);
+        const detail = result.error?.message?.trim();
+        toast.error(detail ? `${errorKind}: ${detail}` : errorKind);
       }
       return result;
     } catch (err) {
       // The IPC always returns TestConnectionResult-shaped data; we only
       // land here when the command itself threw (network to the Tauri
       // host, JSON parse, command missing, ...). Wrap as `Other` and
-      // surface through the inline channel — no toast.
+      // surface through the shared toast.
       const message = err instanceof Error ? err.message : String(err);
       const fallback: TestConnectionResult = {
         ok: false,
@@ -814,8 +727,7 @@ export function AgentSection({
         summary: '',
         error: { kind: 'other', message },
       };
-      setLastTestResult(fallback);
-      setTestStatus('failed');
+      toast.error(`${formatErrorKind(fallback.error?.kind, t)}: ${message}`);
       console.error('[AgentSection] test_ai_connection IPC threw:', err);
       return null;
     }
@@ -824,9 +736,6 @@ export function AgentSection({
   const updateField = <K extends keyof AgentConfig>(field: K, value: AgentConfig[K]) => {
     if (!localConfig) return;
     setLocalConfig({ ...localConfig, [field]: value });
-    // Any form edit invalidates the "last tested" green checkmark —
-    // otherwise the user could think the current form is still verified.
-    setTestStatus((s) => (s === 'testing' ? s : 'idle'));
   };
 
   const updateProvider = (provider: string) => {
@@ -837,11 +746,20 @@ export function AgentSection({
       // as the custom-provider draft so the user can explicitly repair it.
       const savedExistingCustom = savedConfig &&
         savedConfig.models?.length &&
-        (Boolean(savedConfig.providerId?.trim()) ||
+        (Boolean(savedConfig.providerId?.trim()) &&
+          !modelCatalog?.providers.some((entry) => entry.provider === savedConfig.provider) &&
+          !providerConfigs.some((config) =>
+            (config.providerId?.trim() || config.provider) === savedConfig.provider,
+          ) &&
           !catalogProviderFor(savedConfig.provider, modelCatalog))
         ? savedConfig
         : null;
-      const existingCustomConfig = localConfig.providerId?.trim()
+      const existingCustomConfig = localConfig.providerId?.trim() &&
+        !modelCatalog?.providers.some((entry) => entry.provider === localConfig.provider) &&
+        !providerConfigs.some((config) =>
+          (config.providerId?.trim() || config.provider) === localConfig.provider,
+        ) &&
+        !catalogProviderFor(localConfig.provider, modelCatalog)
         ? localConfig
         : savedExistingCustom;
       const isExistingCustom = Boolean(existingCustomConfig);
@@ -880,6 +798,14 @@ export function AgentSection({
     }
     const defaults =
       providerDefaults(provider) ?? catalogProviderDefaults(provider, modelCatalog);
+    const catalogEntry = modelDirectory
+      ? modelCatalog?.providers.find((entry) => entry.provider === provider)
+      : undefined;
+    const configuredEntry = modelDirectory
+      ? providerConfigs.find((config) =>
+          (config.providerId?.trim() || config.provider) === provider,
+        )
+      : undefined;
     const preserveModelDirectory = Boolean(
       modelDirectory &&
       modelFormMode &&
@@ -892,16 +818,16 @@ export function AgentSection({
       // selected catalog route in the persisted providerId instead of routing
       // every provider through a Flowix-specific alias.
       providerId: provider,
-      displayName: '',
-      apiProtocol: '',
+      displayName: catalogEntry?.displayName ?? configuredEntry?.displayName ?? '',
+      apiProtocol: catalogEntry?.api ?? configuredEntry?.apiProtocol ?? '',
       models: preserveModelDirectory ? localConfig.models ?? savedConfig?.models ?? [] : [],
       ...(defaults ?? {}),
     });
     setDiscoveredModels([]);
     setModelDiscoveryError(null);
+    discoveryRequestRef.current += 1;
     setShowCustomProviderForm(false);
     setCustomProviderFormMode(null);
-    setTestStatus((s) => (s === 'testing' ? s : 'idle'));
   };
 
   /** API key change goes through its own helper because the apiKey input
@@ -918,20 +844,23 @@ export function AgentSection({
       apiKeys: { ...localConfig.apiKeys, [keyBucket]: value },
       credentialConfigured: value.trim().length > 0,
     });
-    setTestStatus((s) => (s === 'testing' ? s : 'idle'));
   };
 
   const discoverModels = async () => {
     if (!modelDirectory || !localConfig) return;
+    const requestId = ++discoveryRequestRef.current;
+    const providerAtRequest = localConfig.provider;
     setModelDiscoveryBusy(true);
     setModelDiscoveryError(null);
     try {
       const result = await modelDirectory.discoverModels(localConfig);
+      if (requestId !== discoveryRequestRef.current || localConfigRef.current?.provider !== providerAtRequest) return;
       setDiscoveredModels(result.models);
     } catch (error) {
+      if (requestId !== discoveryRequestRef.current) return;
       setModelDiscoveryError(error instanceof Error ? error.message : String(error));
     } finally {
-      setModelDiscoveryBusy(false);
+      if (requestId === discoveryRequestRef.current) setModelDiscoveryBusy(false);
     }
   };
 
@@ -939,7 +868,11 @@ export function AgentSection({
    * Persist it immediately from the inline form so its route ID, protocol, and
    * model directory stay together in the Harness settings document. */
   const createCustomProvider = async (draft: CustomProviderDraft): Promise<string | null> => {
-    if (!localConfig) return t('preferences.agent.provider.customError');
+    const reject = (message: string): string => {
+      toast.error(message);
+      return message;
+    };
+    if (!localConfig) return reject(t('preferences.agent.provider.customError'));
     const id = draft.id.trim();
     const displayName = draft.displayName.trim();
     const apiUrl = draft.apiUrl.trim().replace(/\/+$/, '');
@@ -947,10 +880,10 @@ export function AgentSection({
       .map((model) => ({ id: model.id.trim(), name: model.name.trim() }))
       .filter((model) => model.id.length > 0);
     if (new Set(models.map((model) => model.id)).size !== models.length) {
-      return t('preferences.agent.provider.customDuplicateModelError');
+      return reject(t('preferences.agent.provider.customDuplicateModelError'));
     }
     if (!CUSTOM_PROVIDER_ID_PATTERN.test(id)) {
-      return t('preferences.agent.provider.customIdError');
+      return reject(t('preferences.agent.provider.customIdError'));
     }
     if (
       !displayName ||
@@ -958,7 +891,7 @@ export function AgentSection({
       !draft.apiKey.trim() ||
       models.length === 0
     ) {
-      return t('preferences.agent.provider.customError');
+      return reject(t('preferences.agent.provider.customError'));
     }
     const formMode = customProviderFormMode;
     const existingModels = (localConfig.models ?? [])
@@ -1032,10 +965,9 @@ export function AgentSection({
       if (listed) setProviderConfigs(listed.map((entry) => entry.model));
       setLocalConfig(persistedConfig);
       setSavedConfig(persistedConfig);
-      setLastTestResult(null);
-      setLastTestedSnapshot(null);
-      setSaveStatus('saved');
-      setTestStatus('idle');
+      setIsSaving(false);
+      setIsTesting(false);
+      toast.success(t('preferences.agent.saved'));
       setDiscoveredModels([]);
       setModelDiscoveryError(null);
       setShowCustomProviderForm(false);
@@ -1045,7 +977,9 @@ export function AgentSection({
       return null;
     } catch (error) {
       console.error('[AgentSection] Failed to create custom DSH provider:', error);
-      return error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(`${t('preferences.agent.saveFailed')}: ${message}`);
+      return message;
     }
   };
 
@@ -1069,7 +1003,6 @@ export function AgentSection({
     if (!cardIsCustomProvider) {
       setShowCustomProviderForm(false);
       setCustomProviderFormMode(null);
-      setModelManagementError(null);
       return;
     }
     const model = (cardConfig.models ?? []).find((entry) => entry.id === card.id);
@@ -1087,7 +1020,6 @@ export function AgentSection({
     });
     setCustomProviderFormMode({ kind: 'edit', modelId: card.id, providerId: routeKey });
     setShowCustomProviderForm(true);
-    setModelManagementError(null);
   };
 
   const addCustomModel = () => {
@@ -1111,7 +1043,6 @@ export function AgentSection({
     setModelFormMode({ kind: 'add' });
     setShowModelForm(true);
     setShowCustomProviderForm(false);
-    setModelManagementError(null);
   };
 
   const cancelModelForm = () => {
@@ -1120,7 +1051,6 @@ export function AgentSection({
     setCustomProviderFormMode(null);
     setShowModelForm(false);
     setModelFormMode(null);
-    setModelManagementError(null);
   };
 
   /** Remove one model from the persisted custom provider directory. The
@@ -1150,7 +1080,6 @@ export function AgentSection({
       ? nextConfig
       : { ...DEFAULT_CONFIG, apiKeys: {} };
     setModelManagementBusy(true);
-    setModelManagementError(null);
     try {
       await configStore.set(nextConfig);
       const listed = modelDirectory && configStore.list
@@ -1160,10 +1089,9 @@ export function AgentSection({
       if (listed) setProviderConfigs(listed.map((entry) => entry.model));
       setLocalConfig(nextActiveConfig);
       setSavedConfig(nextActiveConfig);
-      setLastTestResult(null);
-      setLastTestedSnapshot(null);
-      setTestStatus('idle');
-      setSaveStatus('saved');
+      setIsTesting(false);
+      setIsSaving(false);
+      toast.success(t('preferences.agent.saved'));
       if (customProviderFormMode?.kind === 'edit' && customProviderFormMode.modelId === card.id) {
         setShowCustomProviderForm(false);
         setCustomProviderFormMode(null);
@@ -1172,7 +1100,7 @@ export function AgentSection({
       setModelFormMode(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setModelManagementError(message);
+      toast.error(`${t('preferences.agent.saveFailed')}: ${message}`);
       console.error('[AgentSection] Failed to delete custom DSH model:', error);
     } finally {
       setModelManagementBusy(false);
@@ -1199,8 +1127,13 @@ export function AgentSection({
     const catalogEntry = modelDirectory
       ? modelCatalog?.providers.find((entry) => entry.provider === cfg.provider)
       : undefined;
+    const configuredEntry = modelDirectory
+      ? providerConfigs.find((config) =>
+          (config.providerId?.trim() || config.provider) === cfg.provider,
+        )
+      : undefined;
     const keyRequired = modelDirectory
-      ? catalogEntry?.takesApiKey !== false
+      ? (catalogEntry?.takesApiKey ?? !configuredEntry)
       : cfg.provider !== 'Ollama' && cfg.provider !== 'OpenAI Compatible';
     const keyBucket = cfg.providerId?.trim() || cfg.provider;
     if (keyRequired && !cfg.credentialConfigured && (cfg.apiKeys[keyBucket] ?? '').trim() === '') {
@@ -1211,7 +1144,7 @@ export function AgentSection({
       return translate('preferences.agent.error.badUrl');
     }
     const urlRequired = modelDirectory
-      ? !catalogEntry?.baseUrl
+      ? !(catalogEntry?.baseUrl ?? configuredEntry?.apiUrl)
       : cfg.provider === 'Ollama' || cfg.provider === 'OpenAI Compatible';
     if (urlRequired && url === '') {
       return translate('preferences.agent.error.badUrl');
@@ -1292,8 +1225,9 @@ export function AgentSection({
       (entry) => entry.provider === localConfig.provider,
     ),
   );
+  const isConfiguredProvider = Boolean(currentConfiguredProvider);
   const isCustomProvider = Boolean(
-    modelDirectory && localConfig.providerId?.trim() && !isCatalogProvider,
+    modelDirectory && localConfig.providerId?.trim() && !isCatalogProvider && !isConfiguredProvider,
   );
   const catalogProvider = modelDirectory
     ? localConfig.provider
@@ -1302,15 +1236,18 @@ export function AgentSection({
     (provider) => provider.provider === catalogProvider,
   )?.models ?? [];
   const customModels = isCustomProvider ? localConfig.models ?? [] : [];
-  const dynamicModels = customModels.length > 0
+  const savedModels = localConfig.models ?? [];
+  const dynamicModels = isCustomProvider && customModels.length > 0
     ? customModels
-    : catalogModels.length > 0
-      ? catalogModels
-      : discoveredModels;
+    : savedModels.length > 0
+      ? savedModels
+      : discoveredModels.length > 0
+        ? discoveredModels
+        : catalogModels;
   const dynamicModelOptions = dynamicModels.length > 0
     ? [...new Set(dynamicModels.map((model) => model.id))]
     : undefined;
-  const selectedModel = [...customModels, ...catalogModels, ...discoveredModels].find(
+  const selectedModel = [...savedModels, ...customModels, ...catalogModels, ...discoveredModels].find(
     (model) => model.id === localConfig.model,
   );
   const selectedModelContextWindow = selectedModel && 'contextWindow' in selectedModel
@@ -1325,18 +1262,28 @@ export function AgentSection({
   const baseUrlPlaceholder = providerBaseUrlHint(localConfig.provider) ?? 'Provider default';
   const hideBaseUrlField = !modelDirectory && isCodingPlanProvider(localConfig.provider);
   const lockBaseUrl = !modelDirectory && isLockedBaseUrlProvider(localConfig.provider);
-  const apiKeyDescription =
+  const apiKeyDescription = (
     (!modelDirectory && localConfig.provider === 'Ollama') ||
     (modelDirectory && modelCatalog?.providers.find(
       (entry) => entry.provider === localConfig.provider,
     )?.takesApiKey === false)
+  )
       ? t('preferences.agent.apiKey.optionalDescription')
       : t('preferences.agent.apiKey.description');
 
-  // DSH is sourced exclusively from the installed llm-pi-ai catalog. The
-  // The fallback branch is retained only for legacy single-route settings.
+  // DSH providers come from the appserver catalog and saved routes. If the
+  // catalog is temporarily unavailable, saved routes remain selectable.
   const providerOptions: ProviderOption[] = modelDirectory
-    ? catalogProviderOptions(modelCatalog)
+    ? [
+        ...catalogProviderOptions(modelCatalog),
+        ...providerConfigs.map((config) => ({
+          id: config.providerId?.trim() || config.provider,
+          label: config.displayName?.trim() || config.provider,
+          region: 0 as const,
+        })),
+      ].filter((option, index, all) =>
+        all.findIndex((candidate) => candidate.id === option.id) === index,
+      )
     : [...PROVIDER_OPTIONS];
   const visibleProviderOptions = (modelDirectory
     ? providerOptions
@@ -1364,6 +1311,8 @@ export function AgentSection({
     });
     if (
       localConfig.providerId?.trim() &&
+      !isCatalogProvider &&
+      !isConfiguredProvider &&
       !visibleProviderOptions.some((option) => option.id === localConfig.provider)
     ) {
       visibleProviderOptions.splice(1, 0, {
@@ -1444,6 +1393,32 @@ export function AgentSection({
   // Add/Edit and stays closed while the saved model cards are being browsed.
   // Legacy single-route settings keep their original always-visible form.
   const showGenericModelConfiguration = !modelDirectory || showModelForm;
+
+  const renderOperationActions = (includeCancel: boolean) => (
+    <div className="flex min-h-[2.25rem] items-center gap-3">
+      {includeCancel && (
+        <Button variant="outline" onClick={cancelModelForm}>
+          {t('common.cancel')}
+        </Button>
+      )}
+      <Button type="button" onClick={() => void handleSave()} disabled={isBusy}>
+        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('preferences.agent.save')}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => void handleTest()}
+        disabled={isBusy}
+      >
+        {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('preferences.agent.test')}
+      </Button>
+      <div className="flex items-center gap-1 text-xs" aria-live="polite">
+        {isTesting && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.testing')}</span>}
+        {isSaving && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.saving')}</span>}
+        {!isBusy && isDirty && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.unsaved')}</span>}
+      </div>
+    </div>
+  );
 
   const renderModelConfiguration = () => (
     <div className="space-y-4">
@@ -1532,7 +1507,7 @@ export function AgentSection({
                   {selectedModelMaxTokens ? ` · ${Math.round(selectedModelMaxTokens / 1024)}K output` : ''}
                 </span>
               )}
-              {modelDirectory && !isCustomProvider && !catalogModels.length && (
+              {modelDirectory && !isCustomProvider && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -1577,48 +1552,7 @@ export function AgentSection({
         </>
       ) : null}
 
-      {!showCustomProviderForm && showGenericModelConfiguration && (
-        <div className="flex min-h-[2.25rem] items-center gap-3">
-          {modelDirectory && (
-            <Button variant="outline" onClick={cancelModelForm}>
-              {t('common.cancel')}
-            </Button>
-          )}
-          <Button onClick={handleSave} disabled={!isDirty || isBusy}>
-            {opStatus === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('preferences.agent.save')}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={handleTest}
-            disabled={testStatus === 'testing' || isBusy}
-          >
-            {opStatus === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('preferences.agent.test')}
-          </Button>
-          <div className="flex items-center gap-1 text-xs">
-            {opStatus === 'testing' && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.testing')}</span>}
-            {opStatus === 'saving' && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.saving')}</span>}
-            {opStatus === 'failed' && lastTestResult?.error && (
-              <span className="flex items-center gap-1 text-[var(--destructive)]" title={lastTestResult.error.message}>
-                <XCircle className="h-3.5 w-3.5" />
-                {formatErrorKind(lastTestResult.error.kind, t)}
-              </span>
-            )}
-            {opStatus === 'idle' && isDirty && <span className="text-[var(--muted-foreground)]">{t('preferences.agent.unsaved')}</span>}
-            {opStatus === 'idle' && !isDirty && lastTestResult?.ok && (
-              <span className="flex items-center gap-1 text-[var(--success)]" title={lastTestResult.summary || undefined}>
-                <Check className="h-3.5 w-3.5" />
-                {t('preferences.agent.testSuccess', { ms: lastTestResult.latencyMs })}
-              </span>
-            )}
-            {opStatus === 'idle' && !isDirty && lastTestResult?.error && (
-              <span className="flex items-center gap-1 text-[var(--destructive)]" title={lastTestResult.error.message}>
-                <XCircle className="h-3.5 w-3.5" />
-                {formatErrorKind(lastTestResult.error.kind, t)}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+      {!showCustomProviderForm && showGenericModelConfiguration && renderOperationActions(Boolean(modelDirectory))}
     </div>
   );
 
@@ -1631,9 +1565,7 @@ export function AgentSection({
       />
       <div className="border-b border-[var(--divider)]" />
 
-      <div className={modelDirectory
-        ? 'space-y-4'
-        : 'space-y-4'}>
+      <div className="space-y-4">
         {modelDirectory && (
           <ConfiguredModelsList
             models={configuredModels}
@@ -1648,7 +1580,6 @@ export function AgentSection({
             onEdit={editCustomModel}
             onDelete={(model) => void deleteCustomModel(model)}
             busy={modelManagementBusy || isBusy || showModelForm}
-            error={modelManagementError}
           />
         )}
 
@@ -1745,7 +1676,7 @@ export function AgentSection({
                 {selectedModelMaxTokens ? ` · ${Math.round(selectedModelMaxTokens / 1024)}K output` : ''}
               </span>
             )}
-            {modelDirectory && !isCustomProvider && !catalogModels.length && (
+            {modelDirectory && !isCustomProvider && (
               <Button
                 type="button"
                 variant="ghost"
@@ -1799,85 +1730,9 @@ export function AgentSection({
         ) : null)}
       </div>
 
-      {/* 底部操作区: 保存 + 测试 + 合并提示区,全部从左到右排一行。
-          提示区按 `opStatus` 优先级显示唯一一个状态 — 不再分两块,
-          不再 toast,错误只在提示区出现一次。 */}
-      {!modelDirectory && !showCustomProviderForm && showGenericModelConfiguration && <div className="flex items-center gap-3 min-h-[2.25rem]">
-        {modelDirectory && (
-          <Button variant="outline" onClick={cancelModelForm}>
-            {t('common.cancel')}
-          </Button>
-        )}
-        <Button
-          onClick={handleSave}
-          disabled={!isDirty || isBusy}
-        >
-          {opStatus === 'saving' ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            t('preferences.agent.save')
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={handleTest}
-          disabled={testStatus === 'testing' || isBusy}
-        >
-          {opStatus === 'testing' ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            t('preferences.agent.test')
-          )}
-        </Button>
-
-        {/* 合并的提示区 — 一次只显示一个状态,无 toast */}
-        <div className="flex items-center gap-1 text-xs">
-          {opStatus === 'testing' && (
-            <span className="text-[var(--muted-foreground)]">
-              {t('preferences.agent.testing')}
-            </span>
-          )}
-          {opStatus === 'saving' && (
-            <span className="text-[var(--muted-foreground)]">
-              {t('preferences.agent.saving')}
-            </span>
-          )}
-          {opStatus === 'failed' && lastTestResult?.error && (
-            <span
-              className="flex items-center gap-1 text-[var(--destructive)]"
-              title={lastTestResult.error.message}
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              {formatErrorKind(lastTestResult.error.kind, t)}
-            </span>
-          )}
-          {opStatus === 'idle' && isDirty && (
-            <span className="text-[var(--muted-foreground)]">
-              {t('preferences.agent.unsaved')}
-            </span>
-          )}
-          {opStatus === 'idle' && !isDirty && lastTestResult?.ok && (
-            <span
-              className="flex items-center gap-1 text-[var(--success)]"
-              title={lastTestResult.summary || undefined}
-            >
-              <Check className="w-3.5 h-3.5" />
-              {t('preferences.agent.testSuccess', {
-                ms: lastTestResult.latencyMs,
-              })}
-            </span>
-          )}
-          {opStatus === 'idle' && !isDirty && lastTestResult?.error && (
-            <span
-              className="flex items-center gap-1 text-[var(--destructive)]"
-              title={lastTestResult.error.message}
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              {formatErrorKind(lastTestResult.error.kind, t)}
-            </span>
-          )}
-        </div>
-      </div>}
+      {/* 底部操作区: 保存 + 测试 + 进行中/未保存提示,全部从左到右排一行。
+          成功/失败通过公共 toast 展示。 */}
+      {!modelDirectory && !showCustomProviderForm && showGenericModelConfiguration && renderOperationActions(false)}
 
     </div>
     </>
@@ -1902,7 +1757,6 @@ function ConfiguredModelsList({
   onEdit,
   onDelete,
   busy,
-  error,
 }: {
   models: ConfiguredModelCard[];
   selectedModelId: string;
@@ -1914,7 +1768,6 @@ function ConfiguredModelsList({
   onEdit: (model: ConfiguredModelCard) => void;
   onDelete: (model: ConfiguredModelCard) => void;
   busy: boolean;
-  error: string | null;
 }) {
   const { t } = useI18n();
 
@@ -2016,7 +1869,6 @@ function ConfiguredModelsList({
         {t('preferences.agent.provider.customAddModel')}
       </Button>
 
-      {error && <p className="text-xs text-[var(--destructive)]">{error}</p>}
     </section>
   );
 }
@@ -2036,7 +1888,6 @@ function CustomProviderInlineForm({
 }) {
   const { t } = useI18n();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const updateModel = (index: number, field: 'id' | 'name', value: string) => {
     onDraftChange({
@@ -2049,10 +1900,12 @@ function CustomProviderInlineForm({
 
   const submit = async () => {
     setSubmitting(true);
-    const nextError = await onCreate(draft);
+    await onCreate(draft);
     setSubmitting(false);
-    setError(nextError);
-    if (!nextError) onCancel();
+    // `onCreate` commits the provider and closes the editor after it has
+    // received the persisted route. Calling onCancel here as well can run
+    // before the parent's savedConfig ref has refreshed and restore the old
+    // draft, making a successful save look as if it did nothing.
   };
 
   return (
@@ -2160,7 +2013,6 @@ function CustomProviderInlineForm({
               {t('preferences.agent.provider.customAddModel')}
             </Button>
           </div>
-          {error && <p className="text-sm text-[var(--destructive)]">{error}</p>}
           <div className="flex justify-start gap-2 pt-1">
             <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
               {t('common.cancel')}

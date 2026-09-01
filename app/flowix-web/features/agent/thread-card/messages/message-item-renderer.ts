@@ -18,7 +18,6 @@ import {
   renderAgentThreadCardMarkdownToHtml,
 } from "@features/agent/thread-card/agent-thread-card-markdown";
 import {
-  createAgentThreadCardCommandPreview,
   createAgentThreadCardMessageFallback,
 } from "@features/agent/thread-card/agent-thread-card-command-renderer";
 import {
@@ -30,11 +29,6 @@ import {
   createChevronIcon,
   createToolIcon,
 } from "@features/agent/thread-card/agent-thread-card-icons";
-import {
-  getShiki,
-  loadHighlighter,
-  loadLanguage,
-} from "@features/editor/extensions/codeblock-shiki/shiki/shiki-highlighter";
 
 type AgentMessage = ThreadState["messages"][number];
 
@@ -206,55 +200,84 @@ function directChildDisplayToggle(parent: HTMLElement): HTMLButtonElement | null
   return null;
 }
 
-/**
- * Highlight the expanded command with the same Shiki token colors used by
- * editor code blocks. The plain text is rendered synchronously first so a
- * lazy grammar/WASM load never delays the tool message itself.
- */
-async function highlightAgentCommandDetails(
-  details: HTMLPreElement,
-  source: string,
-): Promise<void> {
-  try {
-    await loadHighlighter();
-    await loadLanguage("shellscript");
-    const highlighter = getShiki();
-    if (!highlighter || details.dataset.commandSource !== source) return;
+function createExpandableToolContent(options: {
+  message: AgentMessage;
+  text: string;
+  language: AppLanguage;
+  getDisplayExpanded: (message: AgentMessage) => boolean;
+  setDisplayExpanded: (messageId: string, expanded: boolean) => void;
+}): HTMLDivElement {
+  const {
+    message,
+    text,
+    language,
+    getDisplayExpanded,
+    setDisplayExpanded,
+  } = options;
+  const content = document.createElement("div");
+  content.className = "agent-thread-card__message-tool-content";
 
-    const cssTheme = typeof document !== "undefined"
-      ? getComputedStyle(document.documentElement)
-        .getPropertyValue("--shiki-theme")
-        .trim()
-      : "";
-    const fallbackTheme = document.documentElement.classList.contains("dark")
-      ? "github-dark"
-      : "github-light";
-    const theme = highlighter.getLoadedThemes().includes(cssTheme || fallbackTheme)
-      ? (cssTheme || fallbackTheme)
-      : highlighter.getLoadedThemes()[0];
-    if (!theme) return;
+  const summary = document.createElement("span");
+  summary.className = "agent-thread-card__message-tool-summary";
+  summary.textContent = text;
+  summary.title = text;
+  content.append(summary);
 
-    const lines = highlighter.codeToTokensBase(source, {
-      lang: "shellscript",
-      theme,
+  let isExpanded = getDisplayExpanded(message);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "agent-thread-card__message-tool-toggle";
+  toggle.append(createChevronIcon("down"));
+
+  const syncToggleVisibility = () => {
+    if (!content.isConnected) return;
+    // Measure the collapsed text with the button removed. Otherwise the
+    // button consumes width and can keep itself visible even when the full
+    // single-line text would fit without it.
+    if (!isExpanded && toggle.isConnected) toggle.remove();
+    const shouldShow =
+      isExpanded || summary.scrollWidth > summary.clientWidth + 1;
+    if (shouldShow && !toggle.isConnected) content.append(toggle);
+    else if (!shouldShow && toggle.isConnected) toggle.remove();
+  };
+
+  const applyExpandedState = (expanded: boolean) => {
+    isExpanded = expanded;
+    content.classList.toggle(
+      "agent-thread-card__message-tool-content--expanded",
+      expanded,
+    );
+    toggle.setAttribute("aria-expanded", String(expanded));
+    const label = translate(
+      language,
+      expanded ? "agent.tool.collapse" : "agent.tool.expand",
+    );
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    syncToggleVisibility();
+  };
+
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const nextExpanded = !isExpanded;
+    setDisplayExpanded(message.id, nextExpanded);
+    applyExpandedState(nextExpanded);
+  });
+  toggle.addEventListener("mousedown", (event) => event.stopPropagation());
+  if (isExpanded) content.append(toggle);
+  applyExpandedState(isExpanded);
+  requestAnimationFrame(syncToggleVisibility);
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      if (!content.isConnected) {
+        observer.disconnect();
+        return;
+      }
+      syncToggleVisibility();
     });
-    const code = document.createElement("code");
-    code.className = "agent-thread-card__command-code";
-
-    lines.forEach((line, lineIndex) => {
-      line.forEach((token) => {
-        const span = document.createElement("span");
-        span.textContent = token.content;
-        if (token.color) span.style.color = token.color;
-        code.append(span);
-      });
-      if (lineIndex < lines.length - 1) code.append(document.createTextNode("\n"));
-    });
-
-    details.replaceChildren(code);
-  } catch {
-    // Keep the synchronous plain-text fallback if Shiki cannot load.
+    observer.observe(content);
   }
+  return content;
 }
 
 /**
@@ -522,122 +545,26 @@ export function createAgentThreadCardMessageElement(options: {
   try {
     if (message.role === "tool") {
       const icon = createToolIcon(message.toolName, message.toolAgentType);
+      const iconWrap = document.createElement("span");
+      iconWrap.className = "agent-thread-card__message-tool-icon-wrap";
+      iconWrap.append(icon);
       const name = document.createElement("span");
       name.className = "agent-thread-card__message-tool-name";
       name.textContent = messageView.toolLabel;
       const command = parseAgentCommandInput(message.toolInput);
-      // The command parser is the source of truth for the command layout.
-      // `toolDisplay` is derived metadata and is not guaranteed to survive
-      // Codex history projection/reconciliation, while the raw command input
-      // is present in both the live and replay paths. Gating the expanded
-      // renderer on toolDisplay.kind makes the same tool switch between a
-      // command list while streaming and a single summary after completion.
-      if (command) {
-        item.classList.add("agent-thread-card__message--tool-command");
-        const head = document.createElement("div");
-        head.className = "agent-thread-card__message-tool-head";
-        head.append(icon, name);
-        const body = document.createElement("div");
-        body.className = "agent-thread-card__message-tool-body";
-        let isExpanded = getDisplayExpanded(message);
-        const previewRow = document.createElement("div");
-        previewRow.className = "agent-thread-card__command-preview-row";
-        const preview = createAgentThreadCardCommandPreview(command);
-        const expandToggle = document.createElement("button");
-        expandToggle.type = "button";
-        expandToggle.className = "agent-thread-card__command-toggle";
-        expandToggle.setAttribute("aria-expanded", String(isExpanded));
-        expandToggle.setAttribute(
-          "aria-label",
-          translate(language, "agent.tool.expand"),
-        );
-        expandToggle.title = translate(language, "agent.tool.expand");
-        expandToggle.append(createChevronIcon("down"));
-
-        const details = document.createElement("pre");
-        details.className = "agent-thread-card__command-details";
-        const commandText = agentCommandListToText(command);
-        details.textContent = commandText;
-        details.dataset.commandSource = commandText;
-        details.hidden = !isExpanded;
-        void highlightAgentCommandDetails(details, commandText);
-
-        const collapseRow = document.createElement("div");
-        collapseRow.className = "agent-thread-card__command-collapse-row";
-        collapseRow.hidden = !isExpanded;
-        const collapseToggle = document.createElement("button");
-        collapseToggle.type = "button";
-        collapseToggle.className =
-          "agent-thread-card__command-collapse-toggle";
-        collapseToggle.setAttribute("aria-expanded", String(isExpanded));
-        collapseToggle.setAttribute(
-          "aria-label",
-          translate(language, "agent.tool.collapse"),
-        );
-        collapseToggle.title = translate(language, "agent.tool.collapse");
-        collapseToggle.append(createChevronIcon("up"));
-        collapseRow.append(collapseToggle);
-
-        const updateExpandedState = (nextExpanded: boolean) => {
-          setDisplayExpanded(message.id, nextExpanded);
-          isExpanded = nextExpanded;
-          previewRow.hidden = nextExpanded;
-          details.hidden = !nextExpanded;
-          collapseRow.hidden = !nextExpanded;
-          expandToggle.setAttribute("aria-expanded", String(nextExpanded));
-          collapseToggle.setAttribute("aria-expanded", String(nextExpanded));
-        };
-
-        expandToggle.onclick = (event) => {
-          event.stopPropagation();
-          updateExpandedState(true);
-        };
-        expandToggle.onmousedown = (event) => {
-          event.stopPropagation();
-        };
-        collapseToggle.onclick = (event) => {
-          event.stopPropagation();
-          updateExpandedState(false);
-        };
-        collapseToggle.onmousedown = (event) => {
-          event.stopPropagation();
-        };
-
-        previewRow.hidden = isExpanded;
-        previewRow.append(preview, expandToggle);
-        body.append(previewRow, details, collapseRow);
-        item.append(head, body);
-      } else {
-        item.append(icon, name);
-        const summaryText = truncateToolMessageForDisplay(
-          messageView.toolSummary,
-        );
-        if (
-          message.toolAgentType === "codex" &&
-          message.toolName === "mcp_tool_call"
-        ) {
-          const separatorIndex = summaryText.indexOf(" · ");
-          const concreteName = document.createElement("span");
-          concreteName.className =
-            "agent-thread-card__message-tool-concrete-name";
-          concreteName.textContent = separatorIndex >= 0
-            ? summaryText.slice(0, separatorIndex)
-            : summaryText;
-          item.append(concreteName);
-
-          if (separatorIndex >= 0) {
-            const summary = document.createElement("span");
-            summary.className = "agent-thread-card__message-tool-summary";
-            summary.textContent = summaryText.slice(separatorIndex + 3);
-            item.append(summary);
-          }
-        } else {
-          const summary = document.createElement("span");
-          summary.className = "agent-thread-card__message-tool-summary";
-          summary.textContent = summaryText;
-          item.append(summary);
-        }
-      }
+      // Raw command input remains the command source of truth across live and
+      // replay paths, but commands and other tools now share one display DOM.
+      const toolText = command
+        ? agentCommandListToText(command)
+        : truncateToolMessageForDisplay(messageView.toolSummary);
+      const content = createExpandableToolContent({
+        message,
+        text: toolText,
+        language,
+        getDisplayExpanded,
+        setDisplayExpanded,
+      });
+      item.append(iconWrap, name, content);
     } else if (message.role === "end") {
       const content = document.createElement("div");
       content.className = "agent-thread-card__message-content";

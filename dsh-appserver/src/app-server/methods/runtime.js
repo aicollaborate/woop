@@ -4,7 +4,5 @@ export function runtimeMethods(adapter) {
   return {
     'runtime/capabilities': capabilities,
     'runtime/status': status,
-    'flowix.bridge.capabilities': capabilities,
-    'flowix.bridge.status': status,
   }
 }

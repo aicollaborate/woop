@@ -69,7 +69,8 @@ thread/close
 turn/start
 turn/interrupt
 
-model/list
+model/catalog
+model/discover
 model/config/read
 model/config/upsert
 model/config/remove
@@ -89,7 +90,7 @@ session/dispose
 run/cancel
 ```
 
-旧的 `models/*`、`credentials/*` 和 `flowix.bridge.*` 方法名保留为迁移别名，但不参与内部能力建模。
+协议只暴露一套 canonical 方法名；Flowix 自有扩展统一放在 `flowix/*` 下。
 
 ## Transport
 

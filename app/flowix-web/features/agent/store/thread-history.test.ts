@@ -386,6 +386,30 @@ describe("replaceCompletedRunWithHistory", () => {
     ]);
   });
 
+  it("anchors a repeated DSH prompt to the latest history user row", () => {
+    const existing = [
+      message("old-user", "user", "same prompt", "2026-01-01T00:00:00.000Z"),
+      message("old-assistant", "assistant", "old answer", "2026-01-01T00:00:01.000Z"),
+      message("msg:deepseek-harness:run-2:user:user-run-2", "user", "same prompt", "2026-01-01T00:00:02.000Z"),
+      message("live-assistant", "assistant", "current answer", "2026-01-01T00:00:03.000Z"),
+    ];
+    const history = [
+      message("provider-user-1", "user", "same prompt", "2026-01-01T00:00:00.000Z"),
+      message("provider-assistant-1", "assistant", "old answer", "2026-01-01T00:00:01.000Z"),
+      message("provider-user-2", "user", "same prompt", "2026-01-01T00:00:02.000Z"),
+      message("provider-assistant-2", "assistant", "current answer", "2026-01-01T00:00:03.000Z"),
+    ];
+
+    expect(
+      replaceCompletedRunWithHistory(
+        existing,
+        history,
+        "run-2",
+        "deepseek-harness",
+      ).map((item) => item.content),
+    ).toEqual(["same prompt", "old answer", "same prompt", "current answer"]);
+  });
+
   it("preserves live OpenCode tool display metadata during reconciliation", () => {
     const liveTool = {
       ...message(

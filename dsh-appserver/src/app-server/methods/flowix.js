@@ -2,7 +2,7 @@ import { requiredString } from '../protocol/json-rpc.js'
 
 /** Flowix-owned extensions which are intentionally outside the generic
  * Thread/Turn App Server surface. Keeping these under flowix/* lets Desktop
- * remove the legacy flowix.bridge plugin without coupling core protocol names
+ * keep Flowix-owned extensions separate from the generic App Server surface
  * to product-specific UI concerns. */
 export function flowixMethods(adapter) {
   return {

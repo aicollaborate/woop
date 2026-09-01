@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::config::{
-    catalog_provider_id, normalize_agent_preset, normalize_permission, resolve_runtime_config,
-    select_harness_config, PersistedRuntimeConfig,
+    normalize_agent_preset, normalize_permission, resolve_runtime_config, select_harness_config,
+    PersistedRuntimeConfig,
 };
 use super::discovery::timed_host_request;
 use super::error::{resolved_session_id, validate_plugin_key};
@@ -19,7 +19,7 @@ impl DeepSeekHarnessManager {
         let host = self.model_host().await?;
         let result = timed_host_request(
             &host.client(),
-            protocol::models_catalog_request(host.next_request_id()),
+            protocol::model_catalog_request(host.next_request_id()),
         )
         .await;
         result
@@ -132,15 +132,18 @@ impl DeepSeekHarnessManager {
         config: &AiModelConfig,
     ) -> Result<serde_json::Value, String> {
         let runtime_config = resolve_runtime_config(config, None)?;
-        let provider = catalog_provider_id(&runtime_config.provider_name);
+        // The route id is the pi-ai provider id for built-in routes. For a
+        // custom route it intentionally falls through to endpoint discovery;
+        // using the route here also lets newly-added pi-ai providers work
+        // without another Flowix provider mapping.
+        let provider = Some(runtime_config.provider.as_str());
         let host = self.model_host().await?;
-        let request = protocol::models_discover_request(
+        let request = protocol::model_discover_request(
             host.next_request_id(),
             provider,
             &runtime_config.base_url,
             &runtime_config.api_protocol,
             runtime_config.api_key.as_deref(),
-            &runtime_config.api_key_env,
         );
         let result = timed_host_request(&host.client(), request).await;
         result

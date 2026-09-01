@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 // @ts-ignore production JavaScript module
-import { assistantChunkText, projectNotifications, projectTurns } from '../src/app-server/adapters/event-projector.js'
+import { assistantChunkText, projectHistoryMessages, projectNotifications, projectTurns } from '../src/app-server/adapters/event-projector.js'
 
 describe('durable event projector', () => {
   it('rebuilds stable turns and items from DSH events', () => {
@@ -57,5 +57,33 @@ describe('durable event projector', () => {
         params: expect.objectContaining({ delta: 'hello' }),
       }),
     ])
+  })
+
+  it('projects reasoning and folds a tool call/result pair into one readable row', () => {
+    const messages = projectHistoryMessages('thread-a', [
+      { type: 'turn/start', seq: 1, data: { turn: 1 } },
+      { type: 'user/message', seq: 2, data: { id: 'u1', content: [{ type: 'text', text: 'inspect' }] } },
+      {
+        type: 'assistant/message', seq: 3, data: { message: { id: 'a1', content: [
+          { type: 'reasoning', text: 'I will inspect the file.' },
+          { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{"file_path":"a.txt"}' },
+        ] } },
+      },
+      { type: 'tool/call', seq: 4, data: { callId: 'call-1', name: 'read', arguments: '{"file_path":"a.txt"}' } },
+      {
+        type: 'tool/result', seq: 5, data: { message: { source: { kind: 'tool', callId: 'call-1' }, content: [
+          { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'alpha' }] },
+        ] } },
+      },
+    ])
+
+    expect(messages.map(message => message.role)).toEqual(['user', 'reasoning', 'assistant', 'tool'])
+    expect(messages[1].content).toBe('I will inspect the file.')
+    expect(messages[3]).toMatchObject({
+      id: 'call-1', content: 'alpha', toolData: 'alpha',
+      toolCallId: 'call-1', toolName: 'read', toolInput: { file_path: 'a.txt' },
+      isCompleted: true,
+    })
+    expect(new Set(messages.map(message => message.id)).size).toBe(messages.length)
   })
 })

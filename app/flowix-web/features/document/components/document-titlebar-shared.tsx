@@ -47,6 +47,10 @@ import { toast } from '@/lib/toast';
 import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
+import { AgentIcon } from '@features/agent/components/agent-icon';
+import { normalizeAgentTypeKey } from '@/lib/agent-types';
+import type { AgentTypeKey } from '@/types/agent';
+import { ICON_FULLSCREEN_EXIT_PATH } from '@features/agent/thread-card/agent-thread-card-icons';
 
 const logger = createLogger('document-titlebar');
 
@@ -100,6 +104,13 @@ export interface DocumentTitlebarProps {
 
 const AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT =
   'flowix:agent-thread-card-fullscreen-change';
+const AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT =
+  'flowix:agent-thread-card-request-fullscreen';
+
+interface AgentThreadCardFullscreenInfo {
+  title: string;
+  typeKey: AgentTypeKey;
+}
 
 /**
  * Document state for the titlebar. Exactly one is active at a time:
@@ -287,7 +298,18 @@ function hasFullscreenAgentThreadCard(): boolean {
   return !!document.querySelector('.agent-thread-card--fullscreen');
 }
 
-function useAgentThreadCardFullscreenActive(): boolean {
+function getFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | null {
+  if (typeof document === 'undefined') return null;
+  const card = document.querySelector<HTMLElement>('.agent-thread-card--fullscreen');
+  if (!card) return null;
+
+  return {
+    title: card.dataset.title?.trim() ?? '',
+    typeKey: normalizeAgentTypeKey(card.dataset.agentType),
+  };
+}
+
+export function useAgentThreadCardFullscreenActive(): boolean {
   const [active, setActive] = useState(false);
 
   useEffect(() => {
@@ -302,6 +324,82 @@ function useAgentThreadCardFullscreenActive(): boolean {
   }, []);
 
   return active;
+}
+
+function useFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | null {
+  const [info, setInfo] = useState<AgentThreadCardFullscreenInfo | null>(null);
+
+  useEffect(() => {
+    const update = () => setInfo(getFullscreenAgentThreadCardInfo());
+    update();
+
+    window.addEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
+
+    return () => {
+      window.removeEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
+    };
+  }, []);
+
+  return info;
+}
+
+/** The exit affordance for an embedded fullscreen Thread Card. */
+export function AgentThreadCardFullscreenExitButton({
+  className,
+}: {
+  className: string;
+}) {
+  const { t } = useI18n();
+  const active = useAgentThreadCardFullscreenActive();
+
+  if (!active) return null;
+
+  return (
+    <Tooltip content={t('editor.threadCard.exitFullscreen')}>
+      <button
+        type="button"
+        onClick={() => {
+          window.dispatchEvent(new CustomEvent(AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT, {
+            detail: { exitOthers: true },
+          }));
+        }}
+        aria-label={t('editor.threadCard.exitFullscreen')}
+        title={t('editor.threadCard.exitFullscreen')}
+        className={`${className} [-webkit-app-region:no-drag]`}
+      >
+        <svg
+          viewBox="0 0 256 256"
+          aria-hidden="true"
+          focusable="false"
+          className="agent-thread-card__fullscreen-icon"
+        >
+          <path d={ICON_FULLSCREEN_EXIT_PATH} fill="currentColor" />
+        </svg>
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Agent identity displayed in the document titlebar while a Thread Card is fullscreen. */
+export function AgentThreadCardFullscreenIdentity() {
+  const { t } = useI18n();
+  const info = useFullscreenAgentThreadCardInfo();
+
+  if (!info) return null;
+
+  return (
+    <div
+      data-tauri-drag-region
+      className="ml-2 flex min-w-0 items-center gap-2"
+    >
+      <span className="agent-type-badge shrink-0" aria-hidden="true">
+        <AgentIcon typeKey={info.typeKey} alt="" className="agent-type-badge__icon" />
+      </span>
+      <span className="min-w-0 truncate text-sm font-semibold leading-none text-[var(--foreground)]">
+        {info.title || t('common.untitled')}
+      </span>
+    </div>
+  );
 }
 
 function withoutHoverClasses(className: string): string {

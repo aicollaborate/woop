@@ -22,7 +22,7 @@ ctx.agents / ctx.sessions / sessionPersistence / ctx.llm / ctx.settings / ctx.cr
 - 方法按资源注册：增加接口时修改对应 `methods/<resource>.js`。
 - Adapter 不解析 JSON-RPC；handler 不访问 Cordis context。
 - Transport 只负责 framing、连接和健康检查。
-- 旧协议名称只作为 handler alias，不进入领域对象。
+- 只暴露一套 canonical 方法名，Flowix 自有扩展统一放在 `flowix/*` 下。
 - 请求经过有界 per-thread 队列：同一 Thread 串行，不同 Thread 并行；stdio framing 额外保持输入顺序。
 
 ## DSH 映射
@@ -36,7 +36,8 @@ ctx.agents / ctx.sessions / sessionPersistence / ctx.llm / ctx.settings / ctx.cr
 | `thread/list` | live catalog；冷启动时枚举 persistence |
 | `turn/start` | `agent.followup()`，由 DSH inbox 排队 |
 | `turn/interrupt` | `agent.cancel({ kind: 'user' }, { keepInbox: true })` |
-| `model/list` | `ctx.llm.discoverModels()` |
+| `model/catalog` | 已配置 provider route 的 catalog |
+| `model/discover` | `ctx.llm.discoverModels()` |
 | `model/config/*` | `ctx.settings` 的 `llm-pi-ai` namespace |
 | `credential/*` | `ctx.credentials` |
 

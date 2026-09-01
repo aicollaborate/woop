@@ -5,9 +5,21 @@ export function textOf(value) {
   if (typeof value === 'string') return value
   if (typeof value?.text === 'string') return value.text
   if (value?.message) return textOf(value.message)
-  if (Array.isArray(value?.content)) return value.content.map(block => typeof block === 'string' ? block : block?.text || '').join('')
+  if (Array.isArray(value)) return value.map(textOf).filter(Boolean).join('')
+  if (Array.isArray(value?.content)) return value.content.map(textOf).filter(Boolean).join('')
   if (typeof value?.content === 'string') return value.content
   return JSON.stringify(value)
+}
+
+function parseToolInput(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined
+  } catch (_) {
+    return undefined
+  }
 }
 
 export function messageFromEvent(threadId, event, toolNames = undefined) {
@@ -18,10 +30,11 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
       ? (data.message?.content ?? data.result ?? data.content ?? data)
       : undefined
     const input = event.type === 'tool/call' ? (data.arguments ?? data.input) : undefined
+    const resultText = result === undefined ? '' : textOf(result)
     return {
       id: String(callId || `${threadId}-tool-${event.seq}`),
       role: 'tool',
-      content: textOf(result ?? input ?? data),
+      content: result === undefined ? textOf(input ?? data) : resultText,
       llmContent: null,
       systemReminderDirectory: null,
       sourceSeq: Number(event.seq),
@@ -30,8 +43,8 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
       isLoading: false,
       toolCallId: callId ? String(callId) : null,
       toolName: data.name || data.toolName || toolNames?.get?.(String(callId)) || null,
-      toolData: result === undefined ? null : textOf(result),
-      toolInput: input ?? null,
+      toolData: result === undefined ? null : resultText,
+      toolInput: parseToolInput(input) ?? null,
       toolCalls: null,
       reasoning: null,
       isCompleted: event.type === 'tool/result',
@@ -72,6 +85,94 @@ export function messageFromEvent(threadId, event, toolNames = undefined) {
     isCollapsed: null,
     codexTurnId: null,
   }
+}
+
+function reasoningMessageFromAssistant(threadId, event, payload, block, index) {
+  const assistantId = String(payload?.id || `${threadId}-message-${event.seq}`)
+  return {
+    id: `${assistantId}:reasoning:${index}`,
+    role: 'reasoning',
+    content: typeof block?.text === 'string' ? block.text : textOf(block),
+    llmContent: null,
+    systemReminderDirectory: null,
+    sourceSeq: Number(event.seq),
+    timestamp: eventTimestamp(event),
+    sourceSequence: Number(event.seq),
+    isLoading: false,
+    toolCallId: null,
+    toolName: null,
+    toolData: null,
+    toolInput: null,
+    toolCalls: null,
+    reasoning: null,
+    isCompleted: true,
+    errorDetails: null,
+    isCollapsed: null,
+    codexTurnId: null,
+  }
+}
+
+/** Project one persisted DSH event into all Flowix-visible messages. */
+export function messagesFromEvent(threadId, event, toolNames = undefined) {
+  const message = messageFromEvent(threadId, event, toolNames)
+  if (!message || event.type !== 'assistant/message') return message ? [message] : []
+
+  const payload = event.data?.message ?? event.data
+  const blocks = Array.isArray(payload?.content) ? payload.content : []
+  const reasoning = blocks
+    .map((block, index) => block?.type === 'reasoning' ? reasoningMessageFromAssistant(threadId, event, payload, block, index) : null)
+    .filter(Boolean)
+  if (reasoning.length === 0) return [message]
+
+  const firstReasoningIndex = blocks.findIndex(block => block?.type === 'reasoning')
+  const firstTextIndex = blocks.findIndex(block => block?.type === 'text' || block?.type === 'tool-call')
+  if (firstTextIndex < 0 || firstReasoningIndex < firstTextIndex) return [...reasoning, message]
+  return [message, ...reasoning]
+}
+
+function mergeToolHistoryMessages(existing, incoming) {
+  const incomingCompleted = incoming.isCompleted === true
+  const existingCompleted = existing.isCompleted === true
+  return {
+    ...existing,
+    id: existing.id,
+    content: incomingCompleted || !existingCompleted ? incoming.content : existing.content,
+    timestamp: (incomingCompleted || !existingCompleted) && incoming.timestamp ? incoming.timestamp : existing.timestamp,
+    sourceSeq: Math.max(Number(existing.sourceSeq) || 0, Number(incoming.sourceSeq) || 0),
+    sourceSequence: Math.max(Number(existing.sourceSequence) || 0, Number(incoming.sourceSequence) || 0),
+    toolCallId: existing.toolCallId || incoming.toolCallId,
+    toolName: existing.toolName || incoming.toolName,
+    toolData: incoming.toolData || existing.toolData,
+    toolInput: existing.toolInput || incoming.toolInput,
+    isCompleted: existingCompleted || incomingCompleted,
+  }
+}
+
+/**
+ * Project the durable event log into the message shape consumed by Flowix.
+ * DSH stores tool calls and results as separate audit events, while Flowix
+ * renders one tool row; merge those events before pagination.
+ */
+export function projectHistoryMessages(threadId, events, toolNames = undefined) {
+  const messages = []
+  const toolIndexes = new Map()
+  for (const event of events || []) {
+    if (event.type === 'tool/call' || event.type === 'tool/result') {
+      const message = messageFromEvent(threadId, event, toolNames)
+      if (!message) continue
+      const callId = message.toolCallId
+      const previous = callId ? toolIndexes.get(callId) : undefined
+      if (previous === undefined) {
+        if (callId) toolIndexes.set(callId, messages.length)
+        messages.push(message)
+      } else {
+        messages[previous] = mergeToolHistoryMessages(messages[previous], message)
+      }
+      continue
+    }
+    messages.push(...messagesFromEvent(threadId, event, toolNames))
+  }
+  return messages
 }
 
 function eventTimestamp(event) {

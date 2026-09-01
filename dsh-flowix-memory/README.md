@@ -50,7 +50,7 @@ dsh plugin --profile flowix add dsh-flowix-memory
 
 The row activates for that profile. Other DSH clients can start it with
 `dsh --profile flowix`; this profile also ships `dsh-appserver` so the
-official `flowix.bridge.*` JSON-RPC surface is available out of the box.
+Flowix App Server JSON-RPC surface is available out of the box.
 
 ## Verify
 
