@@ -345,6 +345,10 @@
 .agent-thread-card__badge-hover-card-mount {
   display: none;
   z-index: 1;
+  /* AgentConversationHeader 包在 data-tauri-drag-region 内 ── mount 被 fixed
+   * 定位脱离普通流后,仍属于 drag region 子树,需要显式 no-drag 才能让 trigger
+   * 在 macOS 下响应 hover/click。 */
+  -webkit-app-region: no-drag;
 }
 
 /* Standalone conversation details use the same badge hover card as the
@@ -354,6 +358,10 @@
   position: relative;
   display: inline-flex;
   flex: 0 0 auto;
+  /* 与 mount 同源 ── drag region 内 wrapper 必须显式置 no-drag,否则 trigger
+   * 的 hover/click 全被 macOS 窗口拖拽吞掉。编辑器内嵌 NodeView 不在 drag
+   * region 里,这里是冗余但无副作用。 */
+  -webkit-app-region: no-drag;
 }
 
 /* 空间名称始终单行右对齐展示,超出时从右侧省略。 */
@@ -447,6 +455,9 @@
   cursor: pointer;
   background: transparent;
   border-radius: inherit;
+  /* 与 wrapper 同源 ── drag region 内 trigger 必须显式置 no-drag 才能响应
+   * pointer 事件 (Radix HoverCard 的 onPointerEnter 才能 fire)。 */
+  -webkit-app-region: no-drag;
 }
 
 /* open 状态不加重背景 (避免与按钮灰色 hover 视觉冲突) ──

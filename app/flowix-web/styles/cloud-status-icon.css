@@ -1,5 +1,5 @@
 /* Shared Phosphor Cloud family mark. Color is inherited from the surrounding
- * control so desktop and mobile keep the same text-color treatment. */
+ * control so desktop controls keep the same text-color treatment. */
 .flowix-cloud-status-icon {
   position: relative;
   display: inline-grid;

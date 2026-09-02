@@ -97,7 +97,7 @@ for (const file of WINDOWS_ICON_FILES) {
 	}
 }
 
-// Drop mobile assets the CLI just produced; this project is desktop only.
+// Drop non-desktop assets the CLI just produced; this project is desktop only.
 for (const sub of ['android', 'ios']) {
 	rmSync(resolve(iconsDir, sub), { recursive: true, force: true });
 }

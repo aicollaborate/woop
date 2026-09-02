@@ -25,8 +25,8 @@ function isTauriDesktopRuntime(): boolean {
 
 /**
  * Check the trusted HTTPS latest.json manifest configured for the platform.
- * Dev/web/mobile surfaces deliberately return null instead of trying to call
- * the desktop updater plugin.
+ * Non-desktop callers deliberately return null instead of trying to call the
+ * desktop updater plugin.
  */
 export async function checkAppUpdate(): Promise<AppUpdate | null> {
   if (!isTauriDesktopRuntime()) return null;

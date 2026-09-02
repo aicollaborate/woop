@@ -55,7 +55,7 @@ tokio = { version = "1", features = ["sync", "time"] }
 # ── 生产体积优化（release 专用，不影响 dev 调试）──────────────────────────────
 # 作用：去掉符号表 + 跨 crate 死代码消除 + 单代码生成单元，明显缩小二进制。
 # 安全说明：
-#   - strip 只作用于 bin / cdylib 产物；iOS 用的 staticlib / rlib 不受影响。
+#   - strip 只作用于 bin / cdylib 产物；staticlib / rlib 不受影响。
 #   - opt-level 保持默认 3，不牺牲运行时性能。
 #   - 崩溃符号化依赖未 strip 的归档产物；发布流水线请保留一份未 strip 的二进制。
 #   - lto 用 thin（而非 fat），平衡编译时长与稳定性。

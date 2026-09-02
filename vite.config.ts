@@ -59,28 +59,25 @@ function removePackagedCrossorigin(): Plugin {
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(({ command, mode }) => {
-  const isMobile = mode === "mobile";
-  const isEditorWebView = mode === "editor-webview";
-
+export default defineConfig(({ command }) => {
   return {
     // Packaged Tauri pages are served from an application protocol rather
     // than an HTTP origin. Keep every emitted asset URL relative in builds so
     // CSS, fonts, and lazy chunks resolve beside index.html in the installed
     // app. The dev server still needs an origin-root base for HMR.
-    base: command === "build" || isEditorWebView ? "./" : "/",
+    base: command === "build" ? "./" : "/",
     // 鍓嶇鍏ュ彛: app/flowix-web/ 浣滀负 Vite 鏍? 璁?index.html / entrypoints /
     // public 閮藉湪鍚屼竴鐩綍, 閬垮厤 Tauri / Vite 璺緞浜掔浉绌胯秺銆?
     root: frontendRoot,
     publicDir: resolve(frontendRoot, "public"),
     build: {
-      outDir: resolve(__dirname, isEditorWebView ? ".build/ios-editor" : ".build/web-dist"),
+      outDir: resolve(__dirname, ".build/web-dist"),
       emptyOutDir: true,
       // The bundle budget follows the desktop startup graph through this
       // manifest instead of looking only at index.html.
-      manifest: !isEditorWebView,
+      manifest: true,
       rollupOptions: {
-        input: resolve(frontendRoot, isEditorWebView ? "editor-webview.html" : "index.html"),
+        input: resolve(frontendRoot, "index.html"),
         output: {
           // Keep dependencies of dynamic imports in their dynamic graph.
           // Without this, Rollup may absorb shared dependencies into an
@@ -127,12 +124,7 @@ export default defineConfig(({ command, mode }) => {
         "@features": resolve(frontendRoot, "features"),
         "@platform": resolve(frontendRoot, "platform"),
         "@shared": resolve(frontendRoot, "shared"),
-        // A compile-time target selection; never use a runtime MODE branch
-        // here, otherwise both application roots can enter one bundle.
-        "@flowix-target-entry": resolve(
-          frontendRoot,
-          isMobile ? "entrypoints/mobile.tsx" : "entrypoints/desktop.tsx",
-        ),
+        "@flowix-target-entry": resolve(frontendRoot, "entrypoints/desktop.tsx"),
       },
     },
 
@@ -154,7 +146,7 @@ export default defineConfig(({ command, mode }) => {
         : undefined,
       watch: {
         // 3. tell Vite to ignore watching `backend` (relative to repo root)
-        ignored: ["**/app/flowix-desktop/**", "**/app/flowix-mobile/**", "**/app/flowix-core/**", "**/app/flowix-cli/**", "**/app/target/**"],
+        ignored: ["**/app/flowix-desktop/**", "**/app/flowix-core/**", "**/app/flowix-cli/**", "**/app/target/**"],
       },
     },
   };

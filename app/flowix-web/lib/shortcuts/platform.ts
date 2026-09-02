@@ -38,11 +38,7 @@ function detectPlatform(): Platform {
   // 2) navigator UA 兜底
   if (typeof navigator !== 'undefined') {
     const ua = navigator.userAgent.toLowerCase();
-    // iPad 在新 iOS 会伪装成 Mac — 用 maxTouchPoints 区分
     if (ua.includes('mac') || ua.includes('darwin')) {
-      if (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0) {
-        return 'mac';
-      }
       return 'mac';
     }
     if (ua.includes('win')) return 'windows';
@@ -53,7 +49,7 @@ function detectPlatform(): Platform {
 }
 
 function mapTauriPlatform(p: string): Platform | null {
-  // Tauri 2 文档值: 'macos' | 'ios' | 'linux' | 'android' | 'windows'
+  // Tauri 2 desktop platform values used by this application.
   if (p === 'macos') return 'mac';
   if (p === 'windows') return 'windows';
   if (p === 'linux') return 'linux';

@@ -9,7 +9,6 @@ export * from './client/desktop';
 export * from './client/plugin';
 export * from './client/general';
 export * from './client/memos';
-export * from './client/mobile';
 export * from './client/updater';
 
 type RpcRequest = <T = unknown>(method: string, params?: unknown) => Promise<T>;

@@ -134,7 +134,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
       data-tauri-drag-region
       className="relative flex h-full min-w-0 flex-1 items-center gap-2 pl-3"
     >
-      <span className="agent-thread-card__badge-hover-wrapper shrink-0">
+      <span className="agent-thread-card__badge-hover-wrapper shrink-0 [-webkit-app-region:no-drag]">
         <BadgeHoverCard
           threadId={productThreadId || undefined}
           sessionId={providerSessionId ?? undefined}

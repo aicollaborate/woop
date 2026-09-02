@@ -20,7 +20,7 @@ const CLOUD_CHECK_PATH =
 const CLOUD_FRAME_CLOSURE_PATH =
   'M96,200H160a8,8,0,0,1,0,16H96a8,8,0,0,1,0-16Z';
 
-/** Shared Cloud family mark used by the mobile top bar and desktop notebook list. */
+/** Shared Cloud family mark used by desktop notebook controls. */
 export function CloudStatusIcon({ status, size = 21, className }: CloudStatusIconProps) {
   const classes = [
     'flowix-cloud-status-icon',

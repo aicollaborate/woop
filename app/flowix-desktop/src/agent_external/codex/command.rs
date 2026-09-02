@@ -91,8 +91,8 @@ fn codex_native_package(platform: &str, arch: &str) -> Option<&'static str> {
     match (platform, arch) {
         ("darwin", "x64") => Some("@openai/codex-darwin-x64"),
         ("darwin", "arm64") => Some("@openai/codex-darwin-arm64"),
-        ("linux" | "android", "x64") => Some("@openai/codex-linux-x64"),
-        ("linux" | "android", "arm64") => Some("@openai/codex-linux-arm64"),
+        ("linux", "x64") => Some("@openai/codex-linux-x64"),
+        ("linux", "arm64") => Some("@openai/codex-linux-arm64"),
         ("win32", "x64") => Some("@openai/codex-win32-x64"),
         ("win32", "arm64") => Some("@openai/codex-win32-arm64"),
         _ => None,

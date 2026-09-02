@@ -51,6 +51,12 @@ import { AgentIcon } from '@features/agent/components/agent-icon';
 import { normalizeAgentTypeKey } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { ICON_FULLSCREEN_EXIT_PATH } from '@features/agent/thread-card/agent-thread-card-icons';
+import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
+import { BadgeHoverCard } from '@features/agent/thread-card/badge-hover-card';
+import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/runtime/run-status-presenter';
+import { createRuntimeInfoRequester } from '@features/agent/thread-card/runtime/runtime-info-requester';
+import { getResolvedExternalSessionId } from '@features/agent/services/external-agent-runtime-service';
+import { getAgentConversationRuntimeCwd } from '@features/agent/conversation-presentation';
 
 const logger = createLogger('document-titlebar');
 
@@ -110,6 +116,10 @@ const AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT =
 interface AgentThreadCardFullscreenInfo {
   title: string;
   typeKey: AgentTypeKey;
+  /** Agent conversation instance id — used to look up runtime info (sessionId, cwd) for the badge hover card. */
+  instanceId: string | null;
+  /** Provider/external thread id, when the conversation has been bound to one. */
+  threadId: string | null;
 }
 
 /**
@@ -303,9 +313,13 @@ function getFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | nul
   const card = document.querySelector<HTMLElement>('.agent-thread-card--fullscreen');
   if (!card) return null;
 
+  const instanceId = card.dataset.instanceId?.trim() || null;
+  const threadId = card.dataset.threadId?.trim() || null;
   return {
     title: card.dataset.title?.trim() ?? '',
     typeKey: normalizeAgentTypeKey(card.dataset.agentType),
+    instanceId,
+    threadId,
   };
 }
 
@@ -384,18 +398,55 @@ export function AgentThreadCardFullscreenExitButton({
 export function AgentThreadCardFullscreenIdentity() {
   const { t } = useI18n();
   const info = useFullscreenAgentThreadCardInfo();
+  // 用 selector 而不是 getState() ── session/runtime store 更新时让组件
+  // 重新 render, 否则外部 session id / cwd 注入后不会反映到 popup 内容。
+  const instance = useAgentSessionStore((state) =>
+    info?.instanceId ? state.getInstance(info.instanceId) : null,
+  );
+  const codexModel = useAgentSessionStore(
+    (state) => state.sessionMeta.settings.agentCodexModel,
+  );
 
   if (!info) return null;
+
+  // Document titlebar 自身在 data-tauri-drag-region 容器里, badge wrapper + trigger
+  // 都必须显式 [-webkit-app-region:no-drag], 否则 Radix HoverCard 的 hover 会被
+  // macOS 窗口拖拽吞掉。同步处理 ── 与第三列 AgentConversationHeader 行为对齐。
+  const productThreadId = instance?.threadId ?? info.threadId ?? '';
+  const providerSessionId = instance?.sessionId ?? (
+    productThreadId ? getResolvedExternalSessionId(productThreadId) : null
+  );
+  const { model, usage } = computeAgentThreadCardBadgeData({
+    threadState: undefined,
+    codexModel,
+    typeKey: info.typeKey,
+  });
+  const cwd = getAgentConversationRuntimeCwd(instance);
 
   return (
     <div
       data-tauri-drag-region
       className="ml-2 flex min-w-0 items-center gap-2"
     >
-      <span className="agent-type-badge shrink-0" aria-hidden="true">
-        <AgentIcon typeKey={info.typeKey} alt="" className="agent-type-badge__icon" />
+      <span className="agent-thread-card__badge-hover-wrapper shrink-0 [-webkit-app-region:no-drag]">
+        <BadgeHoverCard
+          threadId={productThreadId || undefined}
+          sessionId={providerSessionId ?? undefined}
+          model={model}
+          usage={usage}
+          onRequestRuntimeInfo={createRuntimeInfoRequester(
+            info.typeKey,
+            () => productThreadId || null,
+            () => providerSessionId,
+          )}
+          codex={info.typeKey === 'codex'}
+          cwd={cwd}
+        />
+        <span className="agent-type-badge shrink-0" aria-hidden="true">
+          <AgentIcon typeKey={info.typeKey} alt="" className="agent-type-badge__icon" />
+        </span>
       </span>
-      <span className="min-w-0 truncate text-sm font-semibold leading-none text-[var(--foreground)]">
+      <span className="min-w-0 truncate text-sm font-semibold leading-none text-[var(--foreground)] [-webkit-app-region:no-drag]">
         {info.title || t('common.untitled')}
       </span>
     </div>

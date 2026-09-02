@@ -8,8 +8,7 @@ import { initTauriClient } from "@platform/tauri/client";
 const isMac = navigator.platform.toUpperCase().includes("MAC");
 document.documentElement.dataset.platform = isMac ? "mac" : "non-mac";
 
-// The desktop bridge is intentionally initialized only by the desktop entry.
-// Mobile uses the capability-limited @platform/tauri/mobile-client facade.
+// The desktop bridge is initialized by the desktop entry.
 try {
   initTauriClient();
 } catch (error) {
