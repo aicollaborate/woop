@@ -1,23 +1,23 @@
 {
   "schemaVersion": 1,
   "product": "flowix-dsh",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "protocolVersion": 1,
   "minFlowixVersion": "1.3.2",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://download.flowix-memo.com/dsh/1.5.0/Flowix-DSH_1.5.0_node24-macos-arm64.tar.gz?sha256=20fcefb9deeb79a38a07b236783d5c4d4c1e38fed1591bc470ccce5780922d46",
-      "sha256": "20fcefb9deeb79a38a07b236783d5c4d4c1e38fed1591bc470ccce5780922d46",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNnVaVUVnQTc2b0tjOUJjZEoxSkxaNW9LLytMSjFvbjBQVFZ1OG9hek5GUnJ2d2MyMzBLdmZnaG1GMmhzTk4xVTZhVmtTTUV0ei8ycW92QkVuQ3p5eGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MzYzMjQ5CWZpbGU6Rmxvd2l4LURTSF8xLjUuMF9ub2RlMjQtbWFjb3MtYXJtNjQudGFyLmd6CmRSbU8vYzhVRHNQN09UVkw5ZC9QRmlFR3g4N1ptQjBUL0tsNjMzUXBUYytsaUxGV0dzb2IxUS9oMHNma1ZJZFNsWDg0QWtveFMyVmR2L3RCWUVSdkNnPT0K",
-      "sizeBytes": 84977354,
-      "buildId": "60b0cb9f12d077cb362ef087"
+      "url": "https://download.flowix-memo.com/dsh/1.5.1/Flowix-DSH_1.5.1_node24-macos-arm64.tar.gz?sha256=c4629132950e1d98d6ce4447f202171a9d9a221e01aab8f3f8d07fc46dd2fe89",
+      "sha256": "c4629132950e1d98d6ce4447f202171a9d9a221e01aab8f3f8d07fc46dd2fe89",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNnU5cmpCZjc3L0hlUXlGV3FtQms5K0psSE1CUkRxbHJ5WnV3aHlHd0Y4dG5Gd3Z6cE1xaTBXd0xGeVkzK0tQOUpjc1RnZ01ORWZFRHhoazZiSForY0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MzY3MDU4CWZpbGU6Rmxvd2l4LURTSF8xLjUuMV9ub2RlMjQtbWFjb3MtYXJtNjQudGFyLmd6CkJKV3k2dStVWmJKK21lMFFXL29Cc2dva0pmWTBhTnZLRzEzRUJkd3RzQVF6TDFSckxybGJoby84cXhkSzBSVTlNek9TOG83QURrSVFVNzFyM3p1UUJnPT0K",
+      "sizeBytes": 84998884,
+      "buildId": "af725ddecd74383fd4692dc1"
     },
     "darwin-x86_64": {
-      "url": "https://download.flowix-memo.com/dsh/1.5.0/Flowix-DSH_1.5.0_node24-macos-x64.tar.gz?sha256=e565622ab3c36e8634ffc1485b59656e6ef3cb2feb0e09bcb06a100c8b27c997",
-      "sha256": "e565622ab3c36e8634ffc1485b59656e6ef3cb2feb0e09bcb06a100c8b27c997",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNnJCOUdSQVBvY3RwYmlWeDAzcGMvYzZGWlpKL2hOdXRmREcxeXUySUduUHRWajYvVWFWN1YyeTNNTHVWQnhRbC9YVmtFUktaS09BSVdPdVVleU5DNndZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MzYzMjg3CWZpbGU6Rmxvd2l4LURTSF8xLjUuMF9ub2RlMjQtbWFjb3MteDY0LnRhci5negp2eHlrWmhMQzNISFJPamlQdUVzaXZLYW9wd05hc2NHS3JCM20yNlBKa0c2R1crYjFCbVlOQmN2UkdUTnJsTUp5bkwzTi9wbXk3c1lsdXMyZHJReXJEQT09Cg==",
-      "sizeBytes": 87771190,
-      "buildId": "8f7d7909814e9b43b3b159f9"
+      "url": "https://download.flowix-memo.com/dsh/1.5.1/Flowix-DSH_1.5.1_node24-macos-x64.tar.gz?sha256=d2b9ab22eaa70d97875b8fa5cf3764cb89ae639c763807e6161a9a62f8365661",
+      "sha256": "d2b9ab22eaa70d97875b8fa5cf3764cb89ae639c763807e6161a9a62f8365661",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVMwSWdObW9uNm9Da0dWWG1jOHRiSkVNaVN3L01mQ3NCZUNYUUUrazF2cXRjSWJVZyt5eENTeEZIVml2bVNBa2ZpK2tOckhDRG1SYjJNdVdUZmxHcmJtRTdpNFZiR2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MzY3MDk2CWZpbGU6Rmxvd2l4LURTSF8xLjUuMV9ub2RlMjQtbWFjb3MteDY0LnRhci5negpTaDVMZ0N4dTc2cllDQloxUXB5Y1FwUHROQVI1Wk82cUtuSUJ6WGNRRWZHMnpxNTdlVUwvbmNpclIxeEZPblBELzU3SHh6ZHFSamNNU3ovd3hRamtBdz09Cg==",
+      "sizeBytes": 87769667,
+      "buildId": "3bdeab63ec802c2d7a1d7132"
     }
   }
 }

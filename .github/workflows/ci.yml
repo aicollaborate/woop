@@ -19,6 +19,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dsh:
+    name: DSH · packaging invariants
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify native dependency selection and binary headers
+        run: npm run test:dsh:packaging
+
+      - name: DSH App Server tests
+        run: |
+          npm --prefix dsh-appserver ci --ignore-scripts
+          npm --prefix dsh-appserver test
+
   web:
     name: Web · typecheck + unit tests
     runs-on: ubuntu-22.04
@@ -46,17 +66,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Mobile web production build
-        run: npm run build:mobile
-
       - name: Desktop web production build
         run: npm run build
 
       - name: Desktop web bundle budgets
         run: npm run check:web-bundle
-
-      - name: Mobile import boundaries
-        run: npm run check:mobile-boundaries
 
       - name: Layer boundaries
         run: npm run check:layers

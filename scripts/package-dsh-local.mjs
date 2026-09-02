@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, relative, resolve } from 'node:path'
 import { createDshRuntimeMetadata } from './dsh-runtime-metadata.mjs'
+import { repairDshNativePackages, verifyDshNativePackages } from './dsh-native-deps.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const upstream = resolve(repo, '.build/upstream/deepseek-harness')
@@ -11,7 +12,7 @@ const output = resolve(repo, '.build/dsh-local-package')
 const bundle = resolve(output, 'node24-windows-x64')
 const runtime = resolve(output, 'runtime')
 const release = resolve(repo, '.build/releases/dsh-local')
-const version = process.env.FLOWIX_DSH_VERSION || '1.5.0'
+const version = process.env.FLOWIX_DSH_VERSION || '1.5.1'
 const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.2'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
@@ -67,6 +68,9 @@ const copiedWorkspacePackages = workspacePackages.filter(({ packageName }) =>
 )
 console.log(`verified ${copiedWorkspacePackages.length} DSH workspace packages in the deploy tree`)
 
+await repairDshNativePackages(runtime, upstream)
+await verifyDshNativePackages(runtime)
+
 await mkdir(bundle, { recursive: true })
 await cp(runtime, resolve(bundle, 'runtime'), {
   recursive: true,
@@ -97,14 +101,7 @@ const metadata = createDshRuntimeMetadata({
 await writeFile(resolve(bundle, 'dsh-runtime.json'), `${JSON.stringify(metadata, null, 2)}\n`)
 
 const profile = resolve(bundle, 'profile/flowix')
-const healthHome = resolve(output, '.health-dsh-home')
-await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
-await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true, force: true })
-runHealthCheck(process.execPath, [resolve(bundle, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
-  DSH_HOME: healthHome,
-  DSH_PROFILE_DIR: profile,
-  FLOWIX_DSH_ROOT: bundle,
-})
+run(process.execPath, [resolve(repo, 'scripts/smoke-dsh-package.mjs'), '--root', bundle])
 
 await mkdir(release, { recursive: true })
 const filename = `Flowix-DSH_${version}_node24-windows-x64.tar.gz`
@@ -113,6 +110,7 @@ const archive = resolve(release, filename)
 // virtual-store copy is only install metadata and is not needed by Node at
 // runtime. Excluding it keeps the updater archive practical on Windows.
 run('tar', ['-czf', relative(repo, archive), '-C', bundle, '.'])
+run(resolve(bundle, 'node/node.exe'), [resolve(repo, 'scripts/verify-dsh-archive.mjs'), '--archive', archive])
 const bytes = await readFile(archive)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 const signature = signUpdaterArtifact(archive)
@@ -177,23 +175,6 @@ async function findWorkspacePackages(root) {
   }
   await visit(root)
   return packages
-}
-
-function runHealthCheck(command, args, extraEnv = {}) {
-  const result = spawnSync(command, args, {
-    cwd: repo,
-    env: { ...process.env, ...extraEnv },
-    encoding: 'utf8',
-    stdio: ['inherit', 'pipe', 'pipe'],
-  })
-  process.stdout.write(result.stdout ?? '')
-  process.stderr.write(result.stderr ?? '')
-  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
-  if (result.error) throw result.error
-  if (result.status !== 0) process.exit(result.status ?? 1)
-  if (/Cannot find package|failed to import loader entry/iu.test(output)) {
-    throw new Error('DSH runtime health check reported unresolved package imports')
-  }
 }
 
 function run(command, args, extraEnv = {}) {

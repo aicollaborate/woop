@@ -4,9 +4,10 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createDshRuntimeMetadata, DSH_PNPM_VERSION } from './dsh-runtime-metadata.mjs'
+import { verifyDshNativePackages } from './dsh-native-deps.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
-const version = process.env.FLOWIX_DSH_VERSION || '1.5.0'
+const version = process.env.FLOWIX_DSH_VERSION || '1.5.1'
 const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.2'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 if (!semverPattern.test(version)) {
@@ -47,6 +48,10 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   const targetRoot = resolve(stage, target)
   await mkdir(targetRoot, { recursive: true })
   await cp(sourceRoot, targetRoot, { recursive: true })
+  await verifyDshNativePackages(resolve(targetRoot, 'runtime'), {
+    platform: 'darwin',
+    arch: target.endsWith('arm64') ? 'arm64' : 'x64',
+  })
 
   const profile = resolve(targetRoot, 'profile/flowix')
   await mkdir(resolve(profile, 'node_modules'), { recursive: true })
@@ -79,18 +84,12 @@ for (const target of ['node24-macos-arm64', 'node24-macos-x64']) {
   signAndVerifyNode(nodePath, target)
 
   if (process.env.FLOWIX_DSH_SKIP_HEALTH !== '1') {
-    const healthHome = resolve(targetRoot, '.health-home')
-    await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
-    await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true })
-    runTargetNode(target, nodePath, [resolve(targetRoot, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
-      DSH_HOME: healthHome,
-      DSH_PROFILE_DIR: profile,
-    })
-    await rm(healthHome, { recursive: true, force: true })
+    runTargetNode(target, nodePath, [resolve(repo, 'scripts/smoke-dsh-package.mjs'), '--root', targetRoot])
   }
   const filename = `Flowix-DSH_${version}_${target}.tar.gz`
   const archivePath = resolve(out, filename)
   run('tar', ['-czf', archivePath, '-C', targetRoot, '.'])
+  runTargetNode(target, nodePath, [resolve(repo, 'scripts/verify-dsh-archive.mjs'), '--archive', archivePath])
   const bytes = await readFile(archivePath)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const signature = signUpdaterArtifact(archivePath)

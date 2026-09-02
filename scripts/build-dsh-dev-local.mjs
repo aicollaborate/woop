@@ -2,6 +2,7 @@ import { copyFile, cp, lstat, mkdir, readFile, readlink, readdir, rm, writeFile 
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { repairDshNativePackages, verifyDshNativePackages } from './dsh-native-deps.mjs'
 
 if (Number(process.versions.node.split('.')[0]) !== 24) {
   throw new Error(`DSH development builds require Node 24; current runtime is ${process.version}`)
@@ -50,17 +51,8 @@ await run(corepackCommand, [...corepackArgs,
 
 await materializeLinks(resolve(runtime, 'node_modules'))
 await materializeWorkspaceRoots(runtime, upstream)
-// pnpm deploy can leave Koffi's JavaScript wrapper and platform-native package
-// at different versions. The DSH subprocess/sandbox plugins import Koffi on
-// every fresh host boot; an already-running host hides this until a model
-// configuration change invalidates it. Keep both packages from the same
-// pnpm-installed dependency tree.
-await repairOptionalNativePackage(runtime, upstream, 'koffi')
-await repairOptionalNativePackage(
-  runtime,
-  upstream,
-  `@koromix/koffi-${process.platform}-${process.arch}`,
-)
+await repairDshNativePackages(runtime, upstream)
+await verifyDshNativePackages(runtime)
 await rm(resolve(runtime, 'src'), { recursive: true, force: true })
 await copyTree(resolve(upstream, 'apps/cli'), resolve(runtime, 'node_modules/@deepseek-ai/dsh'))
 await copyTree(resolve(repo, 'dsh-appserver'), resolve(runtime, 'node_modules/dsh-appserver'), true)
@@ -96,6 +88,7 @@ await run(process.execPath, [runtimeCli, '--profile', 'flowix', '--dump-config']
   DSH_HOME: devHome,
   DSH_PROFILE_DIR: profile,
 })
+await run(process.execPath, [resolve(repo, 'scripts/smoke-dsh-package.mjs'), '--root', bundle], repo)
 console.log(`created local DSH development runtime: ${bundle}`)
 
 function targetKey() {
@@ -166,26 +159,6 @@ async function materializeWorkspaceRoots(runtimeRoot, workspaceRoot) {
     const source = packages.get(name)
     if (source === undefined) throw new Error(`workspace dependency ${name} was not materialized by pnpm deploy`)
     await copyTree(source, destination)
-  }
-}
-
-async function repairOptionalNativePackage(runtimeRoot, workspaceRoot, packageName) {
-  const target = resolve(runtimeRoot, 'node_modules', packageName)
-  const source = resolve(workspaceRoot, 'node_modules/.pnpm/node_modules', packageName)
-  if (!existsSync(resolve(source, 'package.json'))) return
-  const sourceVersion = await packageVersion(source)
-  const targetVersion = await packageVersion(target)
-  if (sourceVersion && sourceVersion === targetVersion) return
-  await rm(target, { recursive: true, force: true })
-  await copyTree(source, target)
-}
-
-async function packageVersion(packageRoot) {
-  try {
-    const manifest = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'))
-    return typeof manifest.version === 'string' ? manifest.version : null
-  } catch (_) {
-    return null
   }
 }
 

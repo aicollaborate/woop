@@ -4,10 +4,11 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createDshRuntimeMetadata, DSH_PNPM_VERSION } from './dsh-runtime-metadata.mjs'
+import { verifyDshNativePackages } from './dsh-native-deps.mjs'
 
 if (process.platform !== 'win32') throw new Error('Windows DSH production packages must be packaged on Windows')
 const repo = resolve(import.meta.dirname, '..')
-const version = process.env.FLOWIX_DSH_VERSION || '1.5.0'
+const version = process.env.FLOWIX_DSH_VERSION || '1.5.1'
 const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.2'
 const sourceRoot = resolve(repo, '.build/dsh-runtime-bundle/node24-windows-x64')
 const stage = resolve(repo, '.build/dsh-prod-stage/node24-windows-x64')
@@ -19,6 +20,10 @@ if (!existsSync(resolve(sourceRoot, 'runtime-build.json'))) {
 await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
 await cp(sourceRoot, stage, { recursive: true })
+await verifyDshNativePackages(resolve(stage, 'runtime'), {
+  platform: 'win32',
+  arch: 'x64',
+})
 const profile = resolve(stage, 'profile/flowix')
 await mkdir(resolve(profile, 'node_modules'), { recursive: true })
 await cp(resolve(repo, 'dsh-appserver'), resolve(profile, 'node_modules/dsh-appserver'), { recursive: true, filter: p => !p.includes('node_modules') })
@@ -41,19 +46,13 @@ const metadata = createDshRuntimeMetadata({
 await writeFile(resolve(stage, 'dsh-runtime.json'), `${JSON.stringify(metadata, null, 2)}\n`)
 
 const nodePath = resolve(stage, 'node/node.exe')
-const healthHome = resolve(stage, '.health-home')
-await mkdir(resolve(healthHome, 'profiles'), { recursive: true })
-await cp(profile, resolve(healthHome, 'profiles/flowix'), { recursive: true })
-run(nodePath, [resolve(stage, metadata.entrypoint), '--profile', 'flowix', '--dump-config'], {
-  DSH_HOME: healthHome,
-  DSH_PROFILE_DIR: profile,
-})
-await rm(healthHome, { recursive: true, force: true })
+run(nodePath, [resolve(repo, 'scripts/smoke-dsh-package.mjs'), '--root', stage])
 
 await mkdir(out, { recursive: true })
 const filename = `Flowix-DSH_${version}_node24-windows-x64.tar.gz`
 const archive = resolve(out, filename)
 run('tar.exe', ['-czf', archive, '-C', stage, '.'])
+run(nodePath, [resolve(repo, 'scripts/verify-dsh-archive.mjs'), '--archive', archive])
 const bytes = await readFile(archive)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 const signature = signUpdaterArtifact(archive)

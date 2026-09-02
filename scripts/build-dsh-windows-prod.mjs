@@ -2,6 +2,7 @@ import { cp, lstat, mkdir, readFile, readlink, readdir, rm, writeFile } from 'no
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { repairDshNativePackages, verifyDshNativePackages } from './dsh-native-deps.mjs'
 
 if (process.platform !== 'win32') throw new Error('Windows DSH production bundles must be built on Windows')
 if (Number(process.versions.node.split('.')[0]) !== 24) {
@@ -40,6 +41,8 @@ await run(process.execPath, [
 ], upstream)
 await materializeLinks(resolve(runtime, 'node_modules'))
 await materializeWorkspaceRoots(runtime, upstream)
+await repairDshNativePackages(runtime, upstream)
+await verifyDshNativePackages(runtime)
 await rm(resolve(runtime, 'src'), { recursive: true, force: true })
 await copyTree(resolve(upstream, 'apps/cli'), resolve(runtime, 'node_modules/@deepseek-ai/dsh'))
 await copyTree(resolve(repo, 'dsh-appserver'), resolve(runtime, 'node_modules/dsh-appserver'), true)
@@ -72,7 +75,7 @@ async function installPrivatePnpm(root) {
     corepack, `pnpm@${pnpmVersion}`, '--dir', toolRoot, '--ignore-workspace', 'install', '--prod', '--ignore-scripts',
     '--config.manage-package-manager-versions=false', '--config.node-linker=hoisted',
     '--config.auto-install-peers=false',
-  ], repo)
+  ], dirname(repo))
   await materializeLinks(resolve(toolRoot, 'node_modules'))
   if (!existsSync(resolve(toolRoot, 'node_modules/pnpm/bin/pnpm.mjs'))) {
     throw new Error('private pnpm entrypoint was not installed')
