@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types";
 import {
   createRenderedAgentMessageList,
-  isLastAssistantInTurn,
+  isCurrentTurnMessage,
+  isLastMessageInTurnAndAssistant,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
 
@@ -41,8 +42,8 @@ describe("Codex turn-end message actions", () => {
       message("assistant-2", "assistant"),
     ];
 
-    expect(isLastAssistantInTurn(messages, 0)).toBe(false);
-    expect(isLastAssistantInTurn(messages, 2)).toBe(true);
+    expect(isLastMessageInTurnAndAssistant(messages, 0)).toBe(false);
+    expect(isLastMessageInTurnAndAssistant(messages, 2)).toBe(true);
 
     const { list } = createRenderedAgentMessageList(messages, context());
     expect(list.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(1);
@@ -53,6 +54,19 @@ describe("Codex turn-end message actions", () => {
     expect(actions?.querySelector(".agent-thread-card__message-time")?.textContent).toContain("星期");
   });
 
+  it("does not show actions when a tool is the final message of the turn", () => {
+    const messages = [
+      message("user-1", "user"),
+      message("assistant-1", "assistant"),
+      message("tool-1", "tool"),
+    ];
+
+    expect(isLastMessageInTurnAndAssistant(messages, 1)).toBe(false);
+
+    const { list } = createRenderedAgentMessageList(messages, context());
+    expect(list.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(0);
+  });
+
   it("keeps actions only on the final assistant when non-assistant rows lack a turn id", () => {
     const messages = [
       message("assistant-1", "assistant", "turn-1"),
@@ -60,8 +74,8 @@ describe("Codex turn-end message actions", () => {
       message("assistant-2", "assistant", "turn-1"),
     ];
 
-    expect(isLastAssistantInTurn(messages, 0)).toBe(false);
-    expect(isLastAssistantInTurn(messages, 2)).toBe(true);
+    expect(isLastMessageInTurnAndAssistant(messages, 0)).toBe(false);
+    expect(isLastMessageInTurnAndAssistant(messages, 2)).toBe(true);
 
     const { list } = createRenderedAgentMessageList(messages, context());
     expect(list.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(1);
@@ -85,6 +99,65 @@ describe("Codex turn-end message actions", () => {
 
     const { list } = createRenderedAgentMessageList(messages, streamingContext);
     expect(list.querySelector(".agent-thread-card__message-actions")).toBeNull();
+  });
+
+  it("keeps historical actions while hiding only the current no-id agent turn", () => {
+    const messages = [
+      message("user-1", "user"),
+      message("assistant-1", "assistant"),
+      message("user-2", "user"),
+      { ...message("assistant-2", "assistant"), isCompleted: false },
+    ];
+    const streamingContext = { ...context(), isLoading: true };
+
+    expect(isCurrentTurnMessage(messages[1], messages)).toBe(false);
+    expect(isCurrentTurnMessage(messages[3], messages)).toBe(true);
+    expect(isLastMessageInTurnAndAssistant(messages, 1)).toBe(true);
+    expect(isLastMessageInTurnAndAssistant(messages, 3)).toBe(false);
+
+    const { list } = createRenderedAgentMessageList(messages, streamingContext);
+    expect(
+      list.querySelectorAll(".agent-thread-card__message-actions"),
+    ).toHaveLength(1);
+    expect(
+      list.children[1].querySelector(".agent-thread-card__message-actions"),
+    ).not.toBeNull();
+    expect(
+      list.children[3].querySelector(".agent-thread-card__message-actions"),
+    ).toBeNull();
+  });
+
+  it("uses Codex turn ids while including id-less reasoning and tool rows in the current turn", () => {
+    const messages = [
+      message("user-1", "user", "turn-1"),
+      message("assistant-1", "assistant", "turn-1"),
+      message("user-2", "user", "turn-2"),
+      message("reasoning-2", "reasoning"),
+      message("tool-2", "tool"),
+      message("assistant-2a", "assistant", "turn-2"),
+      {
+        ...message("assistant-2b", "assistant", "turn-2"),
+        isCompleted: false,
+      },
+    ];
+    const streamingContext = { ...context(), isLoading: true };
+
+    expect(isCurrentTurnMessage(messages[1], messages)).toBe(false);
+    expect(isCurrentTurnMessage(messages[3], messages)).toBe(true);
+    expect(isCurrentTurnMessage(messages[5], messages)).toBe(true);
+    expect(isCurrentTurnMessage(messages[6], messages)).toBe(true);
+    expect(isLastMessageInTurnAndAssistant(messages, 5)).toBe(false);
+
+    const { list } = createRenderedAgentMessageList(messages, streamingContext);
+    expect(
+      list.children[1].querySelector(".agent-thread-card__message-actions"),
+    ).not.toBeNull();
+    expect(
+      list.children[5].querySelector(".agent-thread-card__message-actions"),
+    ).toBeNull();
+    expect(
+      list.children[6].querySelector(".agent-thread-card__message-actions"),
+    ).toBeNull();
   });
 
   it("shows a check for one second after copying succeeds", async () => {

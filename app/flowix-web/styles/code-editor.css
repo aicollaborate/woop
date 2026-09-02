@@ -24,7 +24,8 @@
 	display: flex !important;
 	align-items: flex-start !important;
 	height: 100%;
-	overflow-x: hidden;
+	min-width: 0;
+	overflow-x: auto;
 	overflow-y: auto;
 	position: relative;
 	z-index: 0;
@@ -49,16 +50,29 @@
 }
 
 /* Mirror EditorView.lineWrapping with enough specificity to win over the
- * non-wrapping structural fallback above. Long lines stay constrained to the
- * editor viewport and never introduce a horizontal scrollbar. */
+ * non-wrapping structural fallback above. Let the scroller's flex layout
+ * determine the available width instead of forcing the content to 100%. */
 .code-editor .cm-content.cm-lineWrapping {
-	width: 100%;
-	max-width: 100%;
 	min-width: 0;
 	white-space: break-spaces;
 	word-break: break-word;
 	overflow-wrap: anywhere;
 	flex-shrink: 1;
+}
+
+.code-editor .cm-layer {
+	position: absolute;
+	left: 0;
+	top: 0;
+	contain: size style;
+}
+
+.code-editor .cm-layer > * {
+	position: absolute;
+}
+
+.code-editor .cm-cursorLayer {
+	pointer-events: none;
 }
 
 .code-editor .cm-line {

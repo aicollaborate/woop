@@ -23,7 +23,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: POWERSHELL,
       args: ['-Command', 'rg', '-n', '"PRAGMA foreign"'],
       env: [],
-      raw: `${POWERSHELL} -Command rg -n "PRAGMA foreign"`,
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -36,7 +35,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: '/usr/local/bin/node',
       args: ['script.js'],
       env: [],
-      raw: '/usr/local/bin/node script.js',
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -49,7 +47,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: 'C:/Python311/python.exe',
       args: ['-V'],
       env: [],
-      raw: 'C:/Python311/python.exe -V',
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -62,7 +59,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: 'rg',
       args: ['-n', 'pattern'],
       env: [],
-      raw: 'rg -n pattern',
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -75,7 +71,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: 'script.sh',
       args: [],
       env: [],
-      raw: 'script.sh',
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -88,7 +83,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: POWERSHELL,
       args: ['-Command', 'rg'],
       env: [],
-      raw: `${POWERSHELL} -Command rg`,
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -103,7 +97,6 @@ describe('agent-thread-card command renderer — path basename', () => {
       command: POWERSHELL,
       args,
       env: [],
-      raw: `${POWERSHELL} ${args.join(' ')}`,
     };
     const list = createAgentThreadCardCommandList({ items: [item] });
 
@@ -111,30 +104,37 @@ describe('agent-thread-card command renderer — path basename', () => {
     expect(argText.textContent).toBe(args.join(' '));
     expect(argText.title).toBe(args.join(' '));
   });
+
+  it('can render an unbounded details list without compact markers', () => {
+    const longArg = 'x'.repeat(1200);
+    const items: AgentCommandItem[] = Array.from({ length: 7 }, (_, index) => ({
+      command: 'echo',
+      args: index === 6 ? [longArg] : [String(index)],
+      env: [],
+    }));
+    const list = createAgentThreadCardCommandList({ items }, false, {
+      maxItems: Number.POSITIVE_INFINITY,
+      maxInlineArgs: Number.POSITIVE_INFINITY,
+      truncateArgs: false,
+    });
+
+    expect(list.querySelectorAll('.agent-thread-card__command-item')).toHaveLength(7);
+    expect(list.querySelector('.agent-thread-card__command-more')).toBeNull();
+    expect(list.textContent).toContain(longArg);
+  });
 });
 
 describe('agent-thread-card command renderer — compact preview', () => {
-  it('keeps the complete parsed command available as a tooltip', () => {
+  it('renders the command and operators as one text run', () => {
     const preview = createAgentThreadCardCommandPreview({
       items: [
-        {
-          command: 'npm',
-          args: ['run', 'build'],
-          env: [],
-          raw: 'npm run build',
-        },
-        {
-          op: '&&',
-          command: 'npm',
-          args: ['test'],
-          env: [],
-          raw: 'npm test',
-        },
+        { command: 'npm', args: ['run', 'build'], env: [] },
+        { op: '&&', command: 'npm', args: ['test'], env: [] },
       ],
     });
 
-    expect(preview.className).toBe('agent-thread-card__command-preview');
-    expect(preview.textContent).toBe('npm run build\n&& npm test');
+    expect(preview.tagName).toBe('SPAN');
+    expect(preview.textContent).toBe('npm run build && npm test');
     expect(preview.title).toBe(preview.textContent);
   });
 });

@@ -42,6 +42,9 @@ export const agentClient = {
   updateThreadTitle: agent.updateThreadTitle,
 };
 
+/** Public dependency contract used by store slices and compile-checked test fakes. */
+export type AgentClient = typeof agentClient;
+
 export function listenToAgentChunks(
   callback: (chunk: AgentChunk) => void,
   options?: SubscribeOptions,

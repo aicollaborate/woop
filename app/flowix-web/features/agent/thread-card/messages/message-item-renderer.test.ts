@@ -183,7 +183,7 @@ describe("context compaction message rendering", () => {
 });
 
 describe("unified tool message rendering", () => {
-  it("uses the common tool row and toggles overflowing command text in place", async () => {
+  it("keeps a structured command preview and expands to the complete command list", async () => {
     let expanded = false;
     const setDisplayExpanded = vi.fn((_messageId: string, value: boolean) => {
       expanded = value;
@@ -208,8 +208,15 @@ describe("unified tool message rendering", () => {
     if (element) document.body.append(element);
     expect(element?.classList.contains("agent-thread-card__message--tool"))
       .toBe(true);
-    expect(element?.classList.contains("agent-thread-card__message--tool-command"))
-      .toBe(false);
+    const preview = element?.querySelector<HTMLSpanElement>(
+      ".agent-thread-card__command-preview",
+    );
+    expect(preview).not.toBeNull();
+    expect(preview?.textContent).toBe("npm run build && npm test");
+    expect(preview?.title).toBe(preview?.textContent);
+    expect(element?.querySelector(
+      ".agent-thread-card__command-list--details",
+    )).not.toBeNull();
     const iconWrap = element?.querySelector<HTMLSpanElement>(
       ".agent-thread-card__message-tool-icon-wrap",
     );
@@ -222,22 +229,18 @@ describe("unified tool message rendering", () => {
     const content = element?.querySelector<HTMLDivElement>(
       ".agent-thread-card__message-tool-content",
     );
-    const summary = element?.querySelector<HTMLSpanElement>(
-      ".agent-thread-card__message-tool-summary",
-    );
-    if (summary) {
-      Object.defineProperty(summary, "clientWidth", { value: 100 });
-      Object.defineProperty(summary, "scrollWidth", { value: 240 });
-    }
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const toggle = element?.querySelector<HTMLButtonElement>(
       ".agent-thread-card__message-tool-toggle",
     );
 
-    expect(summary?.textContent).toBe("npm run build\n&& npm test");
+    expect(element?.querySelectorAll(
+      ".agent-thread-card__command-list--details .agent-thread-card__command-line",
+    )).toHaveLength(2);
     expect(content?.classList.contains(
       "agent-thread-card__message-tool-content--expanded",
     )).toBe(false);
+    expect(toggle).not.toBeNull();
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
     toggle?.click();
@@ -245,6 +248,9 @@ describe("unified tool message rendering", () => {
     expect(content?.classList.contains(
       "agent-thread-card__message-tool-content--expanded",
     )).toBe(true);
+    expect(element?.querySelector(
+      ".agent-thread-card__command-list--details",
+    )).not.toBeNull();
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     toggle?.click();
@@ -280,6 +286,7 @@ describe("unified tool message rendering", () => {
   });
 
   it("uses the same expansion control for overflowing non-command tools", async () => {
+    const fullSummary = `first line\nsecond line\n${"x".repeat(1200)}`;
     const result = createAgentThreadCardMessageElement({
       message: {
         id: "tool-3",
@@ -287,7 +294,7 @@ describe("unified tool message rendering", () => {
         content: "",
         timestamp: new Date().toISOString(),
         toolName: "read",
-        toolDisplay: { kind: "file", summary: "first line\nsecond line" },
+        toolDisplay: { kind: "file", summary: fullSummary },
       },
       language: "zh-CN",
       getReasoningCollapsed: () => true,
@@ -300,7 +307,7 @@ describe("unified tool message rendering", () => {
     const summary = result?.element.querySelector<HTMLElement>(
       ".agent-thread-card__message-tool-summary",
     );
-    expect(summary?.textContent).toBe("first line\nsecond line");
+    expect(summary?.textContent).toBe(fullSummary);
     if (summary) {
       Object.defineProperty(summary, "clientWidth", { value: 100 });
       Object.defineProperty(summary, "scrollWidth", { value: 180 });
@@ -309,17 +316,23 @@ describe("unified tool message rendering", () => {
     expect(result?.element.querySelector(
       ".agent-thread-card__message-tool-toggle",
     )).not.toBeNull();
+    result?.element.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__message-tool-toggle",
+    )?.click();
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-tool-summary",
+    )?.textContent).toBe(fullSummary);
   });
 
-  it("does not show a toggle when a command fits on one line", async () => {
+  it("does not show a toggle when a short non-command summary fits on one line", async () => {
     const result = createAgentThreadCardMessageElement({
       message: {
         id: "tool-4",
         role: "tool",
         content: "",
         timestamp: new Date().toISOString(),
-        toolName: "shell",
-        toolInput: { command: "pwd" },
+        toolName: "read",
+        toolDisplay: { kind: "file", summary: "example.txt" },
       },
       language: "zh-CN",
       getReasoningCollapsed: () => true,

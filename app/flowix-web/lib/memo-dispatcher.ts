@@ -39,18 +39,16 @@ import type { MemoEvent } from '@/types/memo';
 export const memoDispatcher = new EventDispatcher<MemoEvent>();
 const logger = createLogger('memo-event');
 
-// ---- 模块级: 单一 Tauri 订阅 → dispatcher 入口 -------------------------------
+// ---- 显式生命周期: 单一 Tauri 订阅 → dispatcher 入口 ------------------------
 //
-// 用模块级 let 守门: 即使本模块被多次 import (HMR / StrictMode 双挂),
-// 也只挂 1 个 Tauri listener。 event-bus 的 `subscribe` 自身也能去重,
-// 但每次 subscribe 会增加 1 个 handler, 每次 dispatch 会被调用多次 ──
-// 这里手动守门更直白。
-let memoEventBridgeInstalled = false;
+// Dispatcher 本身可以被普通模块、SSR 和单元测试安全 import。只有内容型
+// Webview 的生命周期组件 acquire 时才连接 Tauri；多个组件共享一个底层
+// listener，最后一个 release 才交还给 event-bus。
+let memoEventBridgeRefCount = 0;
+let memoEventBridgeUnsubscribe: (() => void) | undefined;
 
-function installMemoEventBridge(): void {
-  if (memoEventBridgeInstalled) return;
-  memoEventBridgeInstalled = true;
-  subscribe<MemoEvent>('memo-event', (payload) => {
+function subscribeMemoEventBridge(): () => void {
+  return subscribe<MemoEvent>('memo-event', (payload) => {
     // DEBUG: 打印后端 emit 到前端的所有 memo-event (dedup 之前的原始事件)。
     // 排查"外部修改"提示链路时, 用这个日志看 fs_watcher 是否真的发了
     // `updated` + `source=external_tool` 事件, 路径是否匹配当前文档。
@@ -75,8 +73,23 @@ function installMemoEventBridge(): void {
   });
 }
 
-// 顶层立即执行 — 任何 import 本文件的模块都会触发注册。
-installMemoEventBridge();
+export function acquireMemoEventBridge(): () => void {
+  memoEventBridgeRefCount += 1;
+  if (memoEventBridgeRefCount === 1) {
+    memoEventBridgeUnsubscribe = subscribeMemoEventBridge();
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    memoEventBridgeRefCount = Math.max(0, memoEventBridgeRefCount - 1);
+    if (memoEventBridgeRefCount !== 0) return;
+    const unsubscribe = memoEventBridgeUnsubscribe;
+    memoEventBridgeUnsubscribe = undefined;
+    unsubscribe?.();
+  };
+}
 
 // ---- Phase 2: dedup middleware ----------------------------------------------
 //

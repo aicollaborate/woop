@@ -61,8 +61,7 @@ fn emit_notebook_import_status(
 }
 
 fn notebook_path_missing(path: &str) -> bool {
-    let _ = path;
-    false
+    path.trim().is_empty() || !Path::new(path).is_dir()
 }
 
 fn normalize_notebook_icon(icon: Option<String>) -> Option<String> {
@@ -673,6 +672,19 @@ mod tests {
 
         assert_eq!(value["status"], "failed");
         assert_eq!(value["message"], "disk import failed");
+    }
+
+    #[test]
+    fn notebook_path_missing_reflects_directory_presence() {
+        let root = temp_root();
+        let missing_path = root.join("missing");
+        let file_path = root.join("notebook.md");
+        fs::write(&file_path, "# not a notebook directory").expect("write file");
+
+        assert!(!notebook_path_missing(root.to_str().expect("utf8 root")));
+        assert!(notebook_path_missing(missing_path.to_str().expect("utf8 missing path")));
+        assert!(notebook_path_missing(file_path.to_str().expect("utf8 file path")));
+        assert!(notebook_path_missing("  "));
     }
 
     #[test]

@@ -671,6 +671,7 @@ pub fn run() {
             commands::tab_window::open_note_tab,
             commands::tab_window::open_external_markdown_window,
             commands::tab_window::open_external_markdown_tab,
+            commands::tab_window::open_external_text_window,
             commands::tab_window::open_markdown_path_tab,
             commands::tab_window::tab_window_ready,
             commands::tab_window::tab_window_ack_transfer,

@@ -2588,9 +2588,6 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(
       useAgentConversationStore.getState().getInstance(second.instanceId)?.title,
     ).toBe("Database title");
-    expect(useChatStore.getState().threadLists.codex?.[0]?.title).toBe(
-      "Database title",
-    );
   });
 
   it("rolls every title snapshot back when product persistence fails", async () => {

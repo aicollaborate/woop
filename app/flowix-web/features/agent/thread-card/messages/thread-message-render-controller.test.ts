@@ -326,6 +326,85 @@ describe("ThreadMessageRenderController empty settings", () => {
 });
 
 describe("ThreadMessageRenderController run-end re-parse", () => {
+  it("preserves historical actions across append and restores the current actions on run end", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("deepseek-harness");
+      const history = [
+        {
+          id: "u1",
+          role: "user" as const,
+          content: "first",
+          timestamp: new Date().toISOString(),
+          isCompleted: true,
+        },
+        {
+          id: "a1",
+          role: "assistant" as const,
+          content: "answer 1",
+          timestamp: new Date().toISOString(),
+          isCompleted: true,
+        },
+      ];
+      const currentUser = {
+        id: "u2",
+        role: "user" as const,
+        content: "second",
+        timestamp: new Date().toISOString(),
+        isCompleted: true,
+      };
+      const currentAssistant = {
+        id: "a2",
+        role: "assistant" as const,
+        content: "answer 2",
+        timestamp: new Date().toISOString(),
+        isCompleted: false,
+      };
+
+      controller.render({
+        messages: history,
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      controller.render({
+        messages: [...history, currentUser, currentAssistant],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      const list = body.querySelector<HTMLElement>(".agent-thread-card__messages");
+      expect(body.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(1);
+      expect(list?.children[1].querySelector(".agent-thread-card__message-actions")).not.toBeNull();
+      expect(list?.children[3].querySelector(".agent-thread-card__message-actions")).toBeNull();
+
+      controller.render({
+        messages: [
+          ...history,
+          currentUser,
+          { ...currentAssistant, isCompleted: true },
+        ],
+        isLoading: false,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      expect(body.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(2);
+      expect(list?.children[3].querySelector(".agent-thread-card__message-actions")).not.toBeNull();
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("re-parses the last assistant message on run end to canonicalize loose lists", () => {
     // rAF 同步执行, 让流式态 renderNow 立即落地 (更新 wasLoading)
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {

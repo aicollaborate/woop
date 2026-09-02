@@ -25,7 +25,7 @@ export interface RenderedAgentMessageCache {
 
 export interface AgentThreadCardMessageRenderContext {
   language: AppLanguage;
-  /** True while the current Codex turn is still producing items. */
+  /** True while the current turn is still producing items. */
   isLoading: boolean;
   getReasoningCollapsed: (message: AgentMessage) => boolean;
   setReasoningCollapsed: (messageId: string, collapsed: boolean) => void;
@@ -40,34 +40,106 @@ export interface AgentThreadCardMessageRenderContext {
   onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }
 
-export function isLastAssistantInTurn(
+/**
+ * Returns whether a message belongs to the turn currently being submitted.
+ *
+ * Codex rows are grouped by their provider turn id when one is available.
+ * Other agents do not expose that id, so their latest user row is the turn
+ * boundary and all following rows belong to that turn until another user row
+ * is appended.
+ */
+export function isCurrentTurnMessage(
+  message: AgentMessage,
+  messages: ThreadState["messages"],
+): boolean {
+  const index = messages.indexOf(message);
+  if (index < 0) return false;
+
+  let latestUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user") {
+      latestUserIndex = i;
+      break;
+    }
+  }
+
+  // A live stream can briefly contain provider rows before its user row is
+  // projected. In that state there is no historical boundary to preserve;
+  // use the newest known Codex turn id when possible and otherwise treat the
+  // available rows as the current turn.
+  if (latestUserIndex < 0) {
+    if (!message.codexTurnId) return true;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].codexTurnId) {
+        return messages[i].codexTurnId === message.codexTurnId;
+      }
+    }
+    return true;
+  }
+
+  if (index < latestUserIndex) return false;
+
+  const latestUser = messages[latestUserIndex];
+  let currentTurnId = latestUser.codexTurnId;
+  if (!currentTurnId) {
+    // The optimistic user row may not have adopted the provider id yet. A
+    // later Codex row in the same user-delimited segment can still establish
+    // the current turn id.
+    for (let i = messages.length - 1; i >= latestUserIndex; i -= 1) {
+      if (messages[i].codexTurnId) {
+        currentTurnId = messages[i].codexTurnId;
+        break;
+      }
+    }
+  }
+
+  // Missing ids on reasoning/tool rows are expected in the projected Codex
+  // state. The user boundary still keeps those rows in the current turn.
+  if (currentTurnId && message.codexTurnId) {
+    return currentTurnId === message.codexTurnId;
+  }
+  return true;
+}
+
+export function isLastMessageInTurnAndAssistant(
   messages: ThreadState["messages"],
   index: number,
 ): boolean {
   const message = messages[index];
   if (message.role !== "assistant") return false;
-  // DSH and other external agents do not expose Codex turn ids. Their
-  // projected assistant rows are still ordered, so the last assistant row is
-  // the correct completed-message action target.
-  if (!message.codexTurnId) {
-    for (let i = index + 1; i < messages.length; i += 1) {
-      if (messages[i].role === "assistant") return false;
-    }
-    return message.isCompleted !== false;
-  }
+
+  // A later user row always starts another turn, regardless of whether its
+  // provider metadata has arrived yet.
   for (let i = index + 1; i < messages.length; i += 1) {
-    // A turn can contain reasoning/tool rows which do not carry the Codex
-    // turn id in the projected client state. They must not terminate the
-    // search: only a later assistant with the same turn id proves that this
-    // assistant is not the turn's final assistant output.
+    const laterMessage = messages[i];
+    if (laterMessage.role === "user") break;
+
+    // Codex turn ids are authoritative when both rows provide one. Rows
+    // without an id are tolerated inside the user-delimited turn because
+    // reasoning/tool rows may omit the id. Any such later row still means
+    // that this assistant is not the final message of the turn.
     if (
-      messages[i].role === "assistant" &&
-      messages[i].codexTurnId === message.codexTurnId
+      message.codexTurnId &&
+      laterMessage.codexTurnId &&
+      laterMessage.codexTurnId !== message.codexTurnId
     ) {
-      return false;
+      break;
     }
+    return false;
   }
   return message.isCompleted !== false;
+}
+
+export function shouldShowMessageActions(
+  message: AgentMessage,
+  messages: ThreadState["messages"],
+  isLoading: boolean,
+): boolean {
+  const index = messages.indexOf(message);
+  return (
+    isLastMessageInTurnAndAssistant(messages, index) &&
+    !(isLoading && isCurrentTurnMessage(message, messages))
+  );
 }
 
 function syncMessageActions(
@@ -81,12 +153,13 @@ function syncMessageActions(
     const item = list.children[index] as HTMLDivElement | undefined;
     if (!item || message.role !== "assistant") continue;
 
-    // During a live turn the current last assistant is only a provisional
-    // tail: a tool call or another assistant item may still arrive. Actions
-    // are therefore enabled only after the turn has stopped streaming.
-    const shouldShow =
-      !context.isLoading &&
-      isLastAssistantInTurn(messages, messages.indexOf(message));
+    // During a live turn only the current turn is provisional. Completed
+    // historical turns keep their actions available.
+    const shouldShow = shouldShowMessageActions(
+      message,
+      messages,
+      context.isLoading,
+    );
     const actions = item.querySelector<HTMLElement>(
       ".agent-thread-card__message-actions",
     );
@@ -241,11 +314,15 @@ export function appendRenderedAgentMessagesToTail(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
-      showActions: !context.isLoading && isLastAssistantInTurn(
+      showActions: shouldShowMessageActions(
+        message,
+        messages,
+        context.isLoading,
+      ),
+      canFork: isLastMessageInTurnAndAssistant(
         messages,
         messages.indexOf(message),
       ),
-      canFork: isLastAssistantInTurn(messages, messages.indexOf(message)),
       onForkMessage: context.onForkMessage,
     });
     if (!rendered) continue;
@@ -280,8 +357,8 @@ export function createRenderedAgentMessageList(
       getDisplayExpanded: context.getDisplayExpanded,
       setDisplayExpanded: context.setDisplayExpanded,
       isStreaming: context.isStreaming(message),
-      showActions: !context.isLoading && isLastAssistantInTurn(messages, index),
-      canFork: isLastAssistantInTurn(messages, index),
+      showActions: shouldShowMessageActions(message, messages, context.isLoading),
+      canFork: isLastMessageInTurnAndAssistant(messages, index),
       onForkMessage: context.onForkMessage,
     });
     if (!rendered) continue;

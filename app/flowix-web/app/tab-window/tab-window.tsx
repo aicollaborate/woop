@@ -179,6 +179,12 @@ export function TabWindow() {
             if (!isLatest()) return false;
             await openExternalDocument(tab.target.filePath);
             break;
+          case 'external_text':
+            if (!isLatest()) return false;
+            await openExternalDocument(tab.target.filePath, {
+              scopePath: tab.target.scopePath,
+            });
+            break;
           case 'web':
             if (!isLatest()) return false;
             await clearDocument();
@@ -548,8 +554,11 @@ export function TabWindow() {
       activeMemoSession?.transitionId
       ?? activeExternalSession?.transitionId
       ?? null,
-    isExternalDocument: activeTab.target.kind === 'external_markdown',
-    externalScopePath: activeExternalSession?.scopePath ?? null,
+    isExternalDocument:
+      activeTab.target.kind === 'external_markdown' || activeTab.target.kind === 'external_text',
+    externalScopePath:
+      activeExternalSession?.scopePath
+      ?? (activeTab.target.kind === 'external_text' ? activeTab.target.scopePath : null),
     searchPanelOpen: isSearchPanelOpen,
     onSearchPanelOpenChange: setIsSearchPanelOpen,
     toolbarCollapsed,

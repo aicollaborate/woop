@@ -23,6 +23,7 @@ import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
 import { windows } from "@platform/tauri/client";
 import { agent } from "@platform/tauri/client/agent";
 import { normalizePlainLinkHref } from "@features/editor/extensions/markdown-link";
+import { isCodeTextFilePath } from "@features/editor/code-file";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
 import type { AgentRuntimeSettingKind } from "@features/agent/runtime/agent-runtime-spec";
@@ -75,6 +76,7 @@ import {
 } from "@features/agent/thread-card/agent-thread-card-selectors";
 import {
   isMarkdownFilePath,
+  agentFileScopePath,
   localFilePathFromAgentHref,
 } from "@features/agent/thread-card/link-navigation";
 
@@ -622,6 +624,20 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
    */
   private get cwd(): string | null {
     return getAgentConversationRuntimeCwd(this.instance) ?? null;
+  }
+
+  private scopePathForLocalFile(filePath: string): string | null {
+    const runtimeConfig = this.instance?.runtimeConfig;
+    const snapshotPaths = runtimeConfig?.workspaceState?.desired.workspacePaths
+      ?? runtimeConfig?.workspaceSnapshot?.workspacePaths
+      ?? [];
+    const legacyPaths = [
+      runtimeConfig?.cwd,
+      runtimeConfig?.files?.workspace,
+      ...(runtimeConfig?.files?.folders ?? []),
+      ...(runtimeConfig?.files?.notebooks ?? []),
+    ].filter((path): path is string => typeof path === "string");
+    return agentFileScopePath(filePath, [...snapshotPaths, ...legacyPaths]);
   }
 
   private ensureInstanceBinding(): void {
@@ -1338,6 +1354,16 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       if (isMarkdownFilePath(localPath)) {
         void windows.openMarkdownPathTab(localPath).catch((error) => {
           logger.error("Failed to open Markdown link", { error });
+          toast.error(this.t("agent.link.openLocalFileFailed"));
+        });
+        return;
+      }
+      const scopePath = isCodeTextFilePath(localPath)
+        ? this.scopePathForLocalFile(localPath)
+        : null;
+      if (scopePath) {
+        void windows.openExternalTextWindow(localPath, scopePath).catch((error) => {
+          logger.error("Failed to open text file link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
         return;

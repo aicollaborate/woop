@@ -72,6 +72,10 @@ import {
 } from './memo-list/color-filter-submenu';
 import { MemoNavigationDropdown, MemoNavigationSubmenu } from './memo-navigation-dropdown';
 import { useMemoListWindow } from './memo-list/use-memo-list-window';
+import {
+  buildRunningAgentIndex,
+  findRunningAgentForMemo,
+} from './memo-list/running-agent-index';
 const logger = createLogger('memo-list');
 
 const LazyNotebookDialogs = lazy(() =>
@@ -206,17 +210,15 @@ export function MemoList() {
       ),
     [agentConversationInstances, conversationRunIndex],
   );
+  const runningAgentIndex = useMemo(
+    () => buildRunningAgentIndex(runningAgentInstances),
+    [runningAgentInstances],
+  );
   const getRunningAgentForMemo = useCallback(
     (memo: MemoItem): AgentConversationInstance | null => {
-      const memoThreadIds = new Set(memo.agents.map((agent) => agent.threadId));
-      return (
-        runningAgentInstances.find((instance) => {
-          if (instance.source.memoId === memo.id) return true;
-          return Boolean(instance.threadId && memoThreadIds.has(instance.threadId));
-        }) ?? null
-      );
+      return findRunningAgentForMemo(runningAgentIndex, memo);
     },
-    [runningAgentInstances],
+    [runningAgentIndex],
   );
   const activeTagId = activeFilter === 'tagged' ? selectedTagId : null;
   const setSelectedTagId = useTagStore((s) => s.setSelectedTagId);

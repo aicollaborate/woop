@@ -155,6 +155,10 @@ pub fn markdown_paths_from_args(args: impl IntoIterator<Item = String>) -> Vec<S
 }
 
 pub(crate) fn is_registered_notebook_path(path: &Path, state: &State<AppState>) -> bool {
+    is_registered_notebook_path_with_state(path, state.inner())
+}
+
+pub(crate) fn is_registered_notebook_path_with_state(path: &Path, state: &AppState) -> bool {
     let memo_file = read_lock(&state.memo_file, "memo_file");
     memo_file
         .registered_notebook_paths()
@@ -178,11 +182,20 @@ pub(crate) fn can_access_scoped_file(
     space_path: Option<&str>,
     state: &State<AppState>,
 ) -> bool {
+    can_access_scoped_file_with_state(file_path, space_path, state.inner())
+}
+
+pub(crate) fn can_access_scoped_file_with_state(
+    file_path: &Path,
+    space_path: Option<&str>,
+    state: &AppState,
+) -> bool {
     let Some(space_path) = space_path else {
         return false;
     };
     let root = Path::new(space_path);
-    (is_registered_notebook_path(root, state) || is_agent_access_folder(root, state))
+    (is_registered_notebook_path_with_state(root, state)
+        || is_agent_access_folder_with_state(root, state))
         && path_is_inside(file_path, root)
 }
 
@@ -191,6 +204,10 @@ pub(crate) fn can_access_scoped_file(
 /// 文件夹 (这些目录不在注册笔记本列表里, `is_registered_notebook_path`
 /// 对它们返回 false)。
 pub(crate) fn is_agent_access_folder(path: &Path, state: &State<AppState>) -> bool {
+    is_agent_access_folder_with_state(path, state.inner())
+}
+
+pub(crate) fn is_agent_access_folder_with_state(path: &Path, state: &AppState) -> bool {
     let config = state.agent_access.get_config();
     config.entries.iter().any(|entry| {
         entry.kind == crate::config::AgentAccessKind::Folder

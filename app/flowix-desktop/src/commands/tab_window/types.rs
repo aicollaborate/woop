@@ -29,6 +29,10 @@ pub enum TabTarget {
     ExternalMarkdown {
         file_path: String,
     },
+    ExternalText {
+        file_path: String,
+        scope_path: String,
+    },
     Web {
         url: String,
     },

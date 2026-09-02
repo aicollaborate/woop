@@ -9,7 +9,7 @@ import {
   shouldRenderAgentMessage,
 } from "@features/agent/message";
 import {
-  agentCommandListToText,
+  normalizeToolInput,
   parseAgentCommandInput,
 } from "@features/agent/tool-display";
 import {
@@ -18,11 +18,12 @@ import {
   renderAgentThreadCardMarkdownToHtml,
 } from "@features/agent/thread-card/agent-thread-card-markdown";
 import {
+  createAgentThreadCardCommandPreview,
+  createAgentThreadCardCommandList,
   createAgentThreadCardMessageFallback,
 } from "@features/agent/thread-card/agent-thread-card-command-renderer";
 import {
   applyMessageDisplayBudget,
-  truncateToolMessageForDisplay,
   type MessageDisplayBudgetRole,
 } from "@features/agent/message/display-limits";
 import {
@@ -200,12 +201,57 @@ function directChildDisplayToggle(parent: HTMLElement): HTMLButtonElement | null
   return null;
 }
 
+function findNestedToolString(
+  input: unknown,
+  keys: readonly string[],
+  depth = 3,
+): string | undefined {
+  if (!input || depth < 0 || typeof input !== "object") return undefined;
+  if (Array.isArray(input)) {
+    for (const value of input) {
+      const nested = findNestedToolString(value, keys, depth - 1);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+
+  const record = input as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof record[key] === "string" && record[key].trim()) {
+      return record[key].trim();
+    }
+  }
+  for (const value of Object.values(record)) {
+    const nested = findNestedToolString(value, keys, depth - 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function getMcpToolName(message: AgentMessage): string | undefined {
+  if (message.toolName?.toLowerCase() !== "mcp_tool_call") return undefined;
+  return findNestedToolString(normalizeToolInput(message.toolInput), [
+    "tool",
+    "tool_name",
+    "name",
+  ]);
+}
+
+function getMcpToolSummary(summary: string, toolName: string): string {
+  const prefix = `${toolName} · `;
+  return summary.startsWith(prefix) ? summary.slice(prefix.length) : summary;
+}
+
 function createExpandableToolContent(options: {
   message: AgentMessage;
-  text: string;
+  text?: string;
   language: AppLanguage;
   getDisplayExpanded: (message: AgentMessage) => boolean;
   setDisplayExpanded: (messageId: string, expanded: boolean) => void;
+  /** Optional DOM node whose overflow determines whether the toggle is shown. */
+  measureTarget?: HTMLElement;
+  /** Used for structured command content with a separate compact preview. */
+  alwaysShowToggle?: boolean;
 }): HTMLDivElement {
   const {
     message,
@@ -217,11 +263,13 @@ function createExpandableToolContent(options: {
   const content = document.createElement("div");
   content.className = "agent-thread-card__message-tool-content";
 
-  const summary = document.createElement("span");
-  summary.className = "agent-thread-card__message-tool-summary";
-  summary.textContent = text;
-  summary.title = text;
-  content.append(summary);
+  const summary = text === undefined ? null : document.createElement("span");
+  if (summary) {
+    summary.className = "agent-thread-card__message-tool-summary";
+    summary.textContent = text ?? "";
+    summary.title = text ?? "";
+    content.append(summary);
+  }
 
   let isExpanded = getDisplayExpanded(message);
   const toggle = document.createElement("button");
@@ -235,8 +283,11 @@ function createExpandableToolContent(options: {
     // button consumes width and can keep itself visible even when the full
     // single-line text would fit without it.
     if (!isExpanded && toggle.isConnected) toggle.remove();
-    const shouldShow =
-      isExpanded || summary.scrollWidth > summary.clientWidth + 1;
+    const target = options.measureTarget ?? summary;
+    const shouldShow = Boolean(
+      isExpanded || options.alwaysShowToggle ||
+      (target && target.scrollWidth > target.clientWidth + 1),
+    );
     if (shouldShow && !toggle.isConnected) content.append(toggle);
     else if (!shouldShow && toggle.isConnected) toggle.remove();
   };
@@ -552,19 +603,46 @@ export function createAgentThreadCardMessageElement(options: {
       name.className = "agent-thread-card__message-tool-name";
       name.textContent = messageView.toolLabel;
       const command = parseAgentCommandInput(message.toolInput);
-      // Raw command input remains the command source of truth across live and
-      // replay paths, but commands and other tools now share one display DOM.
-      const toolText = command
-        ? agentCommandListToText(command)
-        : truncateToolMessageForDisplay(messageView.toolSummary);
-      const content = createExpandableToolContent({
-        message,
-        text: toolText,
-        language,
-        getDisplayExpanded,
-        setDisplayExpanded,
-      });
-      item.append(iconWrap, name, content);
+      if (command) {
+        const preview = createAgentThreadCardCommandPreview(command);
+        const details = createAgentThreadCardCommandList(command, false, {
+          maxItems: Number.POSITIVE_INFINITY,
+          maxInlineArgs: Number.POSITIVE_INFINITY,
+          truncateArgs: false,
+        });
+        details.classList.add("agent-thread-card__command-list--details");
+        const content = createExpandableToolContent({
+          message,
+          language,
+          getDisplayExpanded,
+          setDisplayExpanded,
+          measureTarget: preview,
+          alwaysShowToggle: true,
+        });
+        content.prepend(preview, details);
+        item.append(iconWrap, name, content);
+      } else {
+        const mcpToolName = getMcpToolName(message);
+        const toolText = mcpToolName
+          ? getMcpToolSummary(messageView.toolSummary, mcpToolName)
+          : messageView.toolSummary;
+        const content = createExpandableToolContent({
+          message,
+          text: toolText,
+          language,
+          getDisplayExpanded,
+          setDisplayExpanded,
+        });
+        if (mcpToolName) {
+          const concreteName = document.createElement("span");
+          concreteName.className =
+            "agent-thread-card__message-tool-concrete-name";
+          concreteName.textContent = mcpToolName;
+          item.append(iconWrap, name, concreteName, content);
+        } else {
+          item.append(iconWrap, name, content);
+        }
+      }
     } else if (message.role === "end") {
       const content = document.createElement("div");
       content.className = "agent-thread-card__message-content";

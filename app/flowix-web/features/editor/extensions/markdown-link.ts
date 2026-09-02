@@ -3,6 +3,7 @@ import { Extension, markInputRule, markPasteRule, type InputRuleMatch, type Mark
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { isVideoUrl } from '@features/editor/extensions/attachment-link/utils';
+import { sanitizeLinkHref } from '@/lib/safe-link';
 
 interface ParsedMarkdownLink {
   raw: string;
@@ -18,7 +19,9 @@ const FLOWIX_MEMO_URL_RE = /^flowix:\/\/memo\/.*$/i;
 export const linkSelectionHighlightPluginKey = new PluginKey<DecorationSet>('linkSelectionHighlight');
 
 export function normalizePlainLinkHref(url: string | null | undefined): string {
-  const trimmed = url?.trim() ?? '';
+  const safeHref = sanitizeLinkHref(url);
+  if (!safeHref) return '';
+  const trimmed = safeHref.trim();
   if (!trimmed) return '';
 
   if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {

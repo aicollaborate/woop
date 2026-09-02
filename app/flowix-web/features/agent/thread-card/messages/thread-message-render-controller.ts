@@ -7,8 +7,9 @@ import {
   appendRenderedAgentMessagesToTail,
   createRenderedAgentMessageList,
   getRenderedAgentMessages,
-  isLastAssistantInTurn,
+  isLastMessageInTurnAndAssistant,
   patchLastRenderedAgentMessage,
+  shouldShowMessageActions,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
 import { createAgentThreadCardMessageElement } from "@features/agent/thread-card/messages/message-item-renderer";
@@ -290,11 +291,12 @@ export class ThreadMessageRenderController {
           getDisplayExpanded: context.getDisplayExpanded,
           setDisplayExpanded: context.setDisplayExpanded,
           isStreaming: context.isStreaming(message),
-          showActions: !input.isLoading && isLastAssistantInTurn(
+          showActions: shouldShowMessageActions(
+            message,
             input.messages,
-            input.messages.indexOf(message),
+            input.isLoading,
           ),
-          canFork: !input.isLoading && isLastAssistantInTurn(
+          canFork: isLastMessageInTurnAndAssistant(
             input.messages,
             input.messages.indexOf(message),
           ),

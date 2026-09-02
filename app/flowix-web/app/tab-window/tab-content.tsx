@@ -31,7 +31,10 @@ export function resolveTabContentSurface({
     });
   }
 
-  const isExternal = tab.target.kind === 'external_markdown';
+  const isExternal = tab.target.kind === 'external_markdown' || tab.target.kind === 'external_text';
+  const externalScopePath = tab.target.kind === 'external_text'
+    ? tab.target.scopePath
+    : memoContentProps.externalScopePath ?? null;
   const memoId = tab.target.kind === 'memo' ? tab.target.memoId : null;
   const documentPath = memoContentProps.filePath;
   const notebookId = tab.target.kind === 'memo'
@@ -54,7 +57,7 @@ export function resolveTabContentSurface({
         : {
             kind: 'external',
             path: tab.target.filePath,
-            scopePath: null,
+            scopePath: externalScopePath,
           },
       document: {
         identity: memoId
@@ -69,7 +72,7 @@ export function resolveTabContentSurface({
           : {
               kind: 'external' as const,
               path: documentPath,
-              scopePath: memoContentProps.externalScopePath ?? null,
+              scopePath: externalScopePath,
               transitionId: memoContentProps.transitionId ?? null,
             },
         memo,

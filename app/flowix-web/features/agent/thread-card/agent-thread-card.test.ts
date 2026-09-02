@@ -4,6 +4,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types/agent";
+import { createAgentClientMock } from "@features/agent/store/agent-client.test-support";
 import type { AgentConversationInstanceUpsert } from "@platform/tauri/client";
 
 const memoStateMock = vi.hoisted(() => ({
@@ -48,6 +49,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@platform/tauri/client", () => ({
   agent: {
+    ...createAgentClientMock(),
     cacheImage: vi.fn(async () => ({
       path: "/tmp/cached-agent-image.png",
       mimeType: "image/png",
@@ -55,52 +57,10 @@ vi.mock("@platform/tauri/client", () => ({
     })),
     deleteCachedImage: vi.fn(async () => true),
     readCachedImage: vi.fn(async () => null),
-    chatStream: vi.fn(),
-    stopChatStream: vi.fn(async () => true),
-    runningThreads: vi.fn(async () => ({})),
-    listThreads: vi.fn(async () => []),
-    listCodexThreads: vi.fn(async () => []),
-    listClaudeThreads: vi.fn(async () => []),
-    listLocalAgentThreads: vi.fn(async () => []),
-    createThread: vi.fn(async (title: string) => ({
-      threadId: "thread-created",
-      title,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })),
-    getThread: vi.fn(async () => ({ messages: [] })),
-    getCodexThread: vi.fn(async () => ({ messages: [] })),
-    getCodexThreadPage: vi.fn(async () => ({
-      messages: [],
-      oldestSequence: null,
-      hasMore: false,
-    })),
-    getClaudeThread: vi.fn(async () => ({ messages: [] })),
-    getClaudeThreadPage: vi.fn(async () => ({
-      messages: [],
-      oldestSequence: null,
-      hasMore: false,
-    })),
-    listDeepSeekHarnessThreads: vi.fn(async () => []),
-    getDeepSeekHarnessThread: vi.fn(async () => ({ messages: [] })),
-    getDeepSeekHarnessThreadPage: vi.fn(async () => ({
-      messages: [],
-      oldestSequence: null,
-      hasMore: false,
-    })),
     getDeepSeekHarnessSessionId: vi.fn(async () => null),
     getCodexSessionId: vi.fn(async () => null),
     getClaudeSessionId: vi.fn(async () => null),
     getCodexDefaultModel: vi.fn(async () => "gpt-5.5"),
-    listConversationInstances: vi.fn(async () => []),
-    upsertConversationInstance: vi.fn(async (instance: AgentConversationInstanceUpsert) => ({
-      ...instance,
-      threadTitle: instance.initialTitle,
-    })),
-    deleteConversationInstance: vi.fn(async () => true),
-    deleteConversationInstancesForThread: vi.fn(async () => 0),
-    deleteThread: vi.fn(),
-    updateThreadTitle: vi.fn(),
   },
   memos: {
     listAgentRoleMemos: vi.fn(async () => []),
@@ -108,6 +68,7 @@ vi.mock("@platform/tauri/client", () => ({
   windows: {
     openPreferences: vi.fn(async () => undefined),
     openMarkdownPathTab: vi.fn(async () => undefined),
+    openExternalTextWindow: vi.fn(async () => undefined),
   },
   deepseekHarness: {
     get: vi.fn(async () => ({
@@ -500,7 +461,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       agent_type: "codex",
       text: '<a href="/Users/rop/Desktop/%E4%BA%BA%E7%89%A9%E6%A1%A3%E6%A1%88/tool-smoke-test/outputs/tool-smoke-report.docx">测试报告 DOCX</a>',
     });
-    await flushAnimationFrame();
+    await flushStreamingRender();
 
     const link = host.querySelector<HTMLAnchorElement>(
       '.agent-thread-card__message--assistant a[href]',
@@ -559,7 +520,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       agent_type: "codex",
       text: '<a href="/Users/rop/Documents/Outside%20Note.md">Markdown</a>',
     });
-    await flushAnimationFrame();
+    await flushStreamingRender();
 
     host.querySelector<HTMLAnchorElement>(
       '.agent-thread-card__message--assistant a[href]',
@@ -1353,7 +1314,7 @@ describe("AgentThreadCard NodeView streaming", () => {
         string,
         unknown
       >,
-      agent_type: "codex",
+       agent_type: "codex",
     });
 
     await flushAnimationFrame();
@@ -1406,11 +1367,11 @@ describe("AgentThreadCard NodeView streaming", () => {
         tool: "memo",
         arguments: { command: "notebooks" },
       },
-      agent_type: "codex",
-    });
-    await flushAnimationFrame();
+       agent_type: "codex",
+     });
+     await flushStreamingRender();
 
-    const tool = host.querySelector(".agent-thread-card__message--tool");
+     const tool = host.querySelector(".agent-thread-card__message--tool");
     expect(
       tool?.querySelector(".agent-thread-card__message-tool-name")?.textContent,
     ).toBe("MCP");

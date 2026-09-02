@@ -165,9 +165,8 @@
   border-bottom-color: var(--brand);
 }
 
-/* 独立对话中的工具命令不是普通 message-content, 其命令参数默认是
- * nowrap 单行摘要。长命令 (例如 zsh/git 命令) 会因此把消息区撑出横向
- * 溢出；仅在第三列 AgentConversationDetail 中改为可断行。 */
+/* 独立对话中的工具命令收起态是 nowrap 单行摘要；完整参数只在展开态
+ * 进入详情列表。所有尺寸约束都落在工具自己的内容轨道内。 */
 .markdown-editor.agent-conversation-detail .agent-thread-card__message--tool,
 .markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-content,
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-line,
@@ -205,16 +204,16 @@
   text-overflow: clip;
 }
 
-/* 命令名保持可读；工具名称按内容包裹，过长时再限制最大宽度，避免撑开消息区。 */
+/* 收起态命令名也必须保持单行；否则该高 specificity 规则会覆盖
+ * messages.css 的 nowrap，导致 run/bash 等命令参数出现多行布局。 */
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-name {
   flex: 0 1 auto;
   width: fit-content;
   min-width: 0;
   max-width: 45%;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .markdown-editor.agent-conversation-detail .agent-thread-card__message-tool-name {
@@ -238,6 +237,32 @@
   max-width: none;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__message-tool-content--expanded {
+  display: block;
+  overflow: visible;
+}
+
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-line {
+  width: 100%;
+  overflow: visible;
+  white-space: normal;
+}
+
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-name,
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-args-inline {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown-editor.agent-conversation-detail .agent-thread-card__command-args-inline,
@@ -823,16 +848,18 @@
 
 .markdown-editor .agent-thread-card__loading-cells {
   display: inline-grid;
-  grid-template-columns: repeat(2, 0.24rem);
-  grid-template-rows: repeat(2, 0.24rem);
+  grid-template-columns: repeat(2, 4px);
+  grid-template-rows: repeat(2, 4px);
   gap: 1px;
   flex: 0 0 auto;
+  line-height: 0;
 }
 
 .markdown-editor .agent-thread-card__loading-cell {
   display: inline-block;
-  width: 0.24rem;
-  height: 0.24rem;
+  width: 4px;
+  height: 4px;
+  box-sizing: border-box;
   border-radius: 1px;
   /*
    * 显式 background-color, 不用 background: 简写 — 关键帧里混用
@@ -847,7 +874,7 @@
     var(--muted-foreground) 35%,
     transparent
   );
-  will-change: background-color;
+  will-change: auto;
   animation: agentThreadCardLoadingCell 2.4s ease-in-out infinite;
   /*
    * 4 格按 DOM 顺序顺序点亮 (0..3)。 周期 2.4s ÷ 4 = 0.6s/格。

@@ -6,14 +6,14 @@ import { spawnSync } from 'node:child_process'
 import { createDshRuntimeMetadata, DSH_PNPM_VERSION } from './dsh-runtime-metadata.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
-const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
-const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.0'
+const version = process.env.FLOWIX_DSH_VERSION || '1.5.0'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.2'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 if (!semverPattern.test(version)) {
-  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.1.0`)
+  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.5.0`)
 }
 if (!semverPattern.test(minFlowixVersion)) {
-  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.2.6`)
+  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.3.2`)
 }
 const bundleRoot = resolve(repo, '.build/dsh-runtime-bundle')
 const out = resolve(repo, '.build/releases/dsh')

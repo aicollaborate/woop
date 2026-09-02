@@ -11,15 +11,15 @@ const output = resolve(repo, '.build/dsh-local-package')
 const bundle = resolve(output, 'node24-windows-x64')
 const runtime = resolve(output, 'runtime')
 const release = resolve(repo, '.build/releases/dsh-local')
-const version = process.env.FLOWIX_DSH_VERSION || '1.1.0'
-const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.0'
+const version = process.env.FLOWIX_DSH_VERSION || '1.5.0'
+const minFlowixVersion = process.env.FLOWIX_VERSION || '1.3.2'
 const semverPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
 if (!semverPattern.test(version)) {
-  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.1.0`)
+  throw new Error(`invalid DSH package version ${version}; expected SemVer such as 1.5.0`)
 }
 if (!semverPattern.test(minFlowixVersion)) {
-  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.2.6`)
+  throw new Error(`invalid minimum Flowix version ${minFlowixVersion}; expected SemVer such as 1.3.2`)
 }
 if (!existsSync(resolve(upstream, 'package.json'))) {
   throw new Error(`local DSH upstream source is missing: ${upstream}`)

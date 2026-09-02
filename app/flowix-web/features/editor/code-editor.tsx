@@ -278,5 +278,5 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     };
   }, [filePath, languageCompartment]);
 
-  return <div ref={mountRef} className={cn('code-editor h-full w-full min-w-0', className)} />;
+  return <div ref={mountRef} className={cn('code-editor h-full w-full min-h-0 min-w-0 overflow-hidden', className)} />;
 });

@@ -11,9 +11,8 @@ import type { CurrentBlockInfo } from '@features/editor/components/drag-context-
  *   - Text-bearing blocks (paragraph / blockquote / list / table / hr /
  *     frontmatter) use `(lineHeight - handle) / 2` — handle centered on the
  *     first line. Tuned to within 1px of the formula historically.
- *   - codeBlock has `font-size: 0.85em` (see editor.css) — the formula uses
- *     that smaller line-height so the handle is centered on the actual
- *     rendered line, not the body line.
+ *   - codeBlock inherits the body `font-size` (see editor.css), so the
+ *     formula uses the same line-height as the body text.
  *   - Headings h1–h4 have a hard-coded `line-height: 1.3` plus per-level
  *     rem-based font-size. We use a "near top" ratio (~10–14% of the
  *     heading's line-box) so the handle reads as anchored to the heading,
@@ -25,15 +24,15 @@ import type { CurrentBlockInfo } from '@features/editor/components/drag-context-
  *     don't follow line-height — fixed 5px from the top of the node.
  *
  * Edit visually — these are derived from CSS variables. If the CSS
- * constants (0.85em codeblock, 1.3 heading line-height, h1–h4 rem sizes)
+ * constants (1em codeblock, 1.3 heading line-height, h1–h4 rem sizes)
  * change in `css/editor.css`, update the mirrors below.
  * ───────────────────────────────────────────────────────────────────── */
 
 /** Width/height of the drag handle — single source of truth. */
 export const HANDLE_SIZE = 18
 
-/** codeBlock 在 editor.css 里声明 `font-size: 0.85em`, 居中时按 em 缩放。 */
-const CODE_BLOCK_FONT_SIZE_EM = 0.85
+/** codeBlock 继承正文 `font-size`, 居中时按正文比例计算。 */
+const CODE_BLOCK_FONT_SIZE_EM = 1
 
 /** 标题的 line-height 在 editor.css 里硬编码为 1.3。 */
 const HEADING_LINE_HEIGHT = 1.3

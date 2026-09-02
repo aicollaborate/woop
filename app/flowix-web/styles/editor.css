@@ -128,7 +128,7 @@
   border-radius: 0.4rem;
   padding: 0rem 0.3rem;
   font-family: inherit;
-  font-size: 0.84rem;
+  font-size: inherit;
   color: color-mix(in oklch, var(--foreground) 80%, transparent);
 }
 
@@ -139,7 +139,7 @@
   padding: 0.4rem 0.8rem 1.2rem;
   margin: 1rem 0;
   font-family: inherit;
-  font-size: 0.85em;
+  font-size: inherit;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: visible;

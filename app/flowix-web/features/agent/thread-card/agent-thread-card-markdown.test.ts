@@ -40,6 +40,16 @@ describe("agent thread card Markdown math", () => {
     expect(html).toContain("&lt;div&gt;literal&lt;/div&gt;");
   });
 
+  it("rejects entity-encoded dangerous protocols in raw anchors", () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderAgentThreadCardMarkdownToHtml(
+      '<a href="javascript&#x3A;alert(1)">run</a>',
+    );
+
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toContain("javascript&#x3A;alert(1)");
+  });
+
   it("recognizes Codex inline LaTeX delimiters", () => {
     const html = renderAgentThreadCardMarkdownToHtml(
       "Assume \\(q,k\\in\\mathbb R^d\\).",

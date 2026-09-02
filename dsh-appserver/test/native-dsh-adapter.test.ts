@@ -189,4 +189,5 @@ describe('NativeDshAdapter thread launch', () => {
       toolInput: { file_path: 'a.txt' }, isCompleted: true,
     })
   })
+
 })

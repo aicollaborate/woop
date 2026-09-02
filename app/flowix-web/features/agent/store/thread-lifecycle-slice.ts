@@ -17,7 +17,6 @@ import {
 import { replayExternalEventsForThread } from "@features/agent/store/external-event-replay";
 import { useDocumentStore } from "@features/document/store/document-store";
 import { useWorkspaceRestoreStore } from "@features/workspace/store/workspace-restore-store";
-import { useAgentSessionStore } from "@features/agent/store/agent-session-store";
 import { closeAgentTarget } from "@features/workspace/use-cases/workspace-navigation";
 
 type SessionSet = (
@@ -209,12 +208,11 @@ function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
 
 /** Close the third-column conversation view when its underlying thread is
  * torn down, so the titlebar unmounts before the next render. */
-function closeConversationIfActive(threadId: string): void {
+function closeConversationIfActive(threadId: string, get: SessionGet): void {
   const doc = useDocumentStore.getState();
   const activeInstanceId = doc.activeAgentConversationId;
   if (!activeInstanceId) return;
-  const session = useAgentSessionStore.getState();
-  const instance = session.getInstance(activeInstanceId);
+  const instance = get().getInstance(activeInstanceId);
   if (instance?.threadId !== threadId) return;
   closeAgentTarget();
   useWorkspaceRestoreStore.getState().clearAgentConversation(activeInstanceId);
@@ -265,7 +263,7 @@ export function createThreadLifecycleSlice(
     get().invalidateThread(threadId, true);
     await get().removeInstancesForThreadAndWait(threadId);
     tearDownLocalThreadState(set, threadId);
-    closeConversationIfActive(threadId);
+    closeConversationIfActive(threadId, get);
     // provider 侧列表 (codex thread/list 等) 不再返回该 thread, 刷新让
     // 侧栏与后端状态对齐; 失败不阻塞流程。
     await reloadThreadListForType(get, typeKey.key).catch(() => undefined);

@@ -61,6 +61,11 @@ export type TabTarget =
       filePath: string;
     }
   | {
+      kind: 'external_text';
+      filePath: string;
+      scopePath: string;
+    }
+  | {
       kind: 'web';
       url: string;
     };
@@ -102,6 +107,8 @@ export const windows = {
     invoke<void>('open_external_markdown_window', { filePath }),
   openExternalMarkdownTab: (filePath: string) =>
     invoke<void>('open_external_markdown_tab', { filePath }),
+  openExternalTextWindow: (filePath: string, scopePath: string) =>
+    invoke<void>('open_external_text_window', { filePath, scopePath }),
   openMarkdownPathTab: (filePath: string) =>
     invoke<void>('open_markdown_path_tab', { filePath }),
   watchExternalDocument: (filePath: string, scopePath?: string | null) =>

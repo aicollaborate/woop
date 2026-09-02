@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   prewarmNotebookCache: vi.fn(async () => undefined),
   invalidateMentionNotes: vi.fn(),
   invalidateMentionTags: vi.fn(),
+  acquireMemoEventBridge: vi.fn(),
+  releaseMemoEventBridge: vi.fn(),
 }));
 
 vi.mock('@features/agent/hooks/use-agent-events', () => ({
@@ -46,6 +48,12 @@ vi.mock('@features/editor/extensions/tag-mention', () => ({
 vi.mock('@platform/tauri/client', () => ({
   listenToAgentAccessChanges: mocks.listenAccess,
 }));
+vi.mock('@/lib/memo-dispatcher', () => ({
+  acquireMemoEventBridge: () => {
+    mocks.acquireMemoEventBridge();
+    return mocks.releaseMemoEventBridge;
+  },
+}));
 
 import { AgentWindowEffects } from './agent-window-effects';
 
@@ -69,6 +77,7 @@ describe('AgentWindowEffects', () => {
     });
 
     expect(mocks.useAgentEvents).toHaveBeenCalledOnce();
+    expect(mocks.acquireMemoEventBridge).toHaveBeenCalledOnce();
     expect(mocks.refreshRuntime).toHaveBeenCalledWith({ force: true });
     expect(mocks.hydrateConversations).toHaveBeenCalledOnce();
     expect(mocks.loadAccess).toHaveBeenCalledOnce();
@@ -77,5 +86,6 @@ describe('AgentWindowEffects', () => {
 
     await act(async () => root.unmount());
     expect(mocks.unlistenAccess).toHaveBeenCalledOnce();
+    expect(mocks.releaseMemoEventBridge).toHaveBeenCalledOnce();
   });
 });

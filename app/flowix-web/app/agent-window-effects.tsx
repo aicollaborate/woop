@@ -9,6 +9,7 @@ import { invalidateNotebookCache, prewarmNotebookCache } from '@features/editor/
 import { invalidateMentionNotes } from '@features/editor/extensions/note-mention';
 import { invalidateMentionTags } from '@features/editor/extensions/tag-mention';
 import { listenToAgentAccessChanges } from '@platform/tauri/client';
+import { acquireMemoEventBridge } from '@/lib/memo-dispatcher';
 
 /**
  * Agent infrastructure shared by every content-capable Webview.
@@ -20,6 +21,7 @@ import { listenToAgentAccessChanges } from '@platform/tauri/client';
  */
 export function AgentWindowEffects() {
   useAgentEvents();
+  useEffect(() => acquireMemoEventBridge(), []);
   const refreshAgentRuntime = useAgentRuntimeStore((state) => state.refresh);
   useEffect(() => {
     void refreshAgentRuntime({ force: true });

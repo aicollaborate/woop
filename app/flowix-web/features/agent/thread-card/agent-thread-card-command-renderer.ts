@@ -1,7 +1,6 @@
 import { translate, type AppLanguage } from "@/lib/i18n";
 import { truncateToolMessageForDisplay } from "@features/agent/message/display-limits";
 import {
-  agentCommandListToText,
   basenameCommandNameForDisplay,
   type AgentCommandItem,
   type AgentCommandList,
@@ -10,16 +9,37 @@ import {
 const THREAD_CARD_COMMAND_MAX_ITEMS = 6;
 const THREAD_CARD_COMMAND_MAX_INLINE_ARGS = 16;
 
+export interface AgentThreadCardCommandListOptions {
+  maxItems?: number;
+  maxInlineArgs?: number;
+  truncateArgs?: boolean;
+}
+
+/**
+ * Render the collapsed command preview as one text run.
+ *
+ * The details renderer is intentionally structured, but the collapsed row is
+ * a summary and must stay on one line. Keeping this formatter here makes the
+ * distinction explicit and avoids reintroducing a second, unused command
+ * text formatter in tool-display.
+ */
 export function createAgentThreadCardCommandPreview(
   data: AgentCommandList,
-): HTMLDivElement {
-  const preview = document.createElement("div");
+): HTMLSpanElement {
+  const preview = document.createElement("span");
   preview.className = "agent-thread-card__command-preview";
-  const text = agentCommandListToText(data);
+  const text = data.items
+    .map((item) => {
+      const prefix = item.op ? `${item.op} ` : "";
+      return `${prefix}${[...item.env, item.command, ...item.args].join(" ")}`;
+    })
+    .filter((value) => value.trim().length > 0)
+    .join(" ");
   preview.textContent = text;
   preview.title = text;
   return preview;
 }
+
 // 命令名是路径 (powershell.exe / rg 等可执行文件) 时, 卡片只展示末尾文件名。
 // 路径检测: 含 / 或 \ 一律视为路径 ── 简单的硬性条件, 覆盖:
 //   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe → powershell.exe
@@ -37,6 +57,8 @@ function getAgentThreadCardWrapperArgs(item: AgentCommandItem): string[] {
 function createAgentThreadCardCommandLine(
   item: AgentCommandItem,
   args: string[],
+  maxInlineArgs: number,
+  truncateArgs: boolean,
 ): HTMLDivElement {
   const line = document.createElement("div");
   line.className = "agent-thread-card__command-line";
@@ -56,16 +78,26 @@ function createAgentThreadCardCommandLine(
   const displayName = COMMAND_PATH_REGEX.test(item.command)
     ? basenameCommandNameForDisplay(item.command)
     : item.command;
+  if (item.op) {
+    const operator = document.createElement("span");
+    operator.className = "agent-thread-card__command-operator";
+    operator.textContent = item.op;
+    line.append(operator);
+  }
   command.textContent = displayName;
   command.title = item.command;
   line.append(command);
 
-  const inlineArgs = args.slice(0, THREAD_CARD_COMMAND_MAX_INLINE_ARGS);
+  const inlineArgs = Number.isFinite(maxInlineArgs)
+    ? args.slice(0, maxInlineArgs)
+    : args;
   if (inlineArgs.length > 0) {
     const argText = document.createElement("span");
     argText.className = "agent-thread-card__command-args-inline";
     const argsText = inlineArgs.join(" ");
-    argText.textContent = truncateToolMessageForDisplay(argsText);
+    argText.textContent = truncateArgs
+      ? truncateToolMessageForDisplay(argsText)
+      : argsText;
     // CSS 在第三列只展示末尾约 10em；title 保留完整参数，方便检查历史命令。
     argText.title = argsText;
     line.append(argText);
@@ -85,17 +117,30 @@ function createAgentThreadCardCommandLine(
 export function createAgentThreadCardCommandList(
   data: AgentCommandList,
   nested = false,
-  skipFirst = false,
+  options: AgentThreadCardCommandListOptions = {},
 ): HTMLDivElement {
+  const maxItems = options.maxItems ?? THREAD_CARD_COMMAND_MAX_ITEMS;
+  const maxInlineArgs =
+    options.maxInlineArgs ?? THREAD_CARD_COMMAND_MAX_INLINE_ARGS;
+  const truncateArgs = options.truncateArgs ?? true;
   const list = document.createElement("div");
   list.className = nested
     ? "agent-thread-card__command-list agent-thread-card__command-list--nested"
     : "agent-thread-card__command-list";
 
-  const sourceItems = skipFirst ? data.items.slice(1) : data.items;
-  const items = sourceItems.slice(0, THREAD_CARD_COMMAND_MAX_ITEMS);
+  const sourceItems = data.items;
+  const items = Number.isFinite(maxItems)
+    ? sourceItems.slice(0, maxItems)
+    : sourceItems;
   for (const item of items) {
-    list.append(createAgentThreadCardCommandItem(item));
+    list.append(
+      createAgentThreadCardCommandItem(
+        item,
+        maxItems,
+        maxInlineArgs,
+        truncateArgs,
+      ),
+    );
   }
 
   const hidden = sourceItems.length - items.length;
@@ -111,6 +156,9 @@ export function createAgentThreadCardCommandList(
 
 function createAgentThreadCardCommandItem(
   item: AgentCommandItem,
+  maxItems: number,
+  maxInlineArgs: number,
+  truncateArgs: boolean,
 ): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "agent-thread-card__command-item";
@@ -120,13 +168,26 @@ function createAgentThreadCardCommandItem(
       createAgentThreadCardCommandLine(
         item,
         getAgentThreadCardWrapperArgs(item),
+        maxInlineArgs,
+        truncateArgs,
       ),
-      createAgentThreadCardCommandList(item.wrapper.payload, true),
+      createAgentThreadCardCommandList(item.wrapper.payload, true, {
+        maxItems,
+        maxInlineArgs,
+        truncateArgs,
+      }),
     );
     return row;
   }
 
-  row.append(createAgentThreadCardCommandLine(item, item.args));
+  row.append(
+    createAgentThreadCardCommandLine(
+      item,
+      item.args,
+      maxInlineArgs,
+      truncateArgs,
+    ),
+  );
   return row;
 }
 

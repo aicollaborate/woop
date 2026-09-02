@@ -345,7 +345,7 @@ export function DocumentContainer({
 
   return (
     <div className="document-container h-full w-full min-w-0 flex flex-col bg-transparent relative overflow-hidden">
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
         {!state.isLoading && isImagePreview && (
           <ImageFilePreview filePath={filePath} scopePath={externalScopePath} />
         )}

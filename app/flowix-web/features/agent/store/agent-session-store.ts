@@ -32,19 +32,17 @@ import {
   getAgentType,
   normalizeAgentTypeKey,
 } from "@/lib/agent-types";
-import {
-  createStreamEventDispatcher,
-} from "@features/agent/store/stream-event-dispatcher";
+import { createStreamEventDispatcher } from "@features/agent/store/stream-event-dispatcher";
 import {
   createRunId,
   mapAgentChunkToEvent,
-  type AgentEventMapperState,
 } from "@features/agent/events/agent-event-mapper";
 import { completedRunUserMessageId } from "@features/agent/events/message-identity";
 import {
   resolveExternalChunkThreadId,
   resolveProductThreadId,
 } from "@features/agent/store/external-session";
+import { eventMapperStateForChunk } from "@features/agent/store/agent-chunk-routing";
 import {
   recordAgentChunkMapped,
   recordAgentStopRequested,
@@ -65,9 +63,7 @@ import { applyRunStopped } from "@features/agent/store/run-lifecycle";
 import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial-runtime-config";
 import { createAgentSessionStateStorage } from "@features/agent/store/window-session-storage";
 import { installGlobalAgentSettingsSync } from "@features/agent/store/global-agent-settings-sync";
-import {
-  DEFAULT_AGENT_SESSION_META,
-} from "@features/agent/store/session-state";
+import { DEFAULT_AGENT_SESSION_META } from "@features/agent/store/session-state";
 import { rehydrateSessionMeta } from "@features/agent/store/session-persistence";
 import {
   createSessionMetaSlice,
@@ -154,35 +150,6 @@ export interface PendingCodexMessage {
   options?: Parameters<AgentSessionStore["sendMessageToThread"]>[3];
   queuedAt: number;
   clientUserMessageId?: string;
-}
-
-// --------------------------------------------------------------------
-// Persist config
-// --------------------------------------------------------------------
-function eventMapperStateForChunk(
-  chunk: AgentChunk,
-  state: Pick<AgentSessionStore, "sessionMeta" | "threadProjections">,
-): AgentEventMapperState {
-  const threadId = resolveExternalChunkThreadId(
-    chunk,
-    state.sessionMeta.externalSessionResolutions,
-  );
-  const projection = state.threadProjections[threadId];
-  return {
-    threadTypes: state.sessionMeta.threadTypes,
-    externalSessionResolutions: state.sessionMeta.externalSessionResolutions,
-    // Keep this adapter scoped to the one routed thread so high-frequency
-    // chunks do not rebuild the whole map. Usage may arrive after stream_end;
-    // provide the resident snapshot id so it can still update that session.
-    threadStates: projection
-      ? {
-          [threadId]: {
-            activeRunId: projection.runs.activeRunId,
-            lastRunId: projection.runs.lastRun?.runId,
-          },
-        }
-      : {},
-  };
 }
 
 type SessionGet = () => AgentSessionStore;

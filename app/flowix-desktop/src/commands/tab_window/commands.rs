@@ -6,7 +6,8 @@ use super::ipc_events::{
 };
 use super::registry::TabItemDrag;
 use super::resolution::{
-    refresh_tab, resolve_external_markdown_tab, resolve_markdown_path_tab, resolve_memo_tab,
+    refresh_tab, resolve_external_markdown_tab, resolve_external_text_tab,
+    resolve_markdown_path_tab, resolve_memo_tab,
 };
 use super::types::{
     TabDragResult, WindowPosition, WindowRegion, WindowTab, TAB_DRAG_HOVER_POLL_INTERVAL,
@@ -72,6 +73,22 @@ pub async fn open_external_markdown_tab(
         coordinator.inner(),
         resolve_external_markdown_tab(&file_path)?,
         OpenDisposition::LastWindow,
+    )
+}
+
+#[tauri::command]
+pub async fn open_external_text_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    coordinator: tauri::State<'_, TabWindowCoordinator>,
+    file_path: String,
+    #[allow(non_snake_case)] scopePath: String,
+) -> Result<(), String> {
+    route_tab(
+        &app,
+        coordinator.inner(),
+        resolve_external_text_tab(&file_path, &scopePath, state.inner())?,
+        OpenDisposition::NewWindow,
     )
 }
 

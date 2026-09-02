@@ -1,8 +1,9 @@
 {
   "name": "flowix",
   "private": true,
-  "version": "1.3.1",
+  "version": "1.3.2",
   "type": "module",
+  "packageManager": "npm@10.8.2",
   "scripts": {
     "dev": "vite",
     "dev:mobile": "vite --mode mobile",
@@ -12,6 +13,7 @@
     "test": "vitest run",
     "test:rust": "cargo test --manifest-path app/Cargo.toml --workspace --lib",
     "check:layers": "node scripts/check-layer-boundaries.mjs",
+    "check:package-manager": "node scripts/check-package-manager.mjs",
     "check:mobile-boundaries": "node scripts/check-mobile-boundaries.mjs",
     "check:frontend-debt": "node scripts/check-frontend-debt.mjs",
     "check:web-bundle": "node scripts/check-web-bundle.mjs",

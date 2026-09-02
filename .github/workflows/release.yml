@@ -76,6 +76,14 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf libssl-dev
 
+      - name: Use pinned npm
+        run: npm install --global npm@10.8.2 --no-audit --no-fund
+
+      - name: Check package manager policy
+        run: |
+          test "$(npm --version)" = "10.8.2"
+          npm run check:package-manager
+
       - name: Install dependencies
         run: npm ci
 

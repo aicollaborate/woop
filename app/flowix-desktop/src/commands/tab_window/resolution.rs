@@ -1,14 +1,60 @@
 //! Resolve a path/memo into a WindowTab.
 use super::types::{TabTarget, WindowTab};
 use crate::app::state::AppState;
+use crate::commands::external_document::supported_text_document_path;
+use crate::commands::helpers::{
+    can_access_scoped_file_with_state, start_security_bookmark_access,
+};
 use crate::lock_utils::read_lock;
 
 pub(super) fn refresh_tab(tab: &WindowTab, state: &AppState) -> Result<WindowTab, String> {
     match &tab.target {
         TabTarget::Memo { memo_id, .. } => resolve_memo_tab(memo_id, state),
         TabTarget::ExternalMarkdown { file_path } => resolve_external_markdown_tab(file_path),
+        TabTarget::ExternalText {
+            file_path,
+            scope_path,
+        } => resolve_external_text_tab(file_path, scope_path, state),
         TabTarget::Web { .. } => Ok(tab.clone()),
     }
+}
+
+pub(super) fn resolve_external_text_tab(
+    file_path: &str,
+    scope_path: &str,
+    state: &AppState,
+) -> Result<WindowTab, String> {
+    let requested = std::path::PathBuf::from(file_path);
+    if !requested.is_absolute() || !requested.is_file() {
+        return Err(format!(
+            "external text file is unavailable: {}",
+            requested.display()
+        ));
+    }
+    if !can_access_scoped_file_with_state(&requested, Some(scope_path), state) {
+        return Err("external text file is outside its authorized file-tree scope".to_string());
+    }
+    if !supported_text_document_path(&requested) {
+        return Err("external text file is not a supported text file".to_string());
+    }
+    start_security_bookmark_access(state, &requested);
+    let canonical = dunce::canonicalize(&requested)
+        .map_err(|error| format!("failed to resolve external text file: {error}"))?;
+    let title = canonical
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "external text filename is unavailable".to_string())?
+        .to_string();
+    let canonical = canonical.to_string_lossy().to_string();
+    Ok(WindowTab {
+        id: format!("external-text:{canonical}"),
+        title,
+        icon: None,
+        target: TabTarget::ExternalText {
+            file_path: canonical,
+            scope_path: scope_path.to_string(),
+        },
+    })
 }
 
 pub(super) fn resolve_external_markdown_tab(file_path: &str) -> Result<WindowTab, String> {

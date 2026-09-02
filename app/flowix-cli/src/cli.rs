@@ -211,7 +211,7 @@ pub(crate) fn cli_command() -> Command {
     Command::new(DISPLAY_BIN)
         .version(env!("CARGO_PKG_VERSION"))
         .about("Manage local Flowix notebooks, Markdown notes, and artifacts")
-        .after_help("Use --file for UTF-8 content on Windows PowerShell 5.1. Examples:\n  flowix list\n  flowix create --file note.md\n  flowix search TODO --limit 20\n  flowix mcp")
+        .after_help("For Markdown content, --file is recommended (especially on Windows PowerShell 5.1). Files must be UTF-8; stdin remains supported. Examples:\n  flowix create <notebook> --file body.md --json\n  flowix write <id> --file body.md --json\n  flowix list\n  flowix search TODO --limit 20\n  flowix mcp")
         .arg(
             Arg::new("json")
                 .long("json")
@@ -234,9 +234,9 @@ pub(crate) fn cli_command() -> Command {
         .subcommand(Command::new("show").about("Show a note").arg(required_arg("id")))
         .subcommand(
             Command::new("create")
-                .about("Create a note; defaults to the current notebook")
+                .about("Create a note; use --file for UTF-8 Markdown (recommended); defaults to the current notebook")
                 .arg(Arg::new("notebook").allow_hyphen_values(true).num_args(1))
-                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Read content directly from a UTF-8 file").num_args(1)),
+                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1)),
         )
         .subcommand(Command::new("delete").about("Delete a note").arg(required_arg("id")))
         .subcommand(
@@ -271,9 +271,9 @@ pub(crate) fn cli_command() -> Command {
         )
         .subcommand(
             Command::new("write")
-                .about("Replace a complete note")
+                .about("Replace a complete note; use --file for UTF-8 Markdown (recommended)")
                 .arg(required_arg("id"))
-                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Read content directly from a UTF-8 file").num_args(1)),
+                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1)),
         )
         .subcommand(
             Command::new("search")

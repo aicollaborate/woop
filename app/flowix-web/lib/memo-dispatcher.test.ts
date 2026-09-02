@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode, createElement, useEffect } from 'react';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { handleMainWindowMemoEvent } from '@/app/main-window-memo-event-handler';
 import type { MemoEvent } from '@/types/memo';
 
@@ -9,16 +12,94 @@ vi.mock('@platform/tauri/event-bus', () => ({
 }));
 
 describe('memo dispatcher window isolation', () => {
-  it('installs only the Tauri bridge and no window-specific handlers', async () => {
+  beforeEach(() => {
+    vi.resetModules();
+    subscribeMock.mockReset();
+  });
+
+  it('does not connect to Tauri while importing the dispatcher', async () => {
     const { memoDispatcher } = await import('./memo-dispatcher');
 
-    expect(subscribeMock).toHaveBeenCalledOnce();
-    expect(subscribeMock).toHaveBeenCalledWith('memo-event', expect.any(Function));
+    expect(subscribeMock).not.toHaveBeenCalled();
     expect(memoDispatcher.size()).toBe(0);
   });
 
+  it('shares one Tauri listener and releases it after the final acquire', async () => {
+    const unlisten = vi.fn();
+    subscribeMock.mockReturnValue(unlisten);
+    const { acquireMemoEventBridge } = await import('./memo-dispatcher');
+
+    const releaseFirst = acquireMemoEventBridge();
+    const releaseSecond = acquireMemoEventBridge();
+
+    expect(subscribeMock).toHaveBeenCalledOnce();
+    expect(subscribeMock).toHaveBeenCalledWith('memo-event', expect.any(Function));
+    releaseFirst();
+    releaseFirst();
+    expect(unlisten).not.toHaveBeenCalled();
+    releaseSecond();
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it('keeps exactly one live bridge across a StrictMode mount cycle', async () => {
+    const actEnvironment = globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    };
+    const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const liveHandlers = new Set<(event: MemoEvent) => void>();
+    let maximumLiveHandlers = 0;
+    subscribeMock.mockImplementation((_event, handler) => {
+      const typedHandler = handler as (event: MemoEvent) => void;
+      liveHandlers.add(typedHandler);
+      maximumLiveHandlers = Math.max(maximumLiveHandlers, liveHandlers.size);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        liveHandlers.delete(typedHandler);
+      };
+    });
+    const { acquireMemoEventBridge, memoDispatcher } = await import('./memo-dispatcher');
+    const dispatched = vi.fn();
+    const unsubscribe = memoDispatcher.subscribe(dispatched);
+
+    function BridgeOwner() {
+      useEffect(() => acquireMemoEventBridge(), []);
+      return null;
+    }
+
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(StrictMode, null, createElement(BridgeOwner)));
+    });
+
+    expect(maximumLiveHandlers).toBe(1);
+    expect(liveHandlers.size).toBe(1);
+    liveHandlers.values().next().value?.({
+      kind: 'tags_deleted',
+      notebookId: 'test-notebook',
+      deletedTags: ['test'],
+      affectedMemoIds: [],
+    });
+    expect(dispatched).toHaveBeenCalledOnce();
+
+    await act(async () => root.unmount());
+    expect(liveHandlers.size).toBe(0);
+    unsubscribe();
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
   it('routes a backend external-created event through the bridge to the main window opener', async () => {
-    const { memoDispatcher } = await import('./memo-dispatcher');
+    const unlisten = vi.fn();
+    let bridge: ((event: MemoEvent) => void) | undefined;
+    subscribeMock.mockImplementation((_event, handler) => {
+      bridge = handler as (event: MemoEvent) => void;
+      return unlisten;
+    });
+    const { memoDispatcher, acquireMemoEventBridge } = await import('./memo-dispatcher');
+    const releaseBridge = acquireMemoEventBridge();
     const openNoteTab = vi.fn().mockResolvedValue(undefined);
     const unsubscribe = memoDispatcher.subscribe((event) => {
       handleMainWindowMemoEvent(event, {
@@ -36,8 +117,6 @@ describe('memo dispatcher window isolation', () => {
         refreshBackgroundTodoCount: vi.fn(),
       });
     });
-    const bridge = subscribeMock.mock.calls[0]?.[1] as ((event: MemoEvent) => void) | undefined;
-
     expect(bridge).toBeTypeOf('function');
     bridge?.({
       kind: 'created',
@@ -62,5 +141,6 @@ describe('memo dispatcher window isolation', () => {
 
     expect(openNoteTab).toHaveBeenCalledWith('memo-external');
     unsubscribe();
+    releaseBridge();
   });
 });

@@ -254,7 +254,8 @@ pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
     })
 }
 
-/// `flowix-cli create <notebook>` ── 从 stdin 或 UTF-8 `--file` 读 body。
+/// `flowix-cli create <notebook> --file <path>` ── 推荐从 UTF-8 文件读取 body。
+/// 未提供 `--file` 时保留 stdin 输入兼容性。
 ///
 /// 面向 AI agent 的接口 ── body 永远从 stdin 读, 不依赖 $EDITOR,
 /// Windows / Linux / macOS 行为完全一致。
@@ -333,11 +334,22 @@ fn read_stdin() -> Result<String, CliError> {
 /// before it reaches stdin. Without `--file`, preserve the stdin contract.
 fn read_text_input(file: Option<&str>) -> Result<String, CliError> {
     match file {
-        Some(path) => std::fs::read_to_string(path)
-            .map(strip_utf8_bom)
-            .map_err(|error| {
-                CliError::Other(format!("failed to read UTF-8 input file `{path}`: {error}"))
-            }),
+        Some(path) => {
+            let bytes = std::fs::read(path).map_err(|error| {
+                CliError::Io(std::io::Error::new(
+                    error.kind(),
+                    format!("failed to read input file `{path}`: {error}"),
+                ))
+            })?;
+            String::from_utf8(bytes)
+                .map(strip_utf8_bom)
+                .map_err(|error| {
+                    CliError::Other(format!(
+                        "input file `{path}` is not valid UTF-8: {}",
+                        error.utf8_error()
+                    ))
+                })
+        }
         None => read_stdin(),
     }
 }
@@ -639,7 +651,8 @@ fn edit_note_impl(
     })
 }
 
-/// `flowix-cli write <id>` ── 从 stdin 或 UTF-8 `--file` 读 body 并覆盖。
+/// `flowix-cli write <id> --file <path>` ── 推荐从 UTF-8 文件读取 body 并覆盖。
+/// 未提供 `--file` 时保留 stdin 输入兼容性。
 ///
 /// `edit` 的非交互等价物 ── 适合脚本化批量改写、管道入内容、CI 注入等场景。
 ///
@@ -795,7 +808,44 @@ mod tests {
         std::fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
 
         let error = read_text_input(path.to_str()).unwrap_err().to_string();
-        assert!(error.contains("UTF-8 input file"));
+        assert!(error.contains("not valid UTF-8"));
+    }
+
+    #[test]
+    fn file_input_reports_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing.md");
+
+        let error = read_text_input(path.to_str()).unwrap_err();
+        assert!(matches!(&error, CliError::Io(_)));
+        assert!(error.to_string().contains("failed to read input file"));
+    }
+
+    #[test]
+    fn file_input_preserves_markdown_content_for_create_and_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        let nb_dir = tmp.path().join("notebooks").join("work");
+        seed_notebook_config(&data_dir, &config_dir, &nb_dir);
+        let source = "# 中文标题\n\n😀 **加粗**\n\n| 列一 | 列二 |\n| --- | --- |\n| 内容 | ✅ |\n\n```rust\nprintln!(\"你好\");\n```\n";
+        let path = tmp.path().join("body.md");
+        std::fs::write(&path, source.as_bytes()).unwrap();
+
+        with_flowix_env(&config_dir, &data_dir, || {
+            let body = read_text_input(path.to_str()).unwrap();
+            assert_eq!(body, source);
+
+            let (mut mf, notebook) = open_in("work").unwrap();
+            let created = create_note(&mut mf, &notebook, &body).unwrap();
+            let created_body = std::fs::read_to_string(&created.file).unwrap();
+            assert!(created_body.ends_with(source));
+
+            let replacement = read_text_input(path.to_str()).unwrap();
+            write_note(&mut mf, &created.id, &replacement).unwrap();
+            let written_body = std::fs::read_to_string(&created.file).unwrap();
+            assert!(written_body.ends_with(source));
+        });
     }
 
     #[test]

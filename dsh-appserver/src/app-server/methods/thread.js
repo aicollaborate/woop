@@ -17,7 +17,7 @@ export function threadMethods(adapter, notify) {
       notify('thread/resumed', { thread })
       return { thread }
     },
-    'thread/read': async p => ({ thread: await adapter.readThread(requiredString(p.threadId, 'threadId'), p.includeTurns !== false) }),
+    'thread/read': async p => ({ thread: await adapter.readThread(requiredString(p.threadId, 'threadId'), p.includeTurns === true) }),
     'thread/list': async () => ({ threads: await adapter.listThreads() }),
     'thread/fork': async p => {
       const thread = await adapter.forkThread(requiredString(p.threadId, 'threadId'), p.boundarySeq, typeof p.newThreadId === 'string' ? p.newThreadId : newSessionId())

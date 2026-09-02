@@ -90,4 +90,21 @@ describe("event-bus subscribe", () => {
     unsubscribeLive();
     expect(liveUnlisten).toHaveBeenCalledTimes(1);
   });
+
+  it("disposes a pending registration when its final subscriber leaves", async () => {
+    const unlisten = vi.fn();
+    let resolveListen!: (unlisten: () => void) => void;
+    listenMock.mockReturnValueOnce(
+      new Promise<() => void>((resolve) => { resolveListen = resolve; }),
+    );
+
+    const { subscribe } = await import("@platform/tauri/event-bus");
+    const unsubscribe = subscribe("memo-event", vi.fn());
+
+    expect(listenMock).toHaveBeenCalledOnce();
+    unsubscribe();
+    resolveListen(unlisten);
+
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+  });
 });

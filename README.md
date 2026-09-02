@@ -67,6 +67,17 @@ dsh plugin --profile flowix add ./dsh-flowix-memory
 
 Requires the `flowix` CLI on `PATH` (or set `FLOWIX_CLI_PATH`) with access to your notebook data (`~/.flowix`). See the [plugin README](dsh-flowix-memory/README.md) for details.
 
+## Passing Markdown to the CLI
+
+Use a UTF-8 file as the recommended way to pass Markdown content to `create` and `write`, especially from Windows PowerShell 5.1. This avoids text being damaged by stdin pipeline encoding. UTF-8 files may include a BOM, and files without a BOM are supported too.
+
+```powershell
+flowix create <notebook> --file body.md --json
+flowix write <id> --file body.md --json
+```
+
+stdin remains supported for existing scripts. The `--file` path is read directly as UTF-8; a missing, unreadable, or invalid UTF-8 file returns an error.
+
 ---
 
 ## Your notes stay local and under your control

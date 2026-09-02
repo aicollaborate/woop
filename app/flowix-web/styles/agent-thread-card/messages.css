@@ -381,6 +381,12 @@
   white-space: nowrap;
 }
 
+.markdown-editor .agent-thread-card__command-operator {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  color: var(--muted-foreground);
+}
+
 .markdown-editor .agent-thread-card__message-tool-summary {
   flex: 1 1 auto;
   min-width: 0;
@@ -414,6 +420,58 @@
   padding: 0;
   line-height: 18px;
   /* 字体: 与工具描述信息统一为 sans (默认), 删除原先的 mono, 让命令列表跟其它工具描述在视觉上无法区分 */
+}
+
+.markdown-editor .agent-thread-card__command-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-editor .agent-thread-card__command-list--details {
+  display: none;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-list--details {
+  width: 100%;
+  display: block;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded {
+  display: block;
+  overflow: visible;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-line {
+  width: 100%;
+  overflow: visible;
+  white-space: normal;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-name,
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-args-inline {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__command-preview {
+  display: none;
 }
 
 .markdown-editor .agent-thread-card__command-list--nested {

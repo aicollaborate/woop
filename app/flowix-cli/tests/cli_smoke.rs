@@ -28,6 +28,18 @@ fn binary_prints_version_and_help() {
     assert!(text.contains("Commands:"));
     assert!(text.contains("create"));
     assert!(text.contains("defaults to the current notebook"));
+    assert!(text.contains("--file is recommended"));
+}
+
+#[test]
+fn content_commands_recommend_utf8_files() {
+    let create = cli(&["create", "--help"]);
+    assert!(create.status.success());
+    assert!(stdout(&create).contains("Recommended"));
+
+    let write = cli(&["write", "--help"]);
+    assert!(write.status.success());
+    assert!(stdout(&write).contains("Recommended"));
 }
 
 #[test]

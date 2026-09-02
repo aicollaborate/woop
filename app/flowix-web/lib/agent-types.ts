@@ -21,6 +21,20 @@ import iconDeepSeek from '@/assets/icon-deepseek.svg';
 export const DEFAULT_AGENT_TYPE_KEY: AgentTypeKey = 'codex';
 
 /**
+ * Agent icons that are rendered with the current theme color instead of
+ * preserving their original brand colors.
+ */
+export const THEME_ADAPTIVE_AGENT_ICON_KEYS = new Set<AgentTypeKey>([
+  'deepseek-harness',
+  'opencode',
+  'hermes',
+]);
+
+export function isThemeAdaptiveAgentIcon(typeKey: AgentTypeKey): boolean {
+  return THEME_ADAPTIVE_AGENT_ICON_KEYS.has(typeKey);
+}
+
+/**
  * Agent order used when a navigation entry needs one representative local
  * runtime. Keep this separate from AGENT_TYPES: that list is the product's
  * catalog order, while the sidebar follows the requested local-agent

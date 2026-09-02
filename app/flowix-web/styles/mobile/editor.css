@@ -359,7 +359,7 @@ html[data-platform="non-mac"] .mobile-markdown-editor {
 .mobile-markdown-editor__content p:has(> br.ProseMirror-trailingBreak:only-child) { min-height: 1.74em; }
 .mobile-markdown-editor__content strong { font-weight: 700; }
 .mobile-markdown-editor__content em { font-style: italic; font-weight: 300; }
-.mobile-markdown-editor__content p code { border: 1px solid color-mix(in oklch, var(--border) 90%, transparent); border-radius: .4rem; padding: 0 .3rem; color: color-mix(in oklch, var(--foreground) 80%, transparent); font-family: inherit; font-size: .84rem; }
+.mobile-markdown-editor__content p code { border: 1px solid color-mix(in oklch, var(--border) 90%, transparent); border-radius: .4rem; padding: 0 .3rem; color: color-mix(in oklch, var(--foreground) 80%, transparent); font-family: inherit; font-size: inherit; }
 .mobile-markdown-editor__content blockquote { margin: 1rem 0; padding: 2px 0 2px 1rem; border-left: .1875rem solid #ddd; color: #666; font-style: italic; }
 .mobile-markdown-editor__content ul,
 .mobile-markdown-editor__content ol { margin: .5rem 0; padding-inline-start: 1.5rem; }
@@ -409,7 +409,7 @@ html[data-platform="non-mac"] .mobile-markdown-editor {
 }
 .mobile-markdown-editor__content ul[data-type="taskList"] li[data-checked="true"] > div > p { color: #999; text-decoration: line-through; }
 
-.mobile-markdown-editor__content pre { margin: 1rem 0; border: 1px solid var(--border); border-radius: .5rem; padding: .4rem .8rem 1.2rem; background: var(--editor-block-bg); font-family: inherit; font-size: .85em; line-height: 1.6; }
+.mobile-markdown-editor__content pre { margin: 1rem 0; border: 1px solid var(--border); border-radius: .5rem; padding: .4rem .8rem 1.2rem; background: var(--editor-block-bg); font-family: inherit; font-size: inherit; line-height: 1.6; }
 .mobile-markdown-editor__content pre code { padding: 0; font-family: inherit; }
 .mobile-markdown-editor__content table { min-width: 60px; margin-bottom: 0; border: 0; border-radius: 8px; border-spacing: 0; }
 .mobile-markdown-editor__content table td,

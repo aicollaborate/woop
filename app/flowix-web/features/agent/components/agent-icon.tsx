@@ -1,25 +1,19 @@
 import type { CSSProperties } from 'react';
-import { getAgentType } from '@/lib/agent-types';
+import {
+  getAgentType,
+  isThemeAdaptiveAgentIcon,
+  THEME_ADAPTIVE_AGENT_ICON_KEYS,
+} from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
 import { cn } from '@/lib/utils';
 
-/**
- * Agent icons that are intentionally rendered with the current theme color.
- * Other agent icons keep their original brand colors and continue to use img.
- */
-export const THEME_ADAPTIVE_AGENT_ICON_KEYS = new Set<AgentTypeKey>([
-  'deepseek-harness',
-  'opencode',
-  'hermes',
-]);
+// Keep the component module as a compatibility export for existing desktop
+// callers; the predicate itself lives in the dependency-neutral agent catalog.
+export { isThemeAdaptiveAgentIcon, THEME_ADAPTIVE_AGENT_ICON_KEYS };
 
 const DEFAULT_AGENT_ICON_COLORS: Partial<Record<AgentTypeKey, string>> = {
   'deepseek-harness': '#484848',
 };
-
-export function isThemeAdaptiveAgentIcon(typeKey: AgentTypeKey): boolean {
-  return THEME_ADAPTIVE_AGENT_ICON_KEYS.has(typeKey);
-}
 
 export interface AgentIconProps {
   typeKey: AgentTypeKey;

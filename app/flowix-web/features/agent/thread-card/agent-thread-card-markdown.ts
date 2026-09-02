@@ -1,5 +1,6 @@
 import { Marked } from "marked";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
+import { sanitizeLinkHref } from "@/lib/safe-link";
 import type { AgentThreadCardInputImage } from "@features/agent/thread-card/composer/composer-image-controller";
 
 export const DEFAULT_AGENT_THREAD_CARD_TITLE = "";
@@ -96,6 +97,29 @@ function escapeAgentThreadCardHtmlAttr(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function renderSafeAgentAnchor(rawTag: string): string | null {
+  const match = /^<a\b([^>]*)>$/i.exec(rawTag.trim());
+  if (match) {
+    const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(
+      match[1],
+    );
+    const rawHref = hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3];
+    if (!rawHref) {
+      return null;
+    }
+    // Decode HTML entities before the protocol allowlist check. Otherwise an
+    // href such as `javascript&#x3A;alert(1)` can pass a literal-prefix test.
+    const template = document.createElement("template");
+    template.innerHTML = rawTag.trim();
+    const href = template.content.firstElementChild?.getAttribute("href");
+    const safeHref = sanitizeLinkHref(href);
+    if (!safeHref) return null;
+    return `<a href="${escapeAgentThreadCardHtmlAttr(safeHref)}">`;
+  }
+  if (/^<\/a>$/i.test(rawTag.trim())) return "</a>";
+  return null;
+}
+
 function ensureAgentThreadCardKatex(): Promise<KatexModule> {
   if (katexLoaded) return Promise.resolve(katexLoaded);
   if (!katexPromise) {
@@ -144,6 +168,8 @@ const cardMarked = new Marked({
   // `template.innerHTML` as executable/interactive markup.
   renderer: {
     html({ text }: { text: string }) {
+      const safeAnchor = renderSafeAgentAnchor(text);
+      if (safeAnchor) return safeAnchor;
       return escapeAgentThreadCardHtml(text);
     },
   },

@@ -67,6 +67,17 @@ dsh plugin --profile flowix add ./dsh-flowix-memory
 
 需要 `flowix` CLI 位于 `PATH`（或设置 `FLOWIX_CLI_PATH`），并可访问你的笔记数据（`~/.flowix`）。详见[插件 README](dsh-flowix-memory/README.md)。
 
+## 通过 CLI 传递 Markdown
+
+向 `create` 和 `write` 传递 Markdown 正文时，推荐使用 UTF-8 文件，尤其是在 Windows PowerShell 5.1 中。这样可以避免 stdin 管道编码导致中文内容损坏。支持带 BOM 和不带 BOM 的 UTF-8 文件。
+
+```powershell
+flowix create <notebook> --file body.md --json
+flowix write <id> --file body.md --json
+```
+
+现有脚本仍可使用 stdin。`--file` 会直接按 UTF-8 读取；文件不存在、无法读取或不是有效 UTF-8 时，CLI 会返回错误。
+
 ---
 
 ## 笔记留在本地，由你掌控

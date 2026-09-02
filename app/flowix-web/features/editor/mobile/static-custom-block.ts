@@ -2,8 +2,7 @@ import { Node, mergeAttributes, type MarkdownToken } from '@tiptap/core';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 
-import { getAgentType } from '@/lib/agent-types';
-import { isThemeAdaptiveAgentIcon } from '@features/agent/components/agent-icon';
+import { getAgentType, isThemeAdaptiveAgentIcon } from '@/lib/agent-types';
 
 const CUSTOM_BLOCK_RE = /^::([a-z][a-z0-9-]*)(\{[^\n]*\})?[ \t]*(?:\r?\n|$)/i;
 const ATTR_RE = /([A-Za-z][\w]*)="((?:\\"|\\\\|[^"])*)"/g;

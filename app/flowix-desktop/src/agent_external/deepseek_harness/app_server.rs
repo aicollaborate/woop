@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use crate::agent_external::shared::{kill_child_tree, read_capped_line, MAX_STDOUT_LINE_BYTES};
+use crate::agent_external::shared::{kill_child_tree, read_capped_line};
 
 type Pending = oneshot::Sender<Result<Value, String>>;
 
@@ -101,10 +101,14 @@ impl AppServerClient {
 
     fn spawn_reader(client: Arc<Self>, mut reader: BufReader<tokio::process::ChildStdout>) {
         tokio::spawn(async move {
+            let mut line = String::new();
             loop {
-                let next = read_capped_line(&mut reader, MAX_STDOUT_LINE_BYTES).await;
-                let Some((line, truncated)) = (match next { Ok(value) => value, Err(error) => { client.fail_all(format!("dsh-appserver stdout failed: {error}")).await; return; } }) else { client.fail_all("dsh-appserver exited".into()).await; return; };
-                if truncated { client.fail_all("dsh-appserver emitted an oversized protocol frame".into()).await; return; }
+                line.clear();
+                let bytes = match reader.read_line(&mut line).await {
+                    Ok(bytes) => bytes,
+                    Err(error) => { client.fail_all(format!("dsh-appserver stdout failed: {error}")).await; return; }
+                };
+                if bytes == 0 { client.fail_all("dsh-appserver exited".into()).await; return; }
                 let Ok(message) = serde_json::from_str::<Value>(line.trim()) else { continue; };
                 if let Some(id) = message.get("id").and_then(Value::as_u64) {
                     let failed = message.get("error").is_some();
