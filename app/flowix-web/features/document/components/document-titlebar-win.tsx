@@ -53,7 +53,6 @@ export function DocumentTitlebarWin({
     onRequestDeleteMemo,
     onColorsChange,
   },
-  windowTabs,
 }: DocumentTitlebarProps) {
   const { t } = useI18n();
   const isAgentThreadCardFullscreen = useAgentThreadCardFullscreenActive();
@@ -66,7 +65,6 @@ export function DocumentTitlebarWin({
   return (
     <ThirdColumnTitlebarShell
       isWindows
-      dataTabWindowHeader={Boolean(windowTabs)}
       className={isAgentThreadCardFullscreen ? 'agent-thread-card-fullscreen-titlebar' : ''}
       style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
     >
@@ -84,7 +82,6 @@ export function DocumentTitlebarWin({
             <SidebarToggleIcon className="w-4 h-4" variant="collapsed" />
           </button>
         )}
-        <AgentThreadCardFullscreenExitButton className="agent-thread-card-fullscreen-exit-btn" />
         {showNavigationButtons && (
           <>
             <Tooltip content={t("document.titlebar.backTooltip")} shortcut="history.back">
@@ -115,17 +112,11 @@ export function DocumentTitlebarWin({
 
       <AgentThreadCardFullscreenIdentity />
 
-      {windowTabs && (
-        <div className="mr-1 flex h-8 min-w-0 flex-1" data-tauri-drag-region>
-          {windowTabs}
-        </div>
-      )}
-
-
       <div
         data-tauri-drag-region
-        className={`${windowTabs ? '' : 'ml-auto'} flex shrink-0 items-center gap-2 pr-4`}
+        className="ml-auto flex shrink-0 items-center gap-2 pr-4"
       >
+        <AgentThreadCardFullscreenExitButton className="agent-thread-card-fullscreen-exit-btn" />
         {documentState === 'external' && (
           <ExternalTitlebarBadge />
         )}

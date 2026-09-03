@@ -6,7 +6,6 @@ import { isMac } from '@features/shortcuts';
 interface ThirdColumnTitlebarShellProps {
   isWindows: boolean;
   showTrafficLightSpacer?: boolean;
-  dataTabWindowHeader?: boolean;
   className?: string;
   style?: CSSProperties;
   children: ReactNode;
@@ -16,7 +15,6 @@ interface ThirdColumnTitlebarShellProps {
 export function ThirdColumnTitlebarShell({
   isWindows,
   showTrafficLightSpacer = false,
-  dataTabWindowHeader = false,
   className = '',
   style,
   children,
@@ -24,7 +22,6 @@ export function ThirdColumnTitlebarShell({
   return (
     <div
       data-tauri-drag-region
-      data-tab-window-header={dataTabWindowHeader ? '' : undefined}
       className={`z-[50] flex shrink-0 select-none items-center pl-2 ${
         isWindows ? 'h-9 pr-[126px]' : 'h-12'
       } ${className}`}

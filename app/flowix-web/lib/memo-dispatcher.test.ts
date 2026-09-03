@@ -100,12 +100,12 @@ describe('memo dispatcher window isolation', () => {
     });
     const { memoDispatcher, acquireMemoEventBridge } = await import('./memo-dispatcher');
     const releaseBridge = acquireMemoEventBridge();
-    const openNoteTab = vi.fn().mockResolvedValue(undefined);
+    const openMemoInFourthColumn = vi.fn().mockResolvedValue(undefined);
     const unsubscribe = memoDispatcher.subscribe((event) => {
       handleMainWindowMemoEvent(event, {
         getSelectedNotebookId: () => 'notebook-a',
         invalidateMentionCaches: vi.fn(),
-        openNoteTab,
+        openMemoInFourthColumn,
         reportOpenFailure: vi.fn(),
         handleMemoCreated: vi.fn(),
         handleMemoUpdated: vi.fn(),
@@ -139,7 +139,7 @@ describe('memo dispatcher window isolation', () => {
       source: 'external_tool',
     });
 
-    expect(openNoteTab).toHaveBeenCalledWith('memo-external');
+    expect(openMemoInFourthColumn).toHaveBeenCalledWith('memo-external');
     unsubscribe();
     releaseBridge();
   });

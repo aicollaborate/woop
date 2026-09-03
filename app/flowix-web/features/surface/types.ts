@@ -137,31 +137,3 @@ export interface ResolveWorkspaceSurfaceInput {
   pluginWorkbench?: PluginWorkbenchContext | null;
   emptyMessage: string;
 }
-
-export interface ResolveTabSurfaceInput {
-  target: TabSurfaceTarget;
-}
-
-export type TabDocumentTarget =
-  | {
-      kind: 'memo';
-      memoId: string;
-      path: string;
-      notebookId: string;
-      notebookPath: string;
-    }
-  | {
-      kind: 'external';
-      path: string;
-      scopePath: string | null;
-    };
-
-export type TabSurfaceTarget =
-  | { kind: 'web'; url: string }
-  | { kind: 'document'; target: TabDocumentTarget; document: DocumentSurfaceContext }
-  | {
-      kind: 'plugin-workbench';
-      pluginWorkbench: PluginWorkbenchContext;
-    }
-  | { kind: 'agent-conversation'; instanceId: string }
-  | { kind: 'empty'; message: string };

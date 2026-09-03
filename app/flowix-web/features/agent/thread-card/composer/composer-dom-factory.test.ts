@@ -58,6 +58,53 @@ describe("createAgentComposerDom click-to-focus delegation", () => {
     disposeAgentComposerDom(parts);
   });
 
+  it("focuses the textarea from a click in a fullscreen composer", () => {
+    const parts = createAgentComposerDom({ t: noopT });
+    const card = document.createElement("section");
+    card.className = "agent-thread-card agent-thread-card--fullscreen";
+    card.append(parts.composer);
+    document.body.append(card);
+
+    const emptyArea = document.createElement("div");
+    parts.composer.append(emptyArea);
+    emptyArea.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+
+    expect(document.activeElement).toBe(parts.input);
+    disposeAgentComposerDom(parts);
+  });
+
+  it("focuses from fullscreen composer padding inside a contenteditable editor", () => {
+    const parts = createAgentComposerDom({ t: noopT });
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    const card = document.createElement("section");
+    card.className = "agent-thread-card agent-thread-card--fullscreen";
+    card.append(parts.composer);
+    editor.append(card);
+    document.body.append(editor);
+
+    const emptyArea = document.createElement("div");
+    parts.composer.append(emptyArea);
+    dispatchPointerDown(emptyArea);
+
+    expect(document.activeElement).toBe(parts.input);
+    disposeAgentComposerDom(parts);
+  });
+
+  it("still treats contenteditable descendants inside the composer as interactive", () => {
+    const parts = createAgentComposerDom({ t: noopT });
+    document.body.append(parts.composer);
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    parts.composer.append(editable);
+
+    const activeBefore = document.activeElement;
+    dispatchPointerDown(editable);
+
+    expect(document.activeElement).toBe(activeBefore);
+    disposeAgentComposerDom(parts);
+  });
+
   it("focuses the textarea when clicking inside composer-images container", () => {
     const parts = createAgentComposerDom({ t: noopT });
     document.body.append(parts.composer);

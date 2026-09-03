@@ -27,15 +27,29 @@ export class FullscreenLayoutController {
   private readonly scrollDeltaEpsilonPx: number;
   private fullscreenContainer: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private boundsTrackingFrame: number | null = null;
+  private lastFullscreenBounds: string | null = null;
   private readonly syncFullscreenBounds = (): void => {
     const container = this.fullscreenContainer;
     if (!container || !this.isFullscreen()) return;
 
     const rect = container.getBoundingClientRect();
+    const boundsKey = `${rect.top}:${rect.left}:${rect.width}:${rect.height}`;
+    if (boundsKey === this.lastFullscreenBounds) return;
+    this.lastFullscreenBounds = boundsKey;
     this.dom.style.setProperty("--atc-fullscreen-top", `${rect.top}px`);
     this.dom.style.setProperty("--atc-fullscreen-left", `${rect.left}px`);
     this.dom.style.setProperty("--atc-fullscreen-width", `${rect.width}px`);
     this.dom.style.setProperty("--atc-fullscreen-height", `${rect.height}px`);
+  };
+  private readonly trackFullscreenBounds = (): void => {
+    this.boundsTrackingFrame = null;
+    if (!this.fullscreenContainer || !this.isFullscreen()) return;
+
+    this.syncFullscreenBounds();
+    this.boundsTrackingFrame = window.requestAnimationFrame(
+      this.trackFullscreenBounds,
+    );
   };
 
   private returnAnchor: {
@@ -64,7 +78,9 @@ export class FullscreenLayoutController {
       this.resizeObserver = new ResizeObserver(this.syncFullscreenBounds);
       this.resizeObserver.observe(container);
     }
-    window.requestAnimationFrame(this.syncFullscreenBounds);
+    this.boundsTrackingFrame = window.requestAnimationFrame(
+      this.trackFullscreenBounds,
+    );
   }
 
   exit(): void {
@@ -108,7 +124,12 @@ export class FullscreenLayoutController {
     window.removeEventListener("resize", this.syncFullscreenBounds);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    if (this.boundsTrackingFrame !== null) {
+      window.cancelAnimationFrame(this.boundsTrackingFrame);
+      this.boundsTrackingFrame = null;
+    }
     this.fullscreenContainer = null;
+    this.lastFullscreenBounds = null;
     this.dom.style.removeProperty("--atc-fullscreen-top");
     this.dom.style.removeProperty("--atc-fullscreen-left");
     this.dom.style.removeProperty("--atc-fullscreen-width");

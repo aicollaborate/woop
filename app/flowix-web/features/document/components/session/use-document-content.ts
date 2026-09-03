@@ -34,6 +34,7 @@ interface UseDocumentContentOptions {
   /** Non-text external files are rendered by a dedicated preview surface. */
   skipContentLoad?: boolean;
   transitionId: number | null;
+  isolatedSession?: boolean;
 }
 
 function getMemoSnapshot(memoId: string | null | undefined) {
@@ -66,6 +67,7 @@ export function useDocumentContent({
   externalScopePath,
   skipContentLoad = false,
   transitionId,
+  isolatedSession = false,
 }: UseDocumentContentOptions) {
   const [state, setState] = useState<DocumentContainerState>(initialDocumentContainerState);
   // Buffer state (content / lastSavedContent / pendingContent) lives in
@@ -79,7 +81,10 @@ export function useDocumentContent({
   const applyLoadedContent = useCallback(
     (path: string, fullContent: string, options?: Pick<LoadContentOptions, 'preservePending'>) => {
       const startedAt = performance.now();
-      const buf = applyLoadedDocumentContent(identity, path, fullContent, { preservePending: options?.preservePending });
+      const buf = applyLoadedDocumentContent(identity, path, fullContent, {
+        preservePending: options?.preservePending,
+        setAsCurrent: !isolatedSession,
+      });
       const memo = isExternalDocument ? null : getMemoSnapshot(memoId);
       const createdAt = memo?.createdAt ? formatDateTime(memo.createdAt, useUserSettingsStore.getState().settings.language) : '';
       const updatedAt = memo?.updatedAt ? formatDateTime(memo.updatedAt, useUserSettingsStore.getState().settings.language) : '';
@@ -111,7 +116,7 @@ export function useDocumentContent({
         chars: initialCharCount,
       });
     },
-    [identity, isExternalDocument, memoId, transitionId],
+    [identity, isolatedSession, isExternalDocument, memoId, transitionId],
   );
 
   const reloadDocument = useCallback(
@@ -122,7 +127,7 @@ export function useDocumentContent({
       // Switch the active buffer up-front so any in-flight writes from
       // the previous document that resolve after this point still
       // target the right buffer.
-      setActiveDocumentPath(identity, path);
+      if (!isolatedSession) setActiveDocumentPath(identity, path);
       const currentLoadId = ++counter.current;
       if (skipContentLoad) {
         setState((prev) => ({
@@ -134,7 +139,7 @@ export function useDocumentContent({
           charCount: 0,
           tokenCount: 0,
         }));
-        if (transitionId !== null) {
+        if (!isolatedSession && transitionId !== null) {
           useDocumentStore.getState().finishDocumentTransition(transitionId);
         }
         return;
@@ -147,7 +152,7 @@ export function useDocumentContent({
           transitionId,
           bytes: stagedContent.length,
         });
-        if (transitionId !== null) {
+        if (!isolatedSession && transitionId !== null) {
           useDocumentStore.getState().finishDocumentTransition(transitionId);
         }
         return;
@@ -191,8 +196,10 @@ export function useDocumentContent({
             if (retryContent !== null && retryContent !== undefined) {
               readPath = latestPath;
               fullContent = retryContent;
-              setActiveDocumentPath(identity, latestPath);
-              replaceActiveMemoPath(memoId!, latestPath);
+              if (!isolatedSession) {
+                setActiveDocumentPath(identity, latestPath);
+                replaceActiveMemoPath(memoId!, latestPath);
+              }
             }
           }
         }
@@ -207,7 +214,7 @@ export function useDocumentContent({
           if (currentLoadId !== counter.current) return;
           const language = useUserSettingsStore.getState().settings.language;
           setState((prev) => ({ ...prev, isLoading: false, error: translate(language, 'document.load.failed') }));
-          if (transitionId !== null) {
+          if (!isolatedSession && transitionId !== null) {
             useDocumentStore.getState().finishDocumentTransition(transitionId);
           }
           return;
@@ -220,7 +227,7 @@ export function useDocumentContent({
           transitionId,
           bytes: fullContent.length,
         });
-        if (transitionId !== null) {
+        if (!isolatedSession && transitionId !== null) {
           useDocumentStore.getState().finishDocumentTransition(transitionId);
         }
       } catch (err) {
@@ -232,12 +239,12 @@ export function useDocumentContent({
           transitionId,
         });
       } finally {
-        if (currentLoadId === counter.current && transitionId !== null) {
+        if (currentLoadId === counter.current && !isolatedSession && transitionId !== null) {
           useDocumentStore.getState().finishDocumentTransition(transitionId);
         }
       }
     },
-    [applyLoadedContent, identity, isExternalDocument, externalScopePath, memoId, notebookPath, skipContentLoad, transitionId],
+    [applyLoadedContent, identity, isolatedSession, isExternalDocument, externalScopePath, memoId, notebookPath, skipContentLoad, transitionId],
   );
 
   return {

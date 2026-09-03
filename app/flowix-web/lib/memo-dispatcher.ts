@@ -3,8 +3,8 @@
  *
  * 本模块只负责把后端 `memo-event` Tauri 通道桥接到应用层 dispatcher，
  * 不注册任何窗口专属业务 handler。主窗口列表同步由
- * `app/main-window-effects.tsx` 注册，Tab 窗口的 memo adapter 只注册自身 tabs 的
- * handler，因此不同 Webview 不会加载彼此的状态副作用。
+ * `app/main-window-effects.tsx` 注册，第四列复用同一 Webview 的 document
+ * session，因此不需要额外的跨窗口 adapter。
  *
  * 跟 `lib/event-dispatcher.ts` 的关系:
  * - `event-bus.ts` (Tauri 适配层)  → `memoDispatcher.dispatch`
@@ -28,13 +28,9 @@ import { createMemoDedupMiddleware } from '@/lib/memo-dispatcher-dedup';
 import { createLogger } from '@/lib/logger';
 import type { MemoEvent } from '@/types/memo';
 
-// Current windowing model: the main window and each tab-host window import
-// this bridge independently. The preferences window intentionally does not.
-
 /**
- * 全局 memoDispatcher 单例 (per-webview)。主窗口 / Tab 宿主窗口各自
- * 持有一份独立实例，通过 Tauri 事件总线收到的 payload 各自独立
- * dispatch，不共享订阅者。
+ * 全局 memoDispatcher 单例 (per-webview)。内容型 Webview 通过同一个事件
+ * 桥接接收 payload，第四列与第三列共享这份 dispatcher。
  */
 export const memoDispatcher = new EventDispatcher<MemoEvent>();
 const logger = createLogger('memo-event');

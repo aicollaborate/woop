@@ -37,7 +37,7 @@ function createActions(selectedNotebookId = 'notebook-a'): MainWindowMemoEventAc
   return {
     getSelectedNotebookId: vi.fn(() => selectedNotebookId),
     invalidateMentionCaches: vi.fn(),
-    openNoteTab: vi.fn().mockResolvedValue(undefined),
+    openMemoInFourthColumn: vi.fn().mockResolvedValue(undefined),
     reportOpenFailure: vi.fn(),
     handleMemoCreated: vi.fn(),
     handleMemoUpdated: vi.fn(),
@@ -56,7 +56,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
-    expect(actions.openNoteTab).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
@@ -67,7 +67,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
-    expect(actions.openNoteTab).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
   });
@@ -90,7 +90,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openNoteTab).not.toHaveBeenCalled();
+    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
     expect(actions.handleMemoCreated).toHaveBeenCalledWith(memo);
     expect(actions.refreshSelectedNotebookMetadata).toHaveBeenCalledWith(event);
   });
@@ -101,7 +101,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openNoteTab).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
   });
@@ -112,7 +112,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openNoteTab).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
   });
 
   it('updates metadata and the active path for a current-notebook update', () => {
@@ -131,13 +131,13 @@ describe('handleMainWindowMemoEvent', () => {
 
     expect(actions.handleMemoUpdated).toHaveBeenCalledWith(event.memo);
     expect(actions.replaceActiveMemoPath).toHaveBeenCalledWith(memo.id, event.path);
-    expect(actions.openNoteTab).not.toHaveBeenCalled();
+    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
   });
 
   it('reports automatic window-open failures', async () => {
     const error = new Error('window unavailable');
     const actions = createActions('notebook-a');
-    vi.mocked(actions.openNoteTab).mockRejectedValue(error);
+    vi.mocked(actions.openMemoInFourthColumn).mockRejectedValue(error);
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
@@ -168,7 +168,7 @@ describe('handleMainWindowMemoEvent', () => {
     expect(actions.replaceActiveMemoPath).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.refreshBackgroundTodoCount).not.toHaveBeenCalled();
-    expect(actions.openNoteTab).not.toHaveBeenCalled();
+    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
   });
 
@@ -212,7 +212,7 @@ describe('handleMainWindowMemoEvent', () => {
     expect(actions.replaceActiveMemoPath).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.refreshBackgroundTodoCount).not.toHaveBeenCalled();
-    expect(actions.openNoteTab).not.toHaveBeenCalled();
+    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
   });
 

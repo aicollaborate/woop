@@ -43,7 +43,7 @@ impl MemoFile {
             ));
         }
         fs::create_dir_all(&base)?;
-        fs::create_dir_all(self.get_metadata_dir())?;
+        fs::create_dir_all(self.get_flowix_dir())?;
         fs::create_dir_all(self.get_memo_base().join("attachments"))?;
         Ok(())
     }

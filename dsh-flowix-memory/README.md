@@ -64,7 +64,7 @@ mcp__flowix__memo
 Prefer structured arguments:
 
 ```json
-{"action":"search","query":"product plan","notebook":"work","limit":20}
+{"action":"search","query":"product plan","notebook":"work","tag":"project/flowix","limit":20}
 ```
 
 The legacy `{ "command": "search ...", "stdin": "..." }` form remains

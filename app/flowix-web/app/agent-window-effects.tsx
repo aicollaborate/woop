@@ -14,10 +14,9 @@ import { acquireMemoEventBridge } from '@/lib/memo-dispatcher';
 /**
  * Agent infrastructure shared by every content-capable Webview.
  *
- * Tauri Webviews have independent JavaScript realms and Zustand stores, so
- * each main/tab-host window must install its own live-event projection and
- * hydrate its own backend-backed Agent state. Preferences intentionally does
- * not mount this component.
+ * Tauri content Webviews own their live Agent projection and backend hydration.
+ * The fourth column lives in the main Webview and therefore reuses this
+ * infrastructure; preferences intentionally does not mount this component.
  */
 export function AgentWindowEffects() {
   useAgentEvents();

@@ -20,7 +20,6 @@ import type { AgentTypeKey } from "@/types/agent";
 import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
-import { windows } from "@platform/tauri/client";
 import { agent } from "@platform/tauri/client/agent";
 import { normalizePlainLinkHref } from "@features/editor/extensions/markdown-link";
 import { isCodeTextFilePath } from "@features/editor/code-file";
@@ -54,6 +53,10 @@ import {
 import { AgentConversationSurfaceController } from "@features/agent/thread-card/surface/agent-conversation-surface-controller";
 import { getAgentConversationRuntimeCwd } from "@features/agent/conversation-presentation";
 import { selectAndOpenAgentConversation } from "@features/workspace/use-cases/agent-conversation-navigation";
+import {
+  openFourthColumnMarkdown,
+  openFourthColumnText,
+} from "@features/workspace/use-cases/fourth-column-navigation";
 
 const logger = createLogger("agent-thread-card");
 import {
@@ -1352,7 +1355,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const localPath = localFilePathFromAgentHref(rawHref);
     if (localPath) {
       if (isMarkdownFilePath(localPath)) {
-        void windows.openMarkdownPathTab(localPath).catch((error) => {
+        void Promise.resolve(openFourthColumnMarkdown(localPath)).catch((error) => {
           logger.error("Failed to open Markdown link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
@@ -1362,7 +1365,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         ? this.scopePathForLocalFile(localPath)
         : null;
       if (scopePath) {
-        void windows.openExternalTextWindow(localPath, scopePath).catch((error) => {
+        void Promise.resolve(openFourthColumnText(localPath, scopePath)).catch((error) => {
           logger.error("Failed to open text file link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });

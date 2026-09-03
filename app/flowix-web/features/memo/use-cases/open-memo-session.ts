@@ -3,7 +3,11 @@ import { useDocumentStore } from '@features/document';
 import { useMemoStore, type MemoItem, type Notebook } from '@features/memo';
 import { memos as memosClient } from '@platform/tauri/client';
 import { createLogger } from '@/lib/logger';
-import { openExternalTarget, openMemoTarget } from '@features/workspace/use-cases/workspace-navigation';
+import {
+  openExternalTarget,
+  openMemoTarget,
+} from '@features/workspace/use-cases/workspace-navigation';
+import type { WorkspaceContentLocation } from '@features/workspace/use-cases/workspace-content-activation';
 
 const logger = createLogger('memo-session');
 
@@ -11,10 +15,13 @@ export function resolveMemoSessionPath(memo: MemoItem, notebook: Notebook | null
   return notebook?.path ? joinNotebookMemoPath(notebook.path, memo.filename) : memo.filename ?? null;
 }
 
-export async function openMemoSession(memo: MemoItem, notebook: Notebook | null): Promise<void> {
+export async function openMemoSession(
+  memo: MemoItem,
+  notebook: Notebook | null,
+): Promise<WorkspaceContentLocation | null> {
   const fullPath = resolveMemoSessionPath(memo, notebook);
   try {
-    await openMemoTarget({
+    return await openMemoTarget({
       memoId: memo.id,
       path: fullPath,
       notebookId: notebook?.id ?? null,
@@ -24,6 +31,7 @@ export async function openMemoSession(memo: MemoItem, notebook: Notebook | null)
     });
   } catch (error) {
     logger.error('open document failed', { error, memoId: memo.id });
+    return null;
   }
 }
 

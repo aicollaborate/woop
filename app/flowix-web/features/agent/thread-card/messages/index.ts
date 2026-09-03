@@ -39,3 +39,9 @@ export {
   type ThreadMessageRenderControllerOptions,
   type ThreadMessageRenderInput,
 } from "./thread-message-render-controller";
+export {
+  areAgentRenderItemsEqual,
+  groupAgentMessages,
+  type AgentRenderItem,
+  type AgentToolGroupStatus,
+} from "./tool-grouping";

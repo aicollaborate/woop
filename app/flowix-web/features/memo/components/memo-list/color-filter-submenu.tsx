@@ -1,7 +1,6 @@
 import { MEMO_COLORS, MEMO_COLOR_HEX, type ColorFilterValue, type MemoColor } from '@features/memo';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 
 export const COLOR_LABEL_KEYS: Record<MemoColor, import('@/lib/i18n').I18nKey> = {
@@ -20,8 +19,8 @@ interface ColorFilterSubmenuContentProps {
 }
 
 /**
- * 颜色筛选项内容。外层的定位、hover 延迟和关闭行为由
- * MemoNavigationSubmenu 统一处理，保证它与标签/资料二级菜单完全对齐。
+ * 颜色筛选项内容（无内部滚动、无组标题）。外层的定位、hover 延迟和关闭行为由
+ * MemoNavigationSubmenu 统一处理；调用方负责放置「颜色」分组标题与滚动容器。
  */
 export function ColorFilterSubmenuContent({
   value,
@@ -58,10 +57,7 @@ export function ColorFilterSubmenuContent({
   };
 
   return (
-    <OverlayScrollbar
-      className="mention-note-items-frame"
-      scrollerClassName="mention-note-items"
-    >
+    <>
       {renderRow(
         'any',
         t('memo.list.filterColorAny'),
@@ -88,6 +84,6 @@ export function ColorFilterSubmenuContent({
           color,
         ),
       )}
-    </OverlayScrollbar>
+    </>
   );
 }

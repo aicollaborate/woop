@@ -45,6 +45,10 @@ export interface DocumentContainerProps {
   // collapse/expand buttons; no focus-based show/hide.
   toolbarCollapsed?: boolean;
   onToolbarCollapsedChange?: (collapsed: boolean) => void;
+  /** Keep this editor out of the main workspace's singleton document session. */
+  documentSessionMode?: 'main' | 'isolated';
+  /** Render the document without edit or metadata mutation controls. */
+  readOnly?: boolean;
 }
 
 export const initialDocumentContainerState: DocumentContainerState = {

@@ -1,4 +1,4 @@
-﻿import { Editor } from "@tiptap/core";
+import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { closeHistory } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
@@ -38,6 +38,15 @@ const toastMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
+vi.mock("@features/workspace/use-cases/fourth-column-navigation", () => ({
+  openFourthColumnMarkdown: vi.fn(() => ({
+    host: 'fourth-column',
+    tabId: 'external_markdown:/Users/rop/Documents/Outside Note.md',
+    alreadyOpen: false,
+  })),
+  openFourthColumnText: vi.fn(() => "external_text:/Users/rop/Documents/Outside Text.txt"),
+}));
+
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(async () => undefined),
   openUrl: vi.fn(async () => undefined),
@@ -64,11 +73,6 @@ vi.mock("@platform/tauri/client", () => ({
   },
   memos: {
     listAgentRoleMemos: vi.fn(async () => []),
-  },
-  windows: {
-    openPreferences: vi.fn(async () => undefined),
-    openMarkdownPathTab: vi.fn(async () => undefined),
-    openExternalTextWindow: vi.fn(async () => undefined),
   },
   deepseekHarness: {
     get: vi.fn(async () => ({
@@ -478,14 +482,16 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 
-  it("routes an assistant Markdown link through the Flowix tab window", async () => {
+  it("routes an assistant Markdown link through the fourth column", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { openPath } = await import("@tauri-apps/plugin-opener");
-    const { windows } = await import("@platform/tauri/client");
+    const { openFourthColumnMarkdown } = await import(
+      "@features/workspace/use-cases/fourth-column-navigation",
+    );
     vi.mocked(openPath).mockClear();
-    vi.mocked(windows.openMarkdownPathTab).mockClear();
+    vi.mocked(openFourthColumnMarkdown).mockClear();
 
     const threadId = "thread-card-markdown-link";
     const host = document.createElement("div");
@@ -527,7 +533,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     )?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flushPromises();
 
-    expect(windows.openMarkdownPathTab).toHaveBeenCalledWith(
+    expect(openFourthColumnMarkdown).toHaveBeenCalledWith(
       "/Users/rop/Documents/Outside Note.md",
     );
     expect(openPath).not.toHaveBeenCalled();

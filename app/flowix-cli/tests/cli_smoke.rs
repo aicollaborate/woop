@@ -74,6 +74,47 @@ fn binary_reports_usage_errors_with_expected_exit_code() {
 }
 
 #[test]
+fn binary_reports_json_errors_with_stable_shape() {
+    let output = cli(&[
+        "create",
+        "work",
+        "--file",
+        "definitely-missing-flowix-input.md",
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(5));
+    assert!(stderr(&output).is_empty());
+
+    let value: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "IO_ERROR");
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("failed to read input file"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_rejects_implicit_create_and_write_stdin() {
+    for args in [
+        ["create", "any-notebook", "--json"],
+        ["write", "any-note", "--json"],
+    ] {
+        let output = cli(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(stderr(&output).is_empty());
+        let value: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["error"]["code"], "INVALID_COMMAND");
+        assert!(value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("stdin input is disabled by default on Windows"));
+    }
+}
+
+#[test]
 fn binary_generates_shell_completions() {
     let bash = cli(&["completion", "bash"]);
     assert!(bash.status.success());

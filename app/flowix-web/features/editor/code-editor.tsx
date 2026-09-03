@@ -34,6 +34,7 @@ export interface CodeEditorHandle {
 interface CodeEditorProps {
   filePath: string;
   content: string;
+  editable?: boolean;
   onChange: (content: string) => void;
   className?: string;
   autoFocus?: boolean;
@@ -152,6 +153,7 @@ const codeHighlighter = tagHighlighter([
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor({
   filePath,
   content,
+  editable = true,
   onChange,
   className,
   autoFocus = false,
@@ -168,6 +170,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const onEditorScrollRef = useRef(onEditorScroll);
   const onEditingFinishedRef = useRef(onEditingFinished);
   const languageCompartment = useMemo(() => new Compartment(), []);
+  const editableCompartment = useMemo(() => new Compartment(), []);
 
   onChangeRef.current = onChange;
   onSearchPanelOpenChangeRef.current = onSearchPanelOpenChange;
@@ -199,6 +202,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           : [syntaxHighlighting(codeHighlighter)]),
         EditorView.lineWrapping,
         languageCompartment.of([]),
+        editableCompartment.of([
+          EditorState.readOnly.of(!editable),
+          EditorView.editable.of(editable),
+        ]),
         EditorView.contentAttributes.of({
           'aria-label': filePath.split(/[\\/]/).pop() ?? filePath,
           spellcheck: 'false',
@@ -231,7 +238,18 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       view.destroy();
       viewRef.current = null;
     };
-  }, [autoFocus, filePath, languageCompartment]);
+  }, [autoFocus, editableCompartment, filePath, languageCompartment]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: editableCompartment.reconfigure([
+        EditorState.readOnly.of(!editable),
+        EditorView.editable.of(editable),
+      ]),
+    });
+  }, [editable, editableCompartment]);
 
   useEffect(() => {
     const view = viewRef.current;

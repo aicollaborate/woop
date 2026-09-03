@@ -93,7 +93,7 @@ export class AgentThreadCardTitleEditController {
     input.type = "text";
     input.className = "agent-thread-card__title-input";
     input.value = currentTitle;
-    input.setAttribute("aria-label", "重命名对话");
+    input.setAttribute("aria-label", "重命名会话");
     input.addEventListener("mousedown", (event) => event.stopPropagation());
     input.addEventListener("click", (event) => event.stopPropagation());
     input.addEventListener("keydown", (event) => {

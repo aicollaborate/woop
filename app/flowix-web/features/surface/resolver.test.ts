@@ -6,7 +6,7 @@ import type {
   WorkspaceNavigationState,
   WorkspaceTarget,
 } from '@features/workspace/store/workspace-target';
-import { resolveTabSurface, resolveWorkspaceSurface } from './resolver';
+import { resolveWorkspaceSurface } from './resolver';
 
 function memo(properties: Record<string, unknown>, id = 'memo-1'): MemoItem {
   return {
@@ -222,39 +222,4 @@ describe('surface resolvers', () => {
     expect(wrongPlugin.kind).toBe('empty');
   });
 
-  it('resolves an independent tab target and rejects malformed document context', () => {
-    const document = {
-      identity: documentIdentity({ transitionId: 1 }),
-      memo: memo({
-        flowix_note_type: 'mindmap',
-        flowix_plugin: 'mindmap',
-        flowix_artifact: { renderer: 'markmap' },
-      }),
-      markdown: markdownSurface({ transitionId: 1 }),
-      artifact: { memoId: 'memo-1', transitionId: 1 },
-    };
-    const target = {
-      kind: 'memo' as const,
-      memoId: 'memo-1',
-      path: '/notebook/note.md',
-      notebookId: 'notebook-1',
-      notebookPath: '/notebook',
-    };
-    expect(resolveTabSurface({ target: { kind: 'document', target, document } }).kind).toBe('mindmap');
-    expect(resolveTabSurface({
-      target: {
-        kind: 'document',
-        target,
-        document: { ...document, artifact: { memoId: 'other-memo', transitionId: 1 } },
-      },
-    }).kind).toBe('empty');
-
-    expect(resolveTabSurface({
-      target: {
-        kind: 'document',
-        target: { ...target, path: '/notebook/other.md' },
-        document,
-      },
-    }).kind).toBe('empty');
-  });
 });

@@ -90,7 +90,7 @@ function ArtifactToolWorkbench({
             <div className="flex items-start gap-3">
               <TerminalWindowIcon size={18} weight="bold" className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-[var(--foreground)]">在 Agent 对话中创建思维导图</p>
+                <p className="text-sm font-medium text-[var(--foreground)]">在 Agent 会话中创建思维导图</p>
                 <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
                   直接告诉文档内 Agent“生成思维导图”。Agent 会整理内容并调用插件工具，完成后文档会出现在下方列表。
                 </p>

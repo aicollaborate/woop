@@ -73,9 +73,9 @@ export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> 
 }
 
 /**
- * Installs the agent stream bridge for windows that need live chat updates.
+ * Installs the agent stream bridge for content Webviews that need live chat updates.
  *
- * This is mounted by AgentWindowEffects in main and tab-host windows, but not
+ * This is mounted by AgentWindowEffects in content Webviews, but not
  * preferences. The bridge itself is idempotent within each Webview realm.
  */
 export function useAgentEvents(): void {

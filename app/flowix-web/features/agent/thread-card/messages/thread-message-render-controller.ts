@@ -6,12 +6,17 @@ import { supportsAgentEmptySettings } from "@features/agent/runtime/agent-runtim
 import {
   appendRenderedAgentMessagesToTail,
   createRenderedAgentMessageList,
-  getRenderedAgentMessages,
+  getRenderedAgentItems,
   isLastMessageInTurnAndAssistant,
   patchLastRenderedAgentMessage,
   shouldShowMessageActions,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
+import {
+  areAgentRenderItemsEqual,
+  groupAgentMessages,
+  type AgentRenderItem,
+} from "@features/agent/thread-card/messages/tool-grouping";
 import { createAgentThreadCardMessageElement } from "@features/agent/thread-card/messages/message-item-renderer";
 import { recordMessageRenderPlan } from "@features/agent/thread-card/messages/message-render-plan";
 import {
@@ -58,9 +63,12 @@ export class ThreadMessageRenderController {
   private readonly onForkMessage?: (message: AgentMessage) => void | Promise<void>;
   private renderedMessagesList: HTMLDivElement | null = null;
   private renderedEmptyState: HTMLElement | null = null;
-  private renderedMessageRefs: ThreadState["messages"] = [];
+  private renderedMessageRefs: AgentRenderItem[] = [];
   private reasoningCollapsedOverrides = new Map<string, boolean>();
   private displayExpandedOverrides = new Map<string, boolean>();
+  private toolGroupExpandedOverrides = new Map<string, boolean>();
+  private toolGroupPreviewBatches = new Map<string, AgentMessage[]>();
+  private toolGroupPreviousTools = new Map<string, AgentMessage[]>();
   private renderRafId: number | null = null;
   private pendingRenderInput: ThreadMessageRenderInput | null = null;
   private progressiveRenderRafId: number | null = null;
@@ -118,12 +126,15 @@ export class ThreadMessageRenderController {
   dispose(): void {
     this.cancelPendingRender();
     this.cancelProgressiveRender();
+    this.toolGroupPreviewBatches.clear();
+    this.toolGroupPreviousTools.clear();
   }
 
   private renderNow(input: ThreadMessageRenderInput): void {
     const scrollState = this.messageViewport.captureRenderScrollState();
     const loadingJustEnded = this.previousIsLoading && !input.isLoading;
     this.previousIsLoading = input.isLoading;
+    this.syncToolGroupPreviewBatches(input.messages, input.isLoading);
     // 流式 Markdown 使用块级增量解析，空行等边界在流式期间可能被暂时
     // 切成多个 block。run 结束时只强制重解析末条消息的 content，既收敛
     // 到最终 Markdown 结构，又保留 message row、滚动位置和交互状态。
@@ -160,6 +171,7 @@ export class ThreadMessageRenderController {
 
     this.pruneReasoningCollapsedOverrides(input.messages);
     this.pruneDisplayExpandedOverrides(input.messages);
+    this.pruneToolGroupExpandedOverrides(input.messages);
 
     if (this.canReuseRenderedMessages(input.messages)) {
       if (loadingJustEnded) {
@@ -214,7 +226,7 @@ export class ThreadMessageRenderController {
     }
 
     recordMessageRenderPlan("replace-all", input.messages.length);
-    const { list, rememberedMessages } = createRenderedAgentMessageList(
+    const { list } = createRenderedAgentMessageList(
       input.messages,
       this.createMessageRenderContext(input.messages, input.isLoading),
     );
@@ -231,7 +243,10 @@ export class ThreadMessageRenderController {
       this.body.removeChild(prevList);
     }
     this.body.insertBefore(list, this.loadingIndicator);
-    this.rememberRenderedMessages(list, rememberedMessages);
+    this.rememberRenderedMessages(
+      list,
+      getRenderedAgentItems(input.messages, this.toolGroupPreviewBatches),
+    );
     this.applyBodyScrollAfterRender({
       isLoading: input.isLoading,
       ...scrollState,
@@ -247,6 +262,12 @@ export class ThreadMessageRenderController {
     // keep that list mounted; removing it to show the skeleton causes a
     // one-frame flash after longer conversations.
     if (this.renderedMessagesList) return false;
+    // The progressive path renders one top-level node per item. A tool group
+    // owns several nested rows and must be built atomically by the full list
+    // renderer to keep the cache's top-level indexes aligned.
+    if (getRenderedAgentItems(input.messages).some((item) => item.kind === "tool-group")) {
+      return false;
+    }
     return input.messages.length >= PROGRESSIVE_RENDER_MESSAGE_THRESHOLD;
   }
 
@@ -269,10 +290,12 @@ export class ThreadMessageRenderController {
     this.body.insertBefore(skeleton, this.loadingIndicator);
     this.messageViewport.resetForEmptyMessages();
 
-    const renderedMessages = getRenderedAgentMessages(input.messages);
+    const renderedItems = getRenderedAgentItems(
+      input.messages,
+      this.toolGroupPreviewBatches,
+    );
     const list = document.createElement("div");
     list.className = "agent-thread-card__messages";
-    const rememberedMessages: ThreadState["messages"] = [];
     const context = this.createMessageRenderContext(input.messages, input.isLoading);
     let index = 0;
 
@@ -280,9 +303,13 @@ export class ThreadMessageRenderController {
       this.progressiveRenderRafId = null;
       if (this.progressiveRenderMessages !== input.messages) return;
 
-      const end = Math.min(index + PROGRESSIVE_RENDER_CHUNK_SIZE, renderedMessages.length);
+      const end = Math.min(index + PROGRESSIVE_RENDER_CHUNK_SIZE, renderedItems.length);
       for (; index < end; index += 1) {
-        const message = renderedMessages[index];
+        const renderItem = renderedItems[index];
+        // A long historical list is normally static; groups are rendered by
+        // the regular path so their nested DOM is created as one unit.
+        if (renderItem.kind === "tool-group") continue;
+        const message = renderItem.message;
         const rendered = createAgentThreadCardMessageElement({
           message,
           language: context.language,
@@ -303,11 +330,10 @@ export class ThreadMessageRenderController {
           onForkMessage: this.onForkMessage,
         });
         if (!rendered) continue;
-        if (rendered.shouldRemember) rememberedMessages.push(message);
         list.append(rendered.element);
       }
 
-      if (index < renderedMessages.length) {
+      if (index < renderedItems.length) {
         this.progressiveRenderRafId = requestAnimationFrame(renderChunk);
         return;
       }
@@ -315,7 +341,7 @@ export class ThreadMessageRenderController {
       this.progressiveRenderMessages = null;
       this.removeRenderedEmptyState();
       this.body.insertBefore(list, this.loadingIndicator);
-      this.rememberRenderedMessages(list, rememberedMessages);
+      this.rememberRenderedMessages(list, renderedItems);
       this.applyBodyScrollAfterRender({
         ...scrollState,
         isLoading: input.isLoading,
@@ -397,12 +423,76 @@ export class ThreadMessageRenderController {
     this.renderedMessageRefs = [];
   }
 
+  /**
+   * The stream has no explicit batch marker. Treat rows appended between two
+   * snapshots as one batch: the first snapshot previews all current tools,
+   * and each later append previews only the newly appended suffix. A
+   * following assistant/reasoning/user row folds every preview back into the
+   * group's detail list.
+   */
+  private syncToolGroupPreviewBatches(
+    messages: ThreadState["messages"],
+    isLoading: boolean,
+  ): void {
+    const lastMessage = messages[messages.length - 1];
+    if (!isLoading || lastMessage?.role !== "tool") {
+      this.toolGroupPreviewBatches.clear();
+      this.toolGroupPreviousTools.clear();
+      return;
+    }
+
+    const group = [...groupAgentMessages(messages)]
+      .reverse()
+      .find((item) => item.kind === "tool-group");
+    if (!group || group.kind !== "tool-group") {
+      this.toolGroupPreviewBatches.clear();
+      this.toolGroupPreviousTools.clear();
+      return;
+    }
+
+    const previousTools = this.toolGroupPreviousTools.get(group.id);
+    const previousPreview = this.toolGroupPreviewBatches.get(group.id);
+    let preview = group.tools;
+    if (previousTools && group.tools.length >= previousTools.length) {
+      const keepsPreviousPrefix = previousTools.every(
+        (tool, index) => group.tools[index]?.id === tool.id,
+      );
+      if (keepsPreviousPrefix) {
+        const appended = group.tools.slice(previousTools.length);
+        preview = appended.length > 0
+          ? appended
+          : group.tools.filter((tool) =>
+              previousPreview?.some((previewTool) => previewTool.id === tool.id),
+            );
+      }
+    }
+
+    this.toolGroupPreviewBatches.clear();
+    this.toolGroupPreviousTools.clear();
+    this.toolGroupPreviewBatches.set(group.id, preview);
+    this.toolGroupPreviousTools.set(group.id, group.tools);
+  }
+
   private rememberRenderedMessages(
     list: HTMLDivElement,
-    messages: ThreadState["messages"],
+    messages: AgentRenderItem[],
   ): void {
     this.renderedMessagesList = list;
     this.renderedMessageRefs = messages;
+  }
+
+  private pruneToolGroupExpandedOverrides(
+    messages: ThreadState["messages"],
+  ): void {
+    if (this.toolGroupExpandedOverrides.size === 0) return;
+    const ids = new Set(
+      getRenderedAgentItems(messages)
+        .filter((item) => item.kind === "tool-group")
+        .map((item) => item.id),
+    );
+    for (const id of this.toolGroupExpandedOverrides.keys()) {
+      if (!ids.has(id)) this.toolGroupExpandedOverrides.delete(id);
+    }
   }
 
   private pruneReasoningCollapsedOverrides(
@@ -467,6 +557,13 @@ export class ThreadMessageRenderController {
         if (expanded) this.displayExpandedOverrides.set(messageId, true);
         else this.displayExpandedOverrides.delete(messageId);
       },
+      getToolGroupExpanded: (groupId) =>
+        this.toolGroupExpandedOverrides.get(groupId) ?? false,
+      setToolGroupExpanded: (groupId, expanded) => {
+        if (expanded) this.toolGroupExpandedOverrides.set(groupId, true);
+        else this.toolGroupExpandedOverrides.delete(groupId);
+      },
+      toolGroupPreview: this.toolGroupPreviewBatches,
       isStreaming: (message) =>
         isLoading && message === lastMessage && !message.isCompleted,
       onForkMessage: this.onForkMessage,
@@ -476,15 +573,20 @@ export class ThreadMessageRenderController {
   private canReuseRenderedMessages(messages: ThreadState["messages"]): boolean {
     const list = this.renderedMessagesList;
     if (!list || !this.body.contains(list)) return false;
-    const renderedMessages = getRenderedAgentMessages(messages);
+    const renderedItems = getRenderedAgentItems(
+      messages,
+      this.toolGroupPreviewBatches,
+    );
     if (
-      renderedMessages.length !== this.renderedMessageRefs.length ||
-      list.children.length !== renderedMessages.length
+      renderedItems.length !== this.renderedMessageRefs.length ||
+      list.children.length !== renderedItems.length
     ) {
       return false;
     }
-    for (let i = 0; i < renderedMessages.length; i += 1) {
-      if (renderedMessages[i] !== this.renderedMessageRefs[i]) return false;
+    for (let i = 0; i < renderedItems.length; i += 1) {
+      if (!areAgentRenderItemsEqual(renderedItems[i], this.renderedMessageRefs[i])) {
+        return false;
+      }
     }
     return true;
   }

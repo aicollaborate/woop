@@ -10,6 +10,7 @@ export {
 } from '@features/document/store/document-history-store';
 export {
   getActiveDocumentDraft,
+  getDocumentDraft,
   consumeSelfDocumentPathUpdate,
   markSelfDocumentPathUpdate,
   recordDocumentEdit,

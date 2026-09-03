@@ -4,7 +4,7 @@ import type { MemoItem } from '@/types/memo-item';
 export interface MainWindowMemoEventActions {
   getSelectedNotebookId: () => string | null;
   invalidateMentionCaches: () => void;
-  openNoteTab: (memoId: string) => Promise<void>;
+  openMemoInFourthColumn: (memoId: string) => Promise<void>;
   reportOpenFailure: (error: unknown) => void;
   handleMemoCreated: (memo: MemoItem) => void;
   handleMemoUpdated: (memo: MemoItem) => void;
@@ -58,7 +58,7 @@ export function handleMainWindowMemoEvent(
     || (!!selectedNotebookId && selectedNotebookId !== event.notebookId)
   );
   if (shouldOpenCreatedNote) {
-    void actions.openNoteTab(event.memo.id).catch(actions.reportOpenFailure);
+    void actions.openMemoInFourthColumn(event.memo.id).catch(actions.reportOpenFailure);
   }
 
   if (!selectedNotebookId || selectedNotebookId !== event.notebookId) {

@@ -55,10 +55,13 @@ vi.mock('@features/workspace/store/workspace-store', () => ({
 }));
 
 import { selectAndOpenAgentConversation } from './agent-conversation-navigation';
+import { useFourthColumnStore } from '@features/workspace/store/fourth-column-store';
+import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
 describe('agent conversation navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useFourthColumnStore.getState().reset();
   });
 
   it('commits the agent target and clears stale workspace selection', async () => {
@@ -71,6 +74,26 @@ describe('agent conversation navigation', () => {
     expect(mocks.setActivePluginId).toHaveBeenCalledWith(null);
     expect(mocks.setSelectedMemo).toHaveBeenCalledWith(null);
     expect(mocks.openAgentConversation).toHaveBeenCalledWith('conversation-a', undefined);
-    expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a');
+    expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a', true);
+  });
+
+  it('activates an existing fourth-column conversation without reopening it in the third column', async () => {
+    useFourthColumnStore.getState().openTab({
+      id: 'agent:conversation-a',
+      title: 'Conversation A',
+      icon: null,
+      target: { kind: 'agent_conversation', instanceId: 'conversation-a' },
+    });
+    mocks.openAgentConversation.mockClear();
+
+    await selectAndOpenAgentConversation('conversation-a');
+
+    expect(mocks.openAgentConversation).not.toHaveBeenCalled();
+    expect(useFourthColumnStore.getState()).toMatchObject({
+      visible: true,
+      activeTabId: 'agent:conversation-a',
+    });
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('fourth-column');
+    expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a', false);
   });
 });

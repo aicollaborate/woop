@@ -39,6 +39,7 @@ impl Default for WhitelistConfig {
     fn default() -> Self {
         Self {
             skip_dirs: vec![
+                ".flowix".into(),
                 ".metadata".into(),
                 ".git".into(),
                 ".DS_Store".into(),
@@ -83,6 +84,16 @@ impl WhitelistConfig {
 
     /// �?���?��通过白名单�?查。返�?`Ok(())` 放�?, `Err(DropReason)` 拒绝�?
     pub fn allows(&self, path: &Path) -> Result<(), DropReason> {
+        // `.flowix` is always a system directory. This check intentionally
+        // precedes `watch_hidden`, so enabling hidden-file watching can never
+        // expose internal versions or plugin artifacts as notes.
+        if path
+            .components()
+            .any(|component| component.as_os_str() == ".flowix")
+        {
+            return Err(DropReason::MetadataDirectory);
+        }
+
         // 1. 闅愯棌鏂囦欢
         if !self.watch_hidden {
             if path
@@ -201,6 +212,16 @@ mod tests {
         let w = WhitelistConfig::default();
         assert_eq!(
             w.allows(Path::new("/x/.metadata/internal.tmp")),
+            Err(DropReason::MetadataDirectory)
+        );
+    }
+
+    #[test]
+    fn flowix_dir_is_always_skipped_when_hidden_watching_is_enabled() {
+        let mut w = WhitelistConfig::default();
+        w.watch_hidden = true;
+        assert_eq!(
+            w.allows(Path::new("/x/.flowix/versions/memo/v_1.md")),
             Err(DropReason::MetadataDirectory)
         );
     }

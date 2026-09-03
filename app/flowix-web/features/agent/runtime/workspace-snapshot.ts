@@ -105,7 +105,7 @@ export function ensureConversationWorkspaceSnapshot(
   // Persist the workspace snapshot on the canonical conversation instance.
   const session = useAgentSessionStore.getState();
   const instance = session.getInstance(instanceId);
-  if (!instance) throw new Error("Agent conversation instance was not found");
+  if (!instance) throw new Error("Agent session instance was not found");
 
   const runtimeConfig = instance.runtimeConfig ?? {};
   const workspaceState = normalizeConversationWorkspaceState(runtimeConfig);

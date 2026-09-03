@@ -530,6 +530,24 @@ pub fn normalize_tag_path(raw: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+/// Normalize a user-facing search tag filter. Search accepts the same tag path
+/// syntax as stored metadata and additionally tolerates one leading `#`.
+pub fn normalize_search_tag_filter(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let without_hash = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    normalize_tag_path(without_hash)
+}
+
+/// Return whether a stored tag belongs to a requested tag path. Matching is
+/// segment-aware: `project` matches `project` and `project/flowix`, but not
+/// `project-management`.
+pub fn tag_path_matches_filter(tag: &str, filter: &str) -> bool {
+    tag == filter
+        || tag
+            .strip_prefix(filter)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 /// 判定一行是否是 markdown 围栏代码块的 opening fence ── 3+ 个反引号开头,
 /// 后面可接 info string (语言名)。返回 fence 的反引号长度。
 fn fence_open_len(line: &str) -> Option<usize> {

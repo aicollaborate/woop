@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useI18n } from "@/lib/i18n";
-import { windows } from "@platform/tauri/client";
 import { useDocumentStore } from "@features/document/store/document-store";
 import { useMemoStore } from "@features/memo/store/memo-store";
 import { useTagStore } from "@features/memo/store/tag-store";
@@ -27,6 +26,7 @@ import {
 } from '@features/memo/use-cases/open-memo-session';
 import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
 import { createLogger } from '@/lib/logger';
+import { openFourthColumnMemoById } from '@features/workspace/use-cases/fourth-column-navigation';
 import { restoreAgentConversationWorkspace } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
 import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
@@ -128,9 +128,11 @@ export function MainWindowEffects() {
             invalidateMentionNotes();
             invalidateMentionTags();
           },
-          openNoteTab: windows.openNoteTab,
+          openMemoInFourthColumn: async (memoId) => {
+            await openFourthColumnMemoById(memoId);
+          },
           reportOpenFailure: (error) => {
-            logger.warn('open created note window failed', { error });
+            logger.warn('open created note in fourth column failed', { error });
             toast.error(error instanceof Error ? error.message : String(error));
           },
           handleMemoCreated: (memo) => useMemoStore.getState().handleMemoCreated(memo),

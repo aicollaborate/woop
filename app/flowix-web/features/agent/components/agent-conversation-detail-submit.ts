@@ -34,7 +34,7 @@ export async function ensureAgentConversationDetailThread(input: {
 }): Promise<EnsureAgentConversationDetailThreadResult> {
   const session = useAgentSessionStore.getState();
   const instance = session.getInstance(input.instanceId);
-  if (!instance) throw new Error("Agent conversation instance was not found");
+  if (!instance) throw new Error("Agent session instance was not found");
 
   const ensured = await ensureAgentThreadCardThread({
     prompt: input.prompt,

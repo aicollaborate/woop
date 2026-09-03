@@ -374,7 +374,7 @@ function RunningAgentConversationsGroup({ onClose }: RunningAgentConversationsGr
   };
 
   return (
-    <CommandGroup heading="Agent Conversation">
+    <CommandGroup heading="Agent Sessions">
       {runningInstances.map((instance) => {
         const agent = getAgentType(instance.agentType);
         const runSummary = getConversationRunSummary(

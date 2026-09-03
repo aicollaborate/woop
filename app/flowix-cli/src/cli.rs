@@ -30,6 +30,7 @@ pub enum Cli {
     Create {
         notebook: Option<String>,
         file: Option<String>,
+        stdin: bool,
         json: bool,
     },
     Delete {
@@ -39,6 +40,7 @@ pub enum Cli {
     Search {
         query: String,
         notebook: Option<String>,
+        tag: Option<String>,
         limit: usize,
         json: bool,
     },
@@ -60,6 +62,7 @@ pub enum Cli {
     Write {
         id: String,
         file: Option<String>,
+        stdin: bool,
         json: bool,
     },
     PluginList {
@@ -136,6 +139,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Cli>, CliError> {
         Some(("create", sub)) => Ok(Some(Cli::Create {
             notebook: sub.get_one::<String>("notebook").cloned(),
             file: sub.get_one::<String>("file").cloned(),
+            stdin: sub.get_flag("stdin"),
             json,
         })),
         Some(("delete", sub)) => Ok(Some(Cli::Delete {
@@ -154,6 +158,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Cli>, CliError> {
         Some(("write", sub)) => Ok(Some(Cli::Write {
             id: required_string(sub, "id")?,
             file: sub.get_one::<String>("file").cloned(),
+            stdin: sub.get_flag("stdin"),
             json,
         })),
         Some(("search", sub)) => {
@@ -166,6 +171,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Cli>, CliError> {
             Ok(Some(Cli::Search {
                 query: required_string(sub, "query")?,
                 notebook: sub.get_one::<String>("notebook").cloned(),
+                tag: sub.get_one::<String>("tag").cloned(),
                 limit,
                 json,
             }))
@@ -211,7 +217,7 @@ pub(crate) fn cli_command() -> Command {
     Command::new(DISPLAY_BIN)
         .version(env!("CARGO_PKG_VERSION"))
         .about("Manage local Flowix notebooks, Markdown notes, and artifacts")
-        .after_help("For Markdown content, --file is recommended (especially on Windows PowerShell 5.1). Files must be UTF-8; stdin remains supported. Examples:\n  flowix create <notebook> --file body.md --json\n  flowix write <id> --file body.md --json\n  flowix list\n  flowix search TODO --limit 20\n  flowix mcp")
+        .after_help("For Markdown content, --file is recommended (especially on Windows PowerShell 5.1). Files must be UTF-8. On Windows, stdin is opt-in with --stdin because PowerShell may corrupt non-ASCII text. Examples:\n  flowix create <notebook> --file body.md --json\n  flowix write <id> --file body.md --json\n  flowix create <notebook> --stdin --json\n  flowix list\n  flowix search TODO --tag project/flowix --limit 20\n  flowix mcp")
         .arg(
             Arg::new("json")
                 .long("json")
@@ -234,9 +240,11 @@ pub(crate) fn cli_command() -> Command {
         .subcommand(Command::new("show").about("Show a note").arg(required_arg("id")))
         .subcommand(
             Command::new("create")
-                .about("Create a note; use --file for UTF-8 Markdown (recommended); defaults to the current notebook")
+                .about("Create a note; use --file for UTF-8 Markdown (recommended), or --stdin explicitly; defaults to the current notebook")
                 .arg(Arg::new("notebook").allow_hyphen_values(true).num_args(1))
-                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1)),
+                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1))
+                .arg(Arg::new("stdin").long("stdin").action(ArgAction::SetTrue).help("Read Markdown from stdin; required explicitly on Windows"))
+                .group(clap::ArgGroup::new("input").args(["file", "stdin"]).multiple(false)),
         )
         .subcommand(Command::new("delete").about("Delete a note").arg(required_arg("id")))
         .subcommand(
@@ -271,15 +279,25 @@ pub(crate) fn cli_command() -> Command {
         )
         .subcommand(
             Command::new("write")
-                .about("Replace a complete note; use --file for UTF-8 Markdown (recommended)")
+                .about("Replace a complete note; use --file for UTF-8 Markdown (recommended), or --stdin explicitly")
                 .arg(required_arg("id"))
-                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1)),
+                .arg(Arg::new("file").long("file").short('f').value_name("UTF-8-MARKDOWN").help("Recommended: read Markdown content directly from a UTF-8 file").num_args(1))
+                .arg(Arg::new("stdin").long("stdin").action(ArgAction::SetTrue).help("Read Markdown from stdin; required explicitly on Windows"))
+                .group(clap::ArgGroup::new("input").args(["file", "stdin"]).multiple(false)),
         )
         .subcommand(
             Command::new("search")
                 .about("Search memo text")
                 .arg(required_arg("query"))
                 .arg(Arg::new("notebook").long("notebook").short('b').num_args(1))
+                .arg(
+                    Arg::new("tag")
+                        .long("tag")
+                        .short('t')
+                        .value_name("TAG-PATH")
+                        .help("Only return notes tagged with this path or one of its sub-tags")
+                        .num_args(1),
+                )
                 .arg(
                     Arg::new("limit")
                         .long("limit")

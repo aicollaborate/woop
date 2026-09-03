@@ -508,6 +508,16 @@ fn normalize_tag_path_unit() {
     assert_eq!(normalize_tag_path("___"), None);
 }
 
+#[test]
+fn normalize_search_tag_filter_accepts_optional_hash() {
+    assert_eq!(
+        normalize_search_tag_filter(" #项目/Flowix "),
+        Some("项目/Flowix".to_string())
+    );
+    assert_eq!(normalize_search_tag_filter("#"), None);
+    assert_eq!(normalize_search_tag_filter("项目//Flowix"), None);
+}
+
 /// 路径式 tag 仍走 strip_code_regions, NUL 占位不影响。
 /// 围栏外紧邻的 `#a/b` 仍正确提取, 不被前一行围栏内的 orphan
 /// `//#c` 串错位。

@@ -20,6 +20,7 @@ pub(crate) enum FlowixOperation {
     Search {
         query: String,
         notebook: Option<String>,
+        tag: Option<String>,
         limit: usize,
     },
     Create {
@@ -94,10 +95,15 @@ pub(crate) fn execute(operation: FlowixOperation) -> Result<Value, CliError> {
         FlowixOperation::Search {
             query,
             notebook,
+            tag,
             limit,
         } => {
-            let results = store::search_hits(&query, notebook.as_deref(), limit)?;
-            output::to_json_value(&store::search_results_to_value(&query, &results))
+            let results = store::search_hits(&query, notebook.as_deref(), tag.as_deref(), limit)?;
+            output::to_json_value(&store::search_results_to_value(
+                &query,
+                tag.as_deref(),
+                &results,
+            ))
         }
         FlowixOperation::Create { notebook, content } => {
             let notebook = store::resolve_notebook_key(notebook.as_deref())?;

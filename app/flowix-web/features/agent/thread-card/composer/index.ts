@@ -18,6 +18,12 @@ export {
   type ComposerAddMenuControllerOptions,
 } from "./composer-add-menu-controller";
 export {
+  COMPOSER_SLASH_COMMANDS,
+  ComposerSlashCommandController,
+  type ComposerSlashCommand,
+  type ComposerSlashCommandControllerOptions,
+} from "./composer-slash-command-controller";
+export {
   createAgentComposerDom,
   disposeAgentComposerDom,
   type AgentComposerDomFactoryOptions,

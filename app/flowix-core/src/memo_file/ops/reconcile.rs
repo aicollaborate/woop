@@ -3,7 +3,7 @@ use super::*;
 impl MemoFile {
     /// 启动 / 切 notebook 时调用: 扫当前 notebook 根目录 .md, 把 memo index 没记录的补进来。
     /// **不**重命名磁盘文件, 保留外部工具的句柄。
-    /// 跳过 `.metadata/` 目录; 已在 memo index 里的 .md 跳过 (按 filename 精确比对)。
+    /// 跳过 notebook 内部目录; 已在 memo index 里的 .md 跳过 (按 filename 精确比对)。
     pub fn reconcile_with_disk(&self) -> Result<usize, String> {
         let _index_io_guard = self.current_index_io.lock().expect("index_io poisoned");
 
@@ -28,12 +28,7 @@ impl MemoFile {
             if !path.is_file() || !path.is_md() {
                 continue;
             }
-            if path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                == Some(".metadata")
-            {
+            if is_internal_notebook_path(&path) {
                 continue;
             }
             let filename = match path.file_name().and_then(|n| n.to_str()) {
@@ -97,12 +92,7 @@ impl MemoFile {
                     if !path.is_file() || !path.is_md() {
                         return None;
                     }
-                    if path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        == Some(".metadata")
-                    {
+                    if is_internal_notebook_path(&path) {
                         return None;
                     }
                     path.file_name().and_then(|n| n.to_str()).map(String::from)
@@ -167,12 +157,7 @@ impl MemoFile {
                     if !path.is_file() || !path.is_md() {
                         return None;
                     }
-                    if path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        == Some(".metadata")
-                    {
+                    if is_internal_notebook_path(&path) {
                         return None;
                     }
                     path.file_name().and_then(|n| n.to_str()).map(String::from)
@@ -654,4 +639,14 @@ impl MemoFile {
             .map_err(|e| format!("sync memo index failed: {e}"))?;
         Ok(memo)
     }
+}
+
+fn is_internal_notebook_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name)
+                if name == ".flowix" || name == ".metadata" || name == ".plugin-output"
+        )
+    })
 }

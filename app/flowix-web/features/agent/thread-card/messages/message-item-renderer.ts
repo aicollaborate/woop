@@ -5,6 +5,7 @@ import { translate, type AppLanguage } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
 import {
+  agentMessageValueToText,
   createAgentMessageViewModel,
   shouldRenderAgentMessage,
 } from "@features/agent/message";
@@ -114,7 +115,7 @@ export function attachMessageActions(
     const forkButton = document.createElement("button");
     forkButton.type = "button";
     forkButton.className = "agent-thread-card__message-action";
-    forkButton.title = language === "zh-CN" ? "从此处分叉对话" : "Fork conversation";
+    forkButton.title = language === "zh-CN" ? "从此处分叉会话" : "Fork session";
     forkButton.setAttribute("aria-label", forkButton.title);
     forkButton.append(createLucideIcon(GitBranch));
     let activeConfirmation: HTMLSpanElement | null = null;
@@ -143,7 +144,7 @@ export function attachMessageActions(
       confirmation.setAttribute("role", "group");
       confirmation.setAttribute(
         "aria-label",
-        language === "zh-CN" ? "确认分叉对话" : "Confirm fork",
+        language === "zh-CN" ? "确认分叉会话" : "Confirm fork",
       );
 
       const confirmButton = document.createElement("button");
@@ -270,6 +271,12 @@ function createExpandableToolContent(options: {
     summary.title = text ?? "";
     content.append(summary);
   }
+
+  const fullInput = document.createElement("pre");
+  fullInput.className = "agent-thread-card__message-tool-input";
+  const inputText = agentMessageValueToText(message.toolInput);
+  fullInput.textContent = inputText || translate(language, "agent.tools.noInput");
+  content.append(fullInput);
 
   let isExpanded = getDisplayExpanded(message);
   const toggle = document.createElement("button");

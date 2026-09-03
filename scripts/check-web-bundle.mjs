@@ -17,12 +17,33 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 // All three lazy roots render concurrently in the default desktop window.
 // Follow their static imports recursively; checking index.html alone misses
 // Vite's runtime __vitePreload dependency graph.
+//
+// Rollup may merge the `features/shell` facade into an anonymous shared
+// dynamic chunk. In that case the manifest has no stable
+// `features/shell/index.ts` key, so resolve the chunk from the index entry's
+// dynamic imports by its exported startup marker instead of making the budget
+// check depend on a content hash.
+function findDynamicChunkContaining(entryKey, marker) {
+  const entry = manifest[entryKey];
+  for (const candidateKey of entry?.dynamicImports ?? []) {
+    const candidate = manifest[candidateKey];
+    if (!candidate?.file?.endsWith('.js')) continue;
+    const source = readFileSync(resolve(DIST, candidate.file), 'utf8');
+    if (source.includes(marker)) return candidateKey;
+  }
+  return null;
+}
+
+const shellStartupRoot = findDynamicChunkContaining('index.html', 'MainLayout');
+if (!shellStartupRoot) {
+  failures.push('manifest has no desktop startup root/import: features/shell/index.ts');
+}
 const desktopStartupRoots = [
   'index.html',
-  'features/shell/index.ts',
+  shellStartupRoot,
   'app/main-window-effects.tsx',
   'app/agent-window-effects.tsx',
-];
+].filter((key) => key !== null);
 const startupManifestKeys = new Set();
 
 function visitStaticImports(key) {

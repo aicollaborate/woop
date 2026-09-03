@@ -223,8 +223,9 @@ pub fn read_memo(id: String, state: State<AppState>) -> Option<Memo> {
 
 /// Resolve the authoritative memo metadata, path and body in one IPC.
 ///
-/// Tab hosts use this at activation time so inactive tabs remain cheap and a
-/// document switch does not need separate `read_memo` + `read_document` calls.
+/// The fourth-column host uses this at activation time so inactive tabs remain
+/// cheap and a document switch does not need separate `read_memo` +
+/// `read_document` calls.
 #[tauri::command]
 pub fn open_memo_session(id: String, state: State<AppState>) -> Option<OpenMemoSessionResponse> {
     let (memo, notebook_id, notebook_path, path) = {

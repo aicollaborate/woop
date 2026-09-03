@@ -301,18 +301,12 @@
   background: var(--editor-block-bg, var(--document-bg));
 }
 
-/* 独立 Agent 对话标题栏使用消息区同一块纯色背景。
+/* 独立 Agent 对话标题栏与消息区使用完全相同的纯色背景。
  * 只作用于 AgentConversationTitlebar, 不覆盖布局级 --bg-titlebar, 因此
- * 普通文档标题栏、偏好设置标题栏和 WindowsTitlebarControls 保持原样。
- * 渐变只叠加 3% 主色透明层, 底部回到纯 --editor-block-bg, 不会透出
- * 整体窗口的 --document-bg。 */
+ * 普通文档标题栏、偏好设置标题栏和 WindowsTitlebarControls 保持原样。 */
 .agent-conversation-titlebar {
   background-color: var(--editor-block-bg, var(--document-bg));
-  background-image: linear-gradient(
-    to bottom,
-    color-mix(in oklch, var(--primary) 3%, transparent),
-    transparent
-  );
+  background-image: none;
 }
 
 /* When an embedded Thread Card owns the document surface, promote the same
@@ -396,9 +390,7 @@
  * is fullscreen. Keep the card's own entry/exit control for inline mode and
  * avoid rendering a duplicate exit button in the fullscreen card header. */
 .flowix-main-layout .agent-thread-card--fullscreen .agent-thread-card__fullscreen,
-.tab-window-shell .agent-thread-card--fullscreen .agent-thread-card__fullscreen,
-.flowix-main-layout .agent-thread-card--fullscreen .agent-thread-card__actions-divider,
-.tab-window-shell .agent-thread-card--fullscreen .agent-thread-card__actions-divider {
+.flowix-main-layout .agent-thread-card--fullscreen .agent-thread-card__actions-divider {
   display: none;
 }
 

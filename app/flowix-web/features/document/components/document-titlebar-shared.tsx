@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, Ellipsis, Loader2, Palette, Search } from 'lucide-react';
 import {
   LinkSimpleIcon,
@@ -45,6 +45,7 @@ import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/clie
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
+import type { WorkspaceHostId } from '@features/workspace/store/workspace-focus-store';
 import { useI18n, translate, type AppLanguage, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { createLogger } from '@/lib/logger';
 import { AgentIcon } from '@features/agent/components/agent-icon';
@@ -105,7 +106,6 @@ export interface DocumentTitlebarProps {
     onRequestDeleteMemo: () => void;
     onColorsChange?: (next: MemoColor[]) => void;
   };
-  windowTabs?: ReactNode;
 }
 
 const AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT =
@@ -303,14 +303,35 @@ export function MemoColorPicker({
   );
 }
 
-function hasFullscreenAgentThreadCard(): boolean {
-  if (typeof document === 'undefined') return false;
-  return !!document.querySelector('.agent-thread-card--fullscreen');
+/**
+ * Which workspace column's chrome should react to a fullscreen Thread Card.
+ * A fullscreen card is `position: fixed` but keeps its DOM position, so the
+ * hosting column resolves reliably through the closest [data-workspace-host]
+ * ancestor — each column only reacts to its own cards.
+ */
+export type AgentThreadCardFullscreenHost = WorkspaceHostId;
+
+function getFullscreenAgentThreadCard(
+  host: AgentThreadCardFullscreenHost,
+): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  // Only the active fourth-column tab stays mounted, so at most one card per
+  // host can be fullscreen; the first host match wins.
+  const cards = document.querySelectorAll<HTMLElement>('.agent-thread-card--fullscreen');
+  for (const card of cards) {
+    if (card.closest(`[data-workspace-host="${host}"]`)) return card;
+  }
+  return null;
 }
 
-function getFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | null {
-  if (typeof document === 'undefined') return null;
-  const card = document.querySelector<HTMLElement>('.agent-thread-card--fullscreen');
+function hasFullscreenAgentThreadCard(host: AgentThreadCardFullscreenHost): boolean {
+  return getFullscreenAgentThreadCard(host) !== null;
+}
+
+function getFullscreenAgentThreadCardInfo(
+  host: AgentThreadCardFullscreenHost,
+): AgentThreadCardFullscreenInfo | null {
+  const card = getFullscreenAgentThreadCard(host);
   if (!card) return null;
 
   const instanceId = card.dataset.instanceId?.trim() || null;
@@ -323,11 +344,13 @@ function getFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | nul
   };
 }
 
-export function useAgentThreadCardFullscreenActive(): boolean {
+export function useAgentThreadCardFullscreenActive(
+  host: AgentThreadCardFullscreenHost = 'main-third',
+): boolean {
   const [active, setActive] = useState(false);
 
   useEffect(() => {
-    const update = () => setActive(hasFullscreenAgentThreadCard());
+    const update = () => setActive(hasFullscreenAgentThreadCard(host));
     update();
 
     window.addEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
@@ -335,16 +358,18 @@ export function useAgentThreadCardFullscreenActive(): boolean {
     return () => {
       window.removeEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
     };
-  }, []);
+  }, [host]);
 
   return active;
 }
 
-function useFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | null {
+export function useFullscreenAgentThreadCardInfo(
+  host: AgentThreadCardFullscreenHost = 'main-third',
+): AgentThreadCardFullscreenInfo | null {
   const [info, setInfo] = useState<AgentThreadCardFullscreenInfo | null>(null);
 
   useEffect(() => {
-    const update = () => setInfo(getFullscreenAgentThreadCardInfo());
+    const update = () => setInfo(getFullscreenAgentThreadCardInfo(host));
     update();
 
     window.addEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
@@ -352,7 +377,7 @@ function useFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | nul
     return () => {
       window.removeEventListener(AGENT_THREAD_CARD_FULLSCREEN_CHANGE_EVENT, update);
     };
-  }, []);
+  }, [host]);
 
   return info;
 }
@@ -360,11 +385,13 @@ function useFullscreenAgentThreadCardInfo(): AgentThreadCardFullscreenInfo | nul
 /** The exit affordance for an embedded fullscreen Thread Card. */
 export function AgentThreadCardFullscreenExitButton({
   className,
+  host = 'main-third',
 }: {
   className: string;
+  host?: AgentThreadCardFullscreenHost;
 }) {
   const { t } = useI18n();
-  const active = useAgentThreadCardFullscreenActive();
+  const active = useAgentThreadCardFullscreenActive(host);
 
   if (!active) return null;
 
@@ -394,10 +421,14 @@ export function AgentThreadCardFullscreenExitButton({
   );
 }
 
-/** Agent identity displayed in the document titlebar while a Thread Card is fullscreen. */
-export function AgentThreadCardFullscreenIdentity() {
+/** Agent identity displayed in a column titlebar while a Thread Card is fullscreen. */
+export function AgentThreadCardFullscreenIdentity({
+  host = 'main-third',
+}: {
+  host?: AgentThreadCardFullscreenHost;
+} = {}) {
   const { t } = useI18n();
-  const info = useFullscreenAgentThreadCardInfo();
+  const info = useFullscreenAgentThreadCardInfo(host);
   // 用 selector 而不是 getState() ── session/runtime store 更新时让组件
   // 重新 render, 否则外部 session id / cwd 注入后不会反映到 popup 内容。
   const instance = useAgentSessionStore((state) =>

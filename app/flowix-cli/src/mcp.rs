@@ -168,6 +168,7 @@ fn validate_argument_keys(arguments: &Map<String, Value>) -> Result<(), CliError
         "pluginId",
         "sourceNote",
         "producer",
+        "tag",
         "command",
         "stdin",
     ];
@@ -202,6 +203,7 @@ fn parse_structured_operation(
         "search" => Ok(FlowixOperation::Search {
             query: required_string(arguments, "query")?,
             notebook,
+            tag: optional_string(arguments, "tag")?,
             limit,
         }),
         "create" => Ok(FlowixOperation::Create {
@@ -358,12 +360,17 @@ fn execute_command(command: &str, stdin: Option<&str>) -> Result<Value, CliError
         cli::Cli::Search {
             query,
             notebook,
+            tag,
             limit,
             ..
         } => {
             reject_stdin(stdin)?;
-            let results = store::search_hits(&query, notebook.as_deref(), limit)?;
-            output::to_json_value(&store::search_results_to_value(&query, &results))
+            let results = store::search_hits(&query, notebook.as_deref(), tag.as_deref(), limit)?;
+            output::to_json_value(&store::search_results_to_value(
+                &query,
+                tag.as_deref(),
+                &results,
+            ))
         }
         cli::Cli::Edit {
             id,
@@ -551,6 +558,7 @@ mod tests {
             .unwrap()
             .iter()
             .any(|action| action == "artifact.create"));
+        assert!(tools[0]["inputSchema"]["properties"]["tag"].is_object());
         assert_eq!(
             tools[0]["inputSchema"]["anyOf"],
             json!([{"required":["action"]},{"required":["command"]}])

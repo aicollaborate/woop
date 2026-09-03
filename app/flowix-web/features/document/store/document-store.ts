@@ -368,7 +368,7 @@ export const useDocumentStore = create<DocumentStore>()(
         const prev = get().activeMemoSession ?? get().activeExternalSession;
         if (prev) {
           const flushed = await flushDocumentPath(sessionIdentity(prev), prev.path, sessionScopePath(prev));
-          if (!flushed) throw new Error('Conversation switch cancelled because saving did not complete');
+          if (!flushed) throw new Error('Session switch cancelled because saving did not complete');
         }
         if (history === 'push' && previousHistoryEntry) {
           useDocumentHistoryStore.getState().pushBack(previousHistoryEntry);

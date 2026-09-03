@@ -48,6 +48,8 @@ export function DocumentContainer({
   onSearchPanelOpenChange,
   toolbarCollapsed = false,
   onToolbarCollapsedChange,
+  documentSessionMode = 'main',
+  readOnly = false,
 }: DocumentContainerProps) {
   const { t } = useI18n();
   const documentInstanceKey = useMemo(
@@ -86,6 +88,7 @@ export function DocumentContainer({
     externalScopePath,
     skipContentLoad: isImagePreview || isUnsupportedExternalFile,
     transitionId,
+    isolatedSession: documentSessionMode === 'isolated',
   });
   const flushPendingEditorChanges = useCallback(() => {
     return editorHandleRef.current?.flushPendingChanges() ?? null;
@@ -104,6 +107,7 @@ export function DocumentContainer({
     setState,
     reloadDocument,
     flushPendingContent: flushPendingEditorChanges,
+    isolatedSession: documentSessionMode === 'isolated',
   });
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [propertiesContentSnapshot, setPropertiesContentSnapshot] = useState<string | null>(null);
@@ -212,10 +216,10 @@ export function DocumentContainer({
     // 状态下的 rename 冲突由 useExternalDocumentChangeWatch 在事件
     // listener 里走 maybeWarnAboutConflict。
     if (!instanceKeyChanged && filePath === prevFilePathRef.current) {
-      // Restoring a retained single-tab window starts a new document
-      // transition, but this mounted editor already has the current content.
+      // Restoring a retained document starts a new document transition, but
+      // this mounted editor already has the current content.
       // Skip the redundant reload while still releasing the loading overlay.
-      if (transitionId !== null) {
+      if (documentSessionMode !== 'isolated' && transitionId !== null) {
         useDocumentStore.getState().finishDocumentTransition(transitionId);
       }
       return;
@@ -246,7 +250,7 @@ export function DocumentContainer({
     clearSaveTimer();
 
     reloadDocument(filePath, { preservePending: false, showLoading: true });
-  }, [filePath, documentIdentity, documentInstanceKey, isExternalDocument, memoId, reloadDocument, clearSaveTimer]);
+  }, [filePath, documentIdentity, documentInstanceKey, documentSessionMode, isExternalDocument, memoId, reloadDocument, clearSaveTimer]);
 
   useExternalDocumentChangeWatch({
     filePath,
@@ -314,7 +318,7 @@ export function DocumentContainer({
       try {
         const success = await useMemoStore.getState().deleteMemo(memoId);
         if (success) {
-          await clearWorkspaceDocument();
+          if (documentSessionMode !== 'isolated') await clearWorkspaceDocument();
           toast.success(t('document.ghost.removed'));
         } else {
           toast.error(t('document.ghost.deleteFailed'));
@@ -355,6 +359,7 @@ export function DocumentContainer({
             key={documentInstanceKey}
             filePath={filePath}
             content={state.fullContent}
+            editable={!readOnly}
             onChange={handleChange}
             onEditorScroll={(scrollTop) => setState(prev => ({ ...prev, isScrolled: scrollTop > 90 }))}
             onEditingFinished={flushPendingEditorChanges}
@@ -367,6 +372,7 @@ export function DocumentContainer({
             ref={editorHandleRef}
             key={documentInstanceKey}
             content={state.fullContent}
+            editable={!readOnly}
             onChange={(content) => {
               handleChange(content);
               if (state.isNewlyCreated) setState(prev => ({ ...prev, isNewlyCreated: false }));
@@ -385,7 +391,7 @@ export function DocumentContainer({
           />
         )}
       </div>
-      {!isExternalDocument && memoId && (
+      {!readOnly && !isExternalDocument && memoId && (
         <NotePropertiesDialog
           open={propertiesOpen}
           content={propertiesContentSnapshot ?? state.fullContent}

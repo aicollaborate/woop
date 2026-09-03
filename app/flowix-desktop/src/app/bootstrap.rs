@@ -210,7 +210,6 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(crate::app_update::AppUpdateState::default())
         .manage(memo_watcher.clone())
-        .manage(commands::tab_window::TabWindowCoordinator::default())
         .setup(move |app| {
             // 鈹€鈹€ 0) 鍚姩璁惧鐧昏 / last_seen 鍒锋柊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
             //   不阻�? spawn 一�?fire-and-forget tokio 任务, �?��内部
@@ -327,7 +326,7 @@ pub fn run() {
             );
             // Watch every configured notebook. MCP/external tools may write to
             // a background notebook, and those creates must still reach the
-            // main Webview so it can route the note into a tab window.
+            // main Webview so it can route the note into the fourth column.
             let initial_notebooks = {
                 let memo_file = crate::lock_utils::read_lock(&memo_file_arc, "memo_file");
                 memo_file.read_notebook_configs().unwrap_or_default()
@@ -355,6 +354,34 @@ pub fn run() {
                     poisoned.into_inner()
                 })
                 .rebind_all(app.handle().clone(), initial_notebooks.clone());
+
+            // Migrate notebook-owned versions and plugin outputs before the
+            // first reconciliation. The migration is file-level and failure
+            // tolerant, so a locked legacy file cannot block normal notes.
+            {
+                let memo_file = crate::lock_utils::read_lock(&memo_file_arc, "memo_file");
+                for notebook in &initial_notebooks {
+                    match memo_file.migrate_notebook_internal_data(&notebook.id) {
+                        Ok(report) => {
+                            if report.moved_files > 0 || !report.warnings.is_empty() {
+                                tracing::info!(
+                                    notebook = %notebook.id,
+                                    moved_files = report.moved_files,
+                                    completed = report.completed,
+                                    "notebook internal data migration finished"
+                                );
+                            }
+                            for warning in report.warnings {
+                                tracing::warn!(notebook = %notebook.id, "notebook internal migration: {warning}");
+                            }
+                        }
+                        Err(error) => tracing::warn!(
+                            notebook = %notebook.id,
+                            "notebook internal migration failed: {error}"
+                        ),
+                    }
+                }
+            }
 
             // �?��已有 current notebook 时做�?��对账�?current=None �?            // `MemoFile` 会回退到默�?notebook �?��, �?macOS 上可能触�?            // Documents 权限弹窗�?
             let current_notebook_id = crate::lock_utils::read_lock(&memo_file_arc, "memo_file")
@@ -667,20 +694,6 @@ pub fn run() {
             commands::window::show_main_window,
             commands::window::open_preferences_window,
             commands::window::apply_window_theme,
-            commands::tab_window::open_note_window,
-            commands::tab_window::open_note_tab,
-            commands::tab_window::open_external_markdown_window,
-            commands::tab_window::open_external_markdown_tab,
-            commands::tab_window::open_external_text_window,
-            commands::tab_window::open_markdown_path_tab,
-            commands::tab_window::tab_window_ready,
-            commands::tab_window::tab_window_ack_transfer,
-            commands::tab_window::tab_window_set_tab_region,
-            commands::tab_window::tab_window_close_tab,
-            commands::tab_window::tab_window_reorder_tab,
-            commands::tab_window::tab_window_detach_tab,
-            commands::tab_window::tab_window_begin_tab_item_drag,
-            commands::tab_window::tab_window_cancel_tab_item_drag,
             commands::external_document_watch::watch_external_document,
             commands::external_document_watch::unwatch_external_document,
             // 鍏ㄥ眬"閫氳繃閾炬帴鎵撳紑绗旇"鍏ュ彛 鈹€鈹€ 鎺ユ敹 URL / 鐗╃悊璺緞, 瑙ｆ瀽 + emit
@@ -697,7 +710,7 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     // 二�?�?��: 区分 markdown 文件�?���?flowix:// 深链�?    // 两个通道�?��同时触发 (用户�?`xdg-open foo.md flowix://memo/abc123` �?��)�?
     let paths = commands::markdown_paths_from_args(args.clone());
     for path in &paths {
-        route_markdown_path_to_tab(app, path);
+        emit_open_target_if_resolved(app, path);
     }
 
     for arg in args {
@@ -734,23 +747,13 @@ fn handle_cold_start_open_targets(app: &tauri::AppHandle) {
             main_window.hide().ok();
         }
         for path in &paths {
-            route_markdown_path_to_tab(app, path);
+            emit_open_target_if_resolved(app, path);
         }
     }
     for arg in args {
         if !paths.contains(&arg) {
             emit_open_target_if_resolved(app, &arg);
         }
-    }
-}
-
-fn route_markdown_path_to_tab(app: &tauri::AppHandle, path: &str) {
-    let state = app.state::<AppState>();
-    let coordinator = app.state::<commands::tab_window::TabWindowCoordinator>();
-    if let Err(error) =
-        commands::tab_window::route_markdown_path_tab(app, state.inner(), coordinator.inner(), path)
-    {
-        tracing::warn!("[open-markdown] failed to route {path}: {error}");
     }
 }
 
@@ -776,7 +779,7 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                     if let Ok(path) = url.to_file_path() {
                         let path = path.to_string_lossy().to_string();
                         if !commands::markdown_paths_from_args([path.clone()]).is_empty() {
-                            route_markdown_path_to_tab(app, &path);
+                            emit_open_target_if_resolved(app, &path);
                         }
                     }
                 }

@@ -43,7 +43,6 @@ import { Tooltip } from '@shared/ui/tooltip';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
 import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import { MemoCard } from '@features/memo/components/memo-card';
-import { DropdownMenuItem, DropdownMenuLabel } from '@shared/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -61,6 +60,7 @@ import {
 import { memoRepository, notebookRepository } from '@features/memo/services/memo-repository';
 import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
 import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
+import { openFourthColumnMemo } from '@features/workspace/use-cases/fourth-column-navigation';
 import { useI18n, type I18nParams } from '@/lib/i18n';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { createLogger } from '@/lib/logger';
@@ -91,10 +91,6 @@ function normalizeNotebookIconId(icon: string | null | undefined): string | null
 const HEADER_ICON_BTN_CLASS =
   'h-8 w-8 justify-center rounded-xl p-0 border border-[var(--border)] ' +
   'hover:bg-[var(--muted)] hover:text-[var(--primary)] text-[var(--foreground)]';
-
-const DROPDOWN_SECTION_LABEL_CLASS =
-  'flex shrink-0 items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] ' +
-  'text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]';
 
 function BlockingLoadingOverlay({
   text,
@@ -254,6 +250,7 @@ export function MemoList() {
   const [notebookDropdownOpen, setNotebookDropdownOpen] = useState(false);
   const [searchCommandOpen, setSearchCommandOpen] = useState(false);
   const [colorSubmenuOpen, setColorSubmenuOpen] = useState(false);
+  const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false);
   const [newNotebookName, setNewNotebookName] = useState('');
   const [newNotebookPath, setNewNotebookPath] = useState('');
   const [newNotebookIcon, setNewNotebookIcon] = useState<string | null>(null);
@@ -606,15 +603,16 @@ export function MemoList() {
     return cb;
   };
   const handleSelectMemo = useCallback((memo: MemoItem) => {
-    openMemoSession(memo, useMemoStore.getState().selectedNotebook);
-  }, []);
+    void openMemoSession(memo, useMemoStore.getState().selectedNotebook)
+      .then((location) => {
+        if (location) toast.info(t('workspace.alreadyOpen'));
+      });
+  }, [t]);
 
   const handleOpenMemoWindow = useCallback((memo: MemoItem) => {
-    void tauriWindows.openNoteTab(memo.id).catch((error) => {
-      logger.warn('open note window failed', { error });
-      toast.error(String(error));
-    });
-  }, []);
+    const result = openFourthColumnMemo(memo, useMemoStore.getState().selectedNotebook);
+    if (result.alreadyOpen) toast.info(t('workspace.alreadyOpen'));
+  }, [t]);
 
   const handleFavoriteToggle = useCallback(async (memo: MemoItem) => {
     await (memo.favorited
@@ -650,16 +648,33 @@ export function MemoList() {
     [setActiveFilter, setColorFilter, setSelectedTagId, setNotebookDropdownOpen],
   );
 
-  // 当 dropdown 关闭时, 同步把 color submenu 也收掉。
+  // 筛选二级弹窗的选中回调 (本周 / 本月): 同步 activeFilter + 关父 dropdown。
+  const handleFilterFromSubmenu = useCallback(
+    (filter: typeof activeFilter) => {
+      handleFilterChange(filter);
+      setColorSubmenuOpen(false);
+      setNotebookDropdownOpen(false);
+    },
+    [handleFilterChange, setNotebookDropdownOpen],
+  );
+
+  // 排序二级弹窗的选中回调: 同步 activeSort + 关父 dropdown。
+  const handleSortFromSubmenu = useCallback(
+    (sort: typeof activeSort) => {
+      setActiveSort(sort);
+      setSortSubmenuOpen(false);
+      setNotebookDropdownOpen(false);
+    },
+    [setActiveSort, setNotebookDropdownOpen],
+  );
+
+  // 当 dropdown 关闭时, 同步把 filter / sort submenu 也收掉。
   useEffect(() => {
     if (!notebookDropdownOpen) {
       setColorSubmenuOpen(false);
+      setSortSubmenuOpen(false);
     }
   }, [notebookDropdownOpen]);
-
-  const handleSortChange = (sort: typeof activeSort) => {
-    setActiveSort(sort);
-  };
 
   const handleCreateMemo = useCallback(async () => {
     if (!selectedNotebook) return;
@@ -885,6 +900,22 @@ export function MemoList() {
     }
   };
 
+  // 一级筛选 / 排序按钮尾部展示当前值。颜色组的取值是 colorFilter,其他筛选是
+  // activeFilter 本身 (thisWeek / thisMonth);排序直接读 activeSort。
+  const filterValueAdornment = (() => {
+    if (activeFilter === 'thisWeek') return t('memo.list.filterThisWeek');
+    if (activeFilter === 'thisMonth') return t('memo.list.filterThisMonth');
+    if (activeFilter === 'color') {
+      if (colorFilter === 'any') return t('memo.list.filterColorAny');
+      if (colorFilter === 'none') return t('memo.list.filterColorNone');
+      return t(COLOR_LABEL_KEYS[colorFilter]);
+    }
+    return null;
+  })();
+  const sortValueAdornment = activeSort === 'updatedAt'
+    ? t('memo.list.sortUpdated')
+    : t('memo.list.sortCreated');
+
   return (
     <div className="memo-list relative flex h-full min-w-0 select-none flex-col bg-[var(--card)]">
       <>
@@ -898,13 +929,20 @@ export function MemoList() {
             open={notebookDropdownOpen}
             onOpenChange={setNotebookDropdownOpen}
           >
-          <div className="space-y-1">
-            {/* Group 1: Filter Options */}
-            <DropdownMenuLabel className={cn(DROPDOWN_SECTION_LABEL_CLASS, 'mt-1')}>{t('memo.list.filterLabel')}</DropdownMenuLabel>
+          <div className="space-y-0.5">
+            {/* Filter — 二级弹窗 (本周 / 本月 / 颜色组) */}
             <MemoNavigationSubmenu
-              label={t('memo.list.filterColorOnly')}
-              active={activeFilter === 'color'}
+              label={t('memo.list.filterLabel')}
+              active={activeFilter === 'thisWeek' || activeFilter === 'thisMonth' || activeFilter === 'color'}
               open={colorSubmenuOpen}
+              hideHeader
+              emptyText=""
+              loadingText=""
+              valueAdornment={filterValueAdornment && (
+                <span className="max-w-[100px] truncate text-xs text-[var(--muted-foreground)]">
+                  {filterValueAdornment}
+                </span>
+              )}
               labelAdornment={activeFilter === 'color' && (
                 <span
                   aria-hidden
@@ -920,50 +958,89 @@ export function MemoList() {
                   }}
                 />
               )}
-              emptyText=""
-              loadingText=""
               submenuContent={(
-                <ColorFilterSubmenuContent
-                  value={colorFilter}
-                  onSelect={handleColorSubmenuSelect}
-                />
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    onClick={() => handleFilterFromSubmenu('thisWeek')}
+                    onMouseDown={(event) => event.preventDefault()}
+                    className={cn(
+                      'mention-note-item cursor-pointer hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none',
+                      activeFilter === 'thisWeek' && 'is-selected',
+                    )}
+                  >
+                    <span className="mention-note-title">{t('memo.list.filterThisWeek')}</span>
+                    {activeFilter === 'thisWeek' && <Check className="w-4 h-4 text-[var(--primary)]" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterFromSubmenu('thisMonth')}
+                    onMouseDown={(event) => event.preventDefault()}
+                    className={cn(
+                      'mention-note-item cursor-pointer hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none',
+                      activeFilter === 'thisMonth' && 'is-selected',
+                    )}
+                  >
+                    <span className="mention-note-title">{t('memo.list.filterThisMonth')}</span>
+                    {activeFilter === 'thisMonth' && <Check className="w-4 h-4 text-[var(--primary)]" />}
+                  </button>
+                  <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
+                  <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+                    {t('memo.list.filterColorGroup')}
+                  </div>
+                  <ColorFilterSubmenuContent
+                    value={colorFilter}
+                    onSelect={handleColorSubmenuSelect}
+                  />
+                </div>
               )}
               onOpenChange={setColorSubmenuOpen}
+              onCloseMenu={() => setNotebookDropdownOpen(false)}
             />
-            <DropdownMenuItem
-              onClick={() => handleFilterChange('thisWeek')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.filterThisWeek')}</span>
-              {activeFilter === 'thisWeek' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => handleFilterChange('thisMonth')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.filterThisMonth')}</span>
-              {activeFilter === 'thisMonth' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
 
-            {/* Separator between Filter and Sort, matching the titlebar dropdown dividers */}
-            <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
-
-            {/* Group 2: Sort Options */}
-            <DropdownMenuLabel className={DROPDOWN_SECTION_LABEL_CLASS}>{t('memo.list.sortLabel')}</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => handleSortChange('createdAt')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.sortCreated')}</span>
-              {activeSort === 'createdAt' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => handleSortChange('updatedAt')}
-              className="flex items-center justify-between cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-            >
-              <span>{t('memo.list.sortUpdated')}</span>
-              {activeSort === 'updatedAt' && <Check className="w-4 h-4 text-[var(--primary)]" />}
-            </DropdownMenuItem>
+            {/* Sort — 二级弹窗 */}
+            <MemoNavigationSubmenu
+              label={t('memo.list.sortLabel')}
+              open={sortSubmenuOpen}
+              hideHeader
+              emptyText=""
+              loadingText=""
+              valueAdornment={(
+                <span className="max-w-[100px] truncate text-xs text-[var(--muted-foreground)]">
+                  {sortValueAdornment}
+                </span>
+              )}
+              submenuContent={(
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    onClick={() => handleSortFromSubmenu('createdAt')}
+                    onMouseDown={(event) => event.preventDefault()}
+                    className={cn(
+                      'mention-note-item cursor-pointer hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none',
+                      activeSort === 'createdAt' && 'is-selected',
+                    )}
+                  >
+                    <span className="mention-note-title">{t('memo.list.sortCreated')}</span>
+                    {activeSort === 'createdAt' && <Check className="w-4 h-4 text-[var(--primary)]" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSortFromSubmenu('updatedAt')}
+                    onMouseDown={(event) => event.preventDefault()}
+                    className={cn(
+                      'mention-note-item cursor-pointer hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none',
+                      activeSort === 'updatedAt' && 'is-selected',
+                    )}
+                  >
+                    <span className="mention-note-title">{t('memo.list.sortUpdated')}</span>
+                    {activeSort === 'updatedAt' && <Check className="w-4 h-4 text-[var(--primary)]" />}
+                  </button>
+                </div>
+              )}
+              onOpenChange={setSortSubmenuOpen}
+              onCloseMenu={() => setNotebookDropdownOpen(false)}
+            />
           </div>
           </MemoNavigationDropdown>
         </div>

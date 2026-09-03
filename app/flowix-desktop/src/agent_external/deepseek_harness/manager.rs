@@ -409,13 +409,13 @@ impl DeepSeekHarnessManager {
         // before thread/fork snapshots the provider session.
         let _lifecycle = self.lifecycle_gate.lock().await;
         if self.runs.target(flowix_thread_id, None).await.is_some() {
-            return Err("DeepSeek Harness 正在运行任务，请等待完成后再分叉对话".into());
+            return Err("DeepSeek Harness 正在运行任务，请等待完成后再分叉会话".into());
         }
         let source_session_id = self
             .sessions
             .session_id(flowix_thread_id)
             .await?
-            .ok_or_else(|| "DeepSeek Harness 对话尚未启动".to_string())?;
+            .ok_or_else(|| "DeepSeek Harness 会话尚未启动".to_string())?;
         if boundary_sequence < 0 {
             return Err("DeepSeek Harness Fork 缺少有效的消息边界".into());
         }

@@ -272,6 +272,84 @@
   line-height: 18px;
 }
 
+/* ── 连续工具组: 独立的两级折叠容器 ─────────────────────────────
+ * header 是一级折叠; 内部每个 tool row 仍保留自己的输入展开按钮。
+ * streaming 组在收起时额外显示最近一批 tool rows 作为进度预览。 */
+.markdown-editor .agent-thread-card__tool-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__tool-group-header {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 6px 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  line-height: 18px;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.markdown-editor .agent-thread-card__tool-group-header:hover {
+  color: var(--foreground);
+}
+
+.markdown-editor .agent-thread-card__tool-group-header svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  transition: transform 150ms ease;
+}
+
+.markdown-editor .agent-thread-card__tool-group-header:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--foreground) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.markdown-editor .agent-thread-card__tool-group--failed
+  .agent-thread-card__tool-group-header {
+  color: var(--destructive, var(--muted-foreground));
+}
+
+.markdown-editor .agent-thread-card__tool-group-tools {
+  display: none;
+  min-width: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+}
+
+.markdown-editor .agent-thread-card__tool-group--expanded
+  .agent-thread-card__tool-group-tools {
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-editor .agent-thread-card__tool-group-preview {
+  display: flex;
+  padding-left: 19px;
+}
+
+.markdown-editor .agent-thread-card__tool-group--expanded
+  .agent-thread-card__tool-group-preview {
+  display: none;
+}
+
+.markdown-editor .agent-thread-card__tool-group--expanded
+  .agent-thread-card__tool-group-tools
+  .agent-thread-card__message {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
 .markdown-editor .agent-thread-card__message-tool-content {
   display: flex;
   position: relative;
@@ -409,6 +487,27 @@
   overflow-wrap: anywhere;
   line-height: 18px;
   text-overflow: clip;
+}
+
+.markdown-editor .agent-thread-card__message-tool-input {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 24px 4px 0;
+  overflow: visible;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-editor
+  .agent-thread-card__message-tool-content--expanded
+  .agent-thread-card__message-tool-input {
+  display: block;
 }
 
 .markdown-editor .agent-thread-card__command-list {

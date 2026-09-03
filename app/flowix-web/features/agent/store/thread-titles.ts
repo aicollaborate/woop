@@ -14,10 +14,8 @@ function isExternalAgentType(_type: AgentTypeKey): boolean {
 }
 
 // Keep runtime/session fallback titles separate from the thread-card title.
-// DeepSeek Harness intentionally uses “session” for the runtime fallback but
-// “Chat” for a newly inserted card, matching the product wording in each
-// surface. The exhaustive Record makes adding a new agent type fail here until
-// its title has been reviewed and localized.
+// The exhaustive Record makes adding a new agent type fail here until its
+// title has been reviewed and localized.
 const AGENT_SESSION_TITLE_KEYS: Record<AgentTypeKey, I18nKey> = {
   codex: "agent.codexSession.title",
   claude: "agent.claudeSession.title",

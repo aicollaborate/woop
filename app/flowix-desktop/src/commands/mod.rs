@@ -45,7 +45,6 @@ pub mod notebook;
 pub mod plugin;
 pub mod product;
 pub mod settings;
-pub mod tab_window;
 pub mod tag;
 pub mod thread;
 pub mod web;

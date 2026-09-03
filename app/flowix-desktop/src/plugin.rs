@@ -638,6 +638,120 @@ fn migrate_legacy_outputs(
     Ok(())
 }
 
+fn legacy_output_prefix(plugin_id: &str) -> String {
+    format!(".plugin-output/{plugin_id}/")
+}
+
+fn migrated_output_path(plugin_id: &str, relative: &str) -> Option<String> {
+    let prefix = legacy_output_prefix(plugin_id);
+    relative
+        .strip_prefix(&prefix)
+        .map(|suffix| format!(".flowix/plugin/{plugin_id}/{suffix}"))
+}
+
+fn is_safe_artifact_relative_path(path: &Path) -> bool {
+    !path.is_absolute()
+        && !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| !matches!(component, std::path::Component::ParentDir))
+}
+
+fn artifact_path_candidates(
+    notebook: &Path,
+    plugin: &PluginDescriptor,
+    relative: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let raw = Path::new(relative);
+    if !is_safe_artifact_relative_path(raw) {
+        return Err("plugin note artifact path is invalid".to_string());
+    }
+    let expected_extension = plugin.definition.extension.trim_start_matches('.');
+    if raw.extension().and_then(|value| value.to_str()) != Some(expected_extension) {
+        return Err("plugin note artifact path is invalid".to_string());
+    }
+
+    let mut relatives = vec![relative.to_string()];
+    if let Some(mapped) = migrated_output_path(&plugin.manifest.id, relative) {
+        // A conflict may leave both copies in place. In that case the pointer
+        // still names the legacy file and must not silently switch to the
+        // different-content destination.
+        relatives.push(mapped);
+    }
+
+    let output_dir = notebook.join(&plugin.definition.output_directory);
+    let legacy_dir = notebook.join(".plugin-output").join(&plugin.manifest.id);
+    let mut candidates = Vec::new();
+    for relative in relatives {
+        let candidate = notebook.join(&relative);
+        let in_new_dir = path_is_inside(&candidate, &output_dir);
+        let in_legacy_dir = path_is_inside(&candidate, &legacy_dir);
+        if !in_new_dir && !in_legacy_dir {
+            return Err("plugin note artifact path is outside plugin output".to_string());
+        }
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    Ok(candidates)
+}
+
+/// Repair pointer notes after a legacy artifact has moved. This is separate
+/// from the filesystem migration so a failed note write never causes an
+/// already-moved artifact to be removed.
+pub fn repair_notebook_artifact_pointers(
+    notebook_id: &str,
+    notebook: &Path,
+    memo_file: &Arc<std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
+) -> Result<usize, String> {
+    let entries = {
+        let memo_file = read_lock(memo_file, "memo_file");
+        memo_file.read_all_memos_with_body_for_notebook_id(Some(notebook_id))
+    };
+    let mut repaired = 0;
+    for (memo, raw_note) in entries {
+        let Some(yaml) = raw_note
+            .strip_prefix("---\n")
+            .and_then(|value| value.split_once("\n---"))
+            .map(|(yaml, _)| yaml)
+        else {
+            continue;
+        };
+        let Ok(mut metadata) = serde_yaml::from_str::<PluginNoteFrontmatter>(yaml) else {
+            continue;
+        };
+        let Ok(plugin) = get_plugin(&metadata.flowix_plugin) else {
+            continue;
+        };
+        if metadata.flowix_note_type != plugin.definition.note_type {
+            continue;
+        }
+        let Some(mapped) = migrated_output_path(&plugin.manifest.id, &metadata.flowix_artifact.path)
+        else {
+            continue;
+        };
+        let old_path = notebook.join(&metadata.flowix_artifact.path);
+        let new_path = notebook.join(&mapped);
+        if !new_path.is_file() || old_path.is_file() {
+            continue;
+        }
+        metadata.flowix_artifact.path = mapped.clone();
+        let body = pointer_document(&plugin, &metadata.flowix_artifact)?;
+        flowix_core::MemoService::new(&read_lock(memo_file, "memo_file"))
+            .save_memo_preserving_filename(&memo.id, &body)
+            .map_err(|error| format!("repair plugin pointer {}: {error}", memo.id))?;
+        repaired += 1;
+        tracing::info!(
+            plugin = %plugin.manifest.id,
+            memo_id = %memo.id,
+            from = %old_path.display(),
+            to = %new_path.display(),
+            "repaired plugin artifact pointer path"
+        );
+    }
+    Ok(repaired)
+}
+
 fn parser_key(parser: PluginParser) -> &'static str {
     match parser {
         PluginParser::MindmapMarkdown => "mindmap-markdown",
@@ -667,6 +781,18 @@ pub fn list_notes(
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .map_err(|_| "plugin output migration lock poisoned".to_string())?;
+    {
+        let memo_guard = read_lock(memo_file, "memo_file");
+        let report = memo_guard
+            .migrate_notebook_internal_data(notebook_id)
+            .map_err(|error| format!("migrate notebook internal data: {error}"))?;
+        if !report.warnings.is_empty() {
+            for warning in report.warnings {
+                tracing::warn!(notebook = %notebook_id, "notebook internal migration: {warning}");
+            }
+        }
+    }
+    repair_notebook_artifact_pointers(notebook_id, &notebook, memo_file)?;
     migrate_legacy_outputs(&plugin, notebook_id, &notebook, memo_file, app_handle)?;
     let memo_file = read_lock(memo_file, "memo_file");
     let notes = memo_file
@@ -727,15 +853,13 @@ pub fn artifact_path_for_note(
     if metadata.flowix_note_type != plugin.definition.note_type {
         return Err("plugin note type does not match plugin manifest".to_string());
     }
-    let artifact_path = notebook.join(&metadata.flowix_artifact.path);
-    let output_dir = notebook.join(&plugin.definition.output_directory);
-    if !path_is_inside(&artifact_path, &output_dir)
-        || artifact_path.extension().and_then(|value| value.to_str())
-            != Some(plugin.definition.extension.trim_start_matches('.'))
-    {
-        return Err("plugin note artifact path is invalid".to_string());
+    let candidates = artifact_path_candidates(&notebook, &plugin, &metadata.flowix_artifact.path)?;
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return Ok(Some(path.clone()));
     }
-    Ok(Some(artifact_path))
+    // Return the new location for idempotent cleanup if the artifact is
+    // already gone. The caller's remove operation will be a no-op.
+    Ok(candidates.into_iter().next())
 }
 
 pub fn remove_artifact_path(path: &Path) -> Result<(), String> {
@@ -766,14 +890,12 @@ pub fn resolve_note(
         return Err("plugin note type does not match plugin manifest".to_string());
     }
     let notebook = plugin_notebook_for_memo(memo_id, memo_file)?;
-    let artifact_path = notebook.join(&metadata.flowix_artifact.path);
-    let output_dir = notebook.join(&plugin.definition.output_directory);
-    if !path_is_inside(&artifact_path, &output_dir)
-        || artifact_path.extension().and_then(|value| value.to_str())
-            != Some(plugin.definition.extension.trim_start_matches('.'))
-    {
-        return Err("plugin note artifact path is invalid".to_string());
-    }
+    let candidates = artifact_path_candidates(&notebook, &plugin, &metadata.flowix_artifact.path)?;
+    let artifact_path = candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .ok_or_else(|| "read plugin artifact: file not found".to_string())?;
     let raw_artifact = fs::read_to_string(&artifact_path)
         .map_err(|error| format!("read plugin artifact: {error}"))?;
     let parsed = parse_plugin_output(&plugin, &raw_artifact)?;
@@ -903,7 +1025,7 @@ mod tests {
         let definition = validate_manifest(&manifest).expect("validate manifest");
         assert_eq!(
             definition.output_directory,
-            std::path::Path::new(".plugin-output/mindmap")
+            std::path::Path::new(".flowix/plugin/mindmap")
         );
         assert_eq!(definition.extension, ".md");
         assert_eq!(definition.runtime.map(PluginRuntime::key), None);

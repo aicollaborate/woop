@@ -259,3 +259,85 @@ describe("Codex turn-end message actions", () => {
     expect(list.querySelector(".agent-thread-card__message-fork-confirm")).toBeNull();
   });
 });
+
+describe("continuous tool group rendering", () => {
+  function tool(
+    id: string,
+    overrides: Partial<ChatMessage> = {},
+  ): ChatMessage {
+    return {
+      id,
+      role: "tool",
+      content: "done",
+      timestamp: "2026-09-03T00:00:00.000Z",
+      toolName: "read",
+      toolInput: { path: `${id}.md`, extra: "preserved" },
+      isLoading: false,
+      ...overrides,
+    };
+  }
+
+  it("renders adjacent tools as one top-level group with independently expandable inputs", () => {
+    const { list } = createRenderedAgentMessageList(
+      [tool("tool-1"), tool("tool-2"), tool("tool-3")],
+      context(),
+    );
+
+    expect(list.children).toHaveLength(1);
+    const group = list.firstElementChild as HTMLElement;
+    expect(group.classList.contains("agent-thread-card__tool-group")).toBe(true);
+    expect(group.querySelector(".agent-thread-card__tool-group-header")?.textContent)
+      .toContain("已完成 3 个步骤");
+    expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+      .toHaveLength(3);
+
+    group.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__tool-group-header",
+    )?.click();
+    expect(group.classList.contains("agent-thread-card__tool-group--expanded")).toBe(true);
+
+    const inputToggle = group.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__tool-group-tools .agent-thread-card__message-tool-toggle",
+    );
+    inputToggle?.click();
+    expect(group.textContent).toContain('"path": "tool-1.md"');
+    expect(group.textContent).toContain('"extra": "preserved"');
+  });
+
+  it("uses the same group container for a singleton tool", () => {
+    const { list } = createRenderedAgentMessageList([tool("tool-1")], context());
+
+    expect(list.children).toHaveLength(1);
+    expect(list.querySelector(".agent-thread-card__tool-group-header")?.textContent)
+      .toContain("已完成 1 个步骤");
+    expect(list.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+      .toHaveLength(1);
+  });
+
+  it("keeps the newest tool batch outside the group while streaming", () => {
+    const running = tool("tool-2", { isLoading: true, content: "" });
+    const { list } = createRenderedAgentMessageList(
+      [tool("tool-1"), running],
+      {
+        ...context(),
+        toolGroupPreview: new Map([["tool-group:tool-1", [running]]]),
+      },
+    );
+    const group = list.firstElementChild as HTMLElement;
+
+    expect(group.querySelector(".agent-thread-card__tool-group-header")?.textContent)
+      .toContain("正在进行 2 个步骤");
+    expect(group.querySelector(".agent-thread-card__tool-group-preview"))
+      .not.toBeNull();
+    expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+      .toHaveLength(2);
+
+    group.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__tool-group-header",
+    )?.click();
+    expect(group.querySelector(".agent-thread-card__tool-group-preview"))
+      .not.toBeNull();
+    expect(group.querySelector(".agent-thread-card__tool-group-tools")?.children)
+      .toHaveLength(2);
+  });
+});

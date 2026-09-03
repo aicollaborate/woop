@@ -8,6 +8,11 @@ import { notebooks as notebooksClient } from '@platform/tauri/client';
 import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
 import { EMPTY_WORKSPACE_TARGET } from '@features/workspace/store/workspace-target';
 import type { WorkspaceTarget } from '@features/workspace/store/workspace-target';
+import type { WorkspaceHostId } from '@features/workspace/store/workspace-focus-store';
+import {
+  activateExistingWorkspaceContent,
+  type WorkspaceContentLocation,
+} from './workspace-content-activation';
 
 export interface OpenMemoTargetParams {
   memoId: string;
@@ -268,7 +273,12 @@ function publishExternalTargetIfCurrent(
   });
 }
 
-export async function openMemoTarget(params: OpenMemoTargetParams): Promise<void> {
+export async function openMemoTarget(
+  params: OpenMemoTargetParams,
+): Promise<WorkspaceContentLocation | null> {
+  const existing = activateExistingWorkspaceContent({ kind: 'memo', memoId: params.memoId });
+  if (existing) return existing;
+
   const previousMemo = useMemoStore.getState().selectedMemo;
   const previousNotebook = useMemoStore.getState().selectedNotebook;
   const previousDocument = captureDocumentSnapshot();
@@ -331,7 +341,9 @@ export async function openMemoTarget(params: OpenMemoTargetParams): Promise<void
         throw new Error(`Memo session was not committed: ${params.memoId}`);
       }
     },
-    () => openMemoTarget(params),
+    async () => {
+      await openMemoTarget(params);
+    },
     async (requestId) => {
       if (!useWorkspaceStore.getState().isCurrentNavigation(requestId)) return;
       await restoreDocumentSnapshot(previousDocument);
@@ -346,12 +358,18 @@ export async function openMemoTarget(params: OpenMemoTargetParams): Promise<void
       }
     },
   );
+  return null;
 }
 
 export async function openExternalTarget(
   path: string | null,
   options?: OpenExternalTargetOptions,
-): Promise<void> {
+): Promise<WorkspaceContentLocation | null> {
+  const existing = path
+    ? activateExistingWorkspaceContent({ kind: 'external', path })
+    : null;
+  if (existing) return existing;
+
   const previousMemo = useMemoStore.getState().selectedMemo;
   const previousDocument = captureDocumentSnapshot();
   await runNavigation(
@@ -368,7 +386,9 @@ export async function openExternalTarget(
         throw new Error(`External document session was not committed: ${path}`);
       }
     },
-    () => openExternalTarget(path, options),
+    async () => {
+      await openExternalTarget(path, options);
+    },
     async (requestId) => {
       if (!isCurrentNavigation(requestId)) return;
       await restoreDocumentSnapshot(previousDocument);
@@ -378,6 +398,7 @@ export async function openExternalTarget(
       }
     },
   );
+  return null;
 }
 
 /** Flush the active editable document without clearing its session or target. */
@@ -406,24 +427,32 @@ export async function flushWorkspaceDocument(): Promise<void> {
 export async function openAgentTarget(
   instanceId: string,
   options?: { history?: 'push' | 'skip' },
-): Promise<void> {
+): Promise<WorkspaceHostId | WorkspaceContentLocation> {
   const normalized = instanceId.trim();
-  if (!normalized) return;
+  if (!normalized) return 'main-third';
+  const existing = activateExistingWorkspaceContent({
+    kind: 'agent-conversation',
+    instanceId: normalized,
+  });
+  if (existing) return existing;
   await runNavigation(
     { kind: 'agent-conversation', instanceId: normalized },
     async (requestId) => {
       await useDocumentStore.getState().openAgentConversation(normalized, options);
       if (!useWorkspaceStore.getState().isCurrentNavigation(requestId)) return;
       if (useDocumentStore.getState().activeAgentConversationId !== normalized) {
-        throw new Error(`Agent conversation was not committed: ${normalized}`);
+        throw new Error(`Agent session was not committed: ${normalized}`);
       }
       useMemoStore.getState().setActivePluginId(null);
       useMemoStore.getState().setSelectedMemo(null);
       if (!isCurrentNavigation(requestId)) return;
       commitNavigation(requestId, { kind: 'agent-conversation', instanceId: normalized });
     },
-    () => openAgentTarget(normalized, options),
+    async () => {
+      await openAgentTarget(normalized, options);
+    },
   );
+  return 'main-third';
 }
 
 export async function clearWorkspaceDocument(): Promise<void> {

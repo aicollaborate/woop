@@ -133,14 +133,20 @@ export function FolderFileTree({
     // Selection clearing and rollback belong to the navigation transaction;
     // the persisted file target is still written only after commit.
     void openExternalTarget(item.fullPath, { scopePath: folderPath })
-      .then(() => {
+      .then((location) => {
+        if (location) {
+          // 文档已在第三列/第四列打开，导航事务已经聚焦到该列，
+          // 不要再写持久化路径（避免把"已激活"的访问覆盖成"新打开"的会话）。
+          toast.info(t('workspace.alreadyOpen'));
+          return;
+        }
         setActiveFileBrowserDocument({ path: item.fullPath, scopePath: folderPath });
       })
       .catch(() => {
         // 文档切换失败时保留原来的持久化选择，避免下次启动恢复到
         // 实际没有打开成功的文件。
       });
-  }, [folderPath, setActiveFileBrowserDocument]);
+  }, [folderPath, setActiveFileBrowserDocument, t]);
 
   const handleDelete = useCallback(async (item: DocTreeItem) => {
     const ok = await files.delete(item.fullPath, folderPath);

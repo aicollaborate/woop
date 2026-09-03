@@ -11,7 +11,7 @@ interface AgentConversationRestoreState {
 interface WorkspaceRestoreStore {
   version: 1;
   agentConversation: AgentConversationRestoreState;
-  selectAgentConversation: (instanceId: string) => void;
+  selectAgentConversation: (instanceId: string, detailOpen?: boolean) => void;
   closeAgentConversationDetail: () => void;
   clearAgentConversation: (instanceId?: string) => void;
 }
@@ -26,13 +26,13 @@ export const useWorkspaceRestoreStore = create<WorkspaceRestoreStore>()(
     (set) => ({
       version: 1,
       agentConversation: EMPTY_AGENT_CONVERSATION_RESTORE,
-      selectAgentConversation: (instanceId) => {
+      selectAgentConversation: (instanceId, detailOpen = true) => {
         const normalized = instanceId.trim();
         if (!normalized) return;
         set({
           agentConversation: {
             selectedInstanceId: normalized,
-            detailOpen: true,
+            detailOpen,
           },
         });
       },

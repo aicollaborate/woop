@@ -449,3 +449,83 @@ describe("ThreadMessageRenderController run-end re-parse", () => {
     }
   });
 });
+
+describe("ThreadMessageRenderController tool batch previews", () => {
+  it("replaces the outside preview with each new batch and folds it on assistant input", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return undefined as unknown as number;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("codex");
+      const tool = (id: string, isLoading = false) => ({
+        id,
+        role: "tool" as const,
+        content: isLoading ? "" : "done",
+        timestamp: "2026-09-03T00:00:00.000Z",
+        toolName: "read",
+        toolInput: { path: `${id}.md` },
+        isLoading,
+      });
+      const t1 = tool("t1");
+      const t2 = tool("t2", true);
+
+      controller.render({
+        messages: [t1, t2],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
+        .toHaveLength(2);
+
+      const t3 = tool("t3", true);
+      controller.render({
+        messages: [t1, t2, t3],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      const newestPreview = body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview",
+      );
+      expect(newestPreview).toHaveLength(1);
+      expect(newestPreview[0].textContent).toContain("t3.md");
+
+      controller.render({
+        messages: [t1, t2, { ...t3, content: "still running" }],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
+        .toHaveLength(1);
+      expect(body.querySelector(".agent-thread-card__tool-group-preview")?.textContent)
+        .toContain("t3.md");
+
+      controller.render({
+        messages: [t1, t2, { ...t3, content: "done", isLoading: false }, {
+          id: "assistant-1",
+          role: "assistant",
+          content: "next step",
+          timestamp: "2026-09-03T00:00:00.000Z",
+        }],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
+        .toHaveLength(0);
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+        .toHaveLength(3);
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

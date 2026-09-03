@@ -9,6 +9,7 @@
     "notebook": { "type": "string", "description": "Notebook name or id; defaults to the current notebook where supported." },
     "id": { "type": "string", "description": "Memo id or filename." },
     "query": { "type": "string" },
+    "tag": { "type": "string", "description": "Optional tag path filter. Matches the path itself and all sub-tags; a leading # is accepted (for example 项目/Flowix)." },
     "content": { "type": "string", "description": "Complete Markdown, replacement body, or artifact source." },
     "old": { "type": "string", "description": "Exact text that must occur once for edit." },
     "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },

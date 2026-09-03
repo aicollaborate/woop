@@ -63,6 +63,7 @@ pub(crate) struct SearchOutput {
     pub ok: bool,
     pub action: &'static str,
     pub query: String,
+    pub tag: Option<String>,
     pub matches: Vec<SearchMatch>,
     pub total: usize,
     pub shown: usize,

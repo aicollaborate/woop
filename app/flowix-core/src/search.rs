@@ -31,7 +31,9 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::memo_file::frontmatter::extract_body_content;
-use crate::memo_file::{MemoFile, MemoIndexEntry, NotebookConfig};
+use crate::memo_file::{
+    normalize_search_tag_filter, tag_path_matches_filter, MemoFile, MemoIndexEntry, NotebookConfig,
+};
 
 // ============================================================
 // Tokenizer
@@ -278,6 +280,18 @@ impl MemoIndex {
 
     /// 全文检索. 算法见模块顶部注释.
     pub fn search(&self, query: &str, limit: usize) -> Vec<MemoSearchHit> {
+        self.search_with_tag_filter(query, None, limit)
+    }
+
+    /// Full-text search with an optional hierarchical tag filter. Invalid tag
+    /// filters intentionally produce no hits here; the service boundary turns
+    /// the same validation failure into a user-facing InvalidInput error.
+    pub fn search_with_tag_filter(
+        &self,
+        query: &str,
+        tag_filter: Option<&str>,
+        limit: usize,
+    ) -> Vec<MemoSearchHit> {
         if !self.loaded {
             return Vec::new();
         }
@@ -291,6 +305,13 @@ impl MemoIndex {
         if q_tokens.is_empty() {
             return Vec::new();
         }
+        let normalized_tag_filter = match tag_filter {
+            Some(raw) => match normalize_search_tag_filter(raw) {
+                Some(filter) => Some(filter),
+                None => return Vec::new(),
+            },
+            None => None,
+        };
         // 精确校验用去空白版: 用户输入 "今天 天气" 应当匹配正文 "今天天气...".
         // tokenize 阶段空格已经是分隔符, 但 contains() 还按字面比对, 这里抹平.
         let query_for_contains: String = query_lower.split_whitespace().collect();
@@ -328,6 +349,15 @@ impl MemoIndex {
             let Some(entry) = self.entries.get(id) else {
                 continue;
             };
+            if let Some(filter) = normalized_tag_filter.as_deref() {
+                if !entry
+                    .tags
+                    .iter()
+                    .any(|tag| tag_path_matches_filter(tag, filter))
+                {
+                    continue;
+                }
+            }
             let mut score = 0.0_f32;
             let mut matched_in = MatchField::Body;
             let mut any_match = false;
@@ -458,6 +488,18 @@ pub fn search_notebooks(
     query: &str,
     limit: usize,
 ) -> NotebookSearchResults {
+    search_notebooks_with_tag_filter(memo_file, configs, notebook_filter, query, None, limit)
+}
+
+/// Search across notebooks with an optional hierarchical tag filter.
+pub fn search_notebooks_with_tag_filter(
+    memo_file: &MemoFile,
+    configs: &[NotebookConfig],
+    notebook_filter: Option<&str>,
+    query: &str,
+    tag_filter: Option<&str>,
+    limit: usize,
+) -> NotebookSearchResults {
     let query = query.trim();
     if query.is_empty() || limit == 0 {
         return NotebookSearchResults {
@@ -478,7 +520,7 @@ pub fn search_notebooks(
         let mut index = MemoIndex::new(tokenizer.clone());
         rebuild_index_from_store(&mut index, memo_file, notebook.id.clone());
 
-        for hit in index.search(query, limit) {
+        for hit in index.search_with_tag_filter(query, tag_filter, limit) {
             hits.push(NotebookSearchHit {
                 notebook_id: notebook.id.clone(),
                 notebook_name: notebook.name.clone(),
@@ -749,6 +791,47 @@ mod tests {
         let idx = fixture_index();
         let hits = idx.search("今天", 1);
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn tag_filter_matches_hierarchy_with_segment_boundaries() {
+        let mut idx = MemoIndex::new(Arc::new(BigramTokenizer));
+        idx.rebuild(
+            "nb".to_string(),
+            vec![
+                mk_entry("parent", "发布计划", "关键词", vec!["项目"], 1),
+                mk_entry("child", "发布计划", "关键词", vec!["项目/Flowix/CLI"], 2),
+                mk_entry("other", "发布计划", "关键词", vec!["项目/Other"], 3),
+                mk_entry("similar", "发布计划", "关键词", vec!["项目管理"], 4),
+                mk_entry("body-only", "其他标题", "发布计划", vec![], 5),
+            ],
+        );
+
+        let hits = idx.search_with_tag_filter("发布计划", Some("#项目/Flowix"), 10);
+        let ids = hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(ids, vec!["child"]);
+
+        let hits = idx.search_with_tag_filter("发布计划", Some("项目"), 10);
+        let ids = hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>();
+        assert!(ids.contains(&"parent"));
+        assert!(ids.contains(&"child"));
+        assert!(!ids.contains(&"similar"));
+    }
+
+    #[test]
+    fn tag_filter_is_applied_before_limit_and_excludes_body_only_matches() {
+        let mut idx = MemoIndex::new(Arc::new(BigramTokenizer));
+        idx.rebuild(
+            "nb".to_string(),
+            vec![
+                mk_entry("unrelated", "发布计划", "关键词", vec!["其他"], 10),
+                mk_entry("wanted", "其他标题", "发布计划", vec!["项目/Flowix"], 1),
+            ],
+        );
+
+        let hits = idx.search_with_tag_filter("发布计划", Some("项目/Flowix"), 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "wanted");
     }
 
     #[test]

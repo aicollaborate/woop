@@ -286,7 +286,7 @@ pub async fn codex_thread_fork(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Codex thread not found".to_string())?;
     let title = if source.info.title.trim().is_empty() {
-        "Forked Codex conversation".to_string()
+        "Forked Codex session".to_string()
     } else {
         format!("{} (fork)", source.info.title)
     };

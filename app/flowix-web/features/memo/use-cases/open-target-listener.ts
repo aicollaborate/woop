@@ -29,7 +29,7 @@ let currentUnlisten: UnlistenFn | null = null;
  */
 function isMainWindow(): boolean {
   const hash = window.location.hash;
-  return !hash.startsWith('#preferences') && !hash.startsWith('#tab-window');
+  return !hash.startsWith('#preferences');
 }
 
 /**

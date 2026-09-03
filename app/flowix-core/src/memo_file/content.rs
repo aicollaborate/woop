@@ -9,7 +9,7 @@ use std::fs;
 
 use super::time::{chrono_now, start_of_this_month, start_of_this_week};
 use super::types::{Memo, MemoIndexEntry, MemoTag};
-use super::MemoFile;
+use super::{tag_path_matches_filter, MemoFile};
 
 impl MemoFile {
     /// 派生 tags — 扫所有 memo 的 `tags` 字段, 合并去重, 按 name lowercase 排序。
@@ -132,10 +132,9 @@ impl MemoFile {
                 // 精确匹配仍然能命中 (e.g. tag id = `中国/湖南/长沙`, 选中
                 // 整条路径时仍能匹配它自身)。
                 if let Some(tid) = tag_id {
-                    let prefix = format!("{}/", tid);
                     all_memos
                         .into_iter()
-                        .filter(|m| m.tags.iter().any(|t| t == tid || t.starts_with(&prefix)))
+                        .filter(|m| m.tags.iter().any(|t| tag_path_matches_filter(t, tid)))
                         .collect()
                 } else {
                     all_memos

@@ -10,8 +10,11 @@ export async function selectAndOpenAgentConversation(
   const normalized = instanceId.trim();
   if (!normalized) return;
 
-  await openAgentTarget(normalized, options);
-  useWorkspaceRestoreStore.getState().selectAgentConversation(normalized);
+  const host = await openAgentTarget(normalized, options);
+  useWorkspaceRestoreStore.getState().selectAgentConversation(
+    normalized,
+    host === 'main-third',
+  );
 }
 
 export function closeAgentConversationDetail(): void {

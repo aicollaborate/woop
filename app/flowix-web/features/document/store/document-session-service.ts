@@ -103,8 +103,15 @@ export function consumeSelfDocumentPathUpdate(memoId: string, path: string): boo
 export function getActiveDocumentDraft(): DocumentDraftSnapshot | null {
   const identity = getCurrentIdentity();
   const path = getCurrentPath();
-  const buffer = identity ? getBuffer(identity) : undefined;
-  if (!identity || !path || !buffer?.content) return null;
+  return identity && path ? getDocumentDraft(identity, path) : null;
+}
+
+export function getDocumentDraft(
+  identity: DocumentIdentity,
+  path: string,
+): DocumentDraftSnapshot | null {
+  const buffer = getBuffer(identity);
+  if (!path || !buffer || buffer.content == null) return null;
   return { identity, path, content: buffer.content };
 }
 
@@ -183,7 +190,7 @@ export function applyLoadedDocumentContent(
   identity: DocumentIdentity,
   path: string,
   fullContent: string,
-  options?: { preservePending?: boolean },
+  options?: { preservePending?: boolean; setAsCurrent?: boolean },
 ): DocumentBuffer {
   return applyLoadedContent(identity, path, fullContent, options);
 }

@@ -258,7 +258,7 @@ mod tests {
             definition,
         };
         let pointer = PluginArtifactPointer {
-            path: ".plugin-output/mindmap/output.md".to_string(),
+            path: ".flowix/plugin/mindmap/output.md".to_string(),
             format: "markdown".to_string(),
             parser: "mindmap-markdown".to_string(),
             renderer: "markmap".to_string(),

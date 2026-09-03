@@ -12,10 +12,28 @@ use flowix_cli::run_cli;
 fn main() -> ExitCode {
     ensure_utf8_console();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let json = args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--json" | "-j"));
     match run_cli(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("flowix: {e}");
+            if json {
+                // Keep errors parseable for agents/scripts even when the
+                // failure happens during argument parsing or input selection.
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": e.code(),
+                            "message": e.to_string()
+                        }
+                    })
+                );
+            } else {
+                eprintln!("flowix: {e}");
+            }
             ExitCode::from(e.exit_code())
         }
     }

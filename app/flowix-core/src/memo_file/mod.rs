@@ -45,6 +45,7 @@ pub const MEMO_ID_LENGTH: usize = 8;
 mod content;
 mod derivation;
 pub(crate) mod frontmatter;
+mod internal_migration;
 mod index_store;
 mod notebook;
 mod onboarding;
@@ -57,7 +58,8 @@ mod versions;
 // 公开 API re-export — 跟旧 `memo_file.rs` 的 pub use 边界一致。
 pub use derivation::{
     apply_derived_memo_fields, extract_agent_threads_from_body, extract_title_and_preview,
-    extract_todos_from_body,
+    extract_todos_from_body, normalize_search_tag_filter, normalize_tag_path,
+    tag_path_matches_filter,
 };
 pub use frontmatter::{
     build_md_content, extract_body_content, extract_document_metadata, extract_frontmatter_key,
@@ -65,6 +67,7 @@ pub use frontmatter::{
     replace_frontmatter_tags, DocumentMetadata, FrontmatterMetadataError, MergeOverrides,
 };
 pub use index_store::{MemoContentCommit, MemoContentRevision};
+pub use internal_migration::{NotebookInternalMigrationReport, NOTEBOOK_INTERNAL_MIGRATION_KEY};
 pub use ops::{
     atomic_write_bytes, base_filename, resolve_filename_conflict, sanitize_filename_component, IsMd,
 };
@@ -194,7 +197,24 @@ impl MemoFile {
         self.get_default_notebook_path()
     }
 
-    /// `.metadata/` 目录绝对路径 — 内部 `memo index` / `todo metadata` 所在地。
+    /// Notebook-local Flowix data root: `<notebook>/.flowix/`.
+    pub fn get_flowix_dir(&self) -> PathBuf {
+        self.get_memo_base().join(".flowix")
+    }
+
+    /// Notebook-local version history root: `<notebook>/.flowix/versions/`.
+    pub fn get_versions_dir(&self) -> PathBuf {
+        self.get_flowix_dir().join("versions")
+    }
+
+    /// Notebook-local plugin output root for a validated plugin id.
+    pub fn get_plugin_dir(&self, plugin_id: &str) -> PathBuf {
+        self.get_flowix_dir().join("plugin").join(plugin_id)
+    }
+
+    /// Legacy `.metadata/` path. Kept for compatibility with older consumers;
+    /// new storage code must use [`Self::get_flowix_dir`] instead.
+    #[deprecated(note = "use get_flowix_dir() for notebook-local Flowix data")]
     pub fn get_metadata_dir(&self) -> PathBuf {
         self.get_memo_base().join(".metadata")
     }

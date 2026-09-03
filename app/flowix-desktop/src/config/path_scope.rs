@@ -107,7 +107,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        let future = tmp.join(".plugin-output").join("mindmap");
+        let future = tmp.join(".flowix").join("plugin").join("mindmap");
         assert!(path_is_inside(&future, &tmp));
         let _ = std::fs::remove_dir_all(&tmp);
     }

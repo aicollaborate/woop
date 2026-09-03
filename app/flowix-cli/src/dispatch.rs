@@ -42,15 +42,17 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
         cli::Cli::Create {
             notebook,
             file,
+            stdin,
             json,
-        } => store::cmd_create(notebook.as_deref(), file.as_deref(), json),
+        } => store::cmd_create(notebook.as_deref(), file.as_deref(), stdin, json),
         cli::Cli::Delete { id, json } => store::cmd_delete(&id, json),
         cli::Cli::Search {
             query,
             notebook,
+            tag,
             limit,
             json,
-        } => store::cmd_search(&query, notebook.as_deref(), limit, json),
+        } => store::cmd_search(&query, notebook.as_deref(), tag.as_deref(), limit, json),
         cli::Cli::Edit {
             id,
             old,
@@ -68,7 +70,12 @@ pub fn run_cli(args: &[String]) -> Result<(), CliError> {
             dry_run,
             json,
         ),
-        cli::Cli::Write { id, file, json } => store::cmd_write(&id, file.as_deref(), json),
+        cli::Cli::Write {
+            id,
+            file,
+            stdin,
+            json,
+        } => store::cmd_write(&id, file.as_deref(), stdin, json),
         cli::Cli::PluginList { json } => plugin::cmd_list(json),
         cli::Cli::PluginDescribe { plugin_id, json } => plugin::cmd_describe(&plugin_id, json),
         cli::Cli::PluginCreate {

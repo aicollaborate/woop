@@ -49,4 +49,14 @@ impl CliError {
             CliError::Other(_) => 1,
         }
     }
+
+    /// Stable machine-readable error category used by `--json` output.
+    pub fn code(&self) -> &'static str {
+        match self {
+            CliError::Usage(_) => "INVALID_COMMAND",
+            CliError::NotFound(_) => "NOT_FOUND",
+            CliError::Io(_) => "IO_ERROR",
+            CliError::Other(_) => "EXECUTION_ERROR",
+        }
+    }
 }

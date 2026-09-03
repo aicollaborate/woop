@@ -30,7 +30,6 @@ function bumpLru<K, V>(map: Map<K, V>, key: K, factory: () => V): V {
 
 let currentPath: string | null = null;
 let currentIdentity: DocumentIdentity | null = null;
-let currentBuffer: DocumentBuffer = emptyDocumentBuffer();
 
 export type DocumentBufferChangeReason = 'edited' | 'loaded' | 'save_settled';
 type DocumentBufferChangeListener = (
@@ -82,7 +81,6 @@ export function setCurrentDocument(identity: DocumentIdentity | null, path: stri
   if (!identity || !path) {
     currentPath = null;
     currentIdentity = null;
-    currentBuffer = emptyDocumentBuffer();
     return;
   }
 
@@ -95,7 +93,7 @@ export function setCurrentDocument(identity: DocumentIdentity | null, path: stri
 
   currentIdentity = normalized;
   currentPath = nextPath;
-  currentBuffer = getOrCreateBuffer(normalized);
+  getOrCreateBuffer(normalized);
 }
 
 export function hasUnsavedLocalChanges(identity?: DocumentIdentity): boolean {
@@ -114,10 +112,10 @@ export function applyLoadedContent(
   identity: DocumentIdentity,
   path: string,
   fullContent: string,
-  options?: { preservePending?: boolean },
+  options?: { preservePending?: boolean; setAsCurrent?: boolean },
 ): DocumentBuffer {
-  setCurrentDocument(identity, path);
-  const buf = currentBuffer;
+  if (options?.setAsCurrent !== false) setCurrentDocument(identity, path);
+  const buf = getOrCreateBuffer(identity);
   const initialContent = options?.preservePending
     ? (buf.pendingContent ?? fullContent)
     : fullContent;

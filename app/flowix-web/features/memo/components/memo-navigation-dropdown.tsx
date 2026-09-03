@@ -14,7 +14,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  useDropdownContext,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
@@ -28,14 +27,27 @@ interface NavigationSubmenuProps {
   itemIcon?: ReactNode;
   itemKind?: 'tag' | 'reference';
   labelAdornment?: ReactNode;
+  /**
+   * 尾部 ChevronRight 旁的当前值提示（例如已选的筛选 / 排序）。
+   * 与 labelAdornment 不同：labelAdornment 贴在 label 文本后（左侧），
+   * valueAdornment 贴在右侧 Chevron 旁（尾部）。
+   */
+  valueAdornment?: ReactNode;
   open: boolean;
   active?: boolean;
   items?: Array<{ id: string; label: string; secondary?: string }>;
   loading?: boolean;
   emptyText: string;
   loadingText: string;
+  /**
+   * 隐藏二级弹窗顶部的 group label（默认渲染 label 文案）。
+   * 自定义 submenuContent 时如果调用方已在内部写了分组标题，
+   * 顶部那个与 label 同名的 header 就会冗余 ── 传 true 不渲染。
+   */
+  hideHeader?: boolean;
   submenuContent?: ReactNode;
   onOpenChange: (open: boolean) => void;
+  onCloseMenu?: () => void;
   onSelect?: (id: string) => void;
   onClick?: () => void;
 }
@@ -46,18 +58,20 @@ export function MemoNavigationSubmenu({
   itemIcon,
   itemKind,
   labelAdornment,
+  valueAdornment,
   open,
   active = false,
   items = [],
   loading = false,
   emptyText,
   loadingText,
+  hideHeader = false,
   submenuContent,
   onOpenChange,
+  onCloseMenu,
   onSelect,
   onClick,
 }: NavigationSubmenuProps) {
-  const { setOpen: setMenuOpen } = useDropdownContext();
   const closeTimerRef = useRef<number | null>(null);
 
   const cancelClose = () => {
@@ -98,7 +112,7 @@ export function MemoNavigationSubmenu({
         onClick={() => {
           onClick?.();
           if (onClick) {
-            setMenuOpen(false);
+            onCloseMenu?.();
             return;
           }
           onOpenChange(!open);
@@ -110,18 +124,21 @@ export function MemoNavigationSubmenu({
           {labelAdornment}
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
+          {valueAdornment}
           <ChevronRight className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
         </span>
       </button>
       {open && (
-        <div className="absolute left-full top-0 z-[1501] flex max-h-[280px] w-[220px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-1 pb-1 pt-1.5 shadow-lg">
-          <div
-            className="mention-note-header"
-            aria-label={typeof label === 'string' ? label : undefined}
-          >
-            <span>{label}</span>
-            {labelAdornment}
-          </div>
+        <div className="absolute left-full top-0 z-[1501] flex max-h-[min(560px,calc(100vh-16px))] w-[220px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-1 pb-1 pt-1.5 shadow-lg">
+          {!hideHeader && (
+            <div
+              className="mention-note-header"
+              aria-label={typeof label === 'string' ? label : undefined}
+            >
+              <span>{label}</span>
+              {labelAdornment}
+            </div>
+          )}
           {submenuContent ?? (
             <OverlayScrollbar
               className="mention-note-items-frame"
@@ -141,7 +158,7 @@ export function MemoNavigationSubmenu({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
                       onSelect?.(item.id);
-                      setMenuOpen(false);
+                      onCloseMenu?.();
                       onOpenChange(false);
                     }}
                   >
@@ -211,8 +228,21 @@ export function MemoNavigationDropdown({
   const tags = useTagStore((state) => state.tags);
   const loadTags = useTagStore((state) => state.loadTags);
   const accessConfig = useAgentAccessStore((state) => state.config);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [openSubmenu, setOpenSubmenu] = useState<'tags' | 'references' | null>(null);
   const selectedNotebookId = selectedNotebook?.id ?? null;
+  const menuOpen = open ?? internalOpen;
+
+  const handleMenuOpenChange = useCallback((nextOpen: boolean) => {
+    if (open === undefined) {
+      setInternalOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  }, [onOpenChange, open]);
+
+  const closeMenu = useCallback(() => {
+    handleMenuOpenChange(false);
+  }, [handleMenuOpenChange]);
 
   useEffect(() => {
     if (!selectedNotebookId) return;
@@ -256,7 +286,7 @@ export function MemoNavigationDropdown({
   });
 
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -334,6 +364,7 @@ export function MemoNavigationDropdown({
             if (open) return 'tags';
             return current === 'tags' ? null : current;
           })}
+          onCloseMenu={closeMenu}
           onSelect={handleTagSelect}
           onClick={() => handleNavigate('tags')}
         />
@@ -351,6 +382,7 @@ export function MemoNavigationDropdown({
             if (open) return 'references';
             return current === 'references' ? null : current;
           })}
+          onCloseMenu={closeMenu}
           onSelect={handleReferenceSelect}
         />
         {children && (

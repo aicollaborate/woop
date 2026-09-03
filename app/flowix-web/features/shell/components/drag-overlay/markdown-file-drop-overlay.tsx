@@ -2,14 +2,14 @@ import { useCallback } from 'react';
 
 import { toast } from '@/lib/toast';
 import { markdownPaths as filterMarkdownPaths, useMarkdownFileDrop } from '@features/document/components/use-markdown-file-drop';
-import { windows } from '@platform/tauri/client';
+import { openFourthColumnMarkdown } from '@features/workspace/use-cases/fourth-column-navigation';
 import { useI18n } from '@/lib/i18n';
 import { errorMessage } from '@/lib/error-message';
 import { FullscreenDragOverlay } from './fullscreen-drag-overlay';
 
 export function MarkdownFileDropOverlay() {
   const { t } = useI18n();
-  const openMarkdownPath = useCallback((path: string) => windows.openMarkdownPathTab(path), []);
+  const openMarkdownPath = useCallback((path: string) => openFourthColumnMarkdown(path), []);
   const handleDropError = useCallback((error: unknown) => {
     console.warn('[MarkdownFileDropOverlay] Failed to open dropped Markdown:', error);
     toast.error(errorMessage(error));

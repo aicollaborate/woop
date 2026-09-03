@@ -37,6 +37,8 @@ import { navigateDocumentHistory } from '@features/document/use-cases/document-n
 import { StatusBar } from '@features/shell/components/status-bar/status-bar';
 import { NotebookDeleteDialog } from '@features/shell/components/notebook-delete-dialog';
 import { MarkdownFileDropOverlay } from '@features/shell/components/drag-overlay/markdown-file-drop-overlay';
+import { FourthColumn } from '@features/shell/components/fourth-column';
+import { resolveFourthColumnLayout } from '@features/shell/hooks/fourth-column-layout';
 import { useDocumentCommands } from '@features/document/components/use-document-commands';
 import { useNotebookTodoCount } from '@features/memo/components/use-notebook-todo-count';
 import { useResizablePanels } from '@features/shell/hooks/use-resizable-panels';
@@ -74,11 +76,13 @@ import {
   retryLastNavigation,
   selectNotebook,
 } from '@features/workspace/use-cases/workspace-navigation';
+import { useFourthColumnStore, FOURTH_COLUMN_MIN_WIDTH } from '@features/workspace/store/fourth-column-store';
+import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 238;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
 const NOTE_NAVIGATION_PANEL_MAX_WIDTH = 420;
-const DOCUMENT_PANEL_MIN_WIDTH = 420;
+const DOCUMENT_PANEL_MIN_WIDTH = FOURTH_COLUMN_MIN_WIDTH;
 const PANEL_DIVIDER_WIDTH = 1;
 const logger = createLogger('main-layout');
 
@@ -307,6 +311,17 @@ export function MainLayout() {
   const memoListMounted = useDeferredUnmount(memoListVisible);
   // tags 面板独立成最左列, 宽度走自己的 state。
   const noteNavigationColumnWidth = noteNavigationVisible ? noteNavigationPanelWidth : 0;
+  const fourthColumnVisible = useFourthColumnStore((state) => state.visible);
+  const fourthColumnSplitRatio = useFourthColumnStore((state) => state.splitRatio);
+  const setFourthColumnSplitRatio = useFourthColumnStore((state) => state.setSplitRatio);
+  const focusWorkspaceHost = useWorkspaceFocusStore((state) => state.focusHost);
+  const focusedHostId = useWorkspaceFocusStore((state) => state.focusedHostId);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const {
     handleListDividerMouseDown,
     isDraggingListDivider,
@@ -318,6 +333,22 @@ export function MainLayout() {
     memoListVisible,
     noteNavigationWidth: noteNavigationColumnWidth,
   });
+  const fourthColumnLayout = resolveFourthColumnLayout({
+    viewportWidth,
+    noteNavigationWidth: noteNavigationColumnWidth,
+    memoListWidth,
+    memoListVisible: !isMemoListHidden,
+    dividerCount: (noteNavigationVisible ? 1 : 0) + (!isMemoListHidden ? 1 : 0),
+    splitRatio: fourthColumnSplitRatio,
+  });
+  const handleFourthColumnResize = useCallback((nextWidth: number) => {
+    if (!fourthColumnLayout.canSplit || fourthColumnLayout.availableDocumentWidth <= 0) return;
+    setFourthColumnSplitRatio(nextWidth / fourthColumnLayout.availableDocumentWidth);
+  }, [
+    fourthColumnLayout.availableDocumentWidth,
+    fourthColumnLayout.canSplit,
+    setFourthColumnSplitRatio,
+  ]);
   const {
     phase: memoListPreviewPhase,
     handleTriggerEnter: handleMemoListPreviewTriggerEnter,
@@ -817,6 +848,7 @@ export function MainLayout() {
             }`}
             style={{ width: noteNavigationColumnWidth, flexShrink: 0 }}
             aria-hidden={!noteNavigationVisible}
+            onPointerDown={() => focusWorkspaceHost('main-third')}
           >
             <div
               className="flex flex-col overflow-hidden h-full bg-[var(--agent-bg)] border-[var(--divider)] border-r"
@@ -857,6 +889,7 @@ export function MainLayout() {
             }`}
             style={{ width: memoListWidth, flexShrink: 0 }}
             aria-hidden={isMemoListHidden && !memoListPreviewVisible}
+            onPointerDown={() => focusWorkspaceHost('main-third')}
           >
             <div
               className={`flex h-full min-w-0 flex-col ${
@@ -933,7 +966,18 @@ export function MainLayout() {
             </div>
           )}
           {/* Memo detail */}
-            <div className="h-full min-w-0 relative -left-px flex flex-col" style={{ minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}>
+            <div
+              className="h-full min-w-0 relative -left-px flex flex-col"
+              style={fourthColumnVisible
+                ? {
+                    minWidth: DOCUMENT_PANEL_MIN_WIDTH,
+                    flex: `0 0 ${fourthColumnLayout.mainColumnWidth}px`,
+                  }
+                : { minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}
+              data-workspace-host="main-third"
+              data-workspace-focused={focusedHostId === 'main-third' ? '' : undefined}
+              onPointerDown={() => focusWorkspaceHost('main-third')}
+            >
             {isMemoListHidden && (
               <button
                 type="button"
@@ -989,6 +1033,12 @@ export function MainLayout() {
               )}
             </div>
           </div>
+          {fourthColumnVisible && (
+            <FourthColumn
+              width={fourthColumnLayout.fourthColumnWidth}
+              onResize={handleFourthColumnResize}
+            />
+          )}
           </div>
           {/* Status bar */}
           <StatusBar

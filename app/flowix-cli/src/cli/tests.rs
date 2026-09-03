@@ -191,9 +191,30 @@ fn create_dash_suffix_no_longer_special() {
 fn create_accepts_utf8_file_input() {
     assert!(matches!(
         parse_args(&["create", "常用信息备案", "--file", "D:\\资料\\说明.md"]),
-        Ok(Some(Cli::Create { notebook: Some(notebook), file: Some(file), json: false }))
+        Ok(Some(Cli::Create { notebook: Some(notebook), file: Some(file), json: false, .. }))
             if notebook == "常用信息备案" && file == "D:\\资料\\说明.md"
     ));
+}
+
+#[test]
+fn create_accepts_explicit_stdin_input() {
+    assert!(matches!(
+        parse_args(&["create", "work", "--stdin"]),
+        Ok(Some(Cli::Create {
+            notebook: Some(notebook),
+            file: None,
+            stdin: true,
+            json: false,
+            ..
+        })) if notebook == "work"
+    ));
+}
+
+#[test]
+fn create_rejects_file_and_stdin_together() {
+    let err = parse_args(&["create", "work", "--file", "body.md", "--stdin"]).unwrap_err();
+    assert_err_contains(&err, "cannot be used with");
+    assert_eq!(err.exit_code(), 2);
 }
 
 // ===== Plugin artifact tools =====
@@ -400,9 +421,30 @@ fn write_basic() {
 fn write_accepts_utf8_file_input() {
     assert!(matches!(
         parse_args(&["write", "abc123", "-f", "D:\\资料\\说明.md"]),
-        Ok(Some(Cli::Write { id, file: Some(file), json: false }))
+        Ok(Some(Cli::Write { id, file: Some(file), json: false, .. }))
             if id == "abc123" && file == "D:\\资料\\说明.md"
     ));
+}
+
+#[test]
+fn write_accepts_explicit_stdin_input() {
+    assert!(matches!(
+        parse_args(&["write", "abc123", "--stdin"]),
+        Ok(Some(Cli::Write {
+            id,
+            file: None,
+            stdin: true,
+            json: false,
+            ..
+        })) if id == "abc123"
+    ));
+}
+
+#[test]
+fn write_rejects_file_and_stdin_together() {
+    let err = parse_args(&["write", "abc123", "--file", "body.md", "--stdin"]).unwrap_err();
+    assert_err_contains(&err, "cannot be used with");
+    assert_eq!(err.exit_code(), 2);
 }
 
 #[test]
@@ -421,8 +463,10 @@ fn search_basic() {
         Ok(Some(Cli::Search {
             query,
             notebook: None,
+            tag: None,
             limit: 20,
             json: false,
+            ..
         })) if query == "TODO"
     ));
 }
@@ -459,6 +503,33 @@ fn search_with_limit_long_and_short() {
         parse_args(&["search", "TODO", "-l", "5"]),
         Ok(Some(Cli::Search { limit: 5, .. }))
     ));
+}
+
+#[test]
+fn search_accepts_tag_filter_long_and_short() {
+    assert!(matches!(
+        parse_args(&["search", "TODO", "--tag", "项目/Flowix"]),
+        Ok(Some(Cli::Search {
+            query,
+            tag: Some(tag),
+            ..
+        })) if query == "TODO" && tag == "项目/Flowix"
+    ));
+    assert!(matches!(
+        parse_args(&["search", "TODO", "-t", "#项目/Flowix", "--json"]),
+        Ok(Some(Cli::Search {
+            tag: Some(tag),
+            json: true,
+            ..
+        })) if tag == "#项目/Flowix"
+    ));
+}
+
+#[test]
+fn search_tag_missing_value_errors() {
+    let err = parse_args(&["search", "TODO", "--tag"]).unwrap_err();
+    assert_err_contains(&err, "a value is required for '--tag");
+    assert_eq!(err.exit_code(), 2);
 }
 
 #[test]

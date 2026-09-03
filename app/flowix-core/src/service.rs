@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::memo_file::{
-    base_filename, resolve_filename_conflict, Memo, MemoFile, MemoIndexEntry, MemoTodoEntry,
-    MemoVersionMeta, MemoVersionSource, NotebookConfig,
+    base_filename, normalize_search_tag_filter, resolve_filename_conflict, Memo, MemoFile,
+    MemoIndexEntry, MemoTodoEntry, MemoVersionMeta, MemoVersionSource, NotebookConfig,
 };
 use crate::search::{self, NotebookSearchResults};
 
@@ -521,6 +521,7 @@ impl<'a> MemoService<'a> {
         &mut self,
         query: &str,
         notebook_filter: Option<&str>,
+        tag_filter: Option<&str>,
         limit: usize,
     ) -> Result<NotebookSearchResults, FlowixError> {
         if query.trim().is_empty() {
@@ -533,6 +534,14 @@ impl<'a> MemoService<'a> {
                 "search limit must be greater than 0".into(),
             ));
         }
+        let normalized_tag_filter = match tag_filter {
+            Some(raw) => Some(normalize_search_tag_filter(raw).ok_or_else(|| {
+                FlowixError::InvalidInput(
+                    "search tag filter must be a valid tag path (for example `项目/Flowix`)".into(),
+                )
+            })?),
+            None => None,
+        };
         let configs = self.list_notebooks()?;
         if let Some(filter) = notebook_filter {
             if !configs
@@ -546,11 +555,12 @@ impl<'a> MemoService<'a> {
         } else if configs.is_empty() {
             return Err(FlowixError::NotFound("no notebooks configured".into()));
         }
-        Ok(search::search_notebooks(
+        Ok(search::search_notebooks_with_tag_filter(
             self.memo_file,
             &configs,
             notebook_filter,
             query,
+            normalized_tag_filter.as_deref(),
             limit.min(MAX_SEARCH_LIMIT),
         ))
     }
@@ -712,6 +722,28 @@ mod tests {
             .edit_memo_exact(&created.memo.id, "repeat", "changed", false)
             .unwrap_err();
         assert!(matches!(error, FlowixError::Conflict(_)));
+    }
+
+    #[test]
+    fn search_validates_and_normalizes_tag_filter() {
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
+        service
+            .create_memo(
+                "work",
+                "---\ntags: [项目/Flowix/CLI]\n---\n# 发布计划\n\n正文关键词\n",
+            )
+            .unwrap();
+
+        let results = service
+            .search_memos("发布计划", None, Some("#项目/Flowix"), 10)
+            .unwrap();
+        assert_eq!(results.hits.len(), 1);
+
+        let error = service
+            .search_memos("发布计划", None, Some("项目//Flowix"), 10)
+            .unwrap_err();
+        assert!(matches!(error, FlowixError::InvalidInput(_)));
     }
 
     #[test]

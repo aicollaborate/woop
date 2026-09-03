@@ -2,7 +2,7 @@
 //!
 //! M1: `cmd_notebooks`
 //! M2: `cmd_list` / `cmd_show`
-//! M3: `cmd_create` (面向 AI, body 从 stdin 读)
+//! M3: `cmd_create` (面向 AI, body 从显式输入源读)
 
 use crate::{
     errors::CliError,
@@ -13,7 +13,7 @@ use crate::{
     },
     paths,
 };
-use flowix_core::memo_file::{MemoFile, NotebookConfig};
+use flowix_core::memo_file::{normalize_search_tag_filter, MemoFile, NotebookConfig};
 use flowix_core::MemoService;
 use std::{collections::HashMap, path::PathBuf};
 
@@ -255,10 +255,9 @@ pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
 }
 
 /// `flowix-cli create <notebook> --file <path>` ── 推荐从 UTF-8 文件读取 body。
-/// 未提供 `--file` 时保留 stdin 输入兼容性。
+/// `--stdin` 用于显式放行标准输入；Windows 上不再隐式读取 stdin。
 ///
-/// 面向 AI agent 的接口 ── body 永远从 stdin 读, 不依赖 $EDITOR,
-/// Windows / Linux / macOS 行为完全一致。
+/// 面向 AI agent 的接口 ── body 从明确的输入源读取, 不依赖 $EDITOR。
 ///
 /// title 由 body 首行 (`# xxx`) 自动派生; body 没 `# ` 开头的行时
 /// fallback 到 "untitled" (见 [`derive_title`])。
@@ -272,11 +271,15 @@ pub(crate) fn note_show_data(id_arg: &str) -> Result<NoteShowData, CliError> {
 pub fn cmd_create(
     notebook_key: Option<&str>,
     file: Option<&str>,
+    stdin: bool,
     json: bool,
 ) -> Result<(), CliError> {
+    // 先读取并校验输入，再解析 notebook，避免缺少输入时触碰存储状态。
+    let source = resolve_text_input_source("create", file, stdin, cfg!(windows))?;
+    let body = read_text_input(source)?;
+    reject_empty_text("create", &body)?;
     let notebook_key = resolve_notebook_key(notebook_key)?;
     let (mut mf, nb) = open_in(&notebook_key)?;
-    let body = read_text_input(file)?;
     let payload = create_note(&mut mf, &nb, &body)?;
     if json {
         print_pretty_json(&payload)?;
@@ -329,12 +332,42 @@ fn read_stdin() -> Result<String, CliError> {
     Ok(strip_utf8_bom(s))
 }
 
-/// Read content directly from a UTF-8 file when `--file` is supplied. This
-/// bypasses PowerShell 5.1's `$OutputEncoding`, which can replace CJK text
-/// before it reaches stdin. Without `--file`, preserve the stdin contract.
-fn read_text_input(file: Option<&str>) -> Result<String, CliError> {
-    match file {
-        Some(path) => {
+/// Content input source for `create` and `write`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextInputSource<'a> {
+    File(&'a str),
+    Stdin,
+}
+
+fn resolve_text_input_source<'a>(
+    command: &str,
+    file: Option<&'a str>,
+    stdin: bool,
+    is_windows: bool,
+) -> Result<TextInputSource<'a>, CliError> {
+    match (file, stdin) {
+        (Some(_), true) => Err(CliError::Usage(format!(
+            "{command}: --file and --stdin are mutually exclusive"
+        ))),
+        (Some(path), false) => Ok(TextInputSource::File(path)),
+        (None, true) => Ok(TextInputSource::Stdin),
+        (None, false) if is_windows => {
+            let positional = if command == "create" {
+                "<notebook>"
+            } else {
+                "<id>"
+            };
+            Err(CliError::Usage(format!(
+                "{command}: stdin input is disabled by default on Windows because PowerShell may corrupt non-ASCII text.\n\nWrite the content to a UTF-8 file and use:\n\n  flowix {command} {positional} --file <path>\n\nIf the caller guarantees UTF-8 stdin, pass --stdin explicitly."
+            )))
+        }
+        (None, false) => Ok(TextInputSource::Stdin),
+    }
+}
+
+fn read_text_input(source: TextInputSource<'_>) -> Result<String, CliError> {
+    match source {
+        TextInputSource::File(path) => {
             let bytes = std::fs::read(path).map_err(|error| {
                 CliError::Io(std::io::Error::new(
                     error.kind(),
@@ -344,14 +377,26 @@ fn read_text_input(file: Option<&str>) -> Result<String, CliError> {
             String::from_utf8(bytes)
                 .map(strip_utf8_bom)
                 .map_err(|error| {
-                    CliError::Other(format!(
+                    CliError::Usage(format!(
                         "input file `{path}` is not valid UTF-8: {}",
                         error.utf8_error()
                     ))
                 })
         }
-        None => read_stdin(),
+        TextInputSource::Stdin => read_stdin(),
     }
+}
+
+fn reject_empty_text(command: &str, body: &str) -> Result<(), CliError> {
+    if body.trim().is_empty() {
+        let message = match command {
+            "create" => "empty body, note not created",
+            "write" => "empty body, note not modified",
+            _ => "empty input",
+        };
+        return Err(CliError::Usage(message.into()));
+    }
+    Ok(())
 }
 
 /// 剥离首部 UTF-8 BOM (U+FEFF)。
@@ -422,17 +467,18 @@ pub(crate) fn delete_note(
     })
 }
 
-/// `flowix-cli search <query> [--notebook <name|id>]` ── 跨 notebook 全文搜索。
+/// `flowix-cli search <query> [--notebook <name|id>] [--tag <path>]` ── 跨 notebook 全文搜索。
 pub fn cmd_search(
     query: &str,
     notebook_filter: Option<&str>,
+    tag_filter: Option<&str>,
     limit: usize,
     json: bool,
 ) -> Result<(), CliError> {
-    let results = search_hits(query, notebook_filter, limit)?;
+    let results = search_hits(query, notebook_filter, tag_filter, limit)?;
 
     if json {
-        let payload = search_results_to_value(query, &results);
+        let payload = search_results_to_value(query, tag_filter, &results);
         print_pretty_json(&payload)?;
     } else if results.hits.is_empty() {
         println!("(no matches for `{query}`)");
@@ -450,18 +496,20 @@ pub fn cmd_search(
 pub(crate) fn search_hits(
     query: &str,
     notebook_filter: Option<&str>,
+    tag_filter: Option<&str>,
     limit: usize,
 ) -> Result<flowix_core::search::NotebookSearchResults, CliError> {
     let mf = open()?;
     MemoService::new(&mf)
-        .search_memos(query, notebook_filter, limit)
+        .search_memos(query, notebook_filter, tag_filter, limit)
         .map_err(Into::into)
 }
 
-/// 把 `NotebookSearchResults` 拍平成跟 CLI `--json` 输出一致的 `Value`。
+/// 把 `NotebookSearchResults` 拍平成 CLI / MCP `--json` 输出一致的 `Value`。
 /// MCP 和 `cmd_search --json` 共用同一份输出 shape。
 pub(crate) fn search_results_to_value(
     query: &str,
+    tag_filter: Option<&str>,
     results: &flowix_core::search::NotebookSearchResults,
 ) -> SearchOutput {
     let matches: Vec<SearchMatch> = results
@@ -481,6 +529,7 @@ pub(crate) fn search_results_to_value(
         ok: true,
         action: "search",
         query: query.to_string(),
+        tag: tag_filter.and_then(normalize_search_tag_filter),
         matches,
         total: results.total,
         shown,
@@ -543,7 +592,7 @@ pub fn cmd_edit(
         }
         s
     } else if let Some(path) = new_file {
-        read_text_input(Some(path))?
+        read_text_input(TextInputSource::File(path))?
     } else {
         match new {
             Some(n) => n.to_string(),
@@ -652,7 +701,7 @@ fn edit_note_impl(
 }
 
 /// `flowix-cli write <id> --file <path>` ── 推荐从 UTF-8 文件读取 body 并覆盖。
-/// 未提供 `--file` 时保留 stdin 输入兼容性。
+/// `--stdin` 用于显式放行标准输入；Windows 上不再隐式读取 stdin。
 ///
 /// `edit` 的非交互等价物 ── 适合脚本化批量改写、管道入内容、CI 注入等场景。
 ///
@@ -667,9 +716,17 @@ fn edit_note_impl(
 ///
 /// 实际写盘在 [`write_note`]；本函数只是输入读取 + `write_note` 的薄壳。
 /// MCP 命令层直接把工具输入传给 `write_note`。
-pub fn cmd_write(id_arg: &str, file: Option<&str>, json: bool) -> Result<(), CliError> {
+pub fn cmd_write(
+    id_arg: &str,
+    file: Option<&str>,
+    stdin: bool,
+    json: bool,
+) -> Result<(), CliError> {
+    // 与 create 一致，输入错误优先于 id / 存储解析，保证失败不会改写笔记。
+    let source = resolve_text_input_source("write", file, stdin, cfg!(windows))?;
+    let body = read_text_input(source)?;
+    reject_empty_text("write", &body)?;
     let (mut mf, full_id) = resolve_id(id_arg)?;
-    let body = read_text_input(file)?;
     let payload = write_note(&mut mf, &full_id, &body)?;
     if json {
         print_pretty_json(&payload)?;
@@ -792,12 +849,60 @@ mod tests {
     }
 
     #[test]
+    fn windows_requires_an_explicit_input_source() {
+        let error = resolve_text_input_source("create", None, false, true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("stdin input is disabled by default on Windows"));
+        assert!(error.contains("flowix create <notebook> --file <path>"));
+        assert!(error.contains("pass --stdin explicitly"));
+
+        assert_eq!(
+            resolve_text_input_source("create", Some("body.md"), false, true).unwrap(),
+            TextInputSource::File("body.md")
+        );
+        assert_eq!(
+            resolve_text_input_source("create", None, true, true).unwrap(),
+            TextInputSource::Stdin
+        );
+    }
+
+    #[test]
+    fn non_windows_keeps_legacy_stdin_fallback() {
+        assert_eq!(
+            resolve_text_input_source("write", None, false, false).unwrap(),
+            TextInputSource::Stdin
+        );
+    }
+
+    #[test]
+    fn input_sources_are_mutually_exclusive_even_before_clap() {
+        let error = resolve_text_input_source("write", Some("body.md"), true, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--file and --stdin are mutually exclusive"));
+    }
+
+    #[test]
+    fn empty_create_and_write_input_is_rejected_before_storage_lookup() {
+        assert_eq!(
+            reject_empty_text("create", "\n  ").unwrap_err().to_string(),
+            "empty body, note not created"
+        );
+        assert_eq!(
+            reject_empty_text("write", "\n\t").unwrap_err().to_string(),
+            "empty body, note not modified"
+        );
+        assert!(reject_empty_text("create", "# 中文\n正文").is_ok());
+    }
+
+    #[test]
     fn file_input_reads_cjk_utf8_and_strips_bom() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("中文说明.md");
         std::fs::write(&path, "\u{FEFF}# 首次正确生成\n正文内容").unwrap();
 
-        let body = read_text_input(path.to_str()).unwrap();
+        let body = read_text_input(TextInputSource::File(path.to_str().unwrap())).unwrap();
         assert_eq!(body, "# 首次正确生成\n正文内容");
     }
 
@@ -807,7 +912,9 @@ mod tests {
         let path = tmp.path().join("invalid.md");
         std::fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
 
-        let error = read_text_input(path.to_str()).unwrap_err().to_string();
+        let error = read_text_input(TextInputSource::File(path.to_str().unwrap()))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("not valid UTF-8"));
     }
 
@@ -816,7 +923,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("missing.md");
 
-        let error = read_text_input(path.to_str()).unwrap_err();
+        let error = read_text_input(TextInputSource::File(path.to_str().unwrap())).unwrap_err();
         assert!(matches!(&error, CliError::Io(_)));
         assert!(error.to_string().contains("failed to read input file"));
     }
@@ -833,7 +940,7 @@ mod tests {
         std::fs::write(&path, source.as_bytes()).unwrap();
 
         with_flowix_env(&config_dir, &data_dir, || {
-            let body = read_text_input(path.to_str()).unwrap();
+            let body = read_text_input(TextInputSource::File(path.to_str().unwrap())).unwrap();
             assert_eq!(body, source);
 
             let (mut mf, notebook) = open_in("work").unwrap();
@@ -841,7 +948,8 @@ mod tests {
             let created_body = std::fs::read_to_string(&created.file).unwrap();
             assert!(created_body.ends_with(source));
 
-            let replacement = read_text_input(path.to_str()).unwrap();
+            let replacement =
+                read_text_input(TextInputSource::File(path.to_str().unwrap())).unwrap();
             write_note(&mut mf, &created.id, &replacement).unwrap();
             let written_body = std::fs::read_to_string(&created.file).unwrap();
             assert!(written_body.ends_with(source));

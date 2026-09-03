@@ -35,10 +35,6 @@ const PreferencesView = lazy(() =>
   import("@features/preferences").then((module) => ({ default: module.PreferencesView }))
 );
 
-const TabWindow = lazy(() =>
-  import("./tab-window/tab-window").then((module) => ({ default: module.TabWindow }))
-);
-
 const MainWindowEffects = lazy(() =>
   import("./main-window-effects").then((module) => ({ default: module.MainWindowEffects }))
 );
@@ -97,7 +93,7 @@ function App() {
     // ErrorBoundary should be visible instead of an endless spinner.
     removeAppLoading();
 
-    const isAuxiliaryWindow = hash.startsWith("#tab-window") || hash.startsWith("#preferences");
+    const isAuxiliaryWindow = hash.startsWith("#preferences");
     if (!isAuxiliaryWindow) {
       void windows.showMain().catch((error) => {
         logger.error("show main window failed during app bootstrap", { error });
@@ -131,31 +127,7 @@ function App() {
     };
   }, []);
 
-  const isTabWindow = hash.startsWith("#tab-window");
   const isPreferencesWindow = hash.startsWith("#preferences");
-
-  if (isTabWindow) {
-    return (
-      <ErrorBoundary language={language}>
-        <AppToaster />
-        <I18nProvider language={language}>
-          <ThemeProvider>
-            <Suspense fallback={null}>
-              <AgentWindowEffects />
-            </Suspense>
-            <TooltipProvider>
-              <ShortcutsProvider overrides={shortcutOverrides}>
-                <Suspense fallback={null}>
-                  <TabWindow />
-                  <AppReadySignal />
-                </Suspense>
-              </ShortcutsProvider>
-            </TooltipProvider>
-          </ThemeProvider>
-        </I18nProvider>
-      </ErrorBoundary>
-    );
-  }
 
   if (isPreferencesWindow) {
     const tab = hash.split("/")[1] || undefined;

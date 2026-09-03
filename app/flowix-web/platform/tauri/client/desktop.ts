@@ -47,50 +47,6 @@ export const dialogs = {
     invoke<boolean>('copy_attachment_file', { sourcePath, targetPath }),
 };
 
-// Windows
-export type TabTarget =
-  | {
-      kind: 'memo';
-      memoId: string;
-      notebookId: string;
-      notebookPath: string;
-      filePath: string;
-    }
-  | {
-      kind: 'external_markdown';
-      filePath: string;
-    }
-  | {
-      kind: 'external_text';
-      filePath: string;
-      scopePath: string;
-    }
-  | {
-      kind: 'web';
-      url: string;
-    };
-
-export interface WindowTab {
-  id: string;
-  title: string;
-  icon: string | null;
-  target: TabTarget;
-}
-
-export interface WindowPosition {
-  x: number;
-  y: number;
-}
-
-export interface WindowRegion extends WindowPosition {
-  width: number;
-  height: number;
-}
-
-export interface TabDragResult {
-  merged: boolean;
-}
-
 export interface ExternalDocumentChangedEvent {
   path: string;
   kind: 'modified' | 'deleted';
@@ -101,43 +57,10 @@ export const windows = {
   showMain: () => invoke<void>('show_main_window'),
   openPreferences: (tab?: string) => invoke<void>('open_preferences_window', { tab }),
   applyWindowTheme: (theme: ThemeId) => invoke<void>('apply_window_theme', { theme }),
-  openNoteWindow: (memoId: string) => invoke<void>('open_note_window', { memoId }),
-  openNoteTab: (memoId: string) => invoke<void>('open_note_tab', { memoId }),
-  openExternalMarkdownWindow: (filePath: string) =>
-    invoke<void>('open_external_markdown_window', { filePath }),
-  openExternalMarkdownTab: (filePath: string) =>
-    invoke<void>('open_external_markdown_tab', { filePath }),
-  openExternalTextWindow: (filePath: string, scopePath: string) =>
-    invoke<void>('open_external_text_window', { filePath, scopePath }),
-  openMarkdownPathTab: (filePath: string) =>
-    invoke<void>('open_markdown_path_tab', { filePath }),
   watchExternalDocument: (filePath: string, scopePath?: string | null) =>
     invoke<string>('watch_external_document', { filePath, scopePath: scopePath ?? null }),
   unwatchExternalDocument: (leaseId: string) =>
     invoke<void>('unwatch_external_document', { leaseId }),
-  tabWindowReady: () => invoke<WindowTab[]>('tab_window_ready'),
-  ackTabWindowTransfer: (transferId: string, tabId: string) =>
-    invoke<void>('tab_window_ack_transfer', { transferId, tabId }),
-  setTabWindowRegion: (region: WindowRegion) =>
-    invoke<void>('tab_window_set_tab_region', { region }),
-  closeTabWindowTab: (tabId: string) => invoke<void>('tab_window_close_tab', { tabId }),
-  reorderTabWindowTab: (tabId: string, beforeTabId: string | null) =>
-    invoke<void>('tab_window_reorder_tab', { tabId, beforeTabId }),
-  detachTabWindowTab: (
-    tabId: string,
-    position: WindowPosition,
-    dragId: string,
-  ) => invoke<TabDragResult>('tab_window_detach_tab', {
-    tabId,
-    position,
-    dragId,
-  }),
-  beginTabItemDrag: (tabId: string, dragId: string) => invoke<void>('tab_window_begin_tab_item_drag', {
-    tabId,
-    dragId,
-  }),
-  cancelTabItemDrag: (tabId: string, dragId: string) =>
-    invoke<void>('tab_window_cancel_tab_item_drag', { tabId, dragId }),
 };
 
 export interface ProductInfo {

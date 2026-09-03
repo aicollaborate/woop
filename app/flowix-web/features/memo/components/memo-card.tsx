@@ -140,12 +140,13 @@ function MemoCardMoreMenu({
   isDropdownOpen,
   moreLabel,
   onOpenDropdown,
+  onOpenInWindow,
   onFavoriteToggle,
   onDelete,
   onColorsChange,
 }: Pick<
   MemoCardShellProps,
-  'memo' | 'variant' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
+  'memo' | 'variant' | 'isDropdownOpen' | 'moreLabel' | 'onOpenDropdown' | 'onOpenInWindow' | 'onFavoriteToggle' | 'onDelete' | 'onColorsChange'
 >) {
   return (
     <div className="absolute right-3 top-2 z-100 shrink-0 items-center gap-1">
@@ -171,6 +172,14 @@ function MemoCardMoreMenu({
         <DropdownMenuContent align="end" className="w-[180px] space-y-1 px-1 py-1.5">
           <MemoCardActions
             memo={memo}
+            onOpenInSplit={
+              onOpenInWindow
+                ? (nextMemo) => {
+                    onOpenDropdown(null);
+                    onOpenInWindow(nextMemo);
+                  }
+                : undefined
+            }
             onFavoriteToggle={(nextMemo) => {
               onOpenDropdown(null);
               onFavoriteToggle(nextMemo);
@@ -214,7 +223,6 @@ function MemoCardShell({
       <ContextMenuTrigger asChild>
         <div
           onClick={() => onSelect(memo)}
-          onDoubleClick={() => onOpenInWindow?.(memo)}
           className={cn(
             'group memo-card relative min-w-0 w-full cursor-pointer rounded-lg px-2 transition-all',
             variant === 'compact' ? 'py-[9px]' : 'py-3',
@@ -233,6 +241,7 @@ function MemoCardShell({
             isDropdownOpen={isDropdownOpen}
             moreLabel={moreLabel}
             onOpenDropdown={onOpenDropdown}
+            onOpenInWindow={onOpenInWindow}
             onFavoriteToggle={onFavoriteToggle}
             onDelete={onDelete}
             onColorsChange={onColorsChange}
@@ -245,6 +254,7 @@ function MemoCardShell({
           onFavoriteToggle={onFavoriteToggle}
           onDelete={onDelete}
           onColorsChange={onColorsChange}
+          onOpenInSplit={onOpenInWindow}
           Item={ContextMenuItem}
         />
       </ContextMenuContent>

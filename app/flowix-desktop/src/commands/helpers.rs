@@ -104,6 +104,39 @@ fn switch_notebook(
         })
         .set_current_notebook(notebook_id.clone());
 
+    if let Some(notebook_id) = notebook_id.as_deref() {
+        let notebook_path = {
+            let memo_file = read_lock(&state.memo_file, "memo_file");
+            match memo_file.migrate_notebook_internal_data(notebook_id) {
+                Ok(report) if report.moved_files > 0 || !report.warnings.is_empty() => {
+                    tracing::info!(
+                        notebook = %notebook_id,
+                        moved_files = report.moved_files,
+                        completed = report.completed,
+                        "notebook internal data migration finished"
+                    );
+                    for warning in report.warnings {
+                        tracing::warn!(notebook = %notebook_id, "notebook internal migration: {warning}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(notebook = %notebook_id, "notebook internal migration failed: {error}"),
+            }
+            memo_file
+                .get_notebook_config_by_id(notebook_id)
+                .map(|notebook| notebook.path)
+        };
+        if let Some(notebook_path) = notebook_path {
+            if let Err(error) = crate::plugin::repair_notebook_artifact_pointers(
+                notebook_id,
+                Path::new(&notebook_path),
+                &state.memo_file,
+            ) {
+                tracing::warn!(notebook = %notebook_id, "plugin pointer repair failed: {error}");
+            }
+        }
+    }
+
     match reconcile_mode {
         ReconcileMode::Skip => {}
         ReconcileMode::ImportAsNew => {

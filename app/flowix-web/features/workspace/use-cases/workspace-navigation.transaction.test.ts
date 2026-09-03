@@ -70,6 +70,8 @@ vi.mock('@platform/tauri/client', () => ({
 }));
 
 import { useWorkspaceStore } from '../store/workspace-store';
+import { useFourthColumnStore } from '../store/fourth-column-store';
+import { useWorkspaceFocusStore } from '../store/workspace-focus-store';
 import {
   dismissNavigationFailure,
   openExternalTarget,
@@ -100,6 +102,7 @@ function resetWorkspace() {
 describe('workspace navigation transaction', () => {
   beforeEach(() => {
     resetWorkspace();
+    useFourthColumnStore.getState().reset();
     mocks.memoState.selectedMemo = { id: 'old' };
     mocks.memoState.selectedMemoId = 'old';
     mocks.memoState.selectedNotebook = null;
@@ -123,6 +126,34 @@ describe('workspace navigation transaction', () => {
     mocks.memoState.setActivePluginId.mockClear();
     mocks.memoState.loadNotebooks.mockResolvedValue(undefined);
     mocks.memoState.loadMemos.mockResolvedValue(undefined);
+  });
+
+  it('activates a matching fourth-column memo without opening it in the third column', async () => {
+    useFourthColumnStore.getState().openTab({
+      id: 'memo:existing',
+      title: 'Existing',
+      icon: null,
+      target: {
+        kind: 'memo',
+        memoId: 'existing',
+        notebookId: 'notebook-a',
+        notebookPath: '/notes',
+        filePath: '/notes/existing.md',
+      },
+    });
+
+    await openMemoTarget({
+      memoId: 'existing',
+      path: '/notes/existing.md',
+      memo: memo('existing'),
+    });
+
+    expect(mocks.openMemoDocument).not.toHaveBeenCalled();
+    expect(useFourthColumnStore.getState()).toMatchObject({
+      visible: true,
+      activeTabId: 'memo:existing',
+    });
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('fourth-column');
   });
 
   it('rolls back memo selection and retains the previous target on failure', async () => {

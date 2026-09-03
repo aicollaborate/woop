@@ -15,11 +15,11 @@ import { useMemoStore } from '@features/memo';
 import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
 import {
   memos,
-  windows,
   type PluginArtifact,
   type PluginDescriptor,
   type PluginField,
 } from '@platform/tauri/client';
+import { openFourthColumnMarkdown } from '@features/workspace/use-cases/fourth-column-navigation';
 import { listenToPluginRuns } from '@platform/tauri/client/plugin';
 import { isPluginRunning, runPlugin } from './plugin-runner';
 import {
@@ -172,13 +172,13 @@ export function AgentPluginWorkbench({
           onFit={() => rendererRef.current?.fit?.()}
           onZoomIn={() => rendererRef.current?.zoomIn?.()}
           onZoomOut={() => rendererRef.current?.zoomOut?.()}
-          onOpenArtifact={artifact ? () => { void windows.openMarkdownPathTab(artifact.path); } : undefined}
+          onOpenArtifact={artifact ? () => { openFourthColumnMarkdown(artifact.path); } : undefined}
           onToggleFullscreen={() => { void toggleFullscreen(); }}
         />
       )}
       {!hasCanvasControls && (
         <div className="pointer-events-auto absolute right-4 top-4 z-20 flex items-center gap-1 rounded-xl border border-[var(--divider)] bg-[var(--card)]/90 p-1 shadow-lg backdrop-blur">
-          {artifact && <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => void windows.openMarkdownPathTab(artifact.path)} title="打开产物" aria-label="打开产物"><ArrowSquareOutIcon size={16} weight="bold" /></button>}
+          {artifact && <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => openFourthColumnMarkdown(artifact.path)} title="打开产物" aria-label="打开产物"><ArrowSquareOutIcon size={16} weight="bold" /></button>}
           <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => void toggleFullscreen()} title={isFullscreen ? '退出全屏' : '全屏'} aria-label={isFullscreen ? '退出全屏' : '全屏'}>{isFullscreen ? <CornersInIcon size={16} weight="bold" /> : <CornersOutIcon size={16} weight="bold" />}</button>
         </div>
       )}

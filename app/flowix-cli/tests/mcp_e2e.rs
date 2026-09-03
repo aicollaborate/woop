@@ -232,6 +232,97 @@ fn structured_actions_create_edit_list_and_show_without_cli_strings() {
 }
 
 #[test]
+fn search_tag_filter_is_shared_by_structured_and_legacy_mcp() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_dir = tmp.path().join("config");
+    let notebook_dir = tmp.path().join("notebooks").join("work");
+    seed_notebook(&config_dir, &notebook_dir);
+
+    let (mut child, mut stdin, mut stdout) = spawn_mcp(&config_dir);
+    let tagged = call_tool(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "create work",
+        Some("---\ntags: [项目/Flowix/CLI]\n---\n# 发布计划\n"),
+    );
+    assert_eq!(tagged["result"]["isError"], false, "{tagged}");
+
+    let untagged = call_tool(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "create work",
+        Some("# 其他笔记\n\n发布计划在正文中，但没有项目标签。\n"),
+    );
+    assert_eq!(untagged["result"]["isError"], false, "{untagged}");
+
+    let structured = call_structured(
+        &mut stdin,
+        &mut stdout,
+        3,
+        json!({
+            "action": "search",
+            "query": "发布计划",
+            "tag": "#项目/Flowix",
+            "limit": 20
+        }),
+    );
+    assert_eq!(structured["result"]["isError"], false, "{structured}");
+    assert_eq!(
+        structured["result"]["structuredContent"]["tag"],
+        "项目/Flowix"
+    );
+    assert_eq!(
+        structured["result"]["structuredContent"]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let legacy = call_tool(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "search 发布计划 --tag 项目/Flowix --json",
+        None,
+    );
+    assert_eq!(legacy["result"]["isError"], false, "{legacy}");
+    assert_eq!(legacy["result"]["structuredContent"]["tag"], "项目/Flowix");
+    assert_eq!(
+        legacy["result"]["structuredContent"]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let invalid = call_structured(
+        &mut stdin,
+        &mut stdout,
+        5,
+        json!({
+            "action": "search",
+            "query": "发布计划",
+            "tag": "项目//Flowix"
+        }),
+    );
+    assert_eq!(invalid["result"]["isError"], true, "{invalid}");
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["code"],
+        "INVALID_COMMAND"
+    );
+    assert!(invalid["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("valid tag path"));
+
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn concurrent_mcp_processes_do_not_overwrite_each_other() {
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};

@@ -3,6 +3,7 @@ import { getPersistableInputDraft } from "@features/agent/thread-card/composer/c
 import type { ComposerDraftController } from "@features/agent/thread-card/composer/composer-draft-controller";
 import type { Root } from "react-dom/client";
 import { renderAgentThreadCardSendButton } from "@features/agent/thread-card/composer/send-button-renderer";
+import { ComposerSlashCommandController } from "@features/agent/thread-card/composer/composer-slash-command-controller";
 
 export interface ComposerControllerOptions {
   input: HTMLTextAreaElement;
@@ -34,6 +35,7 @@ export class ComposerController {
   private readonly getHasPendingAttachments: () => boolean;
   private readonly submit: () => void;
   private readonly stop: () => void;
+  private readonly slashCommands: ComposerSlashCommandController;
 
   private isComposing = false;
   private historyCursor: number | null = null;
@@ -54,6 +56,11 @@ export class ComposerController {
     this.getHasPendingAttachments = options.getHasPendingAttachments;
     this.submit = options.submit;
     this.stop = options.stop;
+
+    this.slashCommands = new ComposerSlashCommandController({
+      input: this.input,
+      composer: this.composer,
+    });
 
     this.input.addEventListener("keydown", this.handleKeydown);
     this.input.addEventListener("compositionstart", this.handleCompositionStart);
@@ -141,6 +148,7 @@ export class ComposerController {
     this.input.removeEventListener("compositionend", this.handleCompositionEnd);
     this.input.removeEventListener("input", this.handleInput);
     this.input.removeEventListener("blur", this.handleBlur);
+    this.slashCommands.dispose();
     // 推迟到下一个 microtask 再 unmount React root ── ProseMirror destroy 可能
     // 在 React commit phase / passive effects 内被调用, 此时同步 unmount 会触发
     // "Attempted to synchronously unmount a root while React was already rendering"。

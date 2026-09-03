@@ -12,6 +12,9 @@ import {
  * This store intentionally does not contain restore data, document content,
  * React props, or component callbacks. Domain stores own those concerns;
  * callers only publish the active third-column navigation target here.
+ * During a transition, `navigation.target` remains the committed intent while
+ * DocumentStore may still hold the outgoing loaded session. Read both through
+ * `resolveThirdColumnContentState` when code needs a combined view.
  */
 interface WorkspaceStore {
   navigation: WorkspaceNavigationState;

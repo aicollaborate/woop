@@ -76,7 +76,14 @@ flowix create <notebook> --file body.md --json
 flowix write <id> --file body.md --json
 ```
 
-stdin remains supported for existing scripts. The `--file` path is read directly as UTF-8; a missing, unreadable, or invalid UTF-8 file returns an error.
+On Windows, stdin is no longer read implicitly when neither input option is given, preventing PowerShell 5.1's `$OutputEncoding` from corrupting non-ASCII text. If the caller has guaranteed UTF-8 stdin, opt in explicitly:
+
+```powershell
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Get-Content -Raw -Encoding UTF8 body.md | flowix create <notebook> --stdin --json
+```
+
+`--file` and `--stdin` are mutually exclusive. The `--file` path is read directly as UTF-8; a missing, unreadable, or invalid UTF-8 file returns an error. With `--json`, errors use the stable `{ok:false,error:{code,message}}` shape.
 
 ---
 

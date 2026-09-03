@@ -51,7 +51,7 @@ impl MemoVersionManifest {
 
 impl MemoFile {
     fn versions_root(&self) -> PathBuf {
-        self.get_metadata_dir().join("versions")
+        self.get_versions_dir()
     }
 
     fn versions_root_for_memo(&self, memo_id: &str) -> PathBuf {
@@ -60,10 +60,22 @@ impl MemoFile {
             .flatten()
             .map(|location| {
                 PathBuf::from(location.notebook.path)
-                    .join(".metadata")
+                    .join(".flowix")
                     .join("versions")
             })
             .unwrap_or_else(|| self.versions_root())
+    }
+
+    fn legacy_versions_root_for_memo(&self, memo_id: &str) -> PathBuf {
+        self.resolve_memo_location(memo_id)
+            .ok()
+            .flatten()
+            .map(|location| {
+                PathBuf::from(location.notebook.path)
+                    .join(".metadata")
+                    .join("versions")
+            })
+            .unwrap_or_else(|| self.get_memo_base().join(".metadata").join("versions"))
     }
 
     fn memo_versions_dir(&self, memo_id: &str) -> PathBuf {
@@ -75,11 +87,19 @@ impl MemoFile {
     }
 
     fn read_version_manifest(&self, memo_id: &str) -> MemoVersionManifest {
-        let path = self.memo_versions_manifest_path(memo_id);
-        let Ok(content) = fs::read_to_string(path) else {
-            return MemoVersionManifest::empty(memo_id);
-        };
-        serde_json::from_str(&content).unwrap_or_else(|_| MemoVersionManifest::empty(memo_id))
+        for root in [
+            self.versions_root_for_memo(memo_id),
+            self.legacy_versions_root_for_memo(memo_id),
+        ] {
+            let path = root.join(memo_id).join("manifest.json");
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            if let Ok(manifest) = serde_json::from_str(&content) {
+                return manifest;
+            }
+        }
+        MemoVersionManifest::empty(memo_id)
     }
 
     fn write_version_manifest(
@@ -108,7 +128,16 @@ impl MemoFile {
         if !manifest.versions.iter().any(|v| v.id == version_id) {
             return None;
         }
-        fs::read_to_string(self.memo_version_path(memo_id, version_id)).ok()
+        for root in [
+            self.versions_root_for_memo(memo_id),
+            self.legacy_versions_root_for_memo(memo_id),
+        ] {
+            let path = root.join(memo_id).join(format!("{version_id}.md"));
+            if let Ok(content) = fs::read_to_string(path) {
+                return Some(content);
+            }
+        }
+        None
     }
 
     pub fn create_memo_version(

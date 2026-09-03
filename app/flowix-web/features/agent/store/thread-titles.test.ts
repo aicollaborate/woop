@@ -61,11 +61,11 @@ describe("thread-titles helpers", () => {
   });
 
   it("defaultThreadTitle falls back per agent family", () => {
-    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness Chat");
+    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness session");
     expect(defaultThreadTitle("hermes")).toBe("Hermes session");
     expect(defaultThreadTitle("codex")).toBe("Codex session");
     expect(defaultThreadTitle("claude")).toBe("Claude Code session");
-    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness Chat");
+    expect(defaultThreadTitle("deepseek-harness")).toBe("DeepSeek Harness session");
     expect(defaultThreadTitle("opencode")).toBe("OpenCode session");
     expect(defaultThreadTitle("hermes")).toBe("Hermes session");
     expect(defaultThreadTitle("gemini")).toBe("Gemini CLI session");
@@ -75,15 +75,15 @@ describe("thread-titles helpers", () => {
   it("localizes DeepSeek Harness card and session titles", () => {
     languageState.language = "zh-CN";
     expect(defaultExternalThreadTitle("deepseek-harness")).toBe(
-      "DeepSeek Harness 对话",
+      "DeepSeek Harness 会话",
     );
     expect(defaultThreadTitle("deepseek-harness")).toBe(
-      "DeepSeek Harness 对话",
+      "DeepSeek Harness 会话",
     );
-    expect(defaultThreadTitle("opencode")).toBe("OpenCode 对话");
-    expect(defaultThreadTitle("hermes")).toBe("Hermes 对话");
-    expect(defaultThreadTitle("gemini")).toBe("Gemini CLI 对话");
-    expect(defaultThreadTitle("openclaw")).toBe("OpenClaw 对话");
+    expect(defaultThreadTitle("opencode")).toBe("OpenCode 会话");
+    expect(defaultThreadTitle("hermes")).toBe("Hermes 会话");
+    expect(defaultThreadTitle("gemini")).toBe("Gemini CLI 会话");
+    expect(defaultThreadTitle("openclaw")).toBe("OpenClaw 会话");
   });
 
   it("deriveThreadTitleFromPrompt strips system block, collapses whitespace, truncates", () => {

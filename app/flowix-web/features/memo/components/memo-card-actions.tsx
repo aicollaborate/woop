@@ -2,6 +2,7 @@
 
 import { Check } from 'lucide-react';
 import {
+  ColumnsIcon,
   CopyIcon,
   LinkSimpleIcon,
   PushPin,
@@ -47,6 +48,11 @@ interface MemoCardActionsProps {
   onFavoriteToggle: (memo: MemoItem) => void;
   onDelete: (memo: MemoItem) => void;
   onColorsChange?: (memo: MemoItem, colors: MemoColor[]) => void;
+  /**
+   * Opens the memo in the fourth column. Optional because the menu is also
+   * rendered where a split target makes no sense; the item hides when absent.
+   */
+  onOpenInSplit?: (memo: MemoItem) => void;
   Item: MenuItemComponent;
 }
 
@@ -191,6 +197,7 @@ export function MemoCardActions({
   onFavoriteToggle,
   onDelete,
   onColorsChange,
+  onOpenInSplit,
   Item,
 }: MemoCardActionsProps) {
   const { t } = useI18n();
@@ -244,6 +251,14 @@ export function MemoCardActions({
 
   return (
     <>
+      {onOpenInSplit && (
+        <>
+          <Item onClick={() => onOpenInSplit(memo)} className={ITEM_BASE}>
+            <ColumnsIcon className="w-4 h-4 mr-2" /> {t('memo.action.openInSplit')}
+          </Item>
+          <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+        </>
+      )}
       <Item onClick={handleCopyLink} className={ITEM_BASE}>
         <LinkSimpleIcon className="w-4 h-4 mr-2" /> {t('document.action.copyLink')}
       </Item>

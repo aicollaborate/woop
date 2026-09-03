@@ -65,6 +65,7 @@ impl MemoFile {
                 .memo_base_for_notebook_id_result(notebook_id)
                 .map_err(|message| std::io::Error::new(std::io::ErrorKind::NotFound, message))?;
             fs::create_dir_all(&base)?;
+            fs::create_dir_all(base.join(".flowix"))?;
             fs::create_dir_all(base.join("attachments"))?;
             (base, notebook_id.to_string())
         } else {
@@ -239,6 +240,7 @@ impl MemoFile {
         })?;
         let base = PathBuf::from(&location.notebook.path);
         fs::create_dir_all(&base)?;
+        fs::create_dir_all(base.join(".flowix"))?;
         fs::create_dir_all(base.join("attachments"))?;
 
         let mut memo = MemoFile::index_entry_to_memo(&location.memo);
@@ -366,6 +368,7 @@ impl MemoFile {
         let notebook_id = location.notebook.id;
         let base = PathBuf::from(location.notebook.path);
         fs::create_dir_all(&base)?;
+        fs::create_dir_all(base.join(".flowix"))?;
         fs::create_dir_all(base.join("attachments"))?;
 
         let mut memo = MemoFile::index_entry_to_memo(&location.memo);

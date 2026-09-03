@@ -2,7 +2,7 @@
 
 import { externalDocuments, memos as memosClient } from '@platform/tauri/client';
 import {
-  getActiveDocumentDraft,
+  getDocumentDraft,
   applyLoadedDocumentContent,
   getDocumentBuffer,
   markSelfDocumentPathUpdate,
@@ -49,6 +49,7 @@ interface UseDocumentAutosaveOptions {
   }>>;
   reloadDocument: (path: string, options?: { preservePending?: boolean; showLoading?: boolean }) => Promise<void>;
   flushPendingContent?: () => string | null;
+  isolatedSession?: boolean;
 }
 
 export function useDocumentAutosave({
@@ -60,6 +61,7 @@ export function useDocumentAutosave({
   setState,
   reloadDocument,
   flushPendingContent,
+  isolatedSession = false,
 }: UseDocumentAutosaveOptions) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const derivedStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,7 +131,7 @@ export function useDocumentAutosave({
           // + 重用或新建 buffer, 保留 buf 内容)。
           if (writtenPath !== path) {
             applyLoadedDocumentContent(identity, writtenPath, writtenContent, { preservePending: true });
-            if (!isExternalDocument && memoId) {
+            if (!isolatedSession && !isExternalDocument && memoId) {
               markSelfDocumentPathUpdate(memoId, writtenPath);
               replaceActiveMemoPath(memoId, writtenPath);
             }
@@ -193,6 +195,7 @@ export function useDocumentAutosave({
     isExternalDocument,
     externalScopePath,
     identity,
+    isolatedSession,
     memoId,
     setState,
   ]);
@@ -288,7 +291,7 @@ export function useDocumentAutosave({
     const handleVisibilityChange = () => {
       if (!document.hidden) return;
       const flushedContent = flushPendingContent?.() ?? null;
-      const draft = getActiveDocumentDraft();
+      const draft = getDocumentDraft(identity, filePath);
       const content = flushedContent ?? draft?.content;
       const path = draft?.path ?? filePath;
       if (content == null || !path) return;
@@ -298,7 +301,7 @@ export function useDocumentAutosave({
 
     const handleBeforeUnload = () => {
       const flushedContent = flushPendingContent?.() ?? null;
-      const draft = getActiveDocumentDraft();
+      const draft = getDocumentDraft(identity, filePath);
       const content = flushedContent ?? draft?.content;
       const path = draft?.path ?? filePath;
       if (content == null || !path) return;
@@ -315,7 +318,7 @@ export function useDocumentAutosave({
       clearSaveTimer();
       clearDerivedStatsTimer();
     };
-  }, [filePath, flushPendingContent, saveDoc, clearSaveTimer, clearDerivedStatsTimer, maybeSaveOrReloadOnHide]);
+  }, [filePath, flushPendingContent, saveDoc, clearSaveTimer, clearDerivedStatsTimer, maybeSaveOrReloadOnHide, identity]);
 
   return {
     clearSaveTimer,

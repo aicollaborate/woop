@@ -161,7 +161,7 @@ export const AgentThreadCard = Node.create({
         [
           "div",
           { class: "agent-thread-card__empty" },
-          "Use current note to start an AI conversation",
+          "Use current note to start an AI session",
         ],
         [
           "div",

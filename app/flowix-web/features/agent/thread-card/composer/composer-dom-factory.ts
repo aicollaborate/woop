@@ -60,6 +60,14 @@ const COMPOSER_FOCUS_INTERACTIVE_SELECTOR = [
   '[data-no-composer-focus]',
 ].join(',');
 
+function isComposerInteractiveTarget(composer: HTMLElement, target: Element): boolean {
+  const interactive = target.closest(COMPOSER_FOCUS_INTERACTIVE_SELECTOR);
+  // `closest()` 会继续向 composer 外查找。Thread Card 位于
+  // ProseMirror 的 contenteditable 根节点内，不能把这个编辑器祖先误判成
+  // composer 内的交互元素；否则全屏卡片的所有空白点击都会提前返回。
+  return interactive !== null && composer.contains(interactive);
+}
+
 function focusComposerInput(composer: HTMLElement, input: HTMLTextAreaElement): void {
   if (document.activeElement === input) return;
   if (!composer.isConnected) return;
@@ -80,11 +88,22 @@ function handleComposerPointerDown(event: PointerEvent): void {
   const composer = event.currentTarget as HTMLElement;
   const target = event.target as Element | null;
   if (!target) return;
-  if (target.closest(COMPOSER_FOCUS_INTERACTIVE_SELECTOR)) return;
+  if (isComposerInteractiveTarget(composer, target)) return;
   // 命中: 抢焦点并阻止默认行为/冒泡。preventDefault 会阻止后续原生
   // mousedown 在编辑器层继续参与选择处理；显式交互控件在上面已经放行,
   // 所以不会影响发送、角色选择、模型选择等按钮的 click 行为。
   event.preventDefault();
+  event.stopPropagation();
+  const input = composer.querySelector<HTMLTextAreaElement>('textarea');
+  if (!input) return;
+  focusComposerInput(composer, input);
+}
+
+function handleComposerClick(event: MouseEvent): void {
+  if (event.button !== 0) return;
+  const composer = event.currentTarget as HTMLElement;
+  const target = event.target as Element | null;
+  if (!target || isComposerInteractiveTarget(composer, target)) return;
   event.stopPropagation();
   const input = composer.querySelector<HTMLTextAreaElement>('textarea');
   if (!input) return;
@@ -138,9 +157,11 @@ export function createAgentComposerDom(
   composer.append(composerImages, composerActions, input, sendButtonMount);
   document.body.append(codexSettingsPopover, composerAddPopover, composerRolePopover);
   // 空区域点击聚焦 ── 见上方 COMPOSER_FOCUS_INTERACTIVE_SELECTOR 注释。
-  // 注意: 用 pointerdown 而非 click ── click 触发时浏览器已经先 focus
-  // 到 body, 后续 focus() 会被某些 webview 忽略 (focus 漂移到按钮)。
+  // 优先使用 pointerdown，避免 click 时浏览器先把焦点移到 body；
+  // click 监听作为部分 fullscreen WebView 的事件链兜底。
   composer.addEventListener('pointerdown', handleComposerPointerDown);
+  // 某些 fullscreen WebView 点击空白网格区域时只派发 click, 作为兜底。
+  composer.addEventListener('click', handleComposerClick);
   return {
     composer,
     composerImages,
@@ -156,6 +177,7 @@ export function createAgentComposerDom(
 
 export function disposeAgentComposerDom(parts: AgentComposerDomParts): void {
   parts.composer.removeEventListener('pointerdown', handleComposerPointerDown);
+  parts.composer.removeEventListener('click', handleComposerClick);
   parts.codexSettingsPopover.remove();
   parts.composerRolePopover.remove();
   parts.composerAddPopover.remove();
