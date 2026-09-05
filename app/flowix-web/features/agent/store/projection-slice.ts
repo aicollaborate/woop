@@ -13,6 +13,10 @@ import {
   liveTurnMessages,
   type CodexLiveTurnCache,
 } from "@features/agent/store/codex-live-turn-cache";
+import {
+  EMPTY_CONVERSATION_RUN_SIGNATURE,
+  getConversationRunSignature,
+} from "@features/agent/store/conversation-run-signature";
 
 type SessionSet = (
   updater: (state: ProjectionContext) => Partial<ProjectionContext> | ProjectionContext,
@@ -24,6 +28,10 @@ type ProjectionContext = ProjectionSlice & {
 };
 export interface ProjectionSlice {
   threadProjections: Record<string, ThreadProjection>;
+  /** Incrementally maintained lifecycle projection used by conversation rows. */
+  threadRunSignatures: Record<string, string>;
+  /** Changes only when lifecycle fields change, not for message chunks. */
+  runStateVersion: number;
   threadEpochs: Record<string, number>;
   threadTombstones: Record<string, true>;
   codexLiveTurns: Record<string, CodexLiveTurnCache>;
@@ -45,8 +53,32 @@ export interface ProjectionSlice {
 export function createProjectionSlice(
   set: SessionSet,
 ): ProjectionSlice {
+  const runStatePatch = (
+    state: ProjectionContext,
+    threadId: string,
+    nextProjection: ThreadProjection | undefined,
+  ): Partial<ProjectionContext> => {
+    const previousSignature = state.threadRunSignatures[threadId]
+      ?? getConversationRunSignature(state.threadProjections[threadId]);
+    const nextSignature = getConversationRunSignature(nextProjection);
+    if (previousSignature === nextSignature) return {};
+
+    const threadRunSignatures = { ...state.threadRunSignatures };
+    if (nextSignature === EMPTY_CONVERSATION_RUN_SIGNATURE) {
+      delete threadRunSignatures[threadId];
+    } else {
+      threadRunSignatures[threadId] = nextSignature;
+    }
+    return {
+      threadRunSignatures,
+      runStateVersion: state.runStateVersion + 1,
+    };
+  };
+
   return {
     threadProjections: {},
+    threadRunSignatures: {},
+    runStateVersion: 0,
     threadEpochs: {},
     threadTombstones: {},
     codexLiveTurns: {},
@@ -93,6 +125,7 @@ export function createProjectionSlice(
             [event.threadId]: next,
           },
           codexLiveTurns,
+          ...runStatePatch(state, event.threadId, next),
         };
       });
     },
@@ -107,6 +140,7 @@ export function createProjectionSlice(
             ...state.threadProjections,
             [threadId]: next,
           },
+          ...runStatePatch(state, threadId, next),
         };
       });
     },
@@ -116,7 +150,11 @@ export function createProjectionSlice(
         const { [threadId]: _removed, ...threadProjections } =
           state.threadProjections;
         const { [threadId]: _removedLive, ...codexLiveTurns } = state.codexLiveTurns;
-        return { threadProjections, codexLiveTurns };
+        return {
+          threadProjections,
+          codexLiveTurns,
+          ...runStatePatch(state, threadId, undefined),
+        };
       });
     },
     resetThreadProjections: (threadIds) => {
@@ -131,7 +169,18 @@ export function createProjectionSlice(
             };
           }
         }
-        return { threadProjections };
+        let threadRunSignatures = state.threadRunSignatures;
+        let runStateVersion = state.runStateVersion;
+        for (const threadId of threadIds) {
+          const patch = runStatePatch(
+            { ...state, threadRunSignatures, runStateVersion },
+            threadId,
+            threadProjections[threadId],
+          );
+          if (patch.threadRunSignatures) threadRunSignatures = patch.threadRunSignatures;
+          if (patch.runStateVersion !== undefined) runStateVersion = patch.runStateVersion;
+        }
+        return { threadProjections, threadRunSignatures, runStateVersion };
       });
     },
     activateThread: (threadId) => {
@@ -200,9 +249,30 @@ export function createProjectionSlice(
           }
         }
 
+        const mergedRunPatch = runStatePatch(state, localThreadId, threadProjections[localThreadId]);
+        const currentThreadTitles = { ...state.sessionMeta.currentThreadTitles };
+        if (sessionId !== localThreadId) {
+          const resolvedTitle =
+            currentThreadTitles[localThreadId] ?? currentThreadTitles[sessionId];
+          if (resolvedTitle !== undefined) {
+            currentThreadTitles[localThreadId] = resolvedTitle;
+          }
+          delete currentThreadTitles[sessionId];
+        }
+        const removedRunSignature = state.threadRunSignatures[sessionId]
+          ?? getConversationRunSignature(state.threadProjections[sessionId]);
+        const threadRunSignatures = mergedRunPatch.threadRunSignatures
+          ? { ...mergedRunPatch.threadRunSignatures }
+          : { ...state.threadRunSignatures };
+        delete threadRunSignatures[sessionId];
+        const removedRunChanged = removedRunSignature !== EMPTY_CONVERSATION_RUN_SIGNATURE;
         return {
           threadProjections,
           codexLiveTurns,
+          threadRunSignatures,
+          runStateVersion:
+            (mergedRunPatch.runStateVersion ?? state.runStateVersion)
+            + (removedRunChanged ? 1 : 0),
           threadEpochs: {
             ...state.threadEpochs,
             [sessionId]: (state.threadEpochs[sessionId] ?? 0) + 1,
@@ -222,6 +292,7 @@ export function createProjectionSlice(
               ...state.sessionMeta.externalSessionResolutions,
               [localThreadId]: sessionId,
             },
+            currentThreadTitles,
             activeThreadIds: {
               ...state.sessionMeta.activeThreadIds,
               [event.agentType]: localThreadId,

@@ -8,8 +8,6 @@ const testState = vi.hoisted(() => ({
   selectedNotebook: null as Notebook | null,
   activeMemoSession: null as { memoId: string; path: string } | null,
   currentDocumentSource: null as 'memo' | 'external' | null,
-  activeFileBrowserPath: null as string | null,
-  activeFileBrowserDocument: null as { path: string; scopePath: string } | null,
   setSelectedMemo: vi.fn((memo: MemoItem | null) => {
     testState.selectedMemo = memo;
   }),
@@ -20,9 +18,6 @@ const testState = vi.hoisted(() => ({
     };
     testState.currentDocumentSource = 'memo';
   }),
-  setActiveFileBrowserPath: vi.fn((path: string | null) => {
-    testState.activeFileBrowserPath = path;
-  }),
   openExternalDocument: vi.fn(async (_path?: string, _options?: { history: 'skip'; scopePath: string }) => {
     testState.currentDocumentSource = 'external';
   }),
@@ -30,6 +25,7 @@ const testState = vi.hoisted(() => ({
     const { memo: _memo, notebook: _notebook, ...documentInput } = input;
     return testState.openMemoDocument(documentInput);
   }),
+  openArtifactTarget: vi.fn(),
   openExternalTarget: vi.fn((path: string, options: { history: 'skip'; scopePath: string }) => (
     testState.openExternalDocument(path, options)
   )),
@@ -40,10 +36,7 @@ vi.mock('@features/memo', () => ({
     getState: () => ({
       selectedMemo: testState.selectedMemo,
       selectedNotebook: testState.selectedNotebook,
-      activeFileBrowserPath: testState.activeFileBrowserPath,
-      activeFileBrowserDocument: testState.activeFileBrowserDocument,
       setSelectedMemo: testState.setSelectedMemo,
-      setActiveFileBrowserPath: testState.setActiveFileBrowserPath,
     }),
   },
 }));
@@ -61,11 +54,12 @@ vi.mock('@features/document', () => ({
 
 vi.mock('@features/workspace/use-cases/workspace-navigation', () => ({
   openMemoTarget: testState.openMemoTarget,
+  openArtifactTarget: testState.openArtifactTarget,
   openExternalTarget: testState.openExternalTarget,
 }));
 
 import {
-  restorePersistedExternalDocument,
+  openMemoSession,
   restorePersistedMemoSession,
 } from '@features/memo/use-cases/open-memo-session';
 
@@ -99,13 +93,11 @@ describe('restorePersistedMemoSession', () => {
     testState.selectedNotebook = notebook;
     testState.activeMemoSession = null;
     testState.currentDocumentSource = null;
-    testState.activeFileBrowserPath = null;
-    testState.activeFileBrowserDocument = null;
     testState.setSelectedMemo.mockClear();
-    testState.setActiveFileBrowserPath.mockClear();
     testState.openMemoDocument.mockClear();
     testState.openExternalDocument.mockClear();
     testState.openMemoTarget.mockClear();
+    testState.openArtifactTarget.mockClear();
     testState.openExternalTarget.mockClear();
     testState.openMemoDocument.mockImplementation(async (input) => {
       testState.activeMemoSession = {
@@ -127,6 +119,29 @@ describe('restorePersistedMemoSession', () => {
       notebookId: notebook.id,
       notebookPath: notebook.path,
     });
+  });
+
+  it('opens a pointer memo as an artifact target instead of an editable session', async () => {
+    testState.openArtifactTarget.mockResolvedValue(null);
+    const pointerMemo = {
+      ...memo,
+      properties: {
+        flowix_note_type: 'mindmap',
+        flowix_plugin: 'mindmap',
+        flowix_artifact: { renderer: 'markmap' },
+      },
+    };
+
+    await openMemoSession(pointerMemo, notebook);
+
+    expect(testState.openArtifactTarget).toHaveBeenCalledWith({
+      pointerMemoId: pointerMemo.id,
+      notebook,
+      pluginId: 'mindmap',
+      renderer: 'markmap',
+      memo: pointerMemo,
+    });
+    expect(testState.openMemoTarget).not.toHaveBeenCalled();
   });
 
   it('does not replace an external document session', async () => {
@@ -153,19 +168,4 @@ describe('restorePersistedMemoSession', () => {
     await Promise.all([first, second]);
   });
 
-  it('restores the persisted external document when no memo is selected', async () => {
-    testState.selectedMemo = null;
-    testState.activeFileBrowserDocument = {
-      path: '/workspace/src/main.ts',
-      scopePath: '/workspace',
-    };
-
-    await restorePersistedExternalDocument();
-
-    expect(testState.setActiveFileBrowserPath).toHaveBeenCalledWith('/workspace');
-    expect(testState.openExternalDocument).toHaveBeenCalledWith(
-      '/workspace/src/main.ts',
-      { history: 'skip', scopePath: '/workspace' },
-    );
-  });
 });

@@ -275,13 +275,6 @@ export class FrontmatterPropertyNodeView implements NodeView {
             name,
           );
           option.append(title);
-          if (item.create) {
-            option.append(createElement(
-              'span',
-              'mention-note-notebook',
-              this.t('editor.tagMention.create'),
-            ));
-          }
           option.addEventListener('mouseenter', () => updateSelectedItem(index));
           option.addEventListener('pointerdown', (event) => {
             event.preventDefault();

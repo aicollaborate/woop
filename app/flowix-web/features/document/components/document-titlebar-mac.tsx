@@ -14,7 +14,10 @@ import {
   useAgentThreadCardFullscreenActive,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
-import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
+import {
+  WORK_COLUMN_TITLEBAR_GRADIENT,
+  WorkColumnTitlebarShell,
+} from '@features/shell/components/work-column-titlebar-shell';
 
 const NAV_BTN =
   'w-8 h-8 flex enabled:!cursor-pointer disabled:!cursor-not-allowed items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg transition-colors';
@@ -66,11 +69,11 @@ export function DocumentTitlebarMac({
       : 'empty';
 
   return (
-    <ThirdColumnTitlebarShell
+      <WorkColumnTitlebarShell
       isWindows={false}
       showTrafficLightSpacer={isSidebarHidden && !noteNavigationVisible}
       className={isAgentThreadCardFullscreen ? 'agent-thread-card-fullscreen-titlebar' : ''}
-      style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
+      style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: WORK_COLUMN_TITLEBAR_GRADIENT }}
     >
       <div className="flex shrink-0 items-center gap-1">
         {isSidebarHidden && (
@@ -118,7 +121,7 @@ export function DocumentTitlebarMac({
 
       <div
         data-tauri-drag-region
-        className="ml-auto flex shrink-0 items-center gap-3 pr-4"
+        className="ml-auto flex shrink-0 items-center gap-3 pr-3"
       >
         <AgentThreadCardFullscreenExitButton className="agent-thread-card-fullscreen-exit-btn" />
         {documentState === 'external' && (
@@ -147,6 +150,6 @@ export function DocumentTitlebarMac({
           />
         )}
       </div>
-    </ThirdColumnTitlebarShell>
+      </WorkColumnTitlebarShell>
   );
 }

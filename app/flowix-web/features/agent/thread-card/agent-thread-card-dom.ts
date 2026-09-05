@@ -17,12 +17,12 @@ export function focusAgentThreadCardInput(
     const dom = view.nodeDOM(pos);
     if (!(dom instanceof HTMLElement)) return;
 
-    const input = dom.querySelector("textarea");
-    if (!(input instanceof HTMLTextAreaElement)) return;
+    const input = dom.querySelector<HTMLElement>(
+      ".agent-thread-card__composer-input",
+    );
+    if (!input) return;
 
     input.focus({ preventScroll: true });
-    const end = input.value.length;
-    input.setSelectionRange(end, end);
   });
 }
 
@@ -84,7 +84,7 @@ export function isAgentThreadCardInteractiveTarget(target: Element): boolean {
     [
       "button",
       "a[href]",
-      "textarea",
+      '[contenteditable="true"]',
       "input",
       "select",
       '[role="button"]',

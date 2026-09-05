@@ -6,7 +6,7 @@
 //! `agent-access-changed` 事件, 其它窗口 React 树收到后从�?盘重�?load�?
 use crate::events as dispatcher;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 
 use crate::lock_utils::{read_lock, write_lock};
@@ -146,6 +146,30 @@ fn create_notebook_registry(
     memo_file: &MemoFile,
 ) -> Result<NotebookConfig, String> {
     create_notebook_registry_with_id(name, path, icon, None, memo_file)
+}
+
+fn default_notebook_path(name: &str) -> Result<PathBuf, String> {
+    let safe_name: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
+    let safe_name = safe_name.trim().trim_matches('.');
+    if safe_name.is_empty() {
+        return Err("INVALID_NAME".to_string());
+    }
+    let documents = dirs::document_dir()
+        .or_else(|| dirs::home_dir().map(|home| home.join("Documents")))
+        .ok_or_else(|| "DOCUMENTS_DIR_UNAVAILABLE".to_string())?;
+    let path = documents.join("flowix").join(safe_name);
+    std::fs::create_dir_all(&path).map_err(|error| format!("PATH_CREATE_FAILED: {error}"))?;
+    Ok(path)
 }
 
 fn create_notebook_registry_with_id(
@@ -346,7 +370,7 @@ pub fn get_notebooks(state: State<AppState>) -> Vec<NotebookListItem> {
 #[tauri::command]
 pub fn create_notebook(
     name: String,
-    path: String,
+    path: Option<String>,
     icon: Option<String>,
     state: State<AppState>,
     app: AppHandle,
@@ -355,10 +379,20 @@ pub fn create_notebook(
     if trimmed_name.is_empty() {
         return Err("INVALID_NAME".to_string());
     }
-    let trimmed_path = path.trim();
-    if trimmed_path.is_empty() {
-        return Err("INVALID_PATH".to_string());
-    }
+    let default_path;
+    let trimmed_path = match path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => path,
+        None => {
+            default_path = default_notebook_path(trimmed_name)?;
+            default_path
+                .to_str()
+                .ok_or_else(|| "PATH_INVALID_UTF8".to_string())?
+        }
+    };
     let has_bookmark_access = state
         .security_bookmarks
         .start_accessing_for_path(Path::new(trimmed_path));
@@ -682,8 +716,12 @@ mod tests {
         fs::write(&file_path, "# not a notebook directory").expect("write file");
 
         assert!(!notebook_path_missing(root.to_str().expect("utf8 root")));
-        assert!(notebook_path_missing(missing_path.to_str().expect("utf8 missing path")));
-        assert!(notebook_path_missing(file_path.to_str().expect("utf8 file path")));
+        assert!(notebook_path_missing(
+            missing_path.to_str().expect("utf8 missing path")
+        ));
+        assert!(notebook_path_missing(
+            file_path.to_str().expect("utf8 file path")
+        ));
         assert!(notebook_path_missing("  "));
     }
 

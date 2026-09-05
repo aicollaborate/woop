@@ -23,9 +23,12 @@ const PLUGIN_ARTIFACT_RENDERERS = new Set<PluginArtifactRendererId>([
   'text',
 ]);
 
-function readArtifactRenderer(value: unknown): PluginArtifactRendererId | null {
-  if (!value || typeof value !== 'object') return null;
-  const renderer = (value as Record<string, unknown>).renderer;
+export function normalizePluginArtifactRenderer(value: unknown): PluginArtifactRendererId | null {
+  const renderer = typeof value === 'string'
+    ? value
+    : value && typeof value === 'object'
+      ? (value as Record<string, unknown>).renderer
+      : null;
   if (typeof renderer !== 'string') return null;
   return PLUGIN_ARTIFACT_RENDERERS.has(renderer as PluginArtifactRendererId)
     ? renderer as PluginArtifactRendererId
@@ -41,6 +44,6 @@ export function getPluginNoteInfo(memo: MemoItem | null | undefined): PluginNote
   return {
     noteType,
     pluginId,
-    renderer: readArtifactRenderer(memo.properties?.flowix_artifact),
+    renderer: normalizePluginArtifactRenderer(memo.properties?.flowix_artifact),
   };
 }

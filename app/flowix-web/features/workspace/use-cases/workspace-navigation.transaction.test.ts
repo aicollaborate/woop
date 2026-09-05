@@ -69,11 +69,13 @@ vi.mock('@platform/tauri/client', () => ({
   notebooks: { setCurrent: mocks.setCurrentNotebook },
 }));
 
-import { useWorkspaceStore } from '../store/workspace-store';
-import { useFourthColumnStore } from '../store/fourth-column-store';
+import { useWorkColumnStore } from '../store/work-column-store';
+import { useBrowserColumnStore } from '../store/browser-column-store';
 import { useWorkspaceFocusStore } from '../store/workspace-focus-store';
 import {
+  closeArtifactTarget,
   dismissNavigationFailure,
+  openArtifactTarget,
   openExternalTarget,
   openMemoTarget,
   reconcileDeletedNotebook,
@@ -86,7 +88,7 @@ function memo(id: string) {
 }
 
 function resetWorkspace() {
-  useWorkspaceStore.setState({
+  useWorkColumnStore.setState({
     navigation: {
       phase: 'idle',
       requestId: 0,
@@ -102,7 +104,7 @@ function resetWorkspace() {
 describe('workspace navigation transaction', () => {
   beforeEach(() => {
     resetWorkspace();
-    useFourthColumnStore.getState().reset();
+    useBrowserColumnStore.getState().reset();
     mocks.memoState.selectedMemo = { id: 'old' };
     mocks.memoState.selectedMemoId = 'old';
     mocks.memoState.selectedNotebook = null;
@@ -128,8 +130,8 @@ describe('workspace navigation transaction', () => {
     mocks.memoState.loadMemos.mockResolvedValue(undefined);
   });
 
-  it('activates a matching fourth-column memo without opening it in the third column', async () => {
-    useFourthColumnStore.getState().openTab({
+  it('activates a matching browser-column memo without opening it in the third column', async () => {
+    useBrowserColumnStore.getState().openTab({
       id: 'memo:existing',
       title: 'Existing',
       icon: null,
@@ -149,11 +151,11 @@ describe('workspace navigation transaction', () => {
     });
 
     expect(mocks.openMemoDocument).not.toHaveBeenCalled();
-    expect(useFourthColumnStore.getState()).toMatchObject({
+    expect(useBrowserColumnStore.getState()).toMatchObject({
       visible: true,
       activeTabId: 'memo:existing',
     });
-    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('fourth-column');
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
   });
 
   it('rolls back memo selection and retains the previous target on failure', async () => {
@@ -167,7 +169,7 @@ describe('workspace navigation transaction', () => {
     })).rejects.toBe(failure);
 
     expect(mocks.memoState.selectedMemo?.id).toBe('old');
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'failed',
       pendingTarget: { kind: 'memo', memoId: 'new' },
       previousTarget: { kind: 'empty' },
@@ -196,7 +198,7 @@ describe('workspace navigation transaction', () => {
 
     await retryLastNavigation();
 
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'committed',
       target: { kind: 'memo', memoId: 'retry-me', transitionId: 2 },
       pendingTarget: null,
@@ -233,7 +235,7 @@ describe('workspace navigation transaction', () => {
     pending[1].resolve();
     await Promise.all([first, second]);
 
-    expect(useWorkspaceStore.getState().navigation.target).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation.target).toMatchObject({
       kind: 'memo',
       memoId: 'second',
       transitionId: 2,
@@ -300,7 +302,7 @@ describe('workspace navigation transaction', () => {
     resolveFirstMetadataLoad?.();
     await first;
 
-    expect(useWorkspaceStore.getState().navigation.target).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation.target).toMatchObject({
       kind: 'memo',
       memoId: 'second',
       transitionId: 2,
@@ -318,7 +320,7 @@ describe('workspace navigation transaction', () => {
     })).rejects.toThrow('external unavailable');
 
     expect(mocks.memoState.selectedMemo?.id).toBe('old');
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'failed',
       pendingTarget: {
         kind: 'external',
@@ -362,7 +364,7 @@ describe('workspace navigation transaction', () => {
     finishRollback?.();
 
     expect(await first).toBe(failure);
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'committed',
       target: { kind: 'memo', memoId: 'second' },
     });
@@ -382,7 +384,7 @@ describe('workspace navigation transaction', () => {
     dismissNavigationFailure();
 
     await expect(retryLastNavigation()).rejects.toThrow('No retryable navigation is available');
-    expect(useWorkspaceStore.getState().navigation.failure).toBeNull();
+    expect(useWorkColumnStore.getState().navigation.failure).toBeNull();
   });
 
   it('rolls back notebook selection when switching the backend notebook fails', async () => {
@@ -409,11 +411,57 @@ describe('workspace navigation transaction', () => {
     await expect(selectNotebook(nextNotebook)).rejects.toThrow('notebook unavailable');
 
     expect(mocks.memoState.selectedNotebook).toEqual(previousNotebook);
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'failed',
       pendingTarget: { kind: 'empty' },
       failure: { message: 'notebook unavailable' },
     });
+  });
+
+  it('keeps the workColumn target while switching notebooks', async () => {
+    const previousNotebook = {
+      id: 'old-notebook',
+      name: 'Old notebook',
+      path: '/old',
+      createdAt: 0,
+      updatedAt: 0,
+      isDefault: false,
+    };
+    const nextNotebook = {
+      id: 'next-notebook',
+      name: 'Next notebook',
+      path: '/next',
+      createdAt: 0,
+      updatedAt: 0,
+      isDefault: false,
+    };
+    const target = {
+      kind: 'memo' as const,
+      memoId: 'memo-1',
+      path: '/old/memo-1.md',
+      notebookId: previousNotebook.id,
+      notebookPath: previousNotebook.path,
+      transitionId: 7,
+    };
+    useWorkColumnStore.setState({
+      navigation: {
+        phase: 'committed',
+        requestId: 4,
+        target,
+        pendingTarget: null,
+        previousTarget: null,
+        failure: null,
+        retryToken: null,
+      },
+    });
+    mocks.memoState.selectedNotebook = previousNotebook;
+    mocks.memoState.selectedNotebookId = previousNotebook.id;
+
+    await selectNotebook(nextNotebook);
+
+    expect(useWorkColumnStore.getState().navigation.target).toEqual(target);
+    expect(useWorkColumnStore.getState().navigation.pendingTarget).toBeNull();
+    expect(mocks.memoState.selectedNotebook).toEqual(nextNotebook);
   });
 
   it('reconciles selection through the facade after deleting the active notebook', async () => {
@@ -443,9 +491,60 @@ describe('workspace navigation transaction', () => {
     expect(mocks.memoState.loadMemos).toHaveBeenCalledWith({
       notebookId: remainingNotebook.id,
     });
-    expect(useWorkspaceStore.getState().navigation).toMatchObject({
+    expect(useWorkColumnStore.getState().navigation).toMatchObject({
       phase: 'idle',
       target: { kind: 'empty' },
+    });
+  });
+
+  it('commits an artifact target without giving it a DocumentStore session', async () => {
+    await openArtifactTarget({
+      pointerMemoId: 'pointer-1',
+      notebookId: 'notebook-a',
+      notebookPath: '/notes',
+      pluginId: 'mindmap',
+      renderer: 'markmap',
+    });
+
+    expect(mocks.clearDocument).not.toHaveBeenCalled();
+    expect(mocks.openMemoDocument).not.toHaveBeenCalled();
+    expect(useWorkColumnStore.getState().navigation.target).toEqual({
+      kind: 'artifact',
+      pointerMemoId: 'pointer-1',
+      notebookId: 'notebook-a',
+      notebookPath: '/notes',
+      pluginId: 'mindmap',
+      renderer: 'markmap',
+    });
+  });
+
+  it('closes an artifact target back to the underlying document target', async () => {
+    const underlyingTarget = {
+      kind: 'memo' as const,
+      memoId: 'memo-underneath',
+      path: '/notes/underneath.md',
+      notebookId: 'notebook-a',
+      notebookPath: '/notes',
+      transitionId: 3,
+    };
+    useWorkColumnStore.setState({
+      navigation: {
+        phase: 'committed',
+        requestId: 3,
+        target: underlyingTarget,
+        pendingTarget: null,
+        previousTarget: null,
+        failure: null,
+        retryToken: null,
+      },
+    });
+    await openArtifactTarget({ pointerMemoId: 'pointer-2', renderer: 'text' });
+
+    expect(closeArtifactTarget()).toBe(true);
+    expect(useWorkColumnStore.getState().navigation.target).toMatchObject({
+      kind: 'memo',
+      memoId: 'memo-underneath',
+      path: '/notes/underneath.md',
     });
   });
 });

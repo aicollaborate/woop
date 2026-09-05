@@ -9,9 +9,10 @@ import {
 } from '@phosphor-icons/react';
 import type { MemoItem } from '@/types/memo-item';
 import { useMemoStore } from '@features/memo';
-import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
+import { openArtifactTarget } from '@features/workspace/use-cases/workspace-navigation';
 import { plugins, type PluginDescriptor } from '@platform/tauri/client';
 import { AgentPluginWorkbench } from './plugin-agent-workbench';
+import { getPluginNoteInfo } from './plugin-note';
 
 interface PluginWorkbenchProps {
   plugin: PluginDescriptor;
@@ -113,7 +114,16 @@ function ArtifactToolWorkbench({
                 <button
                   key={note.id}
                   className="flex w-full items-center gap-3 border-b border-[var(--divider)] px-4 py-3 text-left last:border-b-0 hover:bg-[var(--muted)]"
-                  onClick={() => { void openMemoSession(note, selectedNotebook); }}
+                  onClick={() => {
+                    const noteInfo = getPluginNoteInfo(note);
+                    void openArtifactTarget({
+                      pointerMemoId: note.id,
+                      notebook: selectedNotebook,
+                      pluginId: noteInfo?.pluginId ?? plugin.manifest.id,
+                      renderer: noteInfo?.renderer ?? null,
+                      memo: note,
+                    });
+                  }}
                 >
                   <TreeStructureIcon size={16} weight="bold" className="shrink-0 text-[var(--muted-foreground)]" />
                   <span className="min-w-0 flex-1 truncate text-sm text-[var(--foreground)]">{note.filename.replace(/\.md$/i, '')}</span>

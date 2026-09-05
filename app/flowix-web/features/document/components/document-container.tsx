@@ -35,6 +35,7 @@ import { isEditableTextFilePath, isImageFilePath } from '@features/editor/code-f
 import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
 import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
+import { removeBrowserColumnTabsByMemoId } from '@features/workspace/use-cases/browser-column-navigation';
 
 export function DocumentContainer({
   filePath,
@@ -50,6 +51,7 @@ export function DocumentContainer({
   onToolbarCollapsedChange,
   documentSessionMode = 'main',
   readOnly = false,
+  onFlushReady,
 }: DocumentContainerProps) {
   const { t } = useI18n();
   const documentInstanceKey = useMemo(
@@ -96,6 +98,7 @@ export function DocumentContainer({
 
   const {
     clearSaveTimer,
+    flushDocument,
     handleChange,
     saveDoc,
   } = useDocumentAutosave({
@@ -109,6 +112,11 @@ export function DocumentContainer({
     flushPendingContent: flushPendingEditorChanges,
     isolatedSession: documentSessionMode === 'isolated',
   });
+
+  useEffect(() => {
+    onFlushReady?.(flushDocument);
+    return () => onFlushReady?.(null);
+  }, [flushDocument, onFlushReady]);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [propertiesContentSnapshot, setPropertiesContentSnapshot] = useState<string | null>(null);
 
@@ -318,6 +326,7 @@ export function DocumentContainer({
       try {
         const success = await useMemoStore.getState().deleteMemo(memoId);
         if (success) {
+          removeBrowserColumnTabsByMemoId(memoId);
           if (documentSessionMode !== 'isolated') await clearWorkspaceDocument();
           toast.success(t('document.ghost.removed'));
         } else {

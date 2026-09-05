@@ -16,7 +16,6 @@ import {
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 import { getAgentType } from '@/lib/agent-types';
-import { ShortcutKbd } from '@shared/ui/shortcut-kbd';
 import {
   OverlayScrollbar,
   type OverlayScrollbarHandle,
@@ -68,8 +67,7 @@ export interface SlashMenuItem {
   section?: string;
   /** i18n key ── 渲染时按当前语言翻译。 */
   sectionKey?: I18nKey;
-  /** 快捷键 actionId ── 给出时, 右侧用 ShortcutKbd 渲染 (覆盖 description)。
-   *  description + shortcut 同时缺省时, 右侧不渲染, label 独占宽度。 */
+  /** 快捷键 actionId ── 保留给命令元数据与过滤逻辑, 紧凑菜单不展示副标题。 */
   shortcut?: string;
   /** Keep bundled agent entries visible while their runtime status is settling. */
   alwaysVisible?: boolean;
@@ -322,7 +320,7 @@ export const SlashMenuDropdown = ({
 
   return (
     <div
-      className="slash-menu-dropdown"
+      className={`slash-menu-dropdown${scrollSelectedItem ? ' is-keyboard-navigation' : ''}`}
       role="listbox"
       aria-label={translate(language, 'editor.slash.ariaLabel')}
     >
@@ -357,8 +355,8 @@ export const SlashMenuDropdown = ({
               const agentTypeKey = item.id.slice('agent-thread-'.length) as AgentTypeKey;
               const renderIcon = typeof Icon === 'string'
                 ? isAgentThreadItem ? (
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] p-0.5">
-                      <AgentIcon typeKey={agentTypeKey} alt="" className="h-full w-full object-contain" />
+                    <span className="slash-menu-agent-icon flex h-5 w-5 shrink-0 items-center justify-center rounded-full p-0.5">
+                      <AgentIcon typeKey={agentTypeKey} alt="" className="h-[15px] w-[15px] object-contain" />
                     </span>
                   ) : (
                     <img
@@ -371,8 +369,6 @@ export const SlashMenuDropdown = ({
                 : (
                     <Icon className="h-4 w-4" weight="bold" aria-hidden="true" />
                   );
-              const showDescription = !isAgentThreadItem && (item.shortcut || item.description);
-
               return (
                 <Fragment key={item.id}>
                   {showSectionHeader && (
@@ -399,13 +395,6 @@ export const SlashMenuDropdown = ({
                   >
                     {renderIcon}
                     <span className="slash-menu-item-label">{displayLabel}</span>
-                    {showDescription && (
-                      <span className="slash-menu-item-description">
-                        {item.shortcut
-                          ? <ShortcutKbd actionId={item.shortcut} />
-                          : item.description}
-                      </span>
-                    )}
                   </button>
                 </Fragment>
               );

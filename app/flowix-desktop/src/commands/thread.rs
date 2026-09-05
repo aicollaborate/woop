@@ -4,7 +4,8 @@ use tauri::State;
 
 use crate::agent_history::ExternalRuntimeKind;
 use crate::agent_session::{
-    AgentConversationInstance, ChatMessage, ThreadInfo, ThreadMessagesPage,
+    AgentConversationCursor, AgentConversationInstance, AgentConversationTypeCount, ChatMessage,
+    ThreadInfo, ThreadMessagesPage,
     UpsertAgentConversationInstance,
 };
 use crate::agent_types::default_agent_id;
@@ -35,6 +36,7 @@ pub struct DeepSeekHarnessForkResponse {
 pub struct AgentConversationPage {
     pub items: Vec<AgentConversationInstance>,
     pub has_more: bool,
+    pub next_cursor: Option<AgentConversationCursor>,
 }
 
 #[tauri::command]
@@ -129,20 +131,32 @@ pub async fn agent_conversation_list(
 
 #[tauri::command]
 pub async fn agent_conversation_list_page(
-    offset: usize,
+    notebook_id: Option<String>,
+    agent_type: Option<String>,
+    cursor: Option<AgentConversationCursor>,
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<AgentConversationPage, String> {
     let page_size = limit.clamp(1, 100);
+    let notebook_id = notebook_id.filter(|value| !value.trim().is_empty());
+    let agent_type = agent_type
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
     let manager = &state.thread_manager;
     let items = manager
-        .list_agent_conversation_instances_page(offset, page_size + 1)
+        .list_agent_conversation_instances_page(notebook_id, agent_type, cursor, page_size + 1)
         .await
         .map_err(|e| e.to_string())?;
     let has_more = items.len() > page_size;
+    let returned_items: Vec<_> = items.into_iter().take(page_size).collect();
+    let next_cursor = returned_items.last().map(|item| AgentConversationCursor {
+        updated_at: item.updated_at,
+        instance_id: item.instance_id.clone(),
+    });
     Ok(AgentConversationPage {
-        items: items.into_iter().take(page_size).collect(),
+        items: returned_items,
         has_more,
+        next_cursor,
     })
 }
 
@@ -154,6 +168,18 @@ pub async fn agent_conversation_count_by_notebook(
     let manager = &state.thread_manager;
     manager
         .count_agent_conversation_instances_by_notebook(notebook_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn agent_conversation_type_counts_by_notebook(
+    notebook_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AgentConversationTypeCount>, String> {
+    state
+        .thread_manager
+        .list_agent_conversation_type_counts_by_notebook(notebook_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -647,7 +673,10 @@ async fn apply_thread_lifecycle(
     thread_id: &str,
     action: crate::agent_lifecycle::LifecycleAction,
 ) -> Result<bool, String> {
-    let stopped = state.external_runtimes.stop_chat_all(thread_id, app_handle).await;
+    let stopped = state
+        .external_runtimes
+        .stop_chat_all(thread_id, app_handle)
+        .await;
     if stopped {
         tracing::info!(
             "[Thread] stopped running agent before {:?} of thread {thread_id}",

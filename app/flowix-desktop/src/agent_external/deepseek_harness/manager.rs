@@ -24,8 +24,8 @@ use super::transport::DshClient;
 use super::AGENT_TYPE;
 use crate::agent_external::lifecycle::ExternalLifecycleEmitter;
 use crate::agent_external::{
-    emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata, AgentChunkMetadata,
-    persist_external_chunk_for_thread_with_metadata, StreamingEmitBuffer,
+    emit_chunk_with_run_id, emit_chunk_with_run_id_and_metadata,
+    persist_external_chunk_for_thread_with_metadata, AgentChunkMetadata, StreamingEmitBuffer,
     STREAM_FLUSH_INTERVAL, USER_STOPPED_REASON,
 };
 use crate::agent_session::{ChatMessage, ThreadManager, ThreadMessagesPage};
@@ -206,14 +206,23 @@ impl DeepSeekHarnessManager {
             // into a canonical DSH session before continuing it.
             let request = if let Some(existing_session_id) = session_id {
                 protocol::app_thread_resume_request(
-                    host.next_request_id(), existing_session_id, &runtime_config.provider,
-                    &runtime_config.model, agent_preset, permission,
+                    host.next_request_id(),
+                    existing_session_id,
+                    &runtime_config.provider,
+                    &runtime_config.model,
+                    agent_preset,
+                    permission,
                 )
             } else {
                 protocol::app_thread_start_request(
-                    host.next_request_id(), thread_id, &cwd.to_string_lossy(),
+                    host.next_request_id(),
+                    thread_id,
+                    &cwd.to_string_lossy(),
                     &message.workspace_paths_for_runtime(AGENT_TYPE),
-                    &runtime_config.provider, &runtime_config.model, agent_preset, permission,
+                    &runtime_config.provider,
+                    &runtime_config.model,
+                    agent_preset,
+                    permission,
                 )
             };
             let operation = if session_id.is_some() {
@@ -311,8 +320,15 @@ impl DeepSeekHarnessManager {
         // run back to `assistant:stream` in the live IPC payload.
         for (chunk, metadata) in buffered {
             persist_external_chunk_for_thread_with_metadata(
-                &self.thread_manager, AGENT_TYPE, chunk.thread_id(), &chunk, run_id, None, &metadata,
-            ).await;
+                &self.thread_manager,
+                AGENT_TYPE,
+                chunk.thread_id(),
+                &chunk,
+                run_id,
+                None,
+                &metadata,
+            )
+            .await;
             emit_chunk_with_run_id_and_metadata(app, &chunk, AGENT_TYPE, run_id, &metadata);
         }
     }
@@ -325,8 +341,15 @@ impl DeepSeekHarnessManager {
         run_id: &str,
     ) {
         persist_external_chunk_for_thread_with_metadata(
-            &self.thread_manager, AGENT_TYPE, chunk.thread_id(), chunk, run_id, None, metadata,
-        ).await;
+            &self.thread_manager,
+            AGENT_TYPE,
+            chunk.thread_id(),
+            chunk,
+            run_id,
+            None,
+            metadata,
+        )
+        .await;
         emit_chunk_with_run_id_and_metadata(app, chunk, AGENT_TYPE, run_id, metadata);
     }
 
@@ -368,7 +391,9 @@ impl DeepSeekHarnessManager {
         let threads = value
             .get("threads")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| "invalid DSH thread/list response: threads is not an array".to_string())?;
+            .ok_or_else(|| {
+                "invalid DSH thread/list response: threads is not an array".to_string()
+            })?;
         // Rehydrate Flowix's product index from the provider-owned list. This
         // is essential after a UI/Rust restart: the DSH log survives in
         // DSH_HOME, while the in-memory registry does not.
@@ -652,7 +677,11 @@ impl DeepSeekHarnessManager {
         let host = self.hosts.shared(&self.host_launch_spec()).await?;
         let result = host
             .request(protocol::app_session_history_request(
-                host.next_request_id(), &session_id, before_sequence, snapshot_sequence, limit,
+                host.next_request_id(),
+                &session_id,
+                before_sequence,
+                snapshot_sequence,
+                limit,
             ))
             .await;
         let page: DshSessionHistoryPage = result.and_then(|value| {
@@ -678,12 +707,10 @@ impl DeepSeekHarnessManager {
         };
         let run_id = target.run_id;
         let stream_end_emitted = target.stream_end_emitted;
-        let hosts = self
-            .hosts
-            .cancellation_targets()
-            .await;
+        let hosts = self.hosts.cancellation_targets().await;
         for host in hosts {
-            let request = protocol::app_turn_interrupt_request(host.next_request_id(), &target.session_id);
+            let request =
+                protocol::app_turn_interrupt_request(host.next_request_id(), &target.session_id);
             let _ = host.request(request).await;
         }
         if self.runs.remove_if_matches(thread_id, &run_id).await {
@@ -725,8 +752,7 @@ impl DeepSeekHarnessManager {
             "jsonrpc": "2.0", "id": host.next_request_id(),
             "method": "flowix/jobs/list", "params": { "threadId": session_id }
         });
-        host.request(jobs_request)
-        .await
+        host.request(jobs_request).await
     }
 
     pub async fn stop_all(&self) -> usize {

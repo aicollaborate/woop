@@ -140,3 +140,10 @@ export function createRoleOptionsLoadingIcon(): SVGSVGElement {
     ICON_LOADER_PATH,
   );
 }
+
+export function createToolPreviewLoadingIcon(): SVGSVGElement {
+  return appendStrokePath(
+    createSvg("0 0 24 24", "agent-thread-card__tool-preview-loading-icon"),
+    ICON_LOADER_PATH,
+  );
+}

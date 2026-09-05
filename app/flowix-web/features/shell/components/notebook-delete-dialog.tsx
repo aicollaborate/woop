@@ -32,7 +32,7 @@ export function NotebookDeleteDialog({ target, onCancel, onConfirm }: NotebookDe
         if (!open) onCancel();
       }}
     >
-      <DialogContent>
+      <DialogContent className="rounded-xl border border-[var(--border-popup)] bg-[var(--card)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
         <DialogHeader>
           <DialogTitle>{t('notebook.delete.title')}</DialogTitle>
           <DialogDescription>{t('notebook.delete.description')}</DialogDescription>

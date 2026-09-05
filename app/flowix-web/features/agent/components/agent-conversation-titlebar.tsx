@@ -23,7 +23,7 @@ import { computeAgentThreadCardBadgeData } from '@features/agent/thread-card/run
 import { getResolvedExternalSessionId } from '@features/agent/services/external-agent-runtime-service';
 import { createRuntimeInfoRequester } from '@features/agent/thread-card/runtime/runtime-info-requester';
 import { toast } from '@/lib/toast';
-import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
+import { WorkColumnTitlebarShell } from '@features/shell/components/work-column-titlebar-shell';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -175,7 +175,7 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
           setIsEditingTitle(true);
         }}>{presentation.title}</div>
       )}
-      <div className={`ml-auto flex shrink-0 items-center ${isWindows ? 'gap-2 pr-4' : 'gap-3 pr-4'}`}>
+      <div className={`ml-auto flex shrink-0 items-center ${isWindows ? 'gap-2 pr-3' : 'gap-3 pr-3'}`}>
         {hasSourceDocument ? <>
             <button type="button" onClick={onOpenSourceDocument} aria-label={t('document.agent.viewInNote')}
               title={t('document.agent.viewInNote')} className={`${actionButtonClass} [-webkit-app-region:no-drag]`}>
@@ -193,16 +193,16 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
               <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-[216px] space-y-0.5 px-1 py-1.5">
+          <DropdownMenuContent align="end" className="w-[162px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
             {canArchive ? (
               <DropdownMenuItem onClick={onArchive}
-                className="justify-start gap-2 rounded-md px-2 py-1.5 text-left text-[var(--foreground)] hover:bg-[var(--muted)]">
+                className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left text-[var(--foreground)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
                 <ArchiveIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span>{t('document.agent.archiveConversation')}</span>
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onClick={onDelete}
-              className="justify-start gap-2 rounded-md px-2 py-1.5 text-left text-[var(--destructive)] hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
+              className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left text-[var(--destructive)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
               <TrashSimpleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{t('document.agent.deleteConversation')}</span>
             </DropdownMenuItem>
@@ -243,7 +243,7 @@ export function AgentConversationTitlebar({
     'flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-35';
 
   return (
-    <ThirdColumnTitlebarShell
+    <WorkColumnTitlebarShell
       isWindows={isWindows}
       showTrafficLightSpacer={isMiddleColumnCollapsed && !isSidebarVisible}
       className="agent-conversation-titlebar"
@@ -293,6 +293,6 @@ export function AgentConversationTitlebar({
       <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch">
         <AgentConversationHeader instanceId={instanceId} />
       </div>
-    </ThirdColumnTitlebarShell>
+    </WorkColumnTitlebarShell>
   );
 }

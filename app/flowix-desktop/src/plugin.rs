@@ -649,53 +649,6 @@ fn migrated_output_path(plugin_id: &str, relative: &str) -> Option<String> {
         .map(|suffix| format!(".flowix/plugin/{plugin_id}/{suffix}"))
 }
 
-fn is_safe_artifact_relative_path(path: &Path) -> bool {
-    !path.is_absolute()
-        && !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|component| !matches!(component, std::path::Component::ParentDir))
-}
-
-fn artifact_path_candidates(
-    notebook: &Path,
-    plugin: &PluginDescriptor,
-    relative: &str,
-) -> Result<Vec<PathBuf>, String> {
-    let raw = Path::new(relative);
-    if !is_safe_artifact_relative_path(raw) {
-        return Err("plugin note artifact path is invalid".to_string());
-    }
-    let expected_extension = plugin.definition.extension.trim_start_matches('.');
-    if raw.extension().and_then(|value| value.to_str()) != Some(expected_extension) {
-        return Err("plugin note artifact path is invalid".to_string());
-    }
-
-    let mut relatives = vec![relative.to_string()];
-    if let Some(mapped) = migrated_output_path(&plugin.manifest.id, relative) {
-        // A conflict may leave both copies in place. In that case the pointer
-        // still names the legacy file and must not silently switch to the
-        // different-content destination.
-        relatives.push(mapped);
-    }
-
-    let output_dir = notebook.join(&plugin.definition.output_directory);
-    let legacy_dir = notebook.join(".plugin-output").join(&plugin.manifest.id);
-    let mut candidates = Vec::new();
-    for relative in relatives {
-        let candidate = notebook.join(&relative);
-        let in_new_dir = path_is_inside(&candidate, &output_dir);
-        let in_legacy_dir = path_is_inside(&candidate, &legacy_dir);
-        if !in_new_dir && !in_legacy_dir {
-            return Err("plugin note artifact path is outside plugin output".to_string());
-        }
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    }
-    Ok(candidates)
-}
-
 /// Repair pointer notes after a legacy artifact has moved. This is separate
 /// from the filesystem migration so a failed note write never causes an
 /// already-moved artifact to be removed.
@@ -726,7 +679,8 @@ pub fn repair_notebook_artifact_pointers(
         if metadata.flowix_note_type != plugin.definition.note_type {
             continue;
         }
-        let Some(mapped) = migrated_output_path(&plugin.manifest.id, &metadata.flowix_artifact.path)
+        let Some(mapped) =
+            migrated_output_path(&plugin.manifest.id, &metadata.flowix_artifact.path)
         else {
             continue;
         };
@@ -811,119 +765,6 @@ pub fn list_notes(
         })
         .collect();
     Ok(notes)
-}
-
-/// Remove the real artifact associated with a pointer memo. Non-plugin memos
-/// are intentionally a no-op. Validation is performed before deletion so a
-/// malformed or tampered pointer cannot turn ordinary memo deletion into an
-/// arbitrary filesystem delete.
-pub fn artifact_path_for_note(
-    memo_id: &str,
-    memo_file: &Arc<std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
-) -> Result<Option<PathBuf>, String> {
-    let memo_file_guard = read_lock(memo_file, "memo_file");
-    let Some((_, raw_note)) = memo_file_guard.read_memo_with_body_global(memo_id) else {
-        return Ok(None);
-    };
-    let notebook = memo_file_guard
-        .resolve_memo_location(memo_id)
-        .map_err(|error| format!("resolve plugin note for deletion: {error}"))?
-        .map(|location| PathBuf::from(location.notebook.path));
-    drop(memo_file_guard);
-    let Some(notebook) = notebook else {
-        return Ok(None);
-    };
-    let Some(yaml) = raw_note
-        .strip_prefix("---\n")
-        .and_then(|value| value.split_once("\n---"))
-        .map(|(yaml, _)| yaml)
-    else {
-        return Ok(None);
-    };
-    let Ok(metadata) = serde_yaml::from_str::<PluginNoteFrontmatter>(yaml) else {
-        return Ok(None);
-    };
-    // If the plugin was uninstalled, deleting the pointer note should still
-    // be possible. We cannot safely resolve or remove its artifact without
-    // the manifest, so leave that artifact for explicit cleanup and remove
-    // only the user-facing note.
-    let Ok(plugin) = get_plugin(&metadata.flowix_plugin) else {
-        return Ok(None);
-    };
-    if metadata.flowix_note_type != plugin.definition.note_type {
-        return Err("plugin note type does not match plugin manifest".to_string());
-    }
-    let candidates = artifact_path_candidates(&notebook, &plugin, &metadata.flowix_artifact.path)?;
-    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
-        return Ok(Some(path.clone()));
-    }
-    // Return the new location for idempotent cleanup if the artifact is
-    // already gone. The caller's remove operation will be a no-op.
-    Ok(candidates.into_iter().next())
-}
-
-pub fn remove_artifact_path(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        fs::remove_file(path).map_err(|error| format!("remove plugin artifact: {error}"))?;
-    }
-    Ok(())
-}
-
-pub fn resolve_note(
-    memo_id: &str,
-    memo_file: &Arc<std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
-) -> Result<PluginArtifact, String> {
-    let memo_file_guard = read_lock(memo_file, "memo_file");
-    let (entry, raw_note) = memo_file_guard
-        .read_memo_with_body_global(memo_id)
-        .ok_or_else(|| format!("plugin note not found: {memo_id}"))?;
-    drop(memo_file_guard);
-    let metadata_yaml = raw_note
-        .strip_prefix("---\n")
-        .and_then(|value| value.split_once("\n---"))
-        .map(|(yaml, _)| yaml)
-        .ok_or_else(|| "plugin note is missing YAML frontmatter".to_string())?;
-    let metadata: PluginNoteFrontmatter = serde_yaml::from_str(metadata_yaml)
-        .map_err(|error| format!("invalid plugin note metadata: {error}"))?;
-    let plugin = get_plugin(&metadata.flowix_plugin)?;
-    if metadata.flowix_note_type != plugin.definition.note_type {
-        return Err("plugin note type does not match plugin manifest".to_string());
-    }
-    let notebook = plugin_notebook_for_memo(memo_id, memo_file)?;
-    let candidates = artifact_path_candidates(&notebook, &plugin, &metadata.flowix_artifact.path)?;
-    let artifact_path = candidates
-        .iter()
-        .find(|path| path.is_file())
-        .cloned()
-        .ok_or_else(|| "read plugin artifact: file not found".to_string())?;
-    let raw_artifact = fs::read_to_string(&artifact_path)
-        .map_err(|error| format!("read plugin artifact: {error}"))?;
-    let parsed = parse_plugin_output(&plugin, &raw_artifact)?;
-    if format!("sha256:{}", sha256_hex(&parsed.content)) != metadata.flowix_artifact.content_hash {
-        return Err("plugin artifact content hash does not match plugin note".to_string());
-    }
-    Ok(PluginArtifact {
-        plugin_id: plugin.manifest.id,
-        path: artifact_path.to_string_lossy().to_string(),
-        name: parsed.title,
-        created_at: metadata.flowix_artifact.created_at,
-        format: plugin.manifest.output.format,
-        renderer: plugin.manifest.output.renderer,
-        content: Some(parsed.content),
-        note_id: Some(entry.id),
-    })
-}
-
-fn plugin_notebook_for_memo(
-    memo_id: &str,
-    memo_file: &Arc<std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
-) -> Result<PathBuf, String> {
-    let memo_file = read_lock(memo_file, "memo_file");
-    memo_file
-        .resolve_memo_location(memo_id)
-        .map_err(|error| format!("resolve plugin note: {error}"))?
-        .map(|location| PathBuf::from(location.notebook.path))
-        .ok_or_else(|| format!("plugin note not found: {memo_id}"))
 }
 
 #[cfg(test)]

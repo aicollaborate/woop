@@ -38,6 +38,28 @@ export interface AgentModelConfig {
   name?: string;
 }
 
+export interface AgentConversationCursor {
+  updatedAt: number;
+  instanceId: string;
+}
+
+export interface AgentConversationListQuery {
+  notebookId: string | null;
+  agentType: AgentTypeKey | null;
+  cursor: AgentConversationCursor | null;
+}
+
+export interface AgentConversationListPage {
+  items: AgentConversationInstance[];
+  hasMore: boolean;
+  nextCursor: AgentConversationCursor | null;
+}
+
+export interface AgentConversationTypeCount {
+  agentType: string;
+  count: number;
+}
+
 // Result of a one-shot DeepSeek Harness probe.
 // Mirrors `connection_probe::TestConnectionResult` on the Rust side
 // (`#[serde(rename_all = "camelCase")]`):
@@ -186,9 +208,14 @@ export interface CodexRateLimitWindow {
   resetsAt?: number | null;
 }
 
+export interface CodexRateLimitResetCredits {
+  availableCount?: number | null;
+}
+
 export interface CodexRuntimeInfo {
   account?: { type?: string; email?: string | null; planType?: string } | null;
   rateLimits?: {
+    rateLimitResetCredits?: CodexRateLimitResetCredits | null;
     rateLimitsByLimitId?: Record<string, {
       limitName?: string | null;
       primary?: CodexRateLimitWindow | null;
@@ -274,10 +301,12 @@ export const agent = {
     }>('thread_get_page', { threadId, beforeSequence, limit }),
   listConversationInstances: () =>
     invoke<AgentConversationInstance[]>('agent_conversation_list'),
-  listConversationInstancesPage: (offset: number, limit: number) =>
-    invoke<{ items: AgentConversationInstance[]; hasMore: boolean }>('agent_conversation_list_page', { offset, limit }),
+  listConversationInstancesPage: (query: AgentConversationListQuery, limit: number) =>
+    invoke<AgentConversationListPage>('agent_conversation_list_page', { ...query, limit }),
   countConversationInstancesByNotebook: (notebookId: string | null) =>
     invoke<number>('agent_conversation_count_by_notebook', { notebookId }),
+  listConversationTypeCountsByNotebook: (notebookId: string | null) =>
+    invoke<AgentConversationTypeCount[]>('agent_conversation_type_counts_by_notebook', { notebookId }),
   getConversationInstance: (instanceId: string) =>
     invoke<AgentConversationInstance | null>('agent_conversation_get', {
       instanceId,

@@ -1,43 +1,53 @@
 import {
-  useFourthColumnStore,
-  type FourthColumnTarget,
-} from '@features/workspace/store/fourth-column-store';
+  useBrowserColumnStore,
+  type BrowserColumnTarget,
+} from '@features/workspace/store/browser-column-store';
 import {
-  workspaceContentIdentityKey,
-  type WorkspaceContentIdentity,
+  contentIdentityKey,
+  type ContentIdentity,
 } from '@features/workspace/store/workspace-content-identity';
-import type { WorkspaceTarget } from '@features/workspace/store/workspace-target';
+import type { WorkColumnTarget } from '@features/workspace/store/work-column-target';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
-import { getThirdColumnContentState } from '@features/workspace/store/third-column-content-state';
+import { getWorkColumnContentState } from '@features/workspace/store/work-column-content-state';
+import { activateBrowserColumnTab } from './browser-column-coordinator';
 
 export type WorkspaceContentLocation =
   | { host: 'main-third'; state: 'active' | 'pending' }
-  | { host: 'fourth-column'; tabId: string };
+  | { host: 'browser-column'; tabId: string };
 
-function workspaceTargetIdentity(target: WorkspaceTarget): WorkspaceContentIdentity | null {
+export function workColumnTargetIdentity(target: WorkColumnTarget): ContentIdentity | null {
   switch (target.kind) {
     case 'memo':
       return { kind: 'memo', memoId: target.memoId };
+    case 'artifact':
+      return { kind: 'artifact', pointerMemoId: target.pointerMemoId };
     case 'external':
       return { kind: 'external', path: target.path };
     case 'agent-conversation':
       return { kind: 'agent-conversation', instanceId: target.instanceId };
+    case 'web':
+      return { kind: 'web', url: target.url };
     default:
       return null;
   }
 }
 
-export function fourthColumnTargetIdentity(
-  target: FourthColumnTarget,
-): WorkspaceContentIdentity {
+export function browserColumnTargetIdentity(
+  target: BrowserColumnTarget,
+): ContentIdentity {
   switch (target.kind) {
     case 'memo':
       return { kind: 'memo', memoId: target.memoId };
-    case 'external_markdown':
-    case 'external_text':
+    case 'file':
       return { kind: 'external', path: target.filePath };
+    case 'file-browser':
+      return { kind: 'file-browser', folderPath: target.folderPath };
+    case 'web':
+      return { kind: 'web', url: target.url };
     case 'agent_conversation':
       return { kind: 'agent-conversation', instanceId: target.instanceId };
+    case 'artifact':
+      return { kind: 'artifact', pointerMemoId: target.pointerMemoId };
   }
 }
 
@@ -47,39 +57,72 @@ export function fourthColumnTargetIdentity(
  * columns; normal opens prevent that ambiguous state from being created.
  */
 export function activateExistingWorkspaceContent(
-  identity: WorkspaceContentIdentity,
+  identity: ContentIdentity,
 ): WorkspaceContentLocation | null {
-  const key = workspaceContentIdentityKey(identity);
+  const location = findExistingWorkspaceContent(identity);
+  if (!location) return null;
+
+  if (location.host === 'main-third') {
+    useWorkspaceFocusStore.getState().focusHost('main-third');
+  } else {
+    useBrowserColumnStore.getState().commitTab(location.tabId);
+  }
+  return location;
+}
+
+/**
+ * Async counterpart for navigation use-cases. Browser-column activation may
+ * unmount an isolated editor, so it goes through the shared flush barrier.
+ */
+export async function activateExistingWorkspaceContentAsync(
+  identity: ContentIdentity,
+): Promise<WorkspaceContentLocation | null> {
+  const location = findExistingWorkspaceContent(identity);
+  if (!location) return null;
+
+  if (location.host === 'main-third') {
+    useWorkspaceFocusStore.getState().focusHost('main-third');
+    return location;
+  }
+
+  const activated = await activateBrowserColumnTab(location.tabId);
+  if (activated === null) {
+    throw new Error('BrowserColumn navigation cancelled because saving did not complete');
+  }
+  return activated ? location : null;
+}
+
+/** Read the existing location without changing focus or active tab. */
+export function findExistingWorkspaceContent(
+  identity: ContentIdentity,
+): WorkspaceContentLocation | null {
+  const key = contentIdentityKey(identity);
   if (!key) return null;
 
-  const thirdColumn = getThirdColumnContentState();
-  const pendingIdentity = thirdColumn.status === 'transitioning'
-    ? workspaceTargetIdentity(thirdColumn.to)
+  const workColumn = getWorkColumnContentState();
+  const pendingIdentity = workColumn.status === 'transitioning'
+    ? workColumnTargetIdentity(workColumn.to)
     : null;
-  if (pendingIdentity && workspaceContentIdentityKey(pendingIdentity) === key) {
-    useWorkspaceFocusStore.getState().focusHost('main-third');
+  if (pendingIdentity && contentIdentityKey(pendingIdentity) === key) {
     return { host: 'main-third', state: 'pending' };
   }
 
-  const thirdTarget = thirdColumn.status === 'empty'
+  const workTarget = workColumn.status === 'empty'
     ? null
-    : thirdColumn.status === 'transitioning'
-      ? thirdColumn.from
-      : thirdColumn.target;
-  const thirdIdentity = thirdTarget ? workspaceTargetIdentity(thirdTarget) : null;
-  if (thirdIdentity && workspaceContentIdentityKey(thirdIdentity) === key) {
-    useWorkspaceFocusStore.getState().focusHost('main-third');
+    : workColumn.status === 'transitioning'
+      ? workColumn.from
+      : workColumn.target;
+  const workIdentity = workTarget ? workColumnTargetIdentity(workTarget) : null;
+  if (workIdentity && contentIdentityKey(workIdentity) === key) {
     return { host: 'main-third', state: 'active' };
   }
 
-  const fourth = useFourthColumnStore.getState();
-  const matchingTabs = fourth.tabs.filter(
-    (tab) => workspaceContentIdentityKey(fourthColumnTargetIdentity(tab.target)) === key,
+  const browserColumn = useBrowserColumnStore.getState();
+  const matchingTabs = browserColumn.tabs.filter(
+    (tab) => contentIdentityKey(browserColumnTargetIdentity(tab.target)) === key,
   );
-  const tab = matchingTabs.find((candidate) => candidate.id === fourth.activeTabId)
+  const tab = matchingTabs.find((candidate) => candidate.id === browserColumn.activeTabId)
     ?? matchingTabs[0];
   if (!tab) return null;
-
-  fourth.commitTab(tab.id);
-  return { host: 'fourth-column', tabId: tab.id };
+  return { host: 'browser-column', tabId: tab.id };
 }

@@ -209,7 +209,10 @@ impl ExternalRuntimeRegistry {
         }
         // Test-only construction does not need direct Codex steering access.
         // `new` installs the concrete manager immediately afterwards.
-        Ok(Self { runtimes: registry, codex: None })
+        Ok(Self {
+            runtimes: registry,
+            codex: None,
+        })
     }
 
     pub async fn steer_codex(

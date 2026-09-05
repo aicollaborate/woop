@@ -43,7 +43,7 @@ export function TagMentionDropdown({
 
   return (
     <div
-      className="mention-note-dropdown tag-mention-dropdown"
+      className={`mention-note-dropdown tag-mention-dropdown${scrollSelectedItem ? ' is-keyboard-navigation' : ''}`}
       role="listbox"
       aria-label="Tags"
     >
@@ -96,11 +96,6 @@ export function TagMentionDropdown({
                   <span className="mention-tag-icon" aria-hidden="true" />
                   <TagMentionName name={item.name} />
                 </span>
-                {item.create && (
-                  <span className="mention-note-notebook">
-                    {t('editor.tagMention.create')}
-                  </span>
-                )}
               </button>
             );
           })

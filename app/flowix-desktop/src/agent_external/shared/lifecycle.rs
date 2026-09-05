@@ -34,7 +34,10 @@ impl AgentChunkMetadata {
             );
         }
         if let Some(client_id) = self.client_user_message_id.as_ref() {
-            object.insert("client_user_message_id".to_string(), Value::String(client_id.clone()));
+            object.insert(
+                "client_user_message_id".to_string(),
+                Value::String(client_id.clone()),
+            );
         }
         if let Some(message_phase) = self.message_phase {
             object.insert(

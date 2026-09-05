@@ -21,15 +21,18 @@ interface MemoListWindowOptions {
   selectedMemoId?: string;
   queryKey: string;
   loading: boolean;
+  hasMorePages: boolean;
+  loadingMorePages: boolean;
+  loadMorePages: () => void;
   scrollerRef: RefObject<HTMLDivElement | null>;
 }
 
 /**
  * Owns the memo list's incremental rendering window.
  *
- * This deliberately uses a growing prefix rather than a virtual list: memo
- * cards have dynamic heights and entrance animations, so keeping mounted rows
- * stable is more important than aggressively recycling DOM nodes.
+ * This owns only the growing data prefix. Dynamic-height virtualization is
+ * layered on top by MemoList, so pagination/loading behavior stays separate
+ * from row measurement and DOM recycling.
  */
 export function useMemoListWindow({
   memos,
@@ -38,6 +41,9 @@ export function useMemoListWindow({
   selectedMemoId,
   queryKey,
   loading,
+  hasMorePages,
+  loadingMorePages,
+  loadMorePages,
   scrollerRef,
 }: MemoListWindowOptions) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
@@ -89,27 +95,44 @@ export function useMemoListWindow({
 
   const onScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
-      if (!hasMoreMemos) return;
+      if (!hasMoreMemos && (!hasMorePages || loadingMorePages)) return;
       const scroller = event.currentTarget;
       const distanceToBottom =
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
       if (distanceToBottom <= LOAD_MORE_THRESHOLD_PX) {
-        loadMore();
+        if (hasMoreMemos) {
+          loadMore();
+        } else if (hasMorePages && !loadingMorePages) {
+          loadMorePages();
+        }
       }
     },
-    [hasMoreMemos, loadMore],
+    [hasMoreMemos, hasMorePages, loadMore, loadMorePages, loadingMorePages],
   );
 
   useLayoutEffect(() => {
-    if (loading || !hasMoreMemos) return;
+    if (loading || loadingMorePages) return;
     const scroller = scrollerRef.current;
     if (
       scroller &&
       scroller.scrollHeight - scroller.clientHeight <= LOAD_MORE_THRESHOLD_PX
     ) {
-      loadMore();
+      if (hasMoreMemos) {
+        loadMore();
+      } else if (hasMorePages) {
+        loadMorePages();
+      }
     }
-  }, [hasMoreMemos, loadMore, loading, normalizedVisibleCount, scrollerRef]);
+  }, [
+    hasMoreMemos,
+    hasMorePages,
+    loadMore,
+    loadMorePages,
+    loading,
+    loadingMorePages,
+    normalizedVisibleCount,
+    scrollerRef,
+  ]);
 
   return {
     filteredMemos,

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Hash, ListTodo, SlidersHorizontal } from 'lucide-react';
+import { PlugIcon } from '@phosphor-icons/react';
 import { Tooltip } from '@shared/ui/tooltip';
 import type { Notebook } from '@features/memo';
 import { NotebookSelectorPopup } from '@features/shell/components/status-bar/notebook-selector-popup';
@@ -27,10 +28,12 @@ interface StatusBarProps {
   onSelectNotebook: (notebook: Notebook) => void;
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
+  onCreateNotebook: () => void;
   todoCount: number;
   onOpenTodos: () => void;
   onToggleNoteNavigation: () => void;
   onOpenPreferences: () => void;
+  onOpenMcpPreferences: () => void;
   onOpenDshPreferences: () => void;
   onOpenAgentConversationView: () => void;
   dshDownload: DshDownloadProgress | null;
@@ -99,10 +102,12 @@ export function StatusBar({
   onSelectNotebook,
   onEditNotebook,
   onDeleteNotebook,
+  onCreateNotebook,
   todoCount,
   onOpenTodos,
   onToggleNoteNavigation,
   onOpenPreferences,
+  onOpenMcpPreferences,
   onOpenDshPreferences,
   onOpenAgentConversationView,
   dshDownload,
@@ -198,6 +203,7 @@ export function StatusBar({
           onSelect={onSelectNotebook}
           onEdit={onEditNotebook}
           onDelete={onDeleteNotebook}
+          onCreateNotebook={onCreateNotebook}
           onRefresh={setNotebooks}
           cloudSyncedNotebookIds={cloudSyncedNotebookIds}
           cloudSyncAvailable={cloudSyncAvailable}
@@ -261,6 +267,16 @@ export function StatusBar({
             {t('status.characters')} {charCount}
           </span>
         )}
+        <Tooltip content={t('preferences.tabs.mcp')} side="top">
+          <button
+            type="button"
+            onClick={onOpenMcpPreferences}
+            className="h-full flex items-center justify-center px-1.5 py-0 hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-label={t('preferences.tabs.mcp')}
+          >
+            <PlugIcon className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
         <Tooltip content={t('status.preferences')} shortcut="menu.open" side="top">
           <button
             type="button"

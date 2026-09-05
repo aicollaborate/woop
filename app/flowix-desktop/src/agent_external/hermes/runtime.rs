@@ -294,8 +294,7 @@ impl HermesAcpManager {
         before_sequence: Option<i64>,
         limit: i64,
     ) -> Result<crate::agent_session::ThreadMessagesPage, String> {
-        super::history::get_session_page(thread_id, before_sequence, limit)
-            .await
+        super::history::get_session_page(thread_id, before_sequence, limit).await
     }
 
     pub async fn chat_stream(
@@ -431,10 +430,7 @@ impl HermesAcpManager {
         app_handle: &tauri::AppHandle,
         idle_timeout_ms: i64,
     ) -> usize {
-        let finalized = self
-            .runs
-            .reap_inactive(idle_timeout_ms, "Hermes ACP")
-            .await;
+        let finalized = self.runs.reap_inactive(idle_timeout_ms, "Hermes ACP").await;
         if !finalized.is_empty() {
             let mut controls = self.controls.lock().await;
             for run in &finalized {

@@ -186,7 +186,7 @@ export function FormatSection({ settings, updateSettings }: FormatSectionProps) 
               {loadingFontId === currentFont?.id ? t('preferences.format.downloading') : fontLabel}
             </span>
           </SelectTrigger>
-          <SelectContent align="end" className="w-72">
+          <SelectContent align="end" className="flowix-preferences-select-content w-72">
             {FONT_FAMILY_OPTIONS.map((font) => (
               <SelectItem key={font.id} value={font.id}>
                 <span className="flex w-full items-center justify-between gap-3" style={{ fontFamily: font.value }}>

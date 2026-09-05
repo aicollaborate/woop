@@ -17,8 +17,14 @@ import {
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { CloudNotebook } from '@platform/tauri/client';
-import { ArrowLeft, Check, CloudDownload, Loader2 } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, CloudDownload, Loader2 } from 'lucide-react';
 import { useExperimentalMode } from '@platform/tauri/use-experimental-mode';
+import { useState } from 'react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@shared/ui/dropdown-menu';
 
 interface NotebookDialogsProps {
   createOpen: boolean;
@@ -69,8 +75,10 @@ function NotebookIconPicker({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-2">
-      <div className="text-xs font-medium text-[var(--muted-foreground)]">{t("notebook.iconLabel")}</div>
+    <div>
+      <div className="flex items-center gap-1.5 px-1.5 pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+        {t("notebook.iconLabel")}
+      </div>
       <div className="max-h-[162px] overflow-y-auto pr-1 [scrollbar-gutter:stable]">
         <div className="grid grid-cols-8 gap-1.5">
           <button
@@ -226,6 +234,7 @@ export function NotebookDialogs({
 }: NotebookDialogsProps) {
   const { t } = useI18n();
   const experimental = useExperimentalMode();
+  const [customPathOpen, setCustomPathOpen] = useState(false);
   return (
     <>
       <Dialog open={createOpen} onOpenChange={onCreateOpenChange}>
@@ -303,41 +312,83 @@ export function NotebookDialogs({
           ) : (
             <>
               <div className="mt-1 space-y-3">
-                <Input
-                  placeholder={t("notebook.create.namePlaceholder")}
-                  value={newNotebookName}
-                  onChange={(event) => onNewNotebookNameChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') onConfirmCreate();
-                  }}
-                  autoFocus
-                />
-                <NotebookIconPicker
-                  value={newNotebookIcon}
-                  notebookName={newNotebookName}
-                  onChange={onNewNotebookIconChange}
-                />
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
                   <Input
-                    placeholder={t("notebook.create.pathPlaceholder")}
-                    value={newNotebookPath}
-                    onChange={(event) => onNewNotebookPathChange(event.target.value)}
-                    onClick={() => {
-                      void onSelectDirectory();
+                    placeholder={t("notebook.create.namePlaceholder")}
+                    value={newNotebookName}
+                    onChange={(event) => onNewNotebookNameChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') onConfirmCreate();
                     }}
-                    className="flex-1 cursor-pointer"
-                    readOnly
+                    autoFocus
+                    className="min-w-0 flex-1"
                   />
-                  <Button
-                    variant="outline"
-                    className="h-8"
-                    onClick={() => {
-                      void onSelectDirectory();
-                    }}
-                  >
-                    {t("notebook.create.selectDirectory")}
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-1.5 hover:bg-[var(--muted)]"
+                        aria-label={t('notebook.iconLabel')}
+                        title={t('notebook.iconLabel')}
+                      >
+                        <NotebookIcon
+                          name={newNotebookName}
+                          icon={newNotebookIcon ?? undefined}
+                          className="h-6 w-6 rounded-md bg-[var(--muted)] text-[11px] font-semibold"
+                        />
+                        <ChevronDown className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      side="bottom"
+                      className="w-[318px] rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+                    >
+                      <NotebookIconPicker
+                        value={newNotebookIcon}
+                        notebookName={newNotebookName}
+                        onChange={onNewNotebookIconChange}
+                      />
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-left text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  onClick={() => setCustomPathOpen((open) => !open)}
+                  aria-expanded={customPathOpen}
+                >
+                  {t('notebook.create.customPath')}
+                  <ChevronDown
+                    className={cn(
+                      'h-3.5 w-3.5 transition-transform',
+                      customPathOpen && 'rotate-180',
+                    )}
+                  />
+                </button>
+                {customPathOpen && (
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder={t("notebook.create.pathPlaceholder")}
+                      value={newNotebookPath}
+                      onChange={(event) => onNewNotebookPathChange(event.target.value)}
+                      onClick={() => {
+                        void onSelectDirectory();
+                      }}
+                      className="flex-1 cursor-pointer"
+                      readOnly
+                    />
+                    <Button
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => {
+                        void onSelectDirectory();
+                      }}
+                    >
+                      {t("notebook.create.selectDirectory")}
+                    </Button>
+                  </div>
+                )}
               </div>
               <div className={cn(
                 'mt-4 flex items-center gap-2',
@@ -365,7 +416,7 @@ export function NotebookDialogs({
                     type="button"
                     onClick={onConfirmCreate}
                     className="h-8 px-3 text-sm rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
-                    disabled={!newNotebookName.trim() || !newNotebookPath.trim()}
+                    disabled={!newNotebookName.trim()}
                   >
                     {t("notebook.create.confirm")}
                   </button>

@@ -140,6 +140,26 @@ export interface PluginArtifact {
   noteId?: string | null;
 }
 
+/** Host-owned artifact session. Its content remains readable even when the
+ * producing plugin is unavailable. Plugin runtime state is intentionally not
+ * part of this model. */
+export interface ArtifactSession {
+  pointerMemoId: string;
+  pluginId: string;
+  pluginVersion: string;
+  path: string;
+  name: string;
+  createdAt: string;
+  format: string;
+  parser: string;
+  renderer: string;
+  content?: string | null;
+  noteId?: string | null;
+  status: 'ready' | 'unavailable' | 'invalid' | 'missing';
+  pluginAvailable: boolean;
+  error?: string | null;
+}
+
 export interface PluginRunStarted {
   runId: string;
   preparedPrompt: string;
@@ -177,6 +197,11 @@ export const plugins = {
     invoke<import('@/types/memo-item').MemoItem[]>('plugin_list_notes', { pluginId, notebookId }),
   resolveNote: (memoId: string) =>
     invoke<PluginArtifact>('plugin_resolve_note', { memoId }),
+};
+
+export const artifacts = {
+  resolve: (memoId: string) =>
+    invoke<ArtifactSession>('artifact_resolve', { memoId }),
 };
 
 // Agent

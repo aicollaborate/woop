@@ -3,7 +3,7 @@
  *
  * 本模块只负责把后端 `memo-event` Tauri 通道桥接到应用层 dispatcher，
  * 不注册任何窗口专属业务 handler。主窗口列表同步由
- * `app/main-window-effects.tsx` 注册，第四列复用同一 Webview 的 document
+ * `app/main-window-effects.tsx` 注册，浏览器列复用同一 Webview 的 document
  * session，因此不需要额外的跨窗口 adapter。
  *
  * 跟 `lib/event-dispatcher.ts` 的关系:
@@ -30,7 +30,7 @@ import type { MemoEvent } from '@/types/memo';
 
 /**
  * 全局 memoDispatcher 单例 (per-webview)。内容型 Webview 通过同一个事件
- * 桥接接收 payload，第四列与第三列共享这份 dispatcher。
+ * 桥接接收 payload，浏览器列与第三列共享这份 dispatcher。
  */
 export const memoDispatcher = new EventDispatcher<MemoEvent>();
 const logger = createLogger('memo-event');

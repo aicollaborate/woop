@@ -1,12 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { ArrowUp, Check, Loader2, Plug } from 'lucide-react';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
 import { MemoList } from '@features/memo/components/memo-list';
-import { FolderFileTree } from '@features/memo/components/folder-file-tree';
-import { AgentConversationList } from '@features/agent/components/agent-conversation-list';
 import { AgentConversationTitlebar } from '@features/agent/components/agent-conversation-titlebar';
 import { useMemoListHoverPreview } from '@features/memo/components/use-memo-list-hover-preview';
 import { MemoListTitlebarWin } from '@features/memo/components/memo-list-titlebar-win';
@@ -36,9 +34,9 @@ import { canonicalPath, getDocumentInstanceKey } from '@/lib/path';
 import { navigateDocumentHistory } from '@features/document/use-cases/document-navigation';
 import { StatusBar } from '@features/shell/components/status-bar/status-bar';
 import { NotebookDeleteDialog } from '@features/shell/components/notebook-delete-dialog';
+import { MemoListServicesHost } from '@features/memo/components/memo-list-services-host';
 import { MarkdownFileDropOverlay } from '@features/shell/components/drag-overlay/markdown-file-drop-overlay';
-import { FourthColumn } from '@features/shell/components/fourth-column';
-import { resolveFourthColumnLayout } from '@features/shell/hooks/fourth-column-layout';
+import { resolveBrowserColumnLayout } from '@features/shell/hooks/browser-column-layout';
 import { useDocumentCommands } from '@features/document/components/use-document-commands';
 import { useNotebookTodoCount } from '@features/memo/components/use-notebook-todo-count';
 import { useResizablePanels } from '@features/shell/hooks/use-resizable-panels';
@@ -54,21 +52,19 @@ import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { useCliLinkStatusStore } from '@features/preferences/store';
 import { useAppUpdater, type AppUpdaterState } from '@features/shell/hooks/use-app-updater';
-import { getPluginNoteInfo } from '@features/plugin';
 import { AgentIcon } from '@features/agent/components/agent-icon';
 import { FloatingPrompt, FloatingPromptStack } from '@features/shell/components/floating-prompt';
 import {
-  ThirdColumnSurfaceHost,
-  getThirdColumnSurfaceDefinition,
-  resolveWorkspaceSurface,
+  WorkColumnSurfaceHost,
+  getWorkColumnSurfaceDefinition,
+  resolveWorkColumnSurface,
   surfaceSupports,
 } from '@features/surface';
 import type { PluginDescriptor } from '@platform/tauri/client';
-import { closeAgentConversationDetail } from '@features/workspace/use-cases/agent-conversation-navigation';
-import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
+import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
+import type { WorkColumnTarget } from '@features/workspace/store/work-column-target';
 import {
   clearPluginWorkbenchTarget,
-  closePluginWorkbench,
   dismissNavigationFailure,
   flushWorkspaceDocument,
   openPluginWorkbench,
@@ -76,15 +72,30 @@ import {
   retryLastNavigation,
   selectNotebook,
 } from '@features/workspace/use-cases/workspace-navigation';
-import { useFourthColumnStore, FOURTH_COLUMN_MIN_WIDTH } from '@features/workspace/store/fourth-column-store';
+import { useBrowserColumnStore, BROWSER_COLUMN_MIN_WIDTH } from '@features/workspace/store/browser-column-store';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
 const NOTE_NAVIGATION_PANEL_WIDTH = 238;
 const NOTE_NAVIGATION_PANEL_MIN_WIDTH = 180;
 const NOTE_NAVIGATION_PANEL_MAX_WIDTH = 420;
-const DOCUMENT_PANEL_MIN_WIDTH = FOURTH_COLUMN_MIN_WIDTH;
+const DOCUMENT_PANEL_MIN_WIDTH = BROWSER_COLUMN_MIN_WIDTH;
 const PANEL_DIVIDER_WIDTH = 1;
 const logger = createLogger('main-layout');
+
+const BrowserColumn = lazy(() =>
+  import('@features/shell/components/browser-column').then((module) => ({
+    default: module.BrowserColumn,
+  })),
+);
+
+// The Memo list is the default navigation surface. Keep the Agent
+// conversation list out of the startup graph until the user switches to the
+// Agents filter; the module promise is shared and cached by React.lazy.
+const AgentConversationList = lazy(() =>
+  import('@features/agent/components/agent-conversation-list').then((module) => ({
+    default: module.AgentConversationList,
+  })),
+);
 
 const LOCAL_AGENT_INTRO_OPTIONS = [
   { key: 'codex', nameKey: 'agent.types.codex.name', icon: iconCodex },
@@ -106,11 +117,21 @@ function isWindowsPlatform(): boolean {
 
 function isDifferentHistoryTarget(
   entry: DocumentHistoryEntry,
+  currentWorkColumnTarget: WorkColumnTarget,
   activeMemoSession: MemoDocumentSession | null,
   currentDocumentSource: 'memo' | 'external' | null,
   currentDocumentPath: string | null,
   activeAgentConversationId: string | null,
 ): boolean {
+  if (currentWorkColumnTarget.kind === 'artifact') {
+    return entry.kind !== 'artifact'
+      || entry.pointerMemoId !== currentWorkColumnTarget.pointerMemoId;
+  }
+  if (entry.kind === 'artifact') return true;
+  if (currentWorkColumnTarget.kind === 'agent-conversation') {
+    return entry.kind !== 'agent-conversation'
+      || entry.instanceId !== currentWorkColumnTarget.instanceId;
+  }
   if (entry.kind === 'agent-conversation') {
     return entry.instanceId !== activeAgentConversationId;
   }
@@ -159,7 +180,6 @@ export function MainLayout() {
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const activePluginId = useMemoStore((s) => s.activePluginId);
-  const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const activeSort = useMemoStore((s) => s.activeSort);
   const isAgentConversationView = activeFilter === 'agents';
   const [dshDownload, setDshDownload] = useState<DshDownloadProgress | null>(null);
@@ -239,9 +259,11 @@ export function MainLayout() {
       setToolbarCollapsed: s.setToolbarCollapsed,
     })),
   );
+  const navigationState = useWorkColumnStore((state) => state.navigation);
   const canNavigateBack = useDocumentHistoryStore((s) => (
     s.backStack.some((entry) => isDifferentHistoryTarget(
       entry,
+      navigationState.target,
       activeMemoSession,
       currentDocumentSource,
       currentDocumentPath,
@@ -251,6 +273,7 @@ export function MainLayout() {
   const canNavigateForward = useDocumentHistoryStore((s) => (
     s.forwardStack.some((entry) => isDifferentHistoryTarget(
       entry,
+      navigationState.target,
       activeMemoSession,
       currentDocumentSource,
       currentDocumentPath,
@@ -258,11 +281,11 @@ export function MainLayout() {
     ))
   ));
   const [notebookToDelete, setNotebookToDelete] = useState<Notebook | null>(null);
+  const [notebookCreateRequest, setNotebookCreateRequest] = useState(0);
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
-  const navigationState = useWorkspaceStore((state) => state.navigation);
-  const workspaceTarget = navigationState.target;
-  const activePlugin = workspaceTarget.kind === 'plugin-workbench'
-    ? workspaceTarget.plugin
+  const workColumnTarget = navigationState.target;
+  const activePlugin = workColumnTarget.kind === 'plugin-workbench'
+    ? workColumnTarget.plugin
     : null;
   const [noteNavigationPanelWidth, setNoteNavigationPanelWidth] = useState(NOTE_NAVIGATION_PANEL_WIDTH);
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
@@ -311,9 +334,9 @@ export function MainLayout() {
   const memoListMounted = useDeferredUnmount(memoListVisible);
   // tags 面板独立成最左列, 宽度走自己的 state。
   const noteNavigationColumnWidth = noteNavigationVisible ? noteNavigationPanelWidth : 0;
-  const fourthColumnVisible = useFourthColumnStore((state) => state.visible);
-  const fourthColumnSplitRatio = useFourthColumnStore((state) => state.splitRatio);
-  const setFourthColumnSplitRatio = useFourthColumnStore((state) => state.setSplitRatio);
+  const browserColumnVisible = useBrowserColumnStore((state) => state.visible);
+  const browserColumnSplitRatio = useBrowserColumnStore((state) => state.splitRatio);
+  const setBrowserColumnSplitRatio = useBrowserColumnStore((state) => state.setSplitRatio);
   const focusWorkspaceHost = useWorkspaceFocusStore((state) => state.focusHost);
   const focusedHostId = useWorkspaceFocusStore((state) => state.focusedHostId);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
@@ -333,21 +356,21 @@ export function MainLayout() {
     memoListVisible,
     noteNavigationWidth: noteNavigationColumnWidth,
   });
-  const fourthColumnLayout = resolveFourthColumnLayout({
+  const browserColumnLayout = resolveBrowserColumnLayout({
     viewportWidth,
     noteNavigationWidth: noteNavigationColumnWidth,
     memoListWidth,
     memoListVisible: !isMemoListHidden,
     dividerCount: (noteNavigationVisible ? 1 : 0) + (!isMemoListHidden ? 1 : 0),
-    splitRatio: fourthColumnSplitRatio,
+    splitRatio: browserColumnSplitRatio,
   });
-  const handleFourthColumnResize = useCallback((nextWidth: number) => {
-    if (!fourthColumnLayout.canSplit || fourthColumnLayout.availableDocumentWidth <= 0) return;
-    setFourthColumnSplitRatio(nextWidth / fourthColumnLayout.availableDocumentWidth);
+  const handleBrowserColumnResize = useCallback((nextWidth: number) => {
+    if (!browserColumnLayout.canSplit || browserColumnLayout.availableDocumentWidth <= 0) return;
+    setBrowserColumnSplitRatio(nextWidth / browserColumnLayout.availableDocumentWidth);
   }, [
-    fourthColumnLayout.availableDocumentWidth,
-    fourthColumnLayout.canSplit,
-    setFourthColumnSplitRatio,
+    browserColumnLayout.availableDocumentWidth,
+    browserColumnLayout.canSplit,
+    setBrowserColumnSplitRatio,
   ]);
   const {
     phase: memoListPreviewPhase,
@@ -363,13 +386,11 @@ export function MainLayout() {
   useEffect(() => {
     if (!isAgentConversationView && wasAgentConversationViewRef.current) {
       // The fullscreen view is only locked while browsing the dedicated
-      // conversation list. Leaving that mode restores the source document.
+      // conversation list. Leaving that mode exits fullscreen, but the
+      // independently selected work-column conversation remains mounted.
       window.dispatchEvent(new CustomEvent('flowix:agent-thread-card-request-fullscreen', {
         detail: { exitOthers: true, persist: false },
       }));
-    }
-    if (!isAgentConversationView && wasAgentConversationViewRef.current) {
-      closeAgentConversationDetail();
     }
     wasAgentConversationViewRef.current = isAgentConversationView;
   }, [isAgentConversationView]);
@@ -379,7 +400,7 @@ export function MainLayout() {
     // backend before publishing the new selection. Waiting here avoids a
     // duplicate IPC call and, more importantly, keeps the facade's rollback
     // decision authoritative.
-    if (useWorkspaceStore.getState().navigation.phase === 'loading') return;
+    if (useWorkColumnStore.getState().navigation.phase === 'loading') return;
     const notebookId = selectedNotebook?.id ?? null;
     if (syncedNotebookIdRef.current === notebookId) return;
     syncedNotebookIdRef.current = notebookId;
@@ -512,36 +533,10 @@ export function MainLayout() {
     }
   }, [closeMemoListAndNoteNavigation, memoListVisible, setMemoListVisible]);
 
-  // artifact-tool plugins are second-column filters and never own the current
-  // document. Legacy agent-markdown plugins still mount a third-column
-  // workbench, so only that branch clears its document when closed.
-  const closePluginSurface = useCallback(() => {
-    const hadWorkbench = activePlugin !== null;
-    if (!hadWorkbench) {
-      setActivePluginId(null);
-      return;
-    }
-    void closePluginWorkbench().catch((error) => {
-      logger.warn('clear plugin document failed', { error });
-    });
-  }, [activePlugin, setActivePluginId]);
-
-  useEffect(() => {
-    if (!activePlugin) return;
-    // An explicit close/switch is already being handled by the coordinator.
-    // In particular, a save refusal enters `error` while keeping the old
-    // target visible; retrying from this reconciliation effect would create a
-    // tight loop and hide the recoverable error.
-    if (navigationState.phase !== 'committed') return;
-    if (activeFilter === 'all' && activePluginId === activePlugin.manifest.id) return;
-    closePluginSurface();
-  }, [activeFilter, activePlugin, activePluginId, closePluginSurface, navigationState.phase]);
-
   const currentMemo = currentDocumentPath && currentDocumentSource === 'memo' && activeMemoSession
     ? memos.find((memo) => memo.id === activeMemoSession.memoId)
       ?? (selectedMemo?.id === activeMemoSession.memoId ? selectedMemo : null)
     : null;
-  const currentPluginNote = getPluginNoteInfo(currentMemo);
   const isExternalDocument = currentDocumentSource === 'external';
   const currentDocumentInstanceKey =
     currentDocumentSource === 'memo' && activeMemoSession
@@ -597,7 +592,6 @@ export function MainLayout() {
 
   const handleOpenTodos = useCallback(async () => {
     const nextFilter = activeFilter === 'todos' ? 'all' : 'todos';
-    closePluginSurface();
     setMemoListVisible(true);
     setActiveFilter(nextFilter);
     await loadMemos({
@@ -605,23 +599,22 @@ export function MainLayout() {
       filter: nextFilter,
       sort: activeSort,
     });
-  }, [activeFilter, activeSort, closePluginSurface, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
+  }, [activeFilter, activeSort, loadMemos, selectedNotebook?.id, setActiveFilter, setMemoListVisible]);
 
   // 状态栏 Agents 星标: 打开中间列展示 AgentConversationList,
   // 已在 agents 视图则 no-op, 不再回退。
   const handleOpenAgentConversationView = useCallback(() => {
     if (isAgentConversationView) return;
-    closePluginSurface();
     setActiveFilter('agents');
     setMemoListVisible(true);
-  }, [closePluginSurface, isAgentConversationView, setActiveFilter, setMemoListVisible]);
+  }, [isAgentConversationView, setActiveFilter, setMemoListVisible]);
 
   const handleOpenPlugin = useCallback(async (plugin: PluginDescriptor) => {
     if (plugin.manifest.kind === 'artifact-tool') {
       // Mindmap and other artifact tools behave like list filters: update the
-      // second column only and preserve the currently open third-column
+      // second column only and preserve the currently open work-column
       // document until the user selects an artifact from the list.
-      if (workspaceTarget.kind === 'plugin-workbench') {
+      if (workColumnTarget.kind === 'plugin-workbench') {
         clearPluginWorkbenchTarget();
       }
       setActiveFilter('all');
@@ -640,7 +633,7 @@ export function MainLayout() {
       return;
     }
     setMemoListVisible(true);
-  }, [setActiveFilter, setActivePluginId, setMemoListVisible, workspaceTarget.kind]);
+  }, [setActiveFilter, setActivePluginId, setMemoListVisible, workColumnTarget.kind]);
 
   const handleNavigateBack = useCallback(() => {
     void navigateDocumentHistory('back');
@@ -661,6 +654,10 @@ export function MainLayout() {
     },
     [selectedNotebook?.id, triggerRefresh]
   );
+
+  const handleCreateNotebook = useCallback(() => {
+    setNotebookCreateRequest((request) => request + 1);
+  }, []);
 
   const handleEditNotebook = useCallback(
     (notebook: Notebook) => {
@@ -710,10 +707,9 @@ export function MainLayout() {
     }
   }, [notebookToDelete, selectedNotebook?.id, triggerRefresh]);
 
-  // Document titlebar's more → delete menu: hand off to MemoList, which owns
-  // the delete-memo confirmation dialog. We use a custom event (same pattern
-  // as the notebook edit dialog) so MainLayout doesn't need to lift MemoList's
-  // state up.
+  // Document titlebar's more → delete menu: hand off to the application-level
+  // MemoListServicesHost through a custom event. MainLayout stays independent
+  // from the dialog state and MemoList remains a visual list only.
   const handleRequestDeleteMemo = useCallback(() => {
     if (!currentMemo) return;
     window.dispatchEvent(
@@ -728,7 +724,7 @@ export function MainLayout() {
     );
   }, [currentMemo]);
 
-  const thirdColumnDocument = currentDocumentPath
+  const workColumnDocument = currentDocumentPath
     ? {
         identity: activeMemoSession
           ? {
@@ -766,17 +762,11 @@ export function MainLayout() {
             },
           },
         },
-        artifact: currentPluginNote && activeMemoSession
-          ? {
-              memoId: activeMemoSession.memoId,
-              transitionId: activeMemoSession.transitionId,
-            }
-          : undefined,
       }
     : null;
-  const thirdColumnSurface = resolveWorkspaceSurface({
+  const workColumnSurface = resolveWorkColumnSurface({
     navigation: navigationState,
-    document: thirdColumnDocument,
+    document: workColumnDocument,
     pluginWorkbench: activePlugin
       ? {
           plugin: activePlugin,
@@ -787,12 +777,16 @@ export function MainLayout() {
       : null,
     emptyMessage: t('shell.emptyDocument'),
   });
-  const thirdColumnSurfaceDefinition = getThirdColumnSurfaceDefinition(thirdColumnSurface);
-  const isAgentConversationDetail = thirdColumnSurface.kind === 'agent-conversation';
+  const workColumnSurfaceDefinition = getWorkColumnSurfaceDefinition(workColumnSurface);
+  const isAgentConversationDetail = workColumnSurface.kind === 'agent-conversation';
+  const isEditableDocumentSurface = workColumnSurface.kind === 'markdown';
   const documentTitlebarProps = {
     document: {
-      currentMemo,
-      externalFilePath: isExternalDocument ? currentDocumentPath : null,
+      // An artifact is allowed to sit above an existing editable session.
+      // Do not expose that underlying memo's actions in the artifact chrome;
+      // the workColumn target, not the DocumentStore session, owns the view.
+      currentMemo: isEditableDocumentSurface ? currentMemo : null,
+      externalFilePath: isEditableDocumentSurface && isExternalDocument ? currentDocumentPath : null,
     },
     sidebar: {
       hidden: isMemoListHidden,
@@ -808,12 +802,12 @@ export function MainLayout() {
       onNavigateForward: handleNavigateForward,
     },
     contentCapabilities: {
-      search: surfaceSupports(thirdColumnSurface, 'search'),
-      properties: surfaceSupports(thirdColumnSurface, 'properties'),
-      copyFullText: surfaceSupports(thirdColumnSurface, 'copy-content'),
-      exportContent: surfaceSupports(thirdColumnSurface, 'export-content'),
-      saveAsTemplate: surfaceSupports(thirdColumnSurface, 'save-template'),
-      versionHistory: surfaceSupports(thirdColumnSurface, 'version-history'),
+      search: surfaceSupports(workColumnSurface, 'search'),
+      properties: surfaceSupports(workColumnSurface, 'properties'),
+      copyFullText: surfaceSupports(workColumnSurface, 'copy-content'),
+      exportContent: surfaceSupports(workColumnSurface, 'export-content'),
+      saveAsTemplate: surfaceSupports(workColumnSurface, 'save-template'),
+      versionHistory: surfaceSupports(workColumnSurface, 'version-history'),
     },
     actions: {
       onOpenSearch: () => setIsSearchPanelOpen(true),
@@ -861,11 +855,11 @@ export function MainLayout() {
                   onSelectNotebook={handleSelectNotebook}
                   onEditNotebook={handleEditNotebook}
                   onDeleteNotebook={handleDeleteNotebook}
+                  onCreateNotebook={handleCreateNotebook}
                   onTogglePanel={handleToggleNoteNavigation}
                   onOpenPreferences={(tab) => void windows.openPreferences(tab)}
                   activePluginId={activePluginId}
                   onOpenPlugin={handleOpenPlugin}
-                  onClosePlugin={closePluginSurface}
                 />
               )}
             </div>
@@ -931,7 +925,7 @@ export function MainLayout() {
                 }
                 className={
                   memoListPreviewVisible
-                      ? 'absolute z-[1200] flex w-[280px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] pt-2 shadow-lg ' +
+                      ? 'absolute z-[1200] mb-1 flex w-[280px] flex-col overflow-hidden rounded-xl border border-[var(--border-popup)] bg-[var(--card)] pt-3 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)] ' +
                       (memoListPreviewPhase === 'open'
                         ? 'flowix-hover-preview-enter'
                         : 'flowix-hover-preview-leave')
@@ -943,17 +937,18 @@ export function MainLayout() {
                   bottom: 0,
                 } : undefined}
               >
-                {/* 中间列三态: 资料文件树 → 对话列表 → memo 列表。
-                    activeFileBrowserPath 由侧栏资料行单击置位 (memo-store)。 */}
-                {activeFileBrowserPath ? (
-                  <FolderFileTree
-                    folderPath={activeFileBrowserPath}
-                    folderName={activeFileBrowserPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? activeFileBrowserPath}
-                  />
-                ) : isAgentConversationView ? (
-                  <AgentConversationList />
+                {isAgentConversationView ? (
+                  <Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
+                        {t('memo.navigation.loading')}
+                      </div>
+                    }
+                  >
+                    <AgentConversationList />
+                  </Suspense>
                 ) : (
-                  <MemoList />
+                  <MemoList navigationDrawerEnabled={!noteNavigationVisible} />
                 )}
               </div>
             </div>
@@ -968,10 +963,10 @@ export function MainLayout() {
           {/* Memo detail */}
             <div
               className="h-full min-w-0 relative -left-px flex flex-col"
-              style={fourthColumnVisible
+              style={browserColumnVisible
                 ? {
                     minWidth: DOCUMENT_PANEL_MIN_WIDTH,
-                    flex: `0 0 ${fourthColumnLayout.mainColumnWidth}px`,
+                    flex: `0 0 ${browserColumnLayout.mainColumnWidth}px`,
                   }
                 : { minWidth: DOCUMENT_PANEL_MIN_WIDTH, flex: 1 }}
               data-workspace-host="main-third"
@@ -997,9 +992,9 @@ export function MainLayout() {
               </button>
             )}
             {/* Fixed top navigation bar */}
-            {thirdColumnSurfaceDefinition.chrome === 'agent' && thirdColumnSurface.kind === 'agent-conversation' ? (
+            {workColumnSurfaceDefinition.chrome === 'agent' && workColumnSurface.kind === 'agent-conversation' ? (
               <AgentConversationTitlebar
-                instanceId={thirdColumnSurface.instanceId}
+                instanceId={workColumnSurface.instanceId}
                 isMiddleColumnCollapsed={isMemoListHidden}
                 isSidebarVisible={noteNavigationVisible}
                 onExpandSidebar={handleToggleMemoList}
@@ -1018,7 +1013,7 @@ export function MainLayout() {
 
             {/* Content area */}
             <div className="relative flex-1 min-w-0 overflow-hidden">
-              <ThirdColumnSurfaceHost surface={thirdColumnSurface} />
+              <WorkColumnSurfaceHost surface={workColumnSurface} />
               {(isDocumentTransitioning || navigationState.phase === 'loading') && (
                 <div
                   className="absolute inset-0 z-40 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_78%,transparent)] backdrop-blur-[1px]"
@@ -1033,11 +1028,15 @@ export function MainLayout() {
               )}
             </div>
           </div>
-          {fourthColumnVisible && (
-            <FourthColumn
-              width={fourthColumnLayout.fourthColumnWidth}
-              onResize={handleFourthColumnResize}
-            />
+          {browserColumnVisible && (
+            <Suspense fallback={null}>
+              <BrowserColumn
+                width={browserColumnLayout.browserColumnWidth}
+                onResize={handleBrowserColumnResize}
+                toolbarCollapsed={toolbarCollapsed}
+                onToolbarCollapsedChange={setToolbarCollapsed}
+              />
+            </Suspense>
           )}
           </div>
           {/* Status bar */}
@@ -1045,10 +1044,12 @@ export function MainLayout() {
             onSelectNotebook={handleSelectNotebook}
             onEditNotebook={handleEditNotebook}
             onDeleteNotebook={handleDeleteNotebook}
+            onCreateNotebook={handleCreateNotebook}
             todoCount={todoCount}
             onOpenTodos={handleOpenTodos}
             onToggleNoteNavigation={handleToggleNoteNavigation}
             onOpenPreferences={() => windows.openPreferences()}
+            onOpenMcpPreferences={() => windows.openPreferences('mcp')}
             onOpenDshPreferences={() => windows.openPreferences('dsh')}
             onOpenAgentConversationView={handleOpenAgentConversationView}
             dshDownload={dshDownload}
@@ -1061,6 +1062,11 @@ export function MainLayout() {
         target={notebookToDelete ? { id: notebookToDelete.id, name: notebookToDelete.name } : null}
         onCancel={() => setNotebookToDelete(null)}
         onConfirm={handleConfirmDeleteNotebook}
+      />
+
+      <MemoListServicesHost
+        notebookCreateRequest={notebookCreateRequest}
+        onRefresh={triggerRefresh}
       />
 
       <FloatingPromptStack>
@@ -1079,7 +1085,7 @@ export function MainLayout() {
 
 function NavigationFailurePrompt() {
   const { t } = useI18n();
-  const navigation = useWorkspaceStore((state) => state.navigation);
+  const navigation = useWorkColumnStore((state) => state.navigation);
   const [retrying, setRetrying] = useState(false);
   const failure = navigation.phase === 'failed' ? navigation.failure : null;
 

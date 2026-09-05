@@ -254,19 +254,23 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
             (state.threadProjections[threadId]?.messages.length ?? 0) === 0;
           const conversationTitle = normalizeThreadTitle(options?.conversationTitle);
           if (isFirstMessage && conversationTitle) {
+            const titleThreadId = resolveProductThreadId(
+              threadId,
+              state.sessionMeta.externalSessionResolutions,
+            );
             state.setSessionMeta((meta) => ({
               ...meta,
               // Thread cards and the conversation detail have their own
               // instance-backed titles. An instance-backed send must never
-              // overwrite the legacy, agent-type-wide title (otherwise card
-              // B can make card A display B's title during fallback/recovery).
-              // The legacy main conversation has no instanceId and keeps the
-              // existing current-title behavior.
+              // overwrite the runtime fallback title for another thread
+              // (otherwise card B can make card A display B's title during
+              // fallback/recovery). The main conversation has no instanceId
+              // and keeps the existing current-title behavior.
               ...(!options?.instanceId
                 ? {
                     currentThreadTitles: {
                       ...meta.currentThreadTitles,
-                      [type.key]: conversationTitle,
+                      [titleThreadId]: conversationTitle,
                     },
                   }
                 : {}),
@@ -570,9 +574,7 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
   ),
 );
 
-// --------------------------------------------------------------------
 // Selectors
-// --------------------------------------------------------------------
 
 export const selectThreadProjection = (
   state: AgentSessionStore,
@@ -583,12 +585,10 @@ export const selectSessionMeta = (state: AgentSessionStore) => state.sessionMeta
 
 export const selectConversationRegistry = (state: AgentSessionStore) =>
   state.conversationRegistry;
-
 installGlobalAgentSettingsSync((updater) =>
   useAgentSessionStore.getState().setSessionMeta(updater),
 );
 
-/** Window-local bridge that routes native agent chunks into the canonical store. */
 export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
   const stateBeforeDispatch = useAgentSessionStore.getState();
   useAgentSessionStore.getState().dispatchAgentChunk(chunk);

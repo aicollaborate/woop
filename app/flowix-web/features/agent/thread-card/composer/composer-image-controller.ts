@@ -46,7 +46,7 @@ function isImageAttachment(file: { mimeType: string }): boolean {
 }
 
 export interface ComposerImageControllerOptions {
-  input: HTMLTextAreaElement;
+  input: HTMLElement;
   container: HTMLElement;
   initialImages: AgentThreadCardInputImage[];
   onChange: (images: AgentThreadCardInputImage[]) => void;

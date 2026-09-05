@@ -365,7 +365,10 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
     // `params.event` envelope. Normalize the common streaming boundaries here
     // so the existing projector can consume both transports during rollout.
     if message.pointer("/params/event").is_none() {
-        let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let thread_id = delivery_thread_id.to_string();
         return match method {
             "item/agentMessage/delta" => message
@@ -374,11 +377,15 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                 .map(|text| text_chunk_value(text, thread_id, false))
                 .unwrap_or(AdaptedEvent::Ignore),
             "turn/completed" => {
-                let status = message.pointer("/params/turn/status").and_then(Value::as_str).unwrap_or("completed");
+                let status = message
+                    .pointer("/params/turn/status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("completed");
                 let reason = match status {
                     "completed" => "completed".to_string(),
                     "cancelled" => "cancelled".to_string(),
-                    failed => message.pointer("/params/turn/error/message")
+                    failed => message
+                        .pointer("/params/turn/error/message")
                         .and_then(Value::as_str)
                         .map(str::to_string)
                         .unwrap_or_else(|| failed.to_string()),
@@ -388,18 +395,33 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
             "item/started" | "item/completed" => {
                 let item = message.pointer("/params/item").unwrap_or(&Value::Null);
                 let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-                let id = item.get("callId").or_else(|| item.get("id")).and_then(Value::as_str);
-                let Some(id) = id else { return AdaptedEvent::Ignore; };
-                let name = item.get("toolName").and_then(Value::as_str).unwrap_or("tool").to_string();
+                let id = item
+                    .get("callId")
+                    .or_else(|| item.get("id"))
+                    .and_then(Value::as_str);
+                let Some(id) = id else {
+                    return AdaptedEvent::Ignore;
+                };
+                let name = item
+                    .get("toolName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool")
+                    .to_string();
                 match (method, item_type) {
                     ("item/started", "toolCall") => AdaptedEvent::Chunk(AgentChunk::ToolCall {
-                        thread_id, id: id.to_string(), name,
+                        thread_id,
+                        id: id.to_string(),
+                        name,
                         input: item.get("input").cloned().unwrap_or_else(|| json!({})),
                     }),
-                    ("item/completed", "toolResult") => AdaptedEvent::Chunk(AgentChunk::ToolResult {
-                        thread_id, id: id.to_string(), name,
-                        result: item.get("result").cloned().unwrap_or(Value::Null),
-                    }),
+                    ("item/completed", "toolResult") => {
+                        AdaptedEvent::Chunk(AgentChunk::ToolResult {
+                            thread_id,
+                            id: id.to_string(),
+                            name,
+                            result: item.get("result").cloned().unwrap_or(Value::Null),
+                        })
+                    }
                     _ => AdaptedEvent::Ignore,
                 }
             }
@@ -509,9 +531,15 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
 
 fn text_chunk_value(text: &str, thread_id: String, reasoning: bool) -> AdaptedEvent {
     if reasoning {
-        AdaptedEvent::Chunk(AgentChunk::Reasoning { thread_id, text: text.to_string() })
+        AdaptedEvent::Chunk(AgentChunk::Reasoning {
+            thread_id,
+            text: text.to_string(),
+        })
     } else {
-        AdaptedEvent::Chunk(AgentChunk::Text { thread_id, text: text.to_string() })
+        AdaptedEvent::Chunk(AgentChunk::Text {
+            thread_id,
+            text: text.to_string(),
+        })
     }
 }
 
@@ -720,23 +748,42 @@ mod tests {
     fn builds_direct_app_server_requests() {
         let initialize = app_initialize_request(1, "1.2.3");
         assert_eq!(initialize["method"], "initialize");
-        assert_eq!(initialize.pointer("/params/clientInfo/name").and_then(Value::as_str), Some("flowix-desktop"));
+        assert_eq!(
+            initialize
+                .pointer("/params/clientInfo/name")
+                .and_then(Value::as_str),
+            Some("flowix-desktop")
+        );
 
         let start = app_thread_start_request(
-            2, "thread-1", "/tmp", &["/tmp".to_string()], "deepseek",
-            "deepseek-chat", "standard", "read-only",
+            2,
+            "thread-1",
+            "/tmp",
+            &["/tmp".to_string()],
+            "deepseek",
+            "deepseek-chat",
+            "standard",
+            "read-only",
         );
         assert_eq!(start["method"], "thread/start");
         assert_eq!(start.pointer("/params/threadId"), None);
         assert_eq!(
-            start.pointer("/params/flowixThreadId").and_then(Value::as_str),
+            start
+                .pointer("/params/flowixThreadId")
+                .and_then(Value::as_str),
             Some("thread-1")
         );
-        assert_eq!(start.pointer("/params/provider").and_then(Value::as_str), Some("deepseek"));
+        assert_eq!(
+            start.pointer("/params/provider").and_then(Value::as_str),
+            Some("deepseek")
+        );
 
         let turn = app_turn_start_request(3, "thread-1", "hello");
         assert_eq!(turn["method"], "turn/start");
-        assert_eq!(turn.pointer("/params/input").and_then(Value::as_str), Some("hello"));
+        assert_eq!(
+            turn.pointer("/params/input").and_then(Value::as_str),
+            Some("hello")
+        );
 
         let interrupt = app_turn_interrupt_request(4, "thread-1");
         assert_eq!(interrupt["method"], "turn/interrupt");

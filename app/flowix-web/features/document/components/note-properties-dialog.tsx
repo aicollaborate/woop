@@ -276,7 +276,7 @@ export function NotePropertiesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[640px] max-w-[calc(100vw-32px)]">
+      <DialogContent className="w-[640px] max-w-[calc(100vw-32px)] rounded-xl border border-[var(--border-popup)] bg-[var(--card)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
         <DialogHeader>
           <DialogTitle>{t('document.properties.title')}</DialogTitle>
         </DialogHeader>

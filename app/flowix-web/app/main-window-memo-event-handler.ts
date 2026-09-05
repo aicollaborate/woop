@@ -4,14 +4,16 @@ import type { MemoItem } from '@/types/memo-item';
 export interface MainWindowMemoEventActions {
   getSelectedNotebookId: () => string | null;
   invalidateMentionCaches: () => void;
-  openMemoInFourthColumn: (memoId: string) => Promise<void>;
+  openMemoInBrowserColumn: (memoId: string) => Promise<void>;
   reportOpenFailure: (error: unknown) => void;
   handleMemoCreated: (memo: MemoItem) => void;
   handleMemoUpdated: (memo: MemoItem) => void;
   handleMemoDeleted: (memoId: string) => void;
+  removeBrowserColumnTabsByMemoId: (memoId: string) => void;
   handleTagsRenamed: (event: Extract<MemoEvent, { kind: 'tags_renamed' }>) => void;
   handleTagsDeleted: (event: Extract<MemoEvent, { kind: 'tags_deleted' }>) => void;
   replaceActiveMemoPath: (memoId: string, path: string) => void;
+  replaceBrowserColumnMemoPath: (memoId: string, path: string) => void;
   refreshSelectedNotebookMetadata: (event: MemoEvent) => void;
   refreshBackgroundTodoCount: (notebookId: string) => void;
 }
@@ -52,13 +54,22 @@ export function handleMainWindowMemoEvent(
 
   actions.invalidateMentionCaches();
 
+  // BrowserColumn tabs are independent of the currently selected notebook.
+  // Keep their identity/path projection in sync even for background notebook
+  // events, otherwise a later tab activation can resurrect the old filename.
+  if (event.kind === 'updated') {
+    actions.replaceBrowserColumnMemoPath(event.id, event.path);
+  } else if (event.kind === 'deleted') {
+    actions.removeBrowserColumnTabsByMemoId(event.id);
+  }
+
   const selectedNotebookId = actions.getSelectedNotebookId();
   const shouldOpenCreatedNote = event.kind === 'created' && (
     event.source === 'external_tool'
     || (!!selectedNotebookId && selectedNotebookId !== event.notebookId)
   );
   if (shouldOpenCreatedNote) {
-    void actions.openMemoInFourthColumn(event.memo.id).catch(actions.reportOpenFailure);
+    void actions.openMemoInBrowserColumn(event.memo.id).catch(actions.reportOpenFailure);
   }
 
   if (!selectedNotebookId || selectedNotebookId !== event.notebookId) {

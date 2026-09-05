@@ -257,8 +257,8 @@ defineAction({
 /**
  * 打开/关闭全局搜索 / 命令面板 (GlobalSearchCommand) — toggle 语义。
  *
- * 实现: dispatch `flowix:toggle-palette` 事件, memo-list.tsx 监听后
- * `setSearchCommandOpen(prev => !prev)`。沿用仓库里 `flowix:open-create-notebook` /
+ * 实现: dispatch `flowix:toggle-palette` 事件, MemoListServicesHost 监听后
+ * `setSearchOpen(prev => !prev)`。沿用仓库里 `flowix:open-create-notebook` /
  * `flowix:request-delete-memo` 的 CustomEvent 解耦模式 — 命令面板的
  * 状态留在 memo-list 内部, 任何位置都能触发。
  *
@@ -309,7 +309,7 @@ defineAction({
 /**
  * 新建 Memo。
  *
- * 实现: dispatch `flowix:create-memo` 事件, memo-list.tsx 监听后调用
+ * 实现: dispatch `flowix:create-memo` 事件, MemoListServicesHost 监听后调用
  * `handleCreateMemo` (含 `selectedNotebook` 守卫, 无当前 notebook 时静默
  * no-op, 不弹错)。这样:
  *  - 复用 memo-list 已有逻辑, 不复制代码
@@ -335,7 +335,7 @@ defineAction({
 /**
  * 新建笔记本。
  *
- * 实现: dispatch `flowix:open-create-notebook` 事件, memo-list.tsx 监听后打开
+ * 实现: dispatch `flowix:open-create-notebook` 事件, MemoListServicesHost 监听后打开
  * 已有的新建笔记本弹窗。和状态栏下拉里的"新建笔记本"按钮走同一条路径。
  */
 defineAction({

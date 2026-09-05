@@ -4,10 +4,11 @@ import { useMemoStore, type MemoItem, type Notebook } from '@features/memo';
 import { memos as memosClient } from '@platform/tauri/client';
 import { createLogger } from '@/lib/logger';
 import {
-  openExternalTarget,
+  openArtifactTarget,
   openMemoTarget,
 } from '@features/workspace/use-cases/workspace-navigation';
 import type { WorkspaceContentLocation } from '@features/workspace/use-cases/workspace-content-activation';
+import { getPluginNoteInfo } from '@features/plugin/plugin-note';
 
 const logger = createLogger('memo-session');
 
@@ -19,8 +20,19 @@ export async function openMemoSession(
   memo: MemoItem,
   notebook: Notebook | null,
 ): Promise<WorkspaceContentLocation | null> {
-  const fullPath = resolveMemoSessionPath(memo, notebook);
   try {
+    const pluginNote = getPluginNoteInfo(memo);
+    if (pluginNote) {
+      return await openArtifactTarget({
+        pointerMemoId: memo.id,
+        notebook,
+        pluginId: pluginNote.pluginId,
+        renderer: pluginNote.renderer,
+        memo,
+      });
+    }
+
+    const fullPath = resolveMemoSessionPath(memo, notebook);
     return await openMemoTarget({
       memoId: memo.id,
       path: fullPath,
@@ -36,7 +48,6 @@ export async function openMemoSession(
 }
 
 let restoringMemoId: string | null = null;
-let restoringExternalDocumentPath: string | null = null;
 
 /**
  * Restore the memo persisted by the workspace store exactly once at main
@@ -68,39 +79,5 @@ export async function restorePersistedMemoSession(): Promise<void> {
     await openMemoSession(memo, memoState.selectedNotebook);
   } finally {
     if (restoringMemoId === memoId) restoringMemoId = null;
-  }
-}
-
-/**
- * Restore the last document opened from the persisted资料文件树. The file
- * content is deliberately read by the normal document container from disk;
- * this function only restores the navigation target.
- */
-export async function restorePersistedExternalDocument(): Promise<void> {
-  const memoState = useMemoStore.getState();
-  const persisted = memoState.activeFileBrowserDocument;
-  if (!persisted || memoState.selectedMemoId) return;
-
-  const documentState = useDocumentStore.getState();
-  if (documentState.currentDocumentSource !== null) return;
-  if (restoringExternalDocumentPath === persisted.path) return;
-
-  restoringExternalDocumentPath = persisted.path;
-  try {
-    // activeFileBrowserPath is persisted separately because it controls the
-    // middle-column surface. Align it before opening the third-column file.
-    if (memoState.activeFileBrowserPath !== persisted.scopePath) {
-      memoState.setActiveFileBrowserPath(persisted.scopePath);
-    }
-    await openExternalTarget(persisted.path, {
-      history: 'skip',
-      scopePath: persisted.scopePath,
-    });
-  } catch (error) {
-    logger.warn('restore external document failed', { error, path: persisted.path });
-  } finally {
-    if (restoringExternalDocumentPath === persisted.path) {
-      restoringExternalDocumentPath = null;
-    }
   }
 }

@@ -17,6 +17,7 @@ export const agentClient = {
   getThreadPage: agent.getThreadPage,
   listConversationInstances: agent.listConversationInstances,
   listConversationInstancesPage: agent.listConversationInstancesPage,
+  listConversationTypeCountsByNotebook: agent.listConversationTypeCountsByNotebook,
   getConversationInstance: agent.getConversationInstance,
   findConversationByThread: agent.findConversationByThread,
   upsertConversationInstance: agent.upsertConversationInstance,

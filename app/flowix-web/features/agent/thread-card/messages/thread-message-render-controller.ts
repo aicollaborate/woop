@@ -10,6 +10,7 @@ import {
   isLastMessageInTurnAndAssistant,
   patchLastRenderedAgentMessage,
   shouldShowMessageActions,
+  updateRenderedAgentToolGroups,
   type AgentThreadCardMessageRenderContext,
 } from "@features/agent/thread-card/messages/message-list-renderer";
 import {
@@ -187,6 +188,16 @@ export class ThreadMessageRenderController {
         return;
       }
       recordMessageRenderPlan("noop", input.messages.length);
+      return;
+    }
+
+    if (
+      this.tryUpdateRenderedToolGroups(input.messages, {
+        isLoading: input.isLoading,
+        ...scrollState,
+      })
+    ) {
+      recordMessageRenderPlan("patch-last", input.messages.length);
       return;
     }
 
@@ -425,10 +436,10 @@ export class ThreadMessageRenderController {
 
   /**
    * The stream has no explicit batch marker. Treat rows appended between two
-   * snapshots as one batch: the first snapshot previews all current tools,
-   * and each later append previews only the newly appended suffix. A
-   * following assistant/reasoning/user row folds every preview back into the
-   * group's detail list.
+   * snapshots as one batch: a fresh controller starts by previewing only
+   * in-flight tool rows, and each later append previews only the newly
+   * appended suffix. A following assistant/reasoning/user row folds every
+   * preview back into the group's detail list.
    */
   private syncToolGroupPreviewBatches(
     messages: ThreadState["messages"],
@@ -452,7 +463,12 @@ export class ThreadMessageRenderController {
 
     const previousTools = this.toolGroupPreviousTools.get(group.id);
     const previousPreview = this.toolGroupPreviewBatches.get(group.id);
-    let preview = group.tools;
+    // A controller can be created after a background run has already
+    // accumulated completed tools. Those rows are history, not the current
+    // progress batch. `isLoading` is the only persisted per-tool signal that
+    // can identify the in-flight suffix when no previous render snapshot
+    // exists.
+    let preview = group.tools.filter((tool) => tool.isLoading);
     if (previousTools && group.tools.length >= previousTools.length) {
       const keepsPreviousPrefix = previousTools.every(
         (tool, index) => group.tools[index]?.id === tool.id,
@@ -605,6 +621,24 @@ export class ThreadMessageRenderController {
       context: this.createMessageRenderContext(messages, options.isLoading),
       afterRender: () => this.applyBodyScrollAfterRender(options),
       force,
+    });
+    if (!nextRefs) return false;
+    this.renderedMessageRefs = nextRefs;
+    return true;
+  }
+
+  private tryUpdateRenderedToolGroups(
+    messages: ThreadState["messages"],
+    options: MessageRenderScrollOptions,
+  ): boolean {
+    const nextRefs = updateRenderedAgentToolGroups(messages, {
+      body: this.body,
+      cache: {
+        list: this.renderedMessagesList,
+        refs: this.renderedMessageRefs,
+      },
+      context: this.createMessageRenderContext(messages, options.isLoading),
+      afterRender: () => this.applyBodyScrollAfterRender(options),
     });
     if (!nextRefs) return false;
     this.renderedMessageRefs = nextRefs;

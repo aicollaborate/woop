@@ -128,7 +128,8 @@ pub async fn steer_agent_stream(
     if message.agent_type.as_deref() != Some("codex") {
         return Err("turn/steer is only supported for Codex".to_string());
     }
-    state.external_runtimes
+    state
+        .external_runtimes
         .steer_codex(&threadId, message, clientUserMessageId, &app_handle)
         .await
 }

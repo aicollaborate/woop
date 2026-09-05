@@ -5,6 +5,13 @@ import type { AgentRoleMemoItem } from './general';
 
 export type FilterType = 'all' | 'todos' | 'agents' | 'favorited' | 'tagged' | 'thisWeek' | 'thisMonth';
 export type SortType = 'createdAt' | 'updatedAt';
+export type MemoColorFilter = 'any' | 'none' | MemoColor;
+
+export interface MemoListPage {
+  memos: MemoItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
 
 export type MatchField = 'title' | 'tag' | 'body';
 
@@ -60,11 +67,17 @@ export const memos = {
     filter?: FilterType;
     sort?: SortType;
     tagId?: string;
-  }) => invoke<{ memos: MemoItem[] }>('get_memos', {
+    color?: MemoColorFilter;
+    cursor?: string;
+    limit?: number;
+  }) => invoke<MemoListPage>('get_memos', {
     notebookId: params?.notebookId,
     filter: params?.filter || 'all',
     sort: params?.sort || 'createdAt',
     tagId: params?.tagId,
+    color: params?.color,
+    cursor: params?.cursor,
+    limit: params?.limit,
   }),
   searchMentionNotes: (query?: string, limit?: number) =>
     invoke<MentionNoteSearchItem[]>('search_mention_notes', {
@@ -232,7 +245,7 @@ export interface NotebookRecord {
 
 export const notebooks = {
   getAll: () => invoke<NotebookRecord[]>('get_notebooks'),
-  create: (name: string, path: string, icon?: string | null) =>
+  create: (name: string, path?: string, icon?: string | null) =>
     invoke<NotebookRecord>('create_notebook', { name, path, icon }),
   createFromCloud: (id: string, name: string, path: string, icon?: string | null) =>
     invoke<NotebookRecord>('create_notebook_from_cloud', { id, name, path, icon }),

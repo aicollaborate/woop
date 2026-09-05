@@ -1,17 +1,33 @@
 export {
-  ThirdColumnSurfaceHost,
-  getThirdColumnSurfaceDefinition,
+  WorkColumnSurfaceHost,
+  getWorkColumnSurfaceDefinition,
   surfaceSupports,
-  type ThirdColumnSurfaceDefinition,
+  type WorkColumnSurfaceDefinition,
 } from './registry';
-export { resolveWorkspaceSurface } from './resolver';
+export { resolveWorkColumnSurface } from './resolver';
 export type {
   DocumentSurfaceContext,
   DocumentSurfaceIdentity,
   PluginWorkbenchContext,
-  ResolveWorkspaceSurfaceInput,
-  ThirdColumnSurface,
-  ThirdColumnSurfaceCapability,
-  ThirdColumnSurfaceChrome,
-  ThirdColumnSurfaceKind,
+  ResolveWorkColumnSurfaceInput,
+  WorkColumnSurface,
+  WorkColumnSurfaceCapability,
+  WorkColumnSurfaceChrome,
+  WorkColumnSurfaceKind,
 } from './types';
+
+export {
+  BrowserColumnSurfaceHost,
+  browserColumnSurfaceRegistry,
+  browserColumnSurfaceSupports,
+  getBrowserColumnSurfaceDefinition,
+  resolveBrowserColumnSurface,
+} from './browser-column-registry';
+export type {
+  BrowserColumnSurface,
+  BrowserColumnSurfaceCapability,
+  BrowserColumnSurfaceDefinition,
+  BrowserColumnSurfaceKind,
+  BrowserColumnDocumentFlush,
+  BrowserColumnFlushRegistration,
+} from './browser-column-registry';

@@ -16,10 +16,10 @@
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 36px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--agent-foreground);
   cursor: pointer;
@@ -38,17 +38,20 @@
 }
 
 .agent-thread-card__composer-role-item:hover {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
 }
 
 /* 当前 Role ── 选中态直接走 muted 底色 (无需独立 highlight token),
  * hover 态保持一致 ── 让选中态在视觉上是"持续高亮", 而非"额外标记"。 */
 .agent-thread-card__composer-role-item--selected {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
 }
 
 .agent-thread-card__composer-role-item--selected:hover {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
 }
 
 /* 加载中 / 没有角色 ── 透明度 0.55 + not-allowed 光标 + hover 不显示背景 ──
@@ -166,6 +169,19 @@
   color: var(--foreground);
 }
 
+.agent-thread-card__composer-note-item:hover
+  > .agent-thread-card__composer-role-item-body
+  > .agent-thread-card__composer-role-item-name,
+.agent-thread-card__composer-note-item:focus-visible
+  > .agent-thread-card__composer-role-item-body
+  > .agent-thread-card__composer-role-item-name,
+.agent-thread-card__composer-note-item:hover
+  .agent-thread-card__composer-role-item-time,
+.agent-thread-card__composer-note-item:focus-visible
+  .agent-thread-card__composer-role-item-time {
+  color: var(--primary-foreground);
+}
+
 /* 笔记项右侧时间标签 ── 与对话列表 (agent-conversation-list.tsx) 右上
  * 时间标签同源视觉: `shrink-0 text-xs text-[var(--muted-foreground)]`。
  *   - text-xs: 12px 字号, 比笔记标题 (≈13.5px) 小一档, 视觉权重从属
@@ -231,8 +247,8 @@
 .agent-thread-card__composer-note-search-divider {
   margin: 0 8px;
   border: 0;
-  border-top: 1px solid var(--border);
-  opacity: 0.5;
+  border-top: 1px solid var(--border-popup);
+  opacity: 0.6;
 }
 
 /* 列表容器 — 仅承担垂直 padding, 不画外框; 水平方向不加 padding,
@@ -248,7 +264,8 @@
   display: block;
   max-height: 320px;
   overflow-y: auto;
-  padding: 2px 0 0;
+  margin-right: -0.25rem;
+  padding: 2px 0.25rem 0 0;
 }
 /* 容器内第一组 header 紧贴其上方分隔线, 不再加额外 padding-top。 */
 .agent-thread-card__composer-note-search-list
@@ -333,7 +350,7 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
-  textarea {
+  .agent-thread-card__composer-input {
   -webkit-user-select: text;
   user-select: text;
 }

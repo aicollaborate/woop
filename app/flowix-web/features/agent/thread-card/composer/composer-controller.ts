@@ -1,13 +1,25 @@
+import { Editor } from "@tiptap/core";
+import Document from "@tiptap/extension-document";
+import HardBreak from "@tiptap/extension-hard-break";
+import Paragraph from "@tiptap/extension-paragraph";
+import Text from "@tiptap/extension-text";
+import { UndoRedo } from "@tiptap/extensions/undo-redo";
+import { Markdown } from "@tiptap/markdown";
+
 import { selectAgentThreadCardSendButtonState } from "@features/agent/thread-card/agent-thread-card-selectors";
 import { getPersistableInputDraft } from "@features/agent/thread-card/composer/composer-draft";
 import type { ComposerDraftController } from "@features/agent/thread-card/composer/composer-draft-controller";
-import type { Root } from "react-dom/client";
 import { renderAgentThreadCardSendButton } from "@features/agent/thread-card/composer/send-button-renderer";
 import { ComposerSlashCommandController } from "@features/agent/thread-card/composer/composer-slash-command-controller";
+import { ComposerSlashToken } from "@features/agent/thread-card/composer/composer-slash-token";
+import { NoteReference } from "@features/editor/extensions/note-link";
+import type { MemoRef } from "@features/agent/thread-card/role/agent-role-picker-controller";
+import type { Root } from "react-dom/client";
 
 export interface ComposerControllerOptions {
-  input: HTMLTextAreaElement;
+  input: HTMLDivElement;
   composer: HTMLElement;
+  initialDraft: string;
   draft: ComposerDraftController;
   sendButtonRoot: Root;
   inputDraftMaxChars: number;
@@ -21,9 +33,11 @@ export interface ComposerControllerOptions {
   stop: () => void;
 }
 
+/** Rich text composer shared by the embedded card and standalone detail. */
 export class ComposerController {
-  private readonly input: HTMLTextAreaElement;
+  private readonly input: HTMLDivElement;
   private readonly composer: HTMLElement;
+  private readonly editor: Editor;
   private readonly draft: ComposerDraftController;
   private readonly sendButtonRoot: Root;
   private readonly inputDraftMaxChars: number;
@@ -41,6 +55,8 @@ export class ComposerController {
   private historyCursor: number | null = null;
   private preNavDraft: string | null = null;
   private disposed = false;
+  private suppressUpdates = true;
+  private scrollSelectionFrame: number | null = null;
 
   constructor(options: ComposerControllerOptions) {
     this.input = options.input;
@@ -57,19 +73,100 @@ export class ComposerController {
     this.submit = options.submit;
     this.stop = options.stop;
 
-    this.slashCommands = new ComposerSlashCommandController({
-      input: this.input,
-      composer: this.composer,
+    let removeSlashToken: (() => void) | undefined;
+    this.editor = new Editor({
+      // Use the factory's div as ProseMirror's actual mount node. Passing the
+      // element directly would make Tiptap append a second `.ProseMirror`
+      // child, which complicates focus, sizing, and the shared DOM contract.
+      element: { mount: this.input },
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        HardBreak,
+        UndoRedo,
+        Markdown.configure({
+          markedOptions: { gfm: true, breaks: true },
+        }),
+        NoteReference,
+        ComposerSlashToken.configure({
+          onRemove: () => removeSlashToken?.(),
+        }),
+      ],
+      content: options.initialDraft || "",
+      contentType: "markdown",
+      editorProps: {
+        attributes: {
+          class: "agent-thread-card__composer-editor",
+          spellcheck: "true",
+          "aria-label": this.input.dataset.placeholder ?? "",
+        },
+        clipboardTextSerializer(content) {
+          return content.content.textBetween(0, content.content.size, "\n", "");
+        },
+      },
+      onUpdate: () => this.handleEditorUpdate(),
     });
 
-    this.input.addEventListener("keydown", this.handleKeydown);
+    // When an existing mount element is passed to Tiptap, it replaces the
+    // element's class attribute with its own `tiptap ProseMirror` classes.
+    // Restore the composer-owned hooks after initialization so document
+    // editor styles can explicitly exclude this nested editor.
+    this.input.classList.add(
+      "agent-thread-card__composer-input",
+      "agent-thread-card__composer-editor",
+    );
+
+    this.slashCommands = new ComposerSlashCommandController({
+      editor: this.editor,
+      input: this.input,
+      composer: this.composer,
+      onCommandChange: () => this.handleEditorUpdate(),
+      focusInput: () => this.focus(),
+    });
+    removeSlashToken = () => this.slashCommands.removeSelectedToken();
+
+    // Capture before ProseMirror's own keymap so plain Enter submits without
+    // first inserting an empty paragraph into the composer document.
+    this.input.addEventListener("keydown", this.handleKeydown, true);
     this.input.addEventListener("compositionstart", this.handleCompositionStart);
     this.input.addEventListener("compositionend", this.handleCompositionEnd);
-    this.input.addEventListener("input", this.handleInput);
     this.input.addEventListener("blur", this.handleBlur);
+    this.editor.on("selectionUpdate", this.handleSelectionUpdate);
+
+    this.suppressUpdates = false;
+    this.updateMultiLineState();
   }
 
-  persistInputDraft(value: string): void {
+  get editorInstance(): Editor {
+    return this.editor;
+  }
+
+  getPrompt(): string {
+    if (this.editor.isDestroyed) return "";
+    // A plain composer newline is represented internally as a ProseMirror
+    // hardBreak. Markdown serializes that node as `  \n`; the agent protocol
+    // should receive the same newline the user entered, without Markdown's
+    // visual line-break marker becoming part of the prompt.
+    return this.getDraftMarkdown()
+      .replace(/\[\/[a-z0-9_-]+\]\(flowix:\/\/slash\/[a-z0-9_-]+\)/gi, "")
+      .replace(/ {2}\n/g, "\n");
+  }
+
+  getInputElement(): HTMLDivElement {
+    return this.input;
+  }
+
+  focus(): void {
+    if (this.disposed || this.editor.isDestroyed) return;
+    this.editor.commands.focus(null, { scrollIntoView: false });
+    // Tiptap's focus command schedules its final view focus in an animation
+    // frame. Focus the current view synchronously as well so a click on the
+    // expanded/fullscreen input row is ready for the very next keystroke.
+    this.editor.view.focus();
+  }
+
+  persistInputDraft(value: string = this.getDraftMarkdown()): void {
     const { nextDraft, oversizedDomValue } = getPersistableInputDraft(
       value,
       this.inputDraftMaxChars,
@@ -87,6 +184,16 @@ export class ComposerController {
     this.draft.clear();
   }
 
+  clear(): void {
+    if (this.editor.isDestroyed) return;
+    this.editor
+      .chain()
+      .setContent("", { contentType: "markdown", emitUpdate: false })
+      .focus(null, { scrollIntoView: false })
+      .run();
+    this.updateMultiLineState();
+  }
+
   resetHistoryNavigation(): void {
     this.historyCursor = null;
     this.preNavDraft = null;
@@ -96,16 +203,55 @@ export class ComposerController {
     content: string,
     options: { persistDraft?: boolean } = {},
   ): void {
-    this.input.value = content;
-    this.input.setSelectionRange(content.length, content.length);
-    if (options.persistDraft) {
-      this.persistInputDraft(content);
-    }
+    if (this.editor.isDestroyed) return;
+    this.editor
+      .chain()
+      .setContent(content, { contentType: "markdown", emitUpdate: false })
+      .focus("end", { scrollIntoView: false })
+      .run();
+    if (options.persistDraft) this.persistInputDraft(content);
+    this.updateMultiLineState();
+  }
+
+  insertMemoReference(ref: MemoRef): void {
+    if (this.editor.isDestroyed) return;
+
+    const { selection, doc } = this.editor.state;
+    const from = selection.from;
+    const to = selection.to;
+    const before = from > 0 ? doc.textBetween(from - 1, from, "\n", "\n") : "";
+    const after = to < doc.content.size
+      ? doc.textBetween(to, to + 1, "\n", "\n")
+      : "";
+    const content: Array<Record<string, unknown>> = [];
+
+    if (before && !/\s/.test(before)) content.push({ type: "text", text: " " });
+    content.push({
+      type: "noteReference",
+      attrs: {
+        memoId: ref.id,
+        notebookId: null,
+        notebookName: "",
+        title: ref.title || ref.filename,
+        originalPath: null,
+        stale: false,
+      },
+    });
+    if (after && !/\s/.test(after)) content.push({ type: "text", text: " " });
+
+    this.editor
+      .chain()
+      .focus(null, { scrollIntoView: false })
+      .insertContentAt({ from, to }, content)
+      .run();
+    this.resetHistoryNavigation();
+    this.persistInputDraft();
     this.updateMultiLineState();
   }
 
   updateMultiLineState(): void {
-    if (this.input.value === "") {
+    const prompt = this.getPrompt();
+    if (prompt === "") {
       this.composer.classList.remove("agent-thread-card__composer--multi-line");
       this.setSendButtonState("");
       return;
@@ -116,10 +262,10 @@ export class ComposerController {
       "agent-thread-card__composer--multi-line",
       isMulti,
     );
-    this.setSendButtonState(this.input.value.trim());
+    this.setSendButtonState(prompt.trim());
   }
 
-  setSendButtonState(inputValue: string = this.input.value.trim()): void {
+  setSendButtonState(inputValue: string = this.getPrompt().trim()): void {
     if (this.disposed) return;
     const { wantStop, disabled } = selectAgentThreadCardSendButtonState({
       wantStop: this.getSendButtonWantsStop(),
@@ -140,21 +286,86 @@ export class ComposerController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.input.removeEventListener("keydown", this.handleKeydown);
-    this.input.removeEventListener(
-      "compositionstart",
-      this.handleCompositionStart,
-    );
+    this.input.removeEventListener("keydown", this.handleKeydown, true);
+    this.input.removeEventListener("compositionstart", this.handleCompositionStart);
     this.input.removeEventListener("compositionend", this.handleCompositionEnd);
-    this.input.removeEventListener("input", this.handleInput);
     this.input.removeEventListener("blur", this.handleBlur);
+    this.editor.off("selectionUpdate", this.handleSelectionUpdate);
     this.slashCommands.dispose();
-    // 推迟到下一个 microtask 再 unmount React root ── ProseMirror destroy 可能
-    // 在 React commit phase / passive effects 内被调用, 此时同步 unmount 会触发
-    // "Attempted to synchronously unmount a root while React was already rendering"。
+    if (this.scrollSelectionFrame !== null) {
+      cancelAnimationFrame(this.scrollSelectionFrame);
+      this.scrollSelectionFrame = null;
+    }
+    if (!this.editor.isDestroyed) this.editor.destroy();
     const root = this.sendButtonRoot;
-    queueMicrotask(() => {
-      root.unmount();
+    queueMicrotask(() => root.unmount());
+  }
+
+  private readonly handleEditorUpdate = (): void => {
+    if (this.suppressUpdates || this.disposed) return;
+    if (!this.isCurrentHistoryEntryUnmodified()) this.resetHistoryNavigation();
+    if (!this.isComposing) this.persistInputDraft();
+    this.updateMultiLineState();
+    this.scheduleScrollSelectionIntoView();
+  };
+
+  private getDraftMarkdown(): string {
+    return this.editor.getMarkdown();
+  }
+
+  private readonly handleSelectionUpdate = (): void => {
+    if (!this.disposed) this.slashCommands.refresh();
+  };
+
+  /**
+   * Keep the caret visible when a hard break grows the editor past its
+   * max-height. The editor height/class can change during the update, so wait
+   * until the next frame before measuring the selection. Adjusting this
+   * element's scrollTop directly avoids dispatching a second ProseMirror
+   * transaction, which can leave a stale caret paint in WebViews.
+   */
+  private scheduleScrollSelectionIntoView(): void {
+    if (this.disposed || this.editor.isDestroyed) return;
+
+    if (this.scrollSelectionFrame !== null) {
+      cancelAnimationFrame(this.scrollSelectionFrame);
+    }
+
+    this.scrollSelectionFrame = requestAnimationFrame(() => {
+      this.scrollSelectionFrame = null;
+      if (this.disposed || this.editor.isDestroyed) return;
+
+      let top: number;
+      let bottom: number;
+      try {
+        ({ top, bottom } = this.editor.view.coordsAtPos(
+          this.editor.state.selection.head,
+          1,
+        ));
+      } catch {
+        // A hidden or jsdom-backed editor may not expose layout rectangles.
+        // The editor remains usable; there is simply no geometry to adjust.
+        return;
+      }
+      const inputRect = this.input.getBoundingClientRect();
+      const selectionTop = top - inputRect.top + this.input.scrollTop;
+      const selectionBottom = bottom - inputRect.top + this.input.scrollTop;
+      const padding = 4;
+      const visibleTop = this.input.scrollTop + padding;
+      const visibleBottom =
+        this.input.scrollTop + this.input.clientHeight - padding;
+
+      if (selectionTop < visibleTop) {
+        this.input.scrollTop = Math.max(0, selectionTop - padding);
+      } else if (selectionBottom > visibleBottom) {
+        this.input.scrollTop = Math.max(
+          0,
+          Math.min(
+            this.input.scrollHeight - this.input.clientHeight,
+            selectionBottom - this.input.clientHeight + padding,
+          ),
+        );
+      }
     });
   }
 
@@ -162,8 +373,7 @@ export class ComposerController {
     if (this.isComposing || event.isComposing || event.keyCode === 229) return;
 
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)
-        return;
+      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
       if (!this.shouldHandleHistoryKey(event.key)) return;
       event.preventDefault();
       this.navigateHistory(event.key === "ArrowUp" ? "up" : "down");
@@ -181,14 +391,7 @@ export class ComposerController {
 
   private readonly handleCompositionEnd = (): void => {
     this.isComposing = false;
-  };
-
-  private readonly handleInput = (): void => {
-    if (!this.isCurrentHistoryEntryUnmodified()) {
-      this.resetHistoryNavigation();
-    }
-    this.persistInputDraft(this.input.value);
-    this.updateMultiLineState();
+    this.handleEditorUpdate();
   };
 
   private readonly handleBlur = (): void => {
@@ -198,34 +401,21 @@ export class ComposerController {
   private shouldHandleHistoryKey(key: string): boolean {
     const direction = key === "ArrowUp" ? "up" : "down";
     if (this.getUserHistoryMessages().length === 0) return false;
-    if (!this.isCaretCollapsed()) return false;
+    if (!this.editor.state.selection.empty) return false;
 
+    const { selection, doc } = this.editor.state;
     if (direction === "up") {
-      return this.isCaretOnFirstLine();
+      return doc.textBetween(0, selection.from, "\n", "\n").indexOf("\n") === -1;
     }
 
     if (this.historyCursor === null) return false;
-    return this.isCaretOnLastLine();
-  }
-
-  private isCaretCollapsed(): boolean {
-    return this.input.selectionStart === this.input.selectionEnd;
-  }
-
-  private isCaretOnFirstLine(): boolean {
-    const cursor = this.input.selectionStart ?? 0;
-    return this.input.value.lastIndexOf("\n", Math.max(0, cursor - 1)) === -1;
-  }
-
-  private isCaretOnLastLine(): boolean {
-    const cursor = this.input.selectionEnd ?? 0;
-    return this.input.value.indexOf("\n", cursor) === -1;
+    return doc.textBetween(selection.to, doc.content.size, "\n", "\n").indexOf("\n") === -1;
   }
 
   private isCurrentHistoryEntryUnmodified(): boolean {
     if (this.historyCursor === null) return false;
     const messages = this.getUserHistoryMessages();
-    return messages[this.historyCursor] === this.input.value;
+    return messages[this.historyCursor] === this.getPrompt();
   }
 
   private navigateHistory(direction: "up" | "down"): void {
@@ -234,12 +424,11 @@ export class ComposerController {
 
     if (direction === "up") {
       if (this.historyCursor === null && this.preNavDraft === null) {
-        this.preNavDraft = this.input.value;
+        this.preNavDraft = this.getPrompt();
       }
-      const next =
-        this.historyCursor === null
-          ? messages.length - 1
-          : Math.max(0, this.historyCursor - 1);
+      const next = this.historyCursor === null
+        ? messages.length - 1
+        : Math.max(0, this.historyCursor - 1);
       this.historyCursor = next;
       this.setHistoryValue(messages[next]);
       return;
@@ -249,8 +438,7 @@ export class ComposerController {
     const next = this.historyCursor + 1;
     if (next >= messages.length) {
       this.historyCursor = null;
-      const draft = this.preNavDraft ?? "";
-      this.setHistoryValue(draft, { persistDraft: true });
+      this.setHistoryValue(this.preNavDraft ?? "", { persistDraft: true });
       return;
     }
     this.historyCursor = next;

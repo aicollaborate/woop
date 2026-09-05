@@ -170,7 +170,7 @@ export function attachMessageActions(
         closeConfirmation();
       });
 
-      confirmation.append(cancelButton, confirmButton);
+      confirmation.append(confirmButton, cancelButton);
       activeConfirmation = confirmation;
       actions.insertBefore(confirmation, time);
       document.addEventListener("pointerdown", handleOutsidePointerDown, true);

@@ -16,7 +16,7 @@ export type AgentRenderItem =
       previewTools?: ChatMessage[];
     };
 
-function hasToolFailure(message: ChatMessage): boolean {
+export function isFailedToolMessage(message: ChatMessage): boolean {
   if (message.role !== "tool") return false;
   if (message.isLoading) return false;
   if (!message.content && !message.toolData) return true;
@@ -25,7 +25,7 @@ function hasToolFailure(message: ChatMessage): boolean {
 
 function getToolGroupStatus(tools: ChatMessage[]): AgentToolGroupStatus {
   if (tools.some((tool) => tool.isLoading)) return "running";
-  if (tools.some(hasToolFailure)) return "failed";
+  if (tools.some(isFailedToolMessage)) return "failed";
   return "completed";
 }
 

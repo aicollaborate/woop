@@ -20,7 +20,7 @@
   scrollbar-gutter: stable;
 }
 
-.markdown-editor .ProseMirror {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) {
   display: block;
   width: 100%;
   min-height: 100%;
@@ -46,36 +46,36 @@
   outline: none;
 }
 
-.markdown-editor .ProseMirror > *:not(.editor-datetime-widget):first-of-type {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) > *:not(.editor-datetime-widget):first-of-type {
   margin-top: 0.5rem;
 }
 
-.markdown-editor .tiptap h1,
-.markdown-editor .tiptap h2,
-.markdown-editor .tiptap h3,
-.markdown-editor .tiptap h4,
-.markdown-editor .tiptap h5,
-.markdown-editor .tiptap h6 {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h1,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h2,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h3,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h4,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h5,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h6 {
   margin: 1.5rem 0 0.5rem 0;
   font-weight: 600;
   line-height: 1.3;
   white-space: pre-wrap;
 }
 
-.markdown-editor .tiptap h1 {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h1 {
   font-size: calc(1.9rem * var(--editor-scale));
   padding-bottom: calc(0.3rem * var(--editor-scale));
 }
 
-.markdown-editor .tiptap h2 {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h2 {
   font-size: calc(1.4rem * var(--editor-scale));
 }
 
-.markdown-editor .tiptap h3 {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h3 {
   font-size: calc(1.15rem * var(--editor-scale));
 }
 
-.markdown-editor .tiptap h4 {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) h4 {
   font-size: calc(1.05rem * var(--editor-scale));
 }
 
@@ -85,23 +85,23 @@
  *  - 三处共享同一基线 → 空 p / 非空 p / 单 item 列表行盒等高 (24px),
  *    下边距也等宽 (12px), 互相对齐。 */
 
-.markdown-editor .tiptap p {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p {
   /* 半行 box, 作为块间节奏 */
   margin: 0 0 calc(var(--app-font-size, 15px) * var(--app-line-height, 1.6) * 0.5) 0;
   white-space: pre-wrap;
 }
 
-.markdown-editor .tiptap p:empty,
-.markdown-editor .tiptap p:has(> br.ProseMirror-trailingBreak:only-child) {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p:empty,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p:has(> br.ProseMirror-trailingBreak:only-child) {
   /* 1 行 box, 与非空 <p> 等高 */
   min-height: calc(var(--app-font-size, 15px) * var(--app-line-height, 1.6));
 }
 
-.markdown-editor .tiptap p:empty::before {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p:empty::before {
   content: "\00a0";
 }
 
-.markdown-editor .ProseMirror .terminal-inline-atom-caret-anchor {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .terminal-inline-atom-caret-anchor {
   display: inline;
 }
 
@@ -109,21 +109,21 @@
  * after contenteditable=false inline atoms in Safari/Chrome. The caret anchor
  * already provides the terminal landing point, so both DOM shapes should keep
  * the hack br visually hidden. */
-.markdown-editor .ProseMirror .terminal-inline-atom-caret-anchor + br.ProseMirror-trailingBreak,
-.markdown-editor .ProseMirror .terminal-inline-atom-caret-anchor + img.ProseMirror-separator + br.ProseMirror-trailingBreak {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .terminal-inline-atom-caret-anchor + br.ProseMirror-trailingBreak,
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .terminal-inline-atom-caret-anchor + img.ProseMirror-separator + br.ProseMirror-trailingBreak {
   display: none;
 }
 
-.markdown-editor .tiptap strong {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) strong {
   font-weight: 700;
 }
 
-.markdown-editor .tiptap em {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) em {
   font-style: italic;
   font-weight: 300;
 }
 
-.markdown-editor .tiptap p code {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p code {
   border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
   border-radius: 0.4rem;
   padding: 0rem 0.3rem;
@@ -132,7 +132,7 @@
   color: color-mix(in oklch, var(--foreground) 80%, transparent);
 }
 
-.markdown-editor .tiptap pre  {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) pre  {
   background: var(--editor-block-bg);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
@@ -146,13 +146,13 @@
   line-height: var(--app-line-height, 1.6);
 }
 
-.markdown-editor .tiptap pre code {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) pre code {
   padding: 0;
   font-family: inherit;
 }
 
 
-.markdown-editor .tiptap blockquote {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) blockquote {
   border-left: 0.1875rem solid #ddd;
   margin: 1rem 0;
   padding-left: 1rem;
@@ -160,13 +160,13 @@
   font-style: italic;
 }
 
-.markdown-editor .tiptap ul,
-.markdown-editor .tiptap ol {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ol {
   margin: 0.5rem 0;
   padding-left: 1.5rem;
 }
 
-.markdown-editor .tiptap li {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li {
   margin: 0.25rem 0;
   line-height: var(--app-line-height, 1.6);
 }
@@ -178,42 +178,42 @@
  *  多 item 列表不受影响, 仍保留原本的项间/段间节奏。
  *  仅作用于 .tiptap 直接子列表 — 嵌套在 <li> 内的二级及更深列表维持
  *  正常的 0.5rem / 0.25rem 节奏, 不被压缩。 */
-.markdown-editor .tiptap > ul:has(> li:only-child),
-.markdown-editor .tiptap > ol:has(> li:only-child) {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > ul:has(> li:only-child),
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > ol:has(> li:only-child) {
   margin-top: 0;
   margin-bottom: calc(var(--app-font-size, 15px) * var(--app-line-height, 1.6) * 0.5);
 }
 
-.markdown-editor .tiptap > ul > li:only-child,
-.markdown-editor .tiptap > ol > li:only-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > ul > li:only-child,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > ol > li:only-child {
   margin: 0;
 }
 
-.markdown-editor .tiptap table td p,
-.markdown-editor .tiptap table th p {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table td p,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table th p {
   margin-bottom: 0;
 }
 
-.markdown-editor .tiptap li p {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li p {
   margin: 0;
 }
 
-.markdown-editor .tiptap ul {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul {
   list-style-type: disc;
 }
 
-.markdown-editor .tiptap ul ul {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul ul {
   list-style-type: circle;
 }
 
-.markdown-editor .tiptap mark {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) mark {
   background-color: var(--document-highlight-bg);
   /* 文字色继承 document-foreground, 不另设 token */
   border-radius: 0.15rem;
   padding: 0.1rem 0.2rem;
 }
 
-.markdown-editor .tiptap table {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table {
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -223,8 +223,8 @@
   border-radius: 8px;
 }
 
-.markdown-editor .tiptap table td,
-.markdown-editor .tiptap table th {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table td,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table th {
   border: 1px solid var(--border);
   border-top: none;
   border-left: none;
@@ -235,51 +235,51 @@
   vertical-align: top;
 }
 
-.markdown-editor .tiptap table th {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table th {
   background: var(--muted);
   font-weight: 600;
   text-align: left;
 }
 
-.markdown-editor .tiptap table tr td:first-child,
-.markdown-editor .tiptap table tr th:first-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr td:first-child,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr th:first-child {
   border-left: 1px solid var(--border);
 }
 
-.markdown-editor .tiptap table tr:first-child td,
-.markdown-editor .tiptap table tr:first-child th {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:first-child td,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:first-child th {
   border-top: 1px solid var(--border);
 }
 
-.markdown-editor .tiptap table tr:first-child th:first-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:first-child th:first-child {
   border-top-left-radius: 8px;
 }
 
-.markdown-editor .tiptap table tr:first-child th:last-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:first-child th:last-child {
   border-top-right-radius: 8px;
 }
 
-.markdown-editor .tiptap table tr:last-child td:first-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:last-child td:first-child {
   border-bottom-left-radius: 8px;
 }
 
-.markdown-editor .tiptap table tr:last-child td:last-child {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr:last-child td:last-child {
   border-bottom-right-radius: 8px;
 }
 
-.markdown-editor .ProseMirror.ProseMirror-hideselection *::selection {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor).ProseMirror-hideselection *::selection {
   background: transparent;
 }
 
-.markdown-editor .ProseMirror.ProseMirror-hideselection *::-moz-selection {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor).ProseMirror-hideselection *::-moz-selection {
   background: transparent;
 }
 
-.markdown-editor .ProseMirror.ProseMirror-hideselection {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor).ProseMirror-hideselection {
   caret-color: transparent;
 }
 
-.markdown-editor .tiptap .selectedCell::after {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .selectedCell::after {
   content: "";
   position: absolute;
   z-index: 2;
@@ -299,7 +299,7 @@
  *    取代原硬编码 #5262DC (hue 240 indigo) 在 dark/rock 主题下脱节的问题.
  *  - hover: color-mix × white 25% 提亮派生, 与 .tiptap a:hover (white 20%)
  *    同公式一族, 三主题共享同一提亮曲线, 不会有"某主题的 hover 没设计". */
-.markdown-editor .tiptap .column-resize-handle {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .column-resize-handle {
   position: absolute;
   right: -3px;
   top: 0;
@@ -311,12 +311,12 @@
   pointer-events: none;
 }
 
-.markdown-editor .tiptap table tr > td:last-child .column-resize-handle,
-.markdown-editor .tiptap table tr > th:last-child .column-resize-handle {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr > td:last-child .column-resize-handle,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table tr > th:last-child .column-resize-handle {
   right: 0;
 }
 
-.markdown-editor .tiptap .column-resize-handle::before {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .column-resize-handle::before {
   content: "";
   position: absolute;
   top: 0;
@@ -329,7 +329,7 @@
   transition: background-color 0.12s ease, opacity 0.12s ease;
 }
 
-.markdown-editor .tiptap .column-resize-handle:hover::before {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .column-resize-handle:hover::before {
   background: color-mix(in oklch, var(--brand), white 25%);
   opacity: 1;
 }
@@ -337,15 +337,15 @@
 /* prosemirror-tables 在鼠标进入列边检测区时给 editor 根节点加 `resize-cursor`。
  * 默认 cursor 规则来自 prosemirror-tables/style/tables.css, 但本项目未引入,
  * 故在此声明, 让整个编辑器区域(而非仅 2px handle)在靠近列边时都显示调整光标。 */
-.markdown-editor .tiptap.resize-cursor,
-.markdown-editor .tiptap.ProseMirror.resize-cursor {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor).resize-cursor,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor).ProseMirror.resize-cursor {
   cursor: col-resize;
 }
 
 /* prosemirror-tables 在拖拽期间会给 cell 加 `column-resize-dragging` 装饰类;
  * 故意不样式化 — 列边高亮由 .column-resize-handle widget 自身形成连续线。 */
 
-.markdown-editor .tiptap .tableWrapper {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .tableWrapper {
   overflow-x: auto;
   overflow-y: visible;
   max-width: 100%;
@@ -356,8 +356,8 @@
 }
 
 /* relative 定位: 作为 column-resize-handle 的定位上下文 */
-.markdown-editor .tiptap table td,
-.markdown-editor .tiptap table th {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table td,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) table th {
   position: relative;
 }
 
@@ -413,22 +413,22 @@
   color: var(--foreground, #111827);
 }
 
-.markdown-editor .tiptap ul li::marker {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul li::marker {
   color: var(--brand);
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] {
   list-style: none;
   padding-left: 0;
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
   gap: 8px;
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > label {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > label {
   flex-shrink: 0;
   /* margin-top: 3px 之前用来把 checkbox 视觉下移对齐文字 baseline,
    * 但在 flex 容器里 margin 会进 outer size, 给 <li> 多撑 3px。
@@ -436,7 +436,7 @@
    * 但 transform 不参与 box model, 不会撑高 <li>。 */
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > label input[type="checkbox"] {
   width: 16px;
   height: 16px;
   cursor: pointer;
@@ -448,12 +448,12 @@
   transform: translateY(3px);
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
   background-color: transparent;
   border-color: #999;
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
   content: '✓';
   position: absolute;
   top: 50%;
@@ -464,7 +464,7 @@
   font-weight: bold;
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
   content: '';
   width: 11px;
   height: 9px;
@@ -476,13 +476,13 @@
   mask: var(--flowix-hand-check-mask) center / contain no-repeat;
 }
 
-.markdown-editor .tiptap ul[data-type="taskList"] li > div {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li > div {
   flex: 1;
 }
 
 /* text-decoration 是可继承属性，原本写在 > div 上会经由继承作用到嵌套的
  * 子 todo，所以选择器要限定到本级文本所在的 <p>，避免子级被划线。 */
-.markdown-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div > p {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li[data-checked="true"] > div > p {
   text-decoration: line-through;
   color: #999;
 }
@@ -490,37 +490,37 @@
 /* todo 切到已完成态时, 标签底色跟着文本一起走灰, 视觉上"这条 todo 已经
  * 收尾, 标签也一并沉寂"。复用与文本同色的 #999, 保持和上方 li > p 的
  * color 一致 — 改 li 文字色时这里要同步。 */
-.markdown-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] .tag-node {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ul[data-type="taskList"] li[data-checked="true"] .tag-node {
   background: #999;
 }
 
-.markdown-editor .tiptap ol {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ol {
   list-style-type: decimal;
 }
 
-.markdown-editor .tiptap ol li::marker {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) ol li::marker {
   color: var(--brand);
 }
 
-.markdown-editor .tiptap > img,
-.markdown-editor .tiptap > p > img,
-.markdown-editor .tiptap li > img,
-.markdown-editor .tiptap li > p > img {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > img,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > p > img,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li > img,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li > p > img {
   border-radius: 8px;
   border: 1px solid var(--border);
   margin-bottom: 1rem;
 }
 
-.markdown-editor .tiptap > img.error,
-.markdown-editor .tiptap > p > img.error,
-.markdown-editor .tiptap li > img.error,
-.markdown-editor .tiptap li > p > img.error {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > img.error,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) > p > img.error,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li > img.error,
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) li > p > img.error {
   border: 1px dashed var(--muted-foreground);
   border-radius: 8px;
   opacity: 1 !important;
 }
 
-.markdown-editor .tiptap .editor-link-selection-highlight {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) .editor-link-selection-highlight {
   /* 链接选区高亮: 与 .is-block-selected 同思路, 用 --brand 派生透明底,
    * 在三套主题 (light / dark / rock) 下都能融入品牌色相, 避免硬编码 indigo. */
   background: color-mix(in oklch, var(--brand) 18%, transparent);
@@ -528,7 +528,7 @@
 }
 
 
-.markdown-editor .tiptap hr {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) hr {
   border: none;
   border-top: 0.0625rem solid var(--border);
   margin: 1rem 0 2rem 0;
@@ -547,8 +547,8 @@
  *     不再加 outline / box-shadow 等外框 — hr 自身就是 1px 边, 高亮
  *     只在线本身, 视觉更克制。
  * 选择器特异性 (0,3,1) 高于全局 .ProseMirror-selectednode (0,1,0)。 */
-.markdown-editor .ProseMirror hr.is-block-selected,
-.markdown-editor .ProseMirror hr.ProseMirror-selectednode {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) hr.is-block-selected,
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) hr.ProseMirror-selectednode {
   border-top-color: var(--brand);
 }
 
@@ -811,7 +811,7 @@
   color: color-mix(in oklch, var(--brand) 70%, var(--foreground));
 }
 
-.markdown-editor .tiptap p.is-empty::before {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p.is-empty::before {
   content: attr(data-placeholder);
   color: #aaa;
   pointer-events: none;
@@ -825,7 +825,7 @@
  * 它仍被加上 is-empty + data-placeholder, 原规则会一直显示。
  * ProseMirror 在 view.dom 上自动维护 ProseMirror-focused 类, 这里未聚焦
  * 时直接把 ::before 的 content 置 none 即可, 不影响聚焦态。 */
-.markdown-editor .tiptap:not(.ProseMirror-focused) p.is-empty::before {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor):not(.ProseMirror-focused) p.is-empty::before {
   content: none;
 }
 
@@ -833,7 +833,7 @@
  * 浮动菜单的 transform / delete 操作作用于哪一段。柔背景 + 圆角 + 左侧
  * 强调色, 视觉上读作"行指示", 不抢文本。
  * transition 只动画会被改动的属性, 避免影响光标闪烁等 ProseMirror 内部更新。 */
-.markdown-editor .ProseMirror .is-block-selected {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .is-block-selected {
   position: relative;
   background-color: color-mix(in oklch, var(--brand) 6%, transparent);
   border-radius: 6px;
@@ -841,11 +841,11 @@
     background-color 120ms ease-out;
 }
 
-.markdown-editor .ProseMirror .is-block-selected:hover {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .is-block-selected:hover {
   background-color: color-mix(in oklch, var(--brand) 10%, transparent);
 }
 
-.markdown-editor .ProseMirror .flowix-block-drop-indicator {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .flowix-block-drop-indicator {
   display: block;
   height: 1px;
   margin: 0;
@@ -858,7 +858,7 @@
  * atom 节点被 NodeSelection 选中时): 用品牌色 outline 替代 Tiptap 默认
  * 的浅蓝 #8cf, 与 .is-block-selected 左侧描边、::selection 文字底色共
  * 同收口到 var(--brand), 三主题下视觉一致。 */
-.markdown-editor .ProseMirror .ProseMirror-selectednode {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .ProseMirror-selectednode {
   /* outline: 2px solid var(--brand);
   outline-offset: 2px; */
   border-radius: 6px;
@@ -870,7 +870,7 @@
 /* 编辑器内文本选区: 比全局 ::selection 更显眼, 配合块高亮读作"这段
  * 文字被选中了"。限定在 .markdown-editor 内, 避免影响侧栏 / 输入
  * 框等非编辑区域的选区色。 */
-.markdown-editor .ProseMirror ::selection {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) ::selection {
   background: color-mix(in oklch, var(--brand) 26%, transparent) !important;
   color: inherit !important;
 }
@@ -982,13 +982,13 @@
 
 
 
-.markdown-editor .ProseMirror .search-result {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .search-result {
   background-color: rgba(255, 213, 79, 0.4);
   border-radius: 2px;
   padding: 0 1px;
 }
 
-.markdown-editor .ProseMirror .search-result-current {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .search-result-current {
   background-color: rgba(255, 193, 7, 0.6);
   outline: 1px solid rgba(255, 152, 0, 0.8);
 }

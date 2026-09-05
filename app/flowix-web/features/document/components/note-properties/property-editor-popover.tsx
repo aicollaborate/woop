@@ -261,19 +261,19 @@ function PropertyTypePicker({
       <DropdownMenuContent
         align="start"
         sideOffset={6}
-        className="z-[1500] min-w-[120px] px-1 py-1.5"
+        className="z-[1500] min-w-[120px] rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
       >
         {PROPERTY_KINDS.map((kind) => (
           <DropdownMenuItem
             key={kind}
             onClick={() => onChange(kind)}
-            className="flex cursor-pointer items-center justify-between rounded-md px-2 hover:bg-[var(--muted)]"
+            className="group h-7 items-center justify-between rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
           >
             <span className="truncate">
               {t(getPropertyTypeLabelKey(kind))}
             </span>
             {value === kind && (
-              <Check className="h-4 w-4 shrink-0 text-[var(--primary)]" />
+              <Check className="h-4 w-4 shrink-0 text-[var(--primary)] group-hover:text-[var(--primary-foreground)]" />
             )}
           </DropdownMenuItem>
         ))}
@@ -491,7 +491,7 @@ export function AnchoredPropertyPopover({
           visibility: positioned ? 'visible' : 'hidden',
         }}
         onClick={(event) => event.stopPropagation()}
-        className="w-[240px] max-h-[280px] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-xl"
+        className="w-[240px] max-h-[280px] overflow-y-auto rounded-xl border border-[var(--border-popup)] bg-[var(--card)] p-2 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
       >
         <PopoverPanelBody
           popoverState={popoverState}

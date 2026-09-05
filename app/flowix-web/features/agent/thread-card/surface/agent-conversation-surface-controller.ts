@@ -15,7 +15,7 @@ type SurfaceMessageOptions = Omit<
 >;
 type SurfaceComposerOptions = Omit<
   ComposerControllerOptions,
-  'input' | 'composer' | 'sendButtonRoot'
+  'input' | 'composer' | 'sendButtonRoot' | 'initialDraft'
 >;
 
 /**
@@ -35,7 +35,8 @@ export class AgentConversationSurfaceController {
     body: HTMLElement;
     loadingIndicator: HTMLDivElement;
     composer: HTMLElement;
-    input: HTMLTextAreaElement;
+    input: HTMLDivElement;
+    inputDraft: string;
     sendButtonMount: HTMLSpanElement;
     messageOptions: SurfaceMessageOptions;
     composerOptions: SurfaceComposerOptions;
@@ -49,6 +50,7 @@ export class AgentConversationSurfaceController {
     this.composer = new ComposerController({
       input: options.input,
       composer: options.composer,
+      initialDraft: options.inputDraft,
       sendButtonRoot: createRoot(options.sendButtonMount),
       ...options.composerOptions,
     });

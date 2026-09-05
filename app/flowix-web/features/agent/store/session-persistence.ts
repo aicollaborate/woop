@@ -10,6 +10,35 @@ import {
   type AgentSessionMeta,
 } from '@features/agent/store/session-state';
 
+const LEGACY_AGENT_TITLE_KEYS = new Set([
+  'codex',
+  'claude',
+  'gemini',
+  'hermes',
+  'openclaw',
+  'opencode',
+  'deepseek-harness',
+]);
+
+/** Move the old AgentTypeKey-wide title slots onto the active product thread. */
+function normalizeThreadTitles(
+  value: unknown,
+  activeThreadIds: AgentSessionMeta['activeThreadIds'],
+): AgentSessionMeta['currentThreadTitles'] {
+  if (!value || typeof value !== 'object') return {};
+  const next: AgentSessionMeta['currentThreadTitles'] = {};
+  for (const [key, title] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof title !== 'string') continue;
+    if (LEGACY_AGENT_TITLE_KEYS.has(key)) {
+      const activeThreadId = activeThreadIds[key as keyof typeof activeThreadIds];
+      if (activeThreadId) next[activeThreadId] = title;
+      continue;
+    }
+    next[key] = title;
+  }
+  return next;
+}
+
 /** Migrate the legacy flat chat-store payload into the session metadata slice. */
 function migrateChatPersistToSessionMeta(): AgentSessionMeta | null {
   try {
@@ -19,12 +48,14 @@ function migrateChatPersistToSessionMeta(): AgentSessionMeta | null {
     const old = parsed.state;
     if (!old || typeof old !== 'object') return null;
     const d = DEFAULT_AGENT_SESSION_META;
+    const activeThreadIds =
+      old.activeThreadIds as AgentSessionMeta['activeThreadIds'] ?? d.activeThreadIds;
     return {
       ...d,
-      activeThreadIds: old.activeThreadIds as AgentSessionMeta['activeThreadIds'] ?? d.activeThreadIds,
+      activeThreadIds,
       activeAgentTypeKey: old.activeAgentTypeKey as AgentSessionMeta['activeAgentTypeKey'] ?? d.activeAgentTypeKey,
       threadTypes: old.threadTypes as AgentSessionMeta['threadTypes'] ?? d.threadTypes,
-      currentThreadTitles: old.currentThreadTitles as AgentSessionMeta['currentThreadTitles'] ?? d.currentThreadTitles,
+      currentThreadTitles: normalizeThreadTitles(old.currentThreadTitles, activeThreadIds),
       externalSessionResolutions: old.externalSessionResolutions as AgentSessionMeta['externalSessionResolutions'] ?? d.externalSessionResolutions,
       threadLists: d.threadLists,
       lastRunningRunsReconciledAt: d.lastRunningRunsReconciledAt,
@@ -58,6 +89,10 @@ export function rehydrateSessionMeta(persisted: unknown): AgentSessionMeta {
   base.activeAgentTypeKey = isAgentTypeSelectable(normalizedTypeKey)
     ? normalizedTypeKey
     : DEFAULT_AGENT_TYPE_KEY;
+  base.currentThreadTitles = normalizeThreadTitles(
+    base.currentThreadTitles,
+    base.activeThreadIds,
+  );
   base.settings.agentPermissionMode = normalizeCodexPermissionMode(
     base.settings.agentPermissionMode,
   );

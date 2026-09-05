@@ -20,20 +20,16 @@ import {
   mountOpenTargetListener,
   unmountOpenTargetListener,
 } from "@features/memo/use-cases/open-target-listener";
-import {
-  restorePersistedExternalDocument,
-  restorePersistedMemoSession,
-} from '@features/memo/use-cases/open-memo-session';
-import { bootstrapMemoLibrary } from '@features/memo/use-cases/bootstrap-memo-library';
+import { initializeMainWindowStartup } from './main-window-startup';
 import { createLogger } from '@/lib/logger';
-import { openFourthColumnMemoById } from '@features/workspace/use-cases/fourth-column-navigation';
-import { restoreAgentConversationWorkspace } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
-import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
 import {
-  clearWorkspaceDocument,
   replaceActiveMemoPath,
 } from '@features/workspace/use-cases/workspace-navigation';
+import {
+  removeBrowserColumnTabsByMemoId,
+  replaceBrowserColumnMemoPath,
+} from '@features/workspace/use-cases/browser-column-navigation';
 
 const logger = createLogger('main-window-effects');
 
@@ -67,45 +63,13 @@ export function MainWindowEffects() {
   }, []);
 
   useEffect(() => {
-    // Notebook bootstrap is independent from MemoList because startup may
-    // restore the files or agent-conversation surface instead. Reconcile the
-    // persisted notebook against backend state before resolving document
-    // paths, then keep memo restore's precedence over an external document.
-    void bootstrapMemoLibrary()
-      .catch((error) => {
-        logger.warn('bootstrap memo library failed', { error });
-      })
-      .then(() => restorePersistedMemoSession())
-      .then(() => restorePersistedExternalDocument())
-      .then(() => restoreAgentConversationWorkspace())
+    // The main window owns the critical library bootstrap. It resolves the
+    // authoritative notebook and first memo query before document restoration,
+    // so MemoList never has to race this work from a mount effect.
+    void initializeMainWindowStartup()
       .catch((error) => {
         logger.warn('restore workspace failed', { error });
       });
-
-    let previousSelectedMemoId = useMemoStore.getState().selectedMemoId
-      ?? useMemoStore.getState().selectedMemo?.id
-      ?? null;
-    return useMemoStore.subscribe((state) => {
-      const selectedMemoId = state.selectedMemoId ?? state.selectedMemo?.id ?? null;
-      if (selectedMemoId === previousSelectedMemoId) return;
-      previousSelectedMemoId = selectedMemoId;
-      if (selectedMemoId !== null) return;
-
-      // The navigation facade records the failed request before restoring the
-      // previous selection. Without this guard the legacy selection listener
-      // would immediately enqueue a competing clear and erase the failure.
-      const navigationPhase = useWorkspaceStore.getState().navigation.phase;
-      if (navigationPhase === 'loading' || navigationPhase === 'failed') return;
-
-      const documentState = useDocumentStore.getState();
-      if (documentState.currentDocumentSource !== 'external') {
-        // Plugin workbenches deliberately clear memo selection as part of
-        // their navigation transaction. Do not issue a competing clear after
-        // the workbench target has committed.
-        if (useWorkspaceStore.getState().navigation.target.kind === 'plugin-workbench') return;
-        void clearWorkspaceDocument();
-      }
-    });
   }, []);
 
   useEffect(() => {
@@ -128,20 +92,27 @@ export function MainWindowEffects() {
             invalidateMentionNotes();
             invalidateMentionTags();
           },
-          openMemoInFourthColumn: async (memoId) => {
-            await openFourthColumnMemoById(memoId);
+          openMemoInBrowserColumn: async (memoId) => {
+            const { openBrowserColumnMemoById } = await import(
+              '@features/workspace/use-cases/browser-column-navigation'
+            );
+            await openBrowserColumnMemoById(memoId);
           },
           reportOpenFailure: (error) => {
-            logger.warn('open created note in fourth column failed', { error });
+            logger.warn('open created note in browser column failed', { error });
             toast.error(error instanceof Error ? error.message : String(error));
           },
           handleMemoCreated: (memo) => useMemoStore.getState().handleMemoCreated(memo),
           handleMemoUpdated: (memo) => useMemoStore.getState().handleMemoUpdated(memo),
           handleMemoDeleted: (memoId) => useMemoStore.getState().handleMemoDeleted(memoId),
+          removeBrowserColumnTabsByMemoId: (memoId) => removeBrowserColumnTabsByMemoId(memoId),
           handleTagsRenamed,
           handleTagsDeleted,
           replaceActiveMemoPath: (memoId, path) => {
             replaceActiveMemoPath(memoId, path);
+          },
+          replaceBrowserColumnMemoPath: (memoId, path) => {
+            replaceBrowserColumnMemoPath(memoId, path);
           },
           refreshSelectedNotebookMetadata,
           refreshBackgroundTodoCount: (notebookId) => {

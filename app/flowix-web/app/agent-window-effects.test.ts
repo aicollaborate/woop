@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   useAgentEvents: vi.fn(),
   refreshRuntime: vi.fn(async () => undefined),
-  hydrateConversations: vi.fn(async () => undefined),
   loadAccess: vi.fn(async () => undefined),
   listenAccess: vi.fn(),
   unlistenAccess: vi.fn(),
@@ -24,11 +23,6 @@ vi.mock('@features/agent/store/agent-runtime-store', () => ({
   useAgentRuntimeStore: (selector: (state: { refresh: typeof mocks.refreshRuntime }) => unknown) => (
     selector({ refresh: mocks.refreshRuntime })
   ),
-}));
-vi.mock('@features/agent/store/agent-session-store', () => ({
-  useAgentSessionStore: (
-    selector: (state: { hydrateFromBackend: typeof mocks.hydrateConversations }) => unknown,
-  ) => selector({ hydrateFromBackend: mocks.hydrateConversations }),
 }));
 vi.mock('@features/agent/store/agent-access-store', () => ({
   useAgentAccessStore: (selector: (state: { loadInitial: typeof mocks.loadAccess }) => unknown) => (
@@ -79,7 +73,6 @@ describe('AgentWindowEffects', () => {
     expect(mocks.useAgentEvents).toHaveBeenCalledOnce();
     expect(mocks.acquireMemoEventBridge).toHaveBeenCalledOnce();
     expect(mocks.refreshRuntime).toHaveBeenCalledWith({ force: true });
-    expect(mocks.hydrateConversations).toHaveBeenCalledOnce();
     expect(mocks.loadAccess).toHaveBeenCalledOnce();
     expect(mocks.listenAccess).toHaveBeenCalledOnce();
     expect(mocks.prewarmNotebookCache).toHaveBeenCalledOnce();

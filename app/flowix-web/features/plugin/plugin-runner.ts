@@ -1,7 +1,8 @@
 import { plugins, type PluginArtifact } from '@platform/tauri/client';
-import { listenToPluginRuns } from '@platform/tauri/client/plugin';
-
-const activeRuns = new Map<string, Promise<PluginArtifact>>();
+import {
+  ensurePluginRunStoreSubscription,
+  usePluginRunStore,
+} from './plugin-run-store';
 
 export interface PluginRunRequest {
   pluginId: string;
@@ -12,76 +13,61 @@ export interface PluginRunRequest {
   sourceNote?: string;
 }
 
-export function runPlugin(request: PluginRunRequest): Promise<PluginArtifact> {
-  const existing = activeRuns.get(request.pluginId);
-  if (existing) return existing;
+function waitForRun(runId: string): Promise<PluginArtifact> {
+  return new Promise<PluginArtifact>((resolve, reject) => {
+    let settled = false;
+    let timeout: number | undefined;
+    let unsubscribe: (() => void) | undefined;
 
-  const promise = (async () => {
-    return await new Promise<PluginArtifact>((resolve, reject) => {
-      let unlisten: (() => void) | undefined;
-      let runId: string | undefined;
-      let settled = false;
-      let resolveListenerReady: (() => void) | undefined;
-      const listenerReady = new Promise<void>((resolveReady) => {
-        resolveListenerReady = resolveReady;
-      });
-      const timeout = window.setTimeout(() => {
-        settled = true;
-        unlisten?.();
-        if (runId) void plugins.runStop(runId);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      unsubscribe?.();
+      callback();
+    };
+
+    const inspect = () => {
+      const run = usePluginRunStore.getState().runs[runId];
+      if (!run) return;
+      if (run.status === 'failed') {
+        finish(() => reject(new Error(run.error || 'Plugin generation failed')));
+      } else if (run.status === 'cancelled') {
+        finish(() => reject(new Error('Plugin generation cancelled')));
+      } else if (run.status === 'completed') {
+        const artifact = run.artifact;
+        if (artifact) finish(() => resolve(artifact));
+        else finish(() => reject(new Error('Plugin completed without an artifact')));
+      }
+    };
+
+    unsubscribe = usePluginRunStore.subscribe(inspect);
+    // Completion can arrive before the IPC call that returns runId unwinds.
+    inspect();
+    if (settled) return;
+    timeout = window.setTimeout(() => {
+      finish(() => {
+        void plugins.runStop(runId);
         reject(new Error('Plugin generation timed out'));
-      }, 10 * 60 * 1000);
-      unlisten = listenToPluginRuns((event) => {
-        if (event.pluginId !== request.pluginId) return;
-        if (!runId && event.status === 'started') {
-          runId = event.runId;
-          return;
-        }
-        if (!runId || event.runId !== runId) return;
-        if (event.status === 'failed') {
-          settled = true;
-          window.clearTimeout(timeout);
-          unlisten?.();
-          reject(new Error(event.error || 'Plugin generation failed'));
-        } else if (event.status === 'cancelled') {
-          settled = true;
-          window.clearTimeout(timeout);
-          unlisten?.();
-          reject(new Error('Plugin generation cancelled'));
-        } else if (event.status === 'completed' && event.artifact) {
-          settled = true;
-          window.clearTimeout(timeout);
-          unlisten?.();
-          resolve(event.artifact);
-        }
-      }, {
-        onListenerReady: () => resolveListenerReady?.(),
       });
-      void listenerReady.then(() => {
-        if (settled) return;
-        return plugins.run(request).then((started) => {
-          if (settled) {
-            void plugins.runStop(started.runId);
-            return;
-          }
-          runId = started.runId;
-        });
-      }).catch((error) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        unlisten?.();
-        reject(error);
-      });
-    });
-  })();
-  activeRuns.set(request.pluginId, promise);
-  void promise.finally(() => {
-    if (activeRuns.get(request.pluginId) === promise) activeRuns.delete(request.pluginId);
-  }).catch(() => undefined);
-  return promise;
+    }, 10 * 60 * 1000);
+  });
 }
 
-export function isPluginRunning(pluginId: string): boolean {
-  return activeRuns.has(pluginId);
+/**
+ * Start a run and wait by immutable runId. The run store, rather than a
+ * workColumn component, owns the event projection while a surface is mounted
+ * or not.
+ */
+export async function runPlugin(request: PluginRunRequest): Promise<PluginArtifact> {
+  await ensurePluginRunStoreSubscription();
+  const started = await plugins.run(request);
+  usePluginRunStore.getState().registerRunContext(
+    started.runId,
+    request.pluginId,
+    { notebookPath: request.notebookPath, sourceNote: request.sourceNote },
+  );
+  return await waitForRun(started.runId);
 }
+
+export { ensurePluginRunStoreSubscription, isPluginRunning } from './plugin-run-store';

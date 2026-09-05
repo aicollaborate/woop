@@ -56,9 +56,9 @@ export function useMemoInsertAnimation() {
   }, []);
 
   // 删掉了原来的 (newId, index) + data-virt-index + scrollToIndex 三件套:
-  // 现在没有虚拟列表, 新 memo 永远渲染在列表最前, index 没有意义, 滚动也
-  // 由浏览器原生 overflow-y-auto 自然处理 (新 card 出现在最前, 用户想看
-  // 就滚, 我们不替用户做"自动滚到顶部"的决定)。
+  // 新 memo 永远渲染在列表最前, index 没有意义, 滚动也由浏览器原生
+  // overflow-y-auto 自然处理 (新 card 出现在最前, 用户想看就滚, 我们不替
+  // 用户做"自动滚到顶部"的决定)。动态 virtualizer 的初始 overscan 会包含它。
   const prepareForInsert = useCallback((newId: string) => {
     pendingRef.current = { newId, attempts: 0 };
   }, []);

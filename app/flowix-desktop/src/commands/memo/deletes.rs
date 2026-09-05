@@ -16,11 +16,11 @@ use super::helpers::*;
 
 #[tauri::command]
 pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
-    let artifact_path = match crate::plugin::artifact_path_for_note(&id, &state.memo_file) {
+    let artifact_path = match crate::artifact::path_for_memo(&id, &state.memo_file) {
         Ok(path) => path,
         Err(error) => {
-            tracing::warn!(memo_id = %id, "refuse to delete plugin pointer note: {error}");
-            return false;
+            tracing::warn!(memo_id = %id, "skip plugin artifact cleanup while deleting pointer note: {error}");
+            None
         }
     };
     try_index_remove(state.inner(), &id);
@@ -38,7 +38,7 @@ pub fn delete_memo(id: String, state: State<AppState>, app: AppHandle) -> bool {
         return false;
     }
     if let Some(artifact_path) = artifact_path {
-        if let Err(error) = crate::plugin::remove_artifact_path(&artifact_path) {
+        if let Err(error) = crate::artifact::remove_path(&artifact_path) {
             // Keep the memo deletion successful and leave a recoverable orphan
             // rather than deleting the pointer while an artifact removal is
             // still uncertain. A future cleanup pass can remove this file.
@@ -72,15 +72,11 @@ pub fn clear_memos(notebook_id: Option<String>, state: State<AppState>, app: App
             .list_memos_filtered(notebook_id.as_deref(), "all", "createdAt", None);
         let mut success = true;
         for memo in memos {
-            let artifact_path = match crate::plugin::artifact_path_for_note(
-                &memo.id,
-                &state.memo_file,
-            ) {
+            let artifact_path = match crate::artifact::path_for_memo(&memo.id, &state.memo_file) {
                 Ok(path) => path,
                 Err(error) => {
-                    tracing::warn!(memo_id = %memo.id, "refuse to clear plugin pointer note: {error}");
-                    success = false;
-                    continue;
+                    tracing::warn!(memo_id = %memo.id, "skip plugin artifact cleanup while clearing pointer note: {error}");
+                    None
                 }
             };
             let (abs_path, resolved_notebook_id) =
@@ -100,7 +96,7 @@ pub fn clear_memos(notebook_id: Option<String>, state: State<AppState>, app: App
                 continue;
             }
             if let Some(artifact_path) = artifact_path {
-                if let Err(error) = crate::plugin::remove_artifact_path(&artifact_path) {
+                if let Err(error) = crate::artifact::remove_path(&artifact_path) {
                     tracing::warn!(path = %artifact_path.display(), "plugin artifact cleanup failed: {error}");
                 }
             }

@@ -21,11 +21,11 @@ interface NoteNavigationPanelProps {
   onSelectNotebook: (notebook: Notebook) => void;
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
+  onCreateNotebook: () => void;
   onTogglePanel: () => void;
   onOpenPreferences: (tab?: string) => void;
   activePluginId: string | null;
   onOpenPlugin: (plugin: PluginDescriptor) => void | Promise<void>;
-  onClosePlugin: () => void;
 }
 
 interface NavCounts {
@@ -47,11 +47,11 @@ export function NoteNavigationPanel({
   onSelectNotebook,
   onEditNotebook,
   onDeleteNotebook,
+  onCreateNotebook,
   onTogglePanel,
   onOpenPreferences,
   activePluginId,
   onOpenPlugin,
-  onClosePlugin,
 }: NoteNavigationPanelProps) {
   const [counts, setCounts] = useState<NavCounts>({ total: 0, agent: 0, todo: 0 });
   const [showScrollTopHint, setShowScrollTopHint] = useState(false);
@@ -82,6 +82,7 @@ export function NoteNavigationPanel({
         onSelectNotebook={onSelectNotebook}
         onEditNotebook={onEditNotebook}
         onDeleteNotebook={onDeleteNotebook}
+        onCreateNotebook={onCreateNotebook}
       />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <OverlayScrollbar
@@ -94,7 +95,6 @@ export function NoteNavigationPanel({
           <NavFilterButtons
             totalMemoCount={counts.total}
             todoMemoCount={counts.todo}
-            onSelectFilter={onClosePlugin}
           />
           <PluginNavItems
             activePluginId={activePluginId}

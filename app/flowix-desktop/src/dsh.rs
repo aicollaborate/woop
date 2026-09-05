@@ -255,20 +255,50 @@ pub(crate) fn development_bundle_launch_spec() -> Option<Result<ManagedDshLaunch
     let configured = std::env::var_os("FLOWIX_DSH_DEV_ROOT").map(PathBuf::from);
     let root = configured.or_else(|| {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
-        let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
+        let platform = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "windows") {
+            "windows"
+        } else {
+            "linux"
+        };
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x64"
+        };
         let candidate = repo.join(format!(".build/dsh-runtime-dev/node24-{platform}-{arch}"));
         candidate.is_dir().then_some(candidate)
     });
     root.map(|root| {
-        let canonical = dunce::canonicalize(&root).map_err(|error| format!("invalid DSH dev runtime {}: {error}", root.display()))?;
-        let node = canonical.join("node").join(if cfg!(windows) { "node.exe" } else { "node" });
+        let canonical = dunce::canonicalize(&root)
+            .map_err(|error| format!("invalid DSH dev runtime {}: {error}", root.display()))?;
+        let node = canonical
+            .join("node")
+            .join(if cfg!(windows) { "node.exe" } else { "node" });
         let runtime = canonical.join("runtime/node_modules/@deepseek-ai/dsh/lib/bin.js");
-        let profile = canonical.join("profile").join(DEFAULT_PROFILE).join("package.json");
-        for (label, path) in [("private Node", &node), ("DSH CLI", &runtime), ("Flowix profile", &profile)] {
-            if !path.is_file() { return Err(format!("DSH dev runtime is incomplete: {label} is missing at {}", path.display())); }
+        let profile = canonical
+            .join("profile")
+            .join(DEFAULT_PROFILE)
+            .join("package.json");
+        for (label, path) in [
+            ("private Node", &node),
+            ("DSH CLI", &runtime),
+            ("Flowix profile", &profile),
+        ] {
+            if !path.is_file() {
+                return Err(format!(
+                    "DSH dev runtime is incomplete: {label} is missing at {}",
+                    path.display()
+                ));
+            }
         }
-        Ok(ManagedDshLaunch { executable: node, args: vec![runtime.clone()], root: canonical, cli_entrypoint: Some(runtime) })
+        Ok(ManagedDshLaunch {
+            executable: node,
+            args: vec![runtime.clone()],
+            root: canonical,
+            cli_entrypoint: Some(runtime),
+        })
     })
 }
 
@@ -418,10 +448,7 @@ pub fn run_profile_plugin(
 }
 
 fn is_required_flowix_profile_bundle(package: &str) -> bool {
-    matches!(
-        package,
-        "@deepseek-ai/dsh-base" | "dsh-flowix-memory"
-    )
+    matches!(package, "@deepseek-ai/dsh-base" | "dsh-flowix-memory")
 }
 
 fn install_runtime_inner(
@@ -497,7 +524,13 @@ fn install_runtime_inner(
     let staging = versions.join(format!(".installing-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging).map_err(|e| format!("create DSH staging directory: {e}"))?;
 
-    emit_progress(app, "installing", download.bytes.len() as u64, Some(download.bytes.len() as u64), false);
+    emit_progress(
+        app,
+        "installing",
+        download.bytes.len() as u64,
+        Some(download.bytes.len() as u64),
+        false,
+    );
     let result = extract_archive(&download.bytes, &staging)
         .and_then(|()| check_cancelled())
         .and_then(|()| {
@@ -1016,7 +1049,9 @@ fn copy_profile_tree(source: &Path, target: &Path) -> Result<(), String> {
             copy_profile_tree(&entry.path(), &target.join(entry.file_name()))?;
         }
     } else {
-        if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|e| format!("create DSH profile parent: {e}"))?; }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create DSH profile parent: {e}"))?;
+        }
         fs::copy(source, target).map_err(|e| format!("copy DSH profile file: {e}"))?;
     }
     Ok(())
@@ -1055,7 +1090,10 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
         .env("DSH_CREDENTIALS_PATH", &credentials_path)
         .env("FLOWIX_DSH_ROOT", root)
         .env("FLOWIX_DSH_APPSERVER_STDIO", "1")
-        .env("DSH_PROFILE_DIR", dsh_home.join("profiles").join(DEFAULT_PROFILE))
+        .env(
+            "DSH_PROFILE_DIR",
+            dsh_home.join("profiles").join(DEFAULT_PROFILE),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1108,8 +1146,16 @@ fn health_check(launch: &ManagedDshLaunch) -> Result<(), String> {
         let initialized = initialize
             .get("result")
             .ok_or("DSH App Server initialize returned no result")?;
-        if initialized.get("protocolVersion").and_then(serde_json::Value::as_u64) != Some(DSH_PROTOCOL_VERSION)
-            || initialized.get("serverInfo").and_then(|value| value.get("name")).and_then(serde_json::Value::as_str) != Some("dsh-appserver") {
+        if initialized
+            .get("protocolVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(DSH_PROTOCOL_VERSION)
+            || initialized
+                .get("serverInfo")
+                .and_then(|value| value.get("name"))
+                .and_then(serde_json::Value::as_str)
+                != Some("dsh-appserver")
+        {
             return Err("DSH App Server initialize health check failed".to_string());
         }
         let thread = rpc_health_request(
@@ -1311,9 +1357,7 @@ fn runtime_target_key() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        archive::safe_archive_path, dsh_version_is_at_least, validate_manifest_version,
-    };
+    use super::{archive::safe_archive_path, dsh_version_is_at_least, validate_manifest_version};
     use std::path::Path;
 
     #[cfg(unix)]

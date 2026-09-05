@@ -129,8 +129,8 @@ describe("thread-titles helpers", () => {
         codex: "t1",
       } as Partial<Record<AgentTypeKey, string | undefined>>,
       currentThreadTitles: {
-        codex: "Active title",
-      } as Partial<Record<AgentTypeKey, string | undefined>>,
+        t1: "Active title",
+      },
     };
 
     expect(
@@ -141,7 +141,7 @@ describe("thread-titles helpers", () => {
     const state2 = {
       threadLists: {} as Partial<Record<AgentTypeKey, { threadId: string; title: string; createdAt: number; updatedAt: number }[]>>,
       activeThreadIds: { codex: "t1" } as Partial<Record<AgentTypeKey, string | undefined>>,
-      currentThreadTitles: { codex: "Active" } as Partial<Record<AgentTypeKey, string | undefined>>,
+      currentThreadTitles: { t1: "Active" },
     };
     expect(getConversationTitleForThread(state2, "codex", "t1")).toBe("Active");
 

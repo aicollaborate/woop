@@ -1,14 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Folder, Hash, Layers, ListTodo } from 'lucide-react';
-import { StarFourIcon } from '@phosphor-icons/react';
+import { Check, ChevronDown, ChevronRight, Hash, Layers, ListTodo } from 'lucide-react';
 
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
 import { useMemoStore, useTagStore } from '@features/memo';
-import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
 import { TagMentionName } from '@features/editor/extensions/tag-mention/tag-mention-label';
 import {
   DropdownMenu,
@@ -17,9 +14,13 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { OverlayScrollbar } from '@shared/ui/overlay-scrollbar';
-import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 
-export type MemoNavigationTarget = 'all' | 'agents' | 'todos' | 'tags';
+const MEMO_NAVIGATION_MENU_CLASS =
+  'w-[220px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]';
+const MEMO_NAVIGATION_MENU_ITEM_CLASS =
+  'group flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]';
+
+export type MemoNavigationTarget = 'all' | 'todos' | 'tags';
 
 interface NavigationSubmenuProps {
   label: ReactNode;
@@ -34,7 +35,6 @@ interface NavigationSubmenuProps {
    */
   valueAdornment?: ReactNode;
   open: boolean;
-  active?: boolean;
   items?: Array<{ id: string; label: string; secondary?: string }>;
   loading?: boolean;
   emptyText: string;
@@ -60,7 +60,6 @@ export function MemoNavigationSubmenu({
   labelAdornment,
   valueAdornment,
   open,
-  active = false,
   items = [],
   loading = false,
   emptyText,
@@ -73,6 +72,7 @@ export function MemoNavigationSubmenu({
   onClick,
 }: NavigationSubmenuProps) {
   const closeTimerRef = useRef<number | null>(null);
+  const selectedTagId = useTagStore((state) => state.selectedTagId);
 
   const cancelClose = () => {
     if (closeTimerRef.current === null) return;
@@ -102,12 +102,10 @@ export function MemoNavigationSubmenu({
       <button
         type="button"
         className={cn(
-          'flex h-7 w-full cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2 text-sm text-[var(--foreground)] outline-none',
-          active
-            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-            : open
-              ? 'bg-[var(--muted)]'
-              : 'hover:bg-[var(--muted)]',
+          'memo-navigation-submenu-trigger flex h-7 w-full cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2 text-sm text-[var(--foreground)] outline-none transition-colors',
+          open
+            ? 'bg-[var(--muted)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]'
+            : 'hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]',
         )}
         onClick={() => {
           onClick?.();
@@ -129,7 +127,7 @@ export function MemoNavigationSubmenu({
         </span>
       </button>
       {open && (
-        <div className="absolute left-full top-0 z-[1501] flex max-h-[min(560px,calc(100vh-16px))] w-[220px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-1 pb-1 pt-1.5 shadow-lg">
+        <div className="absolute left-full top-0 z-[1501] flex max-h-[min(560px,calc(100vh-16px))] w-[220px] flex-col overflow-hidden rounded-xl border border-[var(--border-popup)] bg-[var(--card)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
           {!hideHeader && (
             <div
               className="mention-note-header"
@@ -154,7 +152,10 @@ export function MemoNavigationSubmenu({
                     key={item.id}
                     type="button"
                     title={item.secondary ? `${item.label} · ${item.secondary}` : item.label}
-                    className="mention-note-item !h-7 !min-h-7 !rounded-lg !py-0 !pl-[6px] !pr-2 hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none"
+                    className={cn(
+                      'memo-navigation-submenu-item mention-note-item !h-7 !min-h-7 !rounded-lg !py-0 !pl-[6px] !pr-2 hover:bg-[var(--brand)] focus-visible:bg-[var(--brand)] focus-visible:outline-none',
+                      itemKind === 'tag' && item.id === selectedTagId && 'is-selected',
+                    )}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
                       onSelect?.(item.id);
@@ -177,6 +178,9 @@ export function MemoNavigationSubmenu({
                       <span className="mention-note-notebook mention-note-notebook-name">
                         {item.secondary}
                       </span>
+                    )}
+                    {itemKind === 'tag' && item.id === selectedTagId && (
+                      <Check className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" aria-hidden="true" />
                     )}
                   </button>
                 ))
@@ -201,12 +205,10 @@ interface MemoNavigationDropdownProps {
 }
 
 /**
- * Shared navigation menu for the three middle-column list views.
+ * Shared navigation menu for the notes list view.
  *
- * The navigation entries intentionally live here instead of being copied into
- * MemoList, AgentConversationList, and FolderFileTree. Each caller can append
- * its own menu section after the shared navigation without losing the actions
- * that belong to that view.
+ * The filter and sort entries are supplied by MemoList so their state remains
+ * owned by the list while the common note/task/tag entries stay in one place.
  */
 export function MemoNavigationDropdown({
   title,
@@ -220,16 +222,14 @@ export function MemoNavigationDropdown({
 }: MemoNavigationDropdownProps) {
   const { t } = useI18n();
   const activeFilter = useMemoStore((state) => state.activeFilter);
-  const activeFileBrowserPath = useMemoStore((state) => state.activeFileBrowserPath);
   const selectedNotebook = useMemoStore((state) => state.selectedNotebook);
+  const selectedTagId = useTagStore((state) => state.selectedTagId);
   const setActiveFilter = useMemoStore((state) => state.setActiveFilter);
-  const setActiveFileBrowserPath = useMemoStore((state) => state.setActiveFileBrowserPath);
   const setSelectedTagId = useTagStore((state) => state.setSelectedTagId);
   const tags = useTagStore((state) => state.tags);
   const loadTags = useTagStore((state) => state.loadTags);
-  const accessConfig = useAgentAccessStore((state) => state.config);
   const [internalOpen, setInternalOpen] = useState(false);
-  const [openSubmenu, setOpenSubmenu] = useState<'tags' | 'references' | null>(null);
+  const [openSubmenu, setOpenSubmenu] = useState<'tags' | null>(null);
   const selectedNotebookId = selectedNotebook?.id ?? null;
   const menuOpen = open ?? internalOpen;
 
@@ -250,7 +250,6 @@ export function MemoNavigationDropdown({
   }, [loadTags, selectedNotebookId]);
 
   const isActive = (target: MemoNavigationTarget): boolean => {
-    if (activeFileBrowserPath !== null) return false;
     if (target === 'tags') return activeFilter === 'tagged';
     return activeFilter === target;
   };
@@ -268,22 +267,10 @@ export function MemoNavigationDropdown({
     setActiveFilter('tagged');
   };
 
-  const handleReferenceSelect = useCallback((folderPath: string) => {
-    setActiveFileBrowserPath(folderPath);
-  }, [setActiveFileBrowserPath]);
-
   const tagSubmenuItems = tags.map((tag) => ({ id: tag.id, label: tag.name }));
-  const defaultFiles = selectedNotebookId
-    ? normalizeFilesDefaults(accessConfig.defaults?.files)[selectedNotebookId]
-    : undefined;
-  const referenceSubmenuItems = (defaultFiles?.folders ?? []).map((path) => {
-    const trimmed = path.replace(/[\\/]+$/, '');
-    const entry = accessConfig.entries.find(
-      (candidate) => candidate.kind === 'folder'
-        && candidate.path.trim().replace(/[\\/]+$/, '').toLowerCase() === trimmed.toLowerCase(),
-    );
-    return { id: path, label: entry?.name ?? trimmed.split(/[\\/]/).pop() ?? trimmed };
-  });
+  const selectedTagName = selectedTagId
+    ? (tags.find((tag) => tag.id === selectedTagId)?.name ?? selectedTagId)
+    : null;
 
   return (
     <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
@@ -307,56 +294,44 @@ export function MemoNavigationDropdown({
           />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom" className="w-[220px] space-y-0.5 px-1 py-1.5">
+      <DropdownMenuContent align="start" side="bottom" className={MEMO_NAVIGATION_MENU_CLASS}>
         <DropdownMenuItem
           onClick={() => handleNavigate('all')}
           className={cn(
-            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
-            isActive('all')
-              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-              : 'hover:bg-[var(--muted)]',
+            MEMO_NAVIGATION_MENU_ITEM_CLASS,
+            isActive('all') && 'hover:bg-[var(--brand)]',
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
             <Layers className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{t('memo.navigation.allNotes')}</span>
           </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => handleNavigate('agents')}
-          className={cn(
-            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
-            isActive('agents')
-              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-              : 'hover:bg-[var(--muted)]',
-          )}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <StarFourIcon className="h-4 w-4 shrink-0" weight="regular" aria-hidden="true" />
-            <span>{t('memo.navigation.conversations')}</span>
-          </span>
+          {isActive('all') && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--brand)] group-hover:text-[var(--primary-foreground)]" aria-hidden="true" />}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => handleNavigate('todos')}
           className={cn(
-            'flex h-7 cursor-pointer items-center justify-between rounded-lg py-0 pl-[6px] pr-2',
-            isActive('todos')
-              ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-              : 'hover:bg-[var(--muted)]',
+            MEMO_NAVIGATION_MENU_ITEM_CLASS,
+            isActive('todos') && 'hover:bg-[var(--brand)]',
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
             <ListTodo className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{t('memo.list.filterTasks')}</span>
           </span>
+          {isActive('todos') && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--brand)] group-hover:text-[var(--primary-foreground)]" aria-hidden="true" />}
         </DropdownMenuItem>
         <MemoNavigationSubmenu
           label={t('memo.navigation.tags')}
           icon={<Hash className="h-4 w-4 shrink-0" aria-hidden="true" />}
           itemIcon={<Hash className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" aria-hidden="true" />}
           itemKind="tag"
+          valueAdornment={activeFilter === 'tagged' && selectedTagName ? (
+            <span className="max-w-[100px] truncate text-xs text-[var(--muted-foreground)]">
+              #{selectedTagName}
+            </span>
+          ) : undefined}
           open={openSubmenu === 'tags'}
-          active={isActive('tags')}
           items={tagSubmenuItems}
           emptyText={t('memo.navigation.emptyTags')}
           loadingText={t('memo.navigation.loading')}
@@ -368,29 +343,7 @@ export function MemoNavigationDropdown({
           onSelect={handleTagSelect}
           onClick={() => handleNavigate('tags')}
         />
-        <MemoNavigationSubmenu
-          label={t('memo.navigation.referenceMaterials')}
-          icon={<Folder className="h-4 w-4 shrink-0" aria-hidden="true" />}
-          itemIcon={<Folder className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" aria-hidden="true" />}
-          itemKind="reference"
-          open={openSubmenu === 'references'}
-          active={activeFileBrowserPath !== null}
-          items={referenceSubmenuItems}
-          emptyText={t('memo.navigation.emptyReferences')}
-          loadingText={t('memo.navigation.loading')}
-          onOpenChange={(open) => setOpenSubmenu((current) => {
-            if (open) return 'references';
-            return current === 'references' ? null : current;
-          })}
-          onCloseMenu={closeMenu}
-          onSelect={handleReferenceSelect}
-        />
-        {children && (
-          <>
-            <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
-            <div>{children}</div>
-          </>
-        )}
+        {children && <div>{children}</div>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

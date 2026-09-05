@@ -1,5 +1,4 @@
 import { useCallback, useMemo } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 
 import type {
   AgentConversationInstance,
@@ -8,9 +7,11 @@ import {
   useAgentSessionStore,
 } from '@features/agent/store/agent-session-store';
 import type { ThreadProjection } from '@features/agent/store/session-reducer';
-
-const FIELD_SEPARATOR = '';
-const EMPTY_FIELD = '-';
+import {
+  EMPTY_CONVERSATION_RUN_SIGNATURE,
+  getConversationRunSignature,
+  splitConversationRunSignature,
+} from '@features/agent/store/conversation-run-signature';
 
 export type ConversationRunIndex = Readonly<Record<string, string>>;
 
@@ -28,17 +29,6 @@ const EMPTY_RUN_SUMMARY: ConversationRunSummary = {
   currentTool: null,
 };
 
-function runSignature(projection: ThreadProjection | undefined): string {
-  if (!projection) return EMPTY_FIELD;
-  const runs = projection.runs;
-  const activeRun = runs.activeRunId ? runs.runs[runs.activeRunId] : undefined;
-  const status = activeRun?.status ?? runs.lastRun?.status ?? EMPTY_FIELD;
-  const runId = activeRun?.runId ?? runs.lastRun?.runId ?? EMPTY_FIELD;
-  const startedAt = activeRun?.startedAt ?? runs.lastRun?.startedAt ?? 0;
-  const currentTool = activeRun?.currentTool ?? EMPTY_FIELD;
-  return `${status}${FIELD_SEPARATOR}${runId}${FIELD_SEPARATOR}${startedAt}${FIELD_SEPARATOR}${currentTool}`;
-}
-
 function uniqueThreadIds(instances: Record<string, AgentConversationInstance>): string[] {
   const ids = new Set<string>();
   for (const instance of Object.values(instances)) {
@@ -53,9 +43,31 @@ export function buildConversationRunIndex(
 ): ConversationRunIndex {
   const index: Record<string, string> = {};
   for (const threadId of threadIds) {
-    index[threadId] = runSignature(projections[threadId]);
+    index[threadId] = getConversationRunSignature(projections[threadId]);
   }
   return index;
+}
+
+export function getConversationRunSummaryFromSignature(signature: string): ConversationRunSummary {
+  return splitConversationRunSignature(signature);
+}
+
+/**
+ * Read one thread's lifecycle state. The selector is O(1) for each mounted
+ * row, so a text chunk in one thread does not rebuild an index for every row.
+ * The fallback keeps older in-memory states compatible before the incremental
+ * signature map has observed that thread.
+ */
+export function useConversationRunSignature(threadId: string | null | undefined): string {
+  const selector = useCallback(
+    (state: ReturnType<typeof useAgentSessionStore.getState>) => {
+      if (!threadId) return EMPTY_CONVERSATION_RUN_SIGNATURE;
+      return state.threadRunSignatures[threadId]
+        ?? getConversationRunSignature(state.threadProjections[threadId]);
+    },
+    [threadId],
+  );
+  return useAgentSessionStore(selector);
 }
 
 /**
@@ -67,14 +79,16 @@ export function useConversationRunIndex(
   instances: Record<string, AgentConversationInstance>,
 ): ConversationRunIndex {
   const threadIds = useMemo(() => uniqueThreadIds(instances), [instances]);
-  const selector = useCallback(
-    (state: ReturnType<typeof useAgentSessionStore.getState>) => (
-      buildConversationRunIndex(state.threadProjections, threadIds)
-    ),
-    [threadIds],
-  );
-  // Subscribe directly to canonical run projections.
-  return useAgentSessionStore(useShallow(selector));
+  const runStateVersion = useAgentSessionStore((state) => state.runStateVersion);
+  return useMemo(() => {
+    const state = useAgentSessionStore.getState();
+    const index: Record<string, string> = {};
+    for (const threadId of threadIds) {
+      index[threadId] = state.threadRunSignatures[threadId]
+        ?? getConversationRunSignature(state.threadProjections[threadId]);
+    }
+    return index;
+  }, [threadIds, runStateVersion]);
 }
 
 export function getConversationRunSummary(
@@ -83,16 +97,9 @@ export function getConversationRunSummary(
 ): ConversationRunSummary {
   if (!threadId) return EMPTY_RUN_SUMMARY;
   const signature = index[threadId];
-  if (!signature || signature === EMPTY_FIELD) return EMPTY_RUN_SUMMARY;
-  const [status, runId, startedAt, currentTool] = signature.split(FIELD_SEPARATOR);
-  return {
-    status: status === EMPTY_FIELD
-      ? null
-      : status as ConversationRunSummary['status'],
-    runId: runId === EMPTY_FIELD ? null : runId,
-    startedAt: Number(startedAt) || 0,
-    currentTool: currentTool === EMPTY_FIELD ? null : currentTool,
-  };
+  return signature
+    ? getConversationRunSummaryFromSignature(signature)
+    : EMPTY_RUN_SUMMARY;
 }
 
 export function isAgentConversationRunning(

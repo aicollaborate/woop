@@ -183,7 +183,7 @@ describe("createAgentComposerDom click-to-focus delegation", () => {
     disposeAgentComposerDom(parts);
   });
 
-  it("clamps caret to end after focusing", () => {
+  it("keeps the initial draft on the editor mount point", () => {
     const parts = createAgentComposerDom({ t: noopT, inputDraft: "hello world" });
     document.body.append(parts.composer);
 
@@ -192,8 +192,7 @@ describe("createAgentComposerDom click-to-focus delegation", () => {
 
     dispatchPointerDown(padding);
     expect(document.activeElement).toBe(parts.input);
-    expect(parts.input.selectionStart).toBe(parts.input.value.length);
-    expect(parts.input.selectionEnd).toBe(parts.input.value.length);
+    expect(parts.input.dataset.composerInitialDraft).toBe("hello world");
     disposeAgentComposerDom(parts);
   });
 

@@ -7,15 +7,28 @@ import { useCliLinkStatusStore } from '@features/preferences/store';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@shared/ui/button';
 import { toast } from '@/lib/toast';
+import workbuddyIcon from '@/assets/agent-icons/workbuddy.svg';
+import chatgptIcon from '@/assets/agent-icons/chatgpt.svg';
+import claudeIcon from '@/assets/agent-icons/claude.svg';
+import deepseekIcon from '@/assets/agent-icons/deepseek.svg';
+import piIcon from '@/assets/agent-icons/pi.svg';
+import hermesIcon from '@/assets/agent-icons/hermes.svg';
+import openclawIcon from '@/assets/agent-icons/openclaw.svg';
+
+const SUPPORTED_AGENTS = [
+  { name: 'WorkBuddy', icon: workbuddyIcon },
+  { name: 'ChatGPT', icon: chatgptIcon },
+  { name: 'Claude', icon: claudeIcon },
+  { name: 'DeepSeek', icon: deepseekIcon },
+  { name: 'Pi', icon: piIcon },
+  { name: 'Hermes', icon: hermesIcon },
+  { name: 'OpenClaw', icon: openclawIcon },
+] as const;
 
 interface McpSnippet {
   id: string;
   title: string;
   content: string;
-}
-
-function escapeTomlString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 export function buildMcpConfigSnippets(command: string, genericTitle: string): McpSnippet[] {
@@ -28,25 +41,6 @@ export function buildMcpConfigSnippets(command: string, genericTitle: string): M
     {
       id: 'generic',
       title: genericTitle,
-      content: JSON.stringify({ transport: 'stdio', ...sharedServer }, null, 2),
-    },
-    {
-      id: 'codex',
-      title: 'Codex',
-      content: `[mcp_servers.flowix]\ncommand = "${escapeTomlString(command)}"\nargs = ["mcp"]`,
-    },
-    {
-      id: 'claude-code',
-      title: 'Claude Code',
-      content: JSON.stringify(
-        { mcpServers: { flowix: { type: 'stdio', ...sharedServer } } },
-        null,
-        2,
-      ),
-    },
-    {
-      id: 'json',
-      title: 'Claude Desktop / Cursor',
       content: JSON.stringify({ mcpServers: { flowix: sharedServer } }, null, 2),
     },
   ];
@@ -104,7 +98,32 @@ export function McpSection() {
     <div className="space-y-5 pb-6">
       <SectionHeader title={t('preferences.mcp.title')} />
 
-      <div className="space-y-6">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-[var(--muted-foreground)]">
+          <span>{t('preferences.mcp.supportedAgents')}</span>
+          <div className="flex items-center gap-2" aria-label={t('preferences.mcp.supportedAgents')}>
+            {SUPPORTED_AGENTS.map((agent) => (
+              <img
+                key={agent.name}
+                src={agent.icon}
+                alt={agent.name}
+                title={agent.name}
+                className="size-6 rounded-md object-contain"
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-3">
+          <div className="text-sm font-medium text-[var(--foreground)]">
+            {t('preferences.mcp.setupTitle')}
+          </div>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm leading-5 text-[var(--muted-foreground)]">
+            <li>{t('preferences.mcp.setupStep1')}</li>
+            <li>{t('preferences.mcp.setupStep2')}</li>
+          </ol>
+        </div>
+
         {snippets.map((snippet) => (
           <div key={snippet.id} className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card)]">
             <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--divider)] px-3">

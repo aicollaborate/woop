@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-pub use crate::agent_external::runtime_registry::ExternalRuntimeKind;
 use crate::agent_external::codex::CodexAppServerManager;
 use crate::agent_external::hermes::HermesAcpManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
+pub use crate::agent_external::runtime_registry::ExternalRuntimeKind;
 use crate::agent_session::ThreadManager;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,15 +48,24 @@ impl AgentLifecycleService {
         hermes: Arc<HermesAcpManager>,
     ) -> Self {
         let adapters: [Arc<dyn ThreadLifecycleAdapter>; 3] = [
-            Arc::new(CodexLifecycleAdapter { threads: threads.clone(), client: codex }),
-            Arc::new(AcpLifecycleAdapter { runtime: ExternalRuntimeKind::OpenCode, delete: Arc::new(move |thread_id: String| {
-                let client = opencode.clone();
-                Box::pin(async move { client.delete_thread(&thread_id).await })
-            }) }),
-            Arc::new(AcpLifecycleAdapter { runtime: ExternalRuntimeKind::Hermes, delete: Arc::new(move |thread_id: String| {
-                let client = hermes.clone();
-                Box::pin(async move { client.delete_thread(&thread_id).await })
-            }) }),
+            Arc::new(CodexLifecycleAdapter {
+                threads: threads.clone(),
+                client: codex,
+            }),
+            Arc::new(AcpLifecycleAdapter {
+                runtime: ExternalRuntimeKind::OpenCode,
+                delete: Arc::new(move |thread_id: String| {
+                    let client = opencode.clone();
+                    Box::pin(async move { client.delete_thread(&thread_id).await })
+                }),
+            }),
+            Arc::new(AcpLifecycleAdapter {
+                runtime: ExternalRuntimeKind::Hermes,
+                delete: Arc::new(move |thread_id: String| {
+                    let client = hermes.clone();
+                    Box::pin(async move { client.delete_thread(&thread_id).await })
+                }),
+            }),
         ];
         Self::try_from_adapters(adapters)
             .expect("built-in lifecycle adapters must have unique runtime keys")
@@ -103,7 +112,14 @@ struct CodexLifecycleAdapter {
     client: Arc<CodexAppServerManager>,
 }
 
-type DeleteProvider = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send>> + Send + Sync>;
+type DeleteProvider = Arc<
+    dyn Fn(
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 struct AcpLifecycleAdapter {
     runtime: ExternalRuntimeKind,
@@ -112,7 +128,9 @@ struct AcpLifecycleAdapter {
 
 #[async_trait]
 impl ThreadLifecycleAdapter for AcpLifecycleAdapter {
-    fn runtime(&self) -> ExternalRuntimeKind { self.runtime }
+    fn runtime(&self) -> ExternalRuntimeKind {
+        self.runtime
+    }
 
     async fn apply(&self, thread_id: &str, action: LifecycleAction) -> Result<bool, String> {
         if action == LifecycleAction::Archive {
@@ -196,40 +214,32 @@ mod tests {
         );
 
         // A type without a lifecycle adapter must not fail the delete.
-        assert!(
-            !service
-                .apply("claude", "thread-1", LifecycleAction::Delete)
-                .await
-                .unwrap()
-        );
+        assert!(!service
+            .apply("claude", "thread-1", LifecycleAction::Delete)
+            .await
+            .unwrap());
         // Unparseable types (local agents) keep local-only semantics too.
-        assert!(
-            !service
-                .apply("gemini", "thread-1", LifecycleAction::Delete)
-                .await
-                .unwrap()
-        );
+        assert!(!service
+            .apply("gemini", "thread-1", LifecycleAction::Delete)
+            .await
+            .unwrap());
         // A never-started Codex conversation has no provider thread, so no
         // app-server connection is attempted and the caller stays local-only.
-        assert!(
-            !service
-                .apply(
-                    "codex",
-                    "codex-local-agent-inst-abc",
-                    LifecycleAction::Archive
-                )
-                .await
-                .unwrap()
-        );
-        assert!(
-            !service
-                .apply(
-                    "codex",
-                    "codex-local-agent-inst-abc",
-                    LifecycleAction::Delete
-                )
-                .await
-                .unwrap()
-        );
+        assert!(!service
+            .apply(
+                "codex",
+                "codex-local-agent-inst-abc",
+                LifecycleAction::Archive
+            )
+            .await
+            .unwrap());
+        assert!(!service
+            .apply(
+                "codex",
+                "codex-local-agent-inst-abc",
+                LifecycleAction::Delete
+            )
+            .await
+            .unwrap());
     }
 }

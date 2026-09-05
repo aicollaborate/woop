@@ -561,7 +561,7 @@ function PluginsTab() {
                 : 'preferences.dsh.plugins.filterAll')}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="flowix-preferences-select-content">
             <SelectItem value="configurable">{t('preferences.dsh.plugins.filterConfigurable')}</SelectItem>
             <SelectItem value="all">{t('preferences.dsh.plugins.filterAll')}</SelectItem>
           </SelectContent>

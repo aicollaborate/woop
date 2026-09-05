@@ -53,6 +53,12 @@ interface TagTreeProps {
   selectedNotebook: Notebook | null;
   /** loadTags 完成时上抛 (total/agent/todo) 计数, 供 NavFilterButtons 展示。 */
   onCountsChange: (counts: { total: number; agent: number; todo: number }) => void;
+  /** Optional callback for lightweight consumers such as the memo-list drawer. */
+  onSelectTag?: (tagId: string) => void;
+  /** Hide the selected row treatment when rendered as a list-navigation drawer. */
+  hideSelectionStyle?: boolean;
+  /** Hide the section title and its top spacing in compact consumers. */
+  hideSectionHeader?: boolean;
 }
 
 // 笔记本列表区域高度 ── 持久化键 + 读 / 写助手。
@@ -91,7 +97,13 @@ function writePersistedCollapsedTagIds(notebookId: string, ids: string[]): void 
 //   - 行内重命名 / 右键删除确认弹窗 / drag ghost
 // 与父级的唯一耦合是 onCountsChange (counts 上抛给 NavFilterButtons)。
 // 落点位置 / 子树 / 同级重排 / segment 树重建等纯逻辑见 tag-reorder.ts。
-export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
+export function TagTree({
+  selectedNotebook,
+  onCountsChange,
+  onSelectTag,
+  hideSelectionStyle = false,
+  hideSectionHeader = false,
+}: TagTreeProps) {
   const { t } = useI18n();
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const setActiveFilter = useMemoStore((s) => s.setActiveFilter);
@@ -220,8 +232,10 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
     (tagId: string) => {
       setSelectedTagId(tagId);
       setActiveFilter('tagged');
+      onSelectTag?.(tagId);
     },
     [
+      onSelectTag,
       setActiveFilter,
       setSelectedTagId,
     ],
@@ -646,33 +660,35 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
     <>
       {/* 标签组 ── 外侧容器, pt-1 提供组上方留白 (与资料组对称, 两侧均用 padding 而非 margin);
           标签行间距由 .tag-collapse-track 自身控制，确保折叠轨道不残留 space-y margin。 */}
-      <div className="tag-tree-list pt-1">
+      <div className={cn('tag-tree-list', !hideSectionHeader && 'pt-1')}>
         {/* 标签分类标题 ── 过滤器 (全部/对话/待办) 在上, 真正的标签树在此标题之下。 */}
-        <div className="agent-thread-card__access-section-label flex items-center justify-between">
-          <span>{t('memo.navigation.tags')}</span>
-          {batchMode ? (
-            <button
-              type="button"
-              onClick={() => setBatchMode(false)}
-              className="-my-1 flex h-5 translate-x-1 items-center gap-1 rounded-md px-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-              aria-label={t('memo.tag.batchDone')}
-              title={t('memo.tag.batchDone')}
-            >
-              <span>{t('memo.tag.batchDone')}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={openCreateTagDialog}
-              disabled={!selectedNotebook}
-              className="-my-1 flex h-5 w-5 translate-x-1 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-40"
-              aria-label={t('memo.tag.create')}
-              title={t('memo.tag.create')}
-            >
-              <PlusIcon className="h-3.5 w-3.5" weight="light" />
-            </button>
-          )}
-        </div>
+        {!hideSectionHeader && (
+          <div className="agent-thread-card__access-section-label flex items-center justify-between">
+            <span>{t('memo.navigation.tags')}</span>
+            {batchMode ? (
+              <button
+                type="button"
+                onClick={() => setBatchMode(false)}
+                className="-my-1 flex h-5 translate-x-1 items-center gap-1 rounded-md px-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                aria-label={t('memo.tag.batchDone')}
+                title={t('memo.tag.batchDone')}
+              >
+                <span>{t('memo.tag.batchDone')}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={openCreateTagDialog}
+                disabled={!selectedNotebook}
+                className="-my-1 flex h-5 w-5 translate-x-1 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-40"
+                aria-label={t('memo.tag.create')}
+                title={t('memo.tag.create')}
+              >
+                <PlusIcon className="h-3.5 w-3.5" weight="light" />
+              </button>
+            )}
+          </div>
+        )}
         {tagOptions.length > 0 && (
           <>
           {visibleTagOptions.map((tag) => {
@@ -720,9 +736,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 }}
                 className={cn(
                   'group relative flex h-7 w-full cursor-pointer select-none items-center gap-0 rounded-lg pr-2 text-left text-sm transition-[color]',
-                  isSelected
+                  hideSelectionStyle
+                    ? 'text-[var(--foreground)] hover:bg-[var(--muted)]'
+                    : isSelected
                     ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                    : 'text-[var(--foreground)]',
+                    : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
                   isDragging && 'opacity-50',
                   isDropInside && 'tag-drop-target-inside',
                   isHidden && !isSelected && 'opacity-70',
@@ -750,7 +768,11 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                         : t('memo.tag.collapse')
                       : undefined
                   }
-                  style={{ color: isSelected ? 'var(--primary-foreground)' : undefined }}
+                  style={{
+                    color: isSelected && !hideSelectionStyle
+                      ? 'var(--primary-foreground)'
+                      : undefined,
+                  }}
                   onPointerDown={(event) => {
                     // 阻止事件冒泡到行 ── 避免在图标上按下也启动 drag
                     event.stopPropagation();
@@ -844,28 +866,28 @@ export function TagTree({ selectedNotebook, onCountsChange }: TagTreeProps) {
                 )}
               </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="w-[160px] space-y-1 px-1 py-1.5">
+              <ContextMenuContent className="w-[160px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
                 <ContextMenuItem
                   onClick={() => startRename(tag)}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                  className="h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 >
                   {t('memo.tag.rename')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => void pinTag(tag)}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                  className="h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 >
                   {t('memo.tag.pin')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => setBatchMode(true)}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                  className="h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 >
                   {t('memo.tag.batchManage')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => setDeletingTag(tag)}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+                  className="h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left text-[var(--destructive)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 >
                   {t('memo.tag.delete')}
                 </ContextMenuItem>

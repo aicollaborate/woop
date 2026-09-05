@@ -48,9 +48,105 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Browser column 的激活 tab 顶部指示线从中心向两侧展开，避免切换时
+ * 线条瞬间出现。 */
+.browser-column-active-tab-indicator {
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		var(--brand) 30%,
+		var(--brand) 70%,
+		transparent 100%
+	);
+	transform: scaleX(0);
+	transform-origin: center;
+	animation: browser-column-active-tab-indicator-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 全局搜索命令面板是带分组/搜索结果的特殊菜单。保留多行结果的内容高度，
+ * 但单行项目以 h-7 为基线；选中态与第四列 tab 菜单统一使用主题色和反色文字。 */
+.flowix-global-search-command [cmdk-item] {
+	min-height: 1.75rem;
+	padding: 0.125rem 0.5rem;
+	border-radius: 0.5rem;
+}
+
+.flowix-global-search-command [cmdk-item]:hover,
+.flowix-global-search-command [cmdk-item][data-selected='true'] {
+	background: var(--brand);
+	color: var(--primary-foreground);
+}
+
+.flowix-global-search-command [cmdk-item]:hover :is(span, div, svg, kbd),
+.flowix-global-search-command [cmdk-item][data-selected='true'] :is(span, div, svg, kbd) {
+	color: var(--primary-foreground);
+}
+
+.flowix-global-search-command [cmdk-input-wrapper] {
+	border-bottom-color: color-mix(in srgb, var(--border-popup) 60%, transparent);
+}
+
+.flowix-global-search-command [cmdk-separator] {
+	background: var(--border-popup);
+	opacity: 0.6;
+}
+
+.flowix-global-search-filter-panel {
+	border-bottom-color: color-mix(in srgb, var(--border-popup) 60%, transparent);
+}
+
+/* Preferences 使用共享 Select 组件，但只在这些调用点应用弹窗规范，避免
+ * 改变编辑器与 Memo 中其它 Select 的默认表现。 */
+.flowix-preferences-select-content {
+	border-color: var(--border-popup);
+	border-radius: 0.75rem;
+	padding: 0.25rem;
+	box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
+}
+
+.flowix-preferences-select-content > button {
+	min-height: 1.75rem;
+	height: 1.75rem;
+	padding: 0.125rem 0.5rem;
+	border-radius: 0.5rem;
+}
+
+.flowix-preferences-select-content > button:hover,
+.flowix-preferences-select-content > button:focus-visible {
+	background: var(--brand);
+	color: var(--primary-foreground);
+}
+
+.flowix-preferences-select-content > button:hover :is(span, svg),
+.flowix-preferences-select-content > button:focus-visible :is(span, svg) {
+	color: var(--primary-foreground);
+}
+
+@keyframes browser-column-active-tab-indicator-in {
+	from {
+		transform: scaleX(0);
+	}
+	to {
+		transform: scaleX(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.browser-column-active-tab-indicator {
+		animation: none;
+		transform: none;
+	}
+}
+
 /* 中间列顶部的产品图标: 深色模式使用单色白版，保留 PNG 的透明背景。 */
 [data-theme="dark"] .product-icon {
 	filter: brightness(0) invert(0.82);
+}
+
+.memo-list-view-tab-icon > svg {
+	display: block;
+	height: 100%;
+	width: 100%;
 }
 
 /* 资料文件树的子树展开/收起: 用 grid 行高从 0fr 过渡到 1fr,
@@ -154,7 +250,7 @@
 		--font-nav: 'SF Mono';
 
 		/* User-configurable typography (Preferences → Format).
-		 * 主要消费方是 Tiptap 编辑器 (.markdown-editor .ProseMirror);
+		 * 主要消费方是 Tiptap 编辑器 (.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor));
 		 * Thread Card 消息样式直接读 --app-font-size, 侧边栏对话详情
 		 * (.markdown-editor.agent-conversation-detail) 也显式消费
 		 * --app-font-family —— 均是为了与文档内嵌卡片字体对齐。
@@ -608,6 +704,17 @@
 
 .agent-conversation-list__icon--running {
   animation: agent-type-badge-running-border 1.2s ease-in-out infinite alternate;
+}
+
+/* 中间列“新建对话”菜单进入品牌色背景时, Agent 图标与 slash 菜单一致变白。 */
+.agent-conversation-new-agent-item:hover > .agent-icon--masked,
+.agent-conversation-new-agent-item:focus-visible > .agent-icon--masked {
+  background-color: #fff;
+}
+
+.agent-conversation-new-agent-item:hover > img,
+.agent-conversation-new-agent-item:focus-visible > img {
+  filter: brightness(0) invert(1);
 }
 
 @media (prefers-reduced-motion: reduce) {

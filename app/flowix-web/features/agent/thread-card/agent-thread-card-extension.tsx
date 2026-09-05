@@ -167,8 +167,11 @@ export const AgentThreadCard = Node.create({
           "div",
           { class: "agent-thread-card__composer" },
           [
-            "textarea",
-            { placeholder: "Ask AI to handle this task", rows: "1" },
+            "div",
+            {
+              class: "agent-thread-card__composer-input",
+              contenteditable: "true",
+            },
             inputDraft,
           ],
           [

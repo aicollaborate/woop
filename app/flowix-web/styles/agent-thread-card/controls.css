@@ -310,7 +310,7 @@
 }
 
 /* When an embedded Thread Card owns the document surface, promote the same
- * Agent conversation chrome to the third-column titlebar. The card remains
+ * Agent conversation chrome to the work-column titlebar. The card remains
  * responsible for the fullscreen state; this class only changes the outer
  * titlebar skin while that state is active. */
 .agent-thread-card-fullscreen-titlebar {
@@ -355,7 +355,7 @@
 }
 
 /* 侧边栏对话详情 (AgentConversationDetail) 是独立 surface, 不在
- * .markdown-editor .ProseMirror 内, 消息/输入框的 font-family 会退化为
+ * .markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) 内, 消息/输入框的 font-family 会退化为
  * body 的 --font-sans, 与文档内嵌 Thread Card (经 .ProseMirror 继承
  * --app-font-family) 不一致。这里在 surface 根显式消费同一变量, 让整个
  * 详情面 (header / 消息 / composer) 与文档内卡片走同一条字体继承链;
@@ -386,7 +386,7 @@
   cursor: default;
 }
 
-/* The exit action lives in the third-column titlebar while an embedded card
+/* The exit action lives in the work-column titlebar while an embedded card
  * is fullscreen. Keep the card's own entry/exit control for inline mode and
  * avoid rendering a duplicate exit button in the fullscreen card header. */
 .flowix-main-layout .agent-thread-card--fullscreen .agent-thread-card__fullscreen,

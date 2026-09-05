@@ -3,7 +3,9 @@ import type { AgentConversationInstance } from '@features/agent/store/agent-conv
 import type { MemoItem } from '@/types/memo-item';
 import {
   buildRunningAgentIndex,
+  buildRunningAgentTypeIndex,
   findRunningAgentForMemo,
+  findRunningAgentTypeForMemo,
 } from './running-agent-index';
 
 function instance(
@@ -69,5 +71,24 @@ describe('running agent index', () => {
     const index = buildRunningAgentIndex([instance({ threadId: 'other-thread' })]);
 
     expect(findRunningAgentForMemo(index, memo())).toBeNull();
+  });
+
+  it('projects only agent types while preserving match priority', () => {
+    const byThread = instance({
+      instanceId: 'by-thread',
+      threadId: 'thread-1',
+      agentType: 'deepseek-harness',
+    });
+    const byMemo = instance({
+      instanceId: 'by-memo',
+      source: { kind: 'thread-card', memoId: 'memo-1' },
+      agentType: 'codex',
+    });
+    const index = buildRunningAgentTypeIndex([byThread, byMemo]);
+
+    expect(findRunningAgentTypeForMemo(index, memo({
+      agents: [{ threadId: 'thread-1', title: 'Thread', agentType: 'codex' }],
+    }))).toBe('deepseek-harness');
+    expect(findRunningAgentTypeForMemo(index, memo({ id: 'memo-2' }))).toBeNull();
   });
 });

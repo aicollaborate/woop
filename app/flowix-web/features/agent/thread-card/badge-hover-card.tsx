@@ -243,6 +243,7 @@ export function BadgeHoverCard({
     : [];
   const fiveHour = quotaWindows.find((window) => window.windowDurationMins === 300);
   const weekly = quotaWindows.find((window) => window.windowDurationMins === 10080);
+  const resetCount = codexInfo?.rateLimits?.rateLimitResetCredits?.availableCount;
   const quotaText = (window: typeof fiveHour) => {
     if (!window) return "-";
     const remaining = `${Math.max(0, 100 - window.usedPercent)}%`;
@@ -281,7 +282,7 @@ export function BadgeHoverCard({
         side="bottom"
         align="start"
         sideOffset={6}
-        className="w-[14.4rem] rounded-lg px-3 py-2.5"
+        className="w-[14.4rem] rounded-xl border-[var(--border-popup)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)] px-3 py-2.5"
       >
         <div className="flex flex-col gap-1.5">
           {/* Provider Session ID 行: 只展示 provider-owned id, 不展示本地
@@ -420,6 +421,16 @@ export function BadgeHoverCard({
                   {codexPending ? <HoverCardSkeleton width="3rem" /> : quotaText(weekly)}
                 </span>
               </div>
+              {typeof resetCount === "number" && Number.isFinite(resetCount) && resetCount > 0 ? (
+                <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px]">
+                  <span className="text-[var(--muted-foreground)]">
+                    {t("editor.threadCard.codexQuotaResetCount")}
+                  </span>
+                  <span className="agent-thread-card__codex-reset-count text-right font-mono tabular-nums text-[var(--foreground)]">
+                    {resetCount}
+                  </span>
+                </div>
+              ) : null}
             </>
           ) : null}
         </div>

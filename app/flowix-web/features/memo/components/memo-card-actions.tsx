@@ -2,10 +2,10 @@
 
 import { Check } from 'lucide-react';
 import {
-  ColumnsIcon,
   CopyIcon,
   LinkSimpleIcon,
   PushPin,
+  SquareSplitHorizontalIcon,
   StackSimpleIcon,
   TrashSimpleIcon,
 } from '@phosphor-icons/react';
@@ -17,7 +17,6 @@ import { useI18n, translate, type AppLanguage, type I18nKey } from '@/lib/i18n';
 import {
   ContextMenuContext,
 } from '@shared/ui/context-menu';
-import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import {
   DropdownMenuContext,
 } from '@shared/ui/dropdown-menu';
@@ -29,7 +28,7 @@ import {
   type MemoColor,
 } from '@features/memo';
 import { openMemoSession } from '@features/memo';
-import { resolveMemoSessionPath } from '@features/memo/components/open-memo-session';
+import { resolveMemoSessionPath } from '@features/memo/use-cases/open-memo-session';
 
 // Minimal contract every shadcn-style item primitive in this app satisfies:
 // it accepts an onClick, a className, and renders children. Both
@@ -49,7 +48,7 @@ interface MemoCardActionsProps {
   onDelete: (memo: MemoItem) => void;
   onColorsChange?: (memo: MemoItem, colors: MemoColor[]) => void;
   /**
-   * Opens the memo in the fourth column. Optional because the menu is also
+   * Opens the memo in the browser column. Optional because the menu is also
    * rendered where a split target makes no sense; the item hides when absent.
    */
   onOpenInSplit?: (memo: MemoItem) => void;
@@ -57,7 +56,8 @@ interface MemoCardActionsProps {
 }
 
 const ITEM_BASE =
-  "flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]";
+  "h-7 items-center justify-start rounded-lg px-2 py-0 text-left transition-colors hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]";
+const POPUP_DIVIDER_CLASS = 'mx-1 my-1 h-px bg-[var(--border-popup)] opacity-60';
 
 // Inline color grid that lives at the top of the memo card right-click menu.
 // Visually matches the popup above the document titlebar (same swatch order,
@@ -143,7 +143,7 @@ function MemoCardColorRow({ colors, onChange }: MemoCardColorRowProps) {
     <div
       role="group"
       aria-label={t('document.color.button')}
-      className="flex w-full items-center gap-1.5 px-2.5 pb-1.5 pt-1"
+      className="flex h-7 w-full items-center gap-1 px-2"
     >
       <button
         type="button"
@@ -156,7 +156,7 @@ function MemoCardColorRow({ colors, onChange }: MemoCardColorRowProps) {
           event.stopPropagation();
         }}
         className={cn(
-          'relative h-3.5 w-7 rounded-md border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]',
+          'relative h-4 w-7 rounded-md border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]',
           colors.length === 0
             ? 'border-[var(--muted-foreground)]'
             : 'border-[var(--border)] hover:border-[var(--muted-foreground)]',
@@ -175,7 +175,10 @@ function MemoCardColorRow({ colors, onChange }: MemoCardColorRowProps) {
               event.preventDefault();
               event.stopPropagation();
             }}
-            className="relative h-3.5 w-7 rounded-md transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+            className={cn(
+              'relative h-4 w-7 rounded-md transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]',
+              isSelected ? 'opacity-100' : 'opacity-50',
+            )}
             style={{ backgroundColor: MEMO_COLOR_HEX[c] }}
           >
             {isSelected && (
@@ -254,9 +257,8 @@ export function MemoCardActions({
       {onOpenInSplit && (
         <>
           <Item onClick={() => onOpenInSplit(memo)} className={ITEM_BASE}>
-            <ColumnsIcon className="w-4 h-4 mr-2" /> {t('memo.action.openInSplit')}
+            <SquareSplitHorizontalIcon className="w-4 h-4 mr-2" /> {t('memo.action.openInSplit')}
           </Item>
-          <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
         </>
       )}
       <Item onClick={handleCopyLink} className={ITEM_BASE}>
@@ -265,16 +267,6 @@ export function MemoCardActions({
       <Item onClick={handleCopyFullText} className={ITEM_BASE}>
         <CopyIcon className="w-4 h-4 mr-2" /> {t('document.action.copyFullText')}
       </Item>
-      <Item onClick={handleOpenProperties} className={ITEM_BASE}>
-        <StackSimpleIcon className="w-4 h-4 mr-2" /> {t('document.action.properties')}
-      </Item>
-      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
-      {onColorsChange && (
-        <MemoCardColorRow
-          colors={memo.colors}
-          onChange={(next) => onColorsChange(memo, next)}
-        />
-      )}
       <Item onClick={() => onFavoriteToggle(memo)} className={ITEM_BASE}>
         {memo.favorited ? (
           <>
@@ -286,10 +278,20 @@ export function MemoCardActions({
           </>
         )}
       </Item>
-      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+      <Item onClick={handleOpenProperties} className={ITEM_BASE}>
+        <StackSimpleIcon className="w-4 h-4 mr-2" /> {t('document.action.properties')}
+      </Item>
+      <div role="separator" aria-hidden="true" className={POPUP_DIVIDER_CLASS} />
+      {onColorsChange && (
+        <MemoCardColorRow
+          colors={memo.colors}
+          onChange={(next) => onColorsChange(memo, next)}
+        />
+      )}
+      <div role="separator" aria-hidden="true" className={POPUP_DIVIDER_CLASS} />
       <Item
         onClick={() => onDelete(memo)}
-        className={cn(ITEM_BASE, 'hover:text-[var(--destructive)]')}
+        className={cn(ITEM_BASE, 'text-[var(--destructive)]')}
       >
         <TrashSimpleIcon className="w-4 h-4 mr-2" /> {t('memo.action.delete')}
       </Item>

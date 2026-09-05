@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { WorkspaceNavigationState, WorkspaceTarget } from './workspace-target';
-import { resolveThirdColumnContentState } from './third-column-content-state';
+import type { WorkColumnNavigationState, WorkColumnTarget } from './work-column-target';
+import { resolveWorkColumnContentState } from './work-column-content-state';
 
 const emptyDocument = {
   activeMemoSession: null,
@@ -10,9 +10,9 @@ const emptyDocument = {
 };
 
 function navigation(
-  target: WorkspaceTarget,
-  overrides: Partial<WorkspaceNavigationState> = {},
-): WorkspaceNavigationState {
+  target: WorkColumnTarget,
+  overrides: Partial<WorkColumnNavigationState> = {},
+): WorkColumnNavigationState {
   return {
     phase: target.kind === 'empty' ? 'idle' : 'committed',
     requestId: 1,
@@ -25,7 +25,7 @@ function navigation(
   };
 }
 
-const memoA: WorkspaceTarget = {
+const memoA: WorkColumnTarget = {
   kind: 'memo',
   memoId: 'a',
   path: '/notes/a.md',
@@ -34,7 +34,7 @@ const memoA: WorkspaceTarget = {
   transitionId: 1,
 };
 
-const memoB: WorkspaceTarget = { ...memoA, memoId: 'b', path: '/notes/b.md', transitionId: null };
+const memoB: WorkColumnTarget = { ...memoA, memoId: 'b', path: '/notes/b.md', transitionId: null };
 
 const sessionA = {
   id: 'memo:a',
@@ -46,9 +46,9 @@ const sessionA = {
   transitionId: 1,
 };
 
-describe('third-column content state', () => {
+describe('work-column content state', () => {
   it('keeps the loaded A session while navigation to B is in progress', () => {
-    const state = resolveThirdColumnContentState(
+    const state = resolveWorkColumnContentState(
       navigation(memoA, { phase: 'loading', pendingTarget: memoB, previousTarget: memoA }),
       { ...emptyDocument, activeMemoSession: sessionA },
     );
@@ -68,7 +68,7 @@ describe('third-column content state', () => {
       requestId: 2,
       retryToken: 'retry-b',
     };
-    const state = resolveThirdColumnContentState(
+    const state = resolveWorkColumnContentState(
       navigation(memoA, {
         phase: 'failed',
         requestId: 2,
@@ -90,7 +90,7 @@ describe('third-column content state', () => {
   });
 
   it('returns ready only after the target and loaded session are committed', () => {
-    expect(resolveThirdColumnContentState(
+    expect(resolveWorkColumnContentState(
       navigation(memoA),
       { ...emptyDocument, activeMemoSession: sessionA },
     )).toEqual({

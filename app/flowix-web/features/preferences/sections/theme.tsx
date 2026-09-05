@@ -34,11 +34,11 @@ function ThemeCard({
       type="button"
       onClick={onSelect}
       className={cn(
-        'group relative w-full rounded-xl border bg-[var(--card)] p-3 text-left transition-all',
-        'hover:border-[color-mix(in_oklch,var(--primary)_60%,transparent)] hover:shadow-sm',
+        'group relative w-full rounded-xl border border-transparent bg-transparent p-2 text-left transition-all',
+        'hover:bg-white hover:shadow-sm',
         active
-          ? 'border-[var(--primary)] ring-2 ring-[color-mix(in_oklch,var(--primary)_30%,transparent)]'
-          : 'border-[var(--border)]'
+          ? 'border-[var(--primary)] bg-white'
+          : ''
       )}
     >
       {/* Selected check */}

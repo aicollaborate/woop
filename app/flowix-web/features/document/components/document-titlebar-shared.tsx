@@ -28,7 +28,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@shared/ui/dialog';
-import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
 import {
   MEMO_COLORS,
   MEMO_COLOR_HEX,
@@ -42,7 +41,6 @@ import {
   type DocumentIdentity,
 } from '@features/document';
 import { memos as memosClient, type MemoVersionMeta } from '@platform/tauri/client';
-import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
 import type { WorkspaceHostId } from '@features/workspace/store/workspace-focus-store';
@@ -259,7 +257,7 @@ export function MemoColorPicker({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-[180px] p-2"
+        className="w-[180px] rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
       >
         <div className="flex items-center gap-1.5">
           <Tooltip content={t("document.color.noColorTooltip")}>
@@ -315,7 +313,7 @@ function getFullscreenAgentThreadCard(
   host: AgentThreadCardFullscreenHost,
 ): HTMLElement | null {
   if (typeof document === 'undefined') return null;
-  // Only the active fourth-column tab stays mounted, so at most one card per
+  // Only the active browser-column tab stays mounted, so at most one card per
   // host can be fullscreen; the first host match wins.
   const cards = document.querySelectorAll<HTMLElement>('.agent-thread-card--fullscreen');
   for (const card of cards) {
@@ -580,16 +578,16 @@ function VersionHistorySubmenu({
     >
       <button
         type="button"
-        className="flex w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-sm text-[var(--foreground)] hover:bg-[var(--muted)]"
+        className="group flex h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-lg px-2 py-0 text-left text-sm text-[var(--foreground)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
         onFocus={() => setOpen(true)}
       >
         <ClockIcon className="w-4 h-4 mr-2" />
         <span className="flex-1 text-left">{t("document.version.menuLabel")}</span>
-        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]" />
       </button>
 
       {open && (
-        <div className="absolute right-full top-0 z-[1501] w-[300px] rounded-lg border border-[var(--border)] bg-[var(--card)] py-2 shadow-lg">
+        <div className="absolute right-full top-0 z-[1501] w-[300px] rounded-xl border border-[var(--border-popup)] bg-[var(--card)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
           <div
             className="flex items-center justify-between"
             style={{ padding: '0.15rem 0.375rem 0.35rem' }}
@@ -630,22 +628,22 @@ function VersionHistorySubmenu({
                   setOpen(false);
                   onSelectVersion(version);
                 }}
-                className="block w-full rounded-md px-2 py-2 text-left hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="group block w-full rounded-lg px-2 py-2 text-left hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
                 title={version.title || version.filename}
               >
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--foreground)]">
+                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--foreground)] group-hover:text-[var(--foreground)]">
                     {formatVersionTime(version.createdAt, language)}
                   </span>
                   {isRestoring && (
-                    <Loader2 className="h-3 w-3 animate-spin text-[var(--muted-foreground)]" />
+                    <Loader2 className="h-3 w-3 animate-spin text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]" />
                   )}
-                  <span className="rounded bg-[var(--muted)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+                  <span className="rounded bg-[var(--background)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)] group-hover:bg-[var(--card)] group-hover:text-[var(--foreground)]">
                     {translate(language, VERSION_SOURCE_LABEL_KEYS[version.source] ?? "") || version.source}
                   </span>
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
-                  <span className="min-w-0 flex-1 truncate">
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]">
+                  <span className="min-w-0 flex-1 truncate group-hover:text-[var(--foreground)]">
                     {version.title || version.filename}
                   </span>
                   <span className="shrink-0">{formatVersionSize(version.size)}</span>
@@ -796,17 +794,17 @@ export function MemoActions({
             </button>
           </Tooltip>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[200px] px-1 py-1.5 space-y-1">
+        <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
           <DropdownMenuItem
             onClick={onCopyLink}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+            className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
           >
             <LinkSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.copyLink")}
           </DropdownMenuItem>
           {canCopyFullText && (
             <DropdownMenuItem
               onClick={onCopyFullText}
-              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+              className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
             >
               <CopyIcon className="w-4 h-4 mr-2" /> {t("document.action.copyFullText")}
             </DropdownMenuItem>
@@ -814,14 +812,14 @@ export function MemoActions({
           {canEditProperties && (
             <DropdownMenuItem
               onClick={onOpenProperties}
-              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+              className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
             >
               <StackSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.properties")}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
             onClick={onTogglePin}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+            className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
           >
             {isPinned ? (
               <><PushPinSlashIcon className="w-4 h-4 mr-2" /> {t("document.action.unpin")}</>
@@ -830,12 +828,12 @@ export function MemoActions({
             )}
           </DropdownMenuItem>
           {(canSaveAsTemplate || canExportContent) && (
-            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+            <div role="separator" aria-hidden="true" className="mx-2 my-1 h-px bg-[var(--border-popup)] opacity-60" />
           )}
           {canSaveAsTemplate && (
             <DropdownMenuItem
               onClick={onSaveAsTemplate}
-              className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+              className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
             >
               <SwatchesIcon className="w-4 h-4 mr-2" /> {t("document.action.saveAsTemplate")}
             </DropdownMenuItem>
@@ -844,19 +842,19 @@ export function MemoActions({
             <>
               <DropdownMenuItem
                 onClick={onExportMarkdown}
-                className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+                className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
               >
                 <FileMdIcon className="w-4 h-4 mr-2" /> {t("document.action.exportMarkdown")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={onExportWord}
-                className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
+                className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
               >
                 <FileDocIcon className="w-4 h-4 mr-2" /> {t("document.action.exportWord")}
               </DropdownMenuItem>
             </>
           )}
-          <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+          <div role="separator" aria-hidden="true" className="mx-2 my-1 h-px bg-[var(--border-popup)] opacity-60" />
           {canViewVersionHistory && (
             <VersionHistorySubmenu
               memoId={memo.id}
@@ -867,14 +865,14 @@ export function MemoActions({
           )}
           <DropdownMenuItem
             onClick={onRequestDeleteMemo}
-            className="flex items-center cursor-pointer rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)]"
+            className="group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left text-[var(--destructive)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
           >
             <TrashSimpleIcon className="w-4 h-4 mr-2" /> {t("document.action.delete")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Dialog open={!!confirmVersion} onOpenChange={(open) => !open && setConfirmVersion(null)}>
-        <DialogContent>
+        <DialogContent className="rounded-xl border border-[var(--border-popup)] bg-[var(--card)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
           <DialogHeader>
             <DialogTitle>{t("document.version.confirmTitle")}</DialogTitle>
             <DialogDescription>

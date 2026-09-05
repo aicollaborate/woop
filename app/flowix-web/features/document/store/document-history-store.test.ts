@@ -41,4 +41,29 @@ describe('document history store', () => {
 
     expect(useDocumentHistoryStore.getState().backStack).toHaveLength(1);
   });
+
+  it('keeps artifact targets distinct from their pointer memos', () => {
+    const artifact = {
+      kind: 'artifact' as const,
+      pointerMemoId: 'pointer-1',
+      notebookId: 'notebook-1',
+      notebookPath: '/notes',
+      pluginId: 'mindmap',
+      renderer: 'markmap' as const,
+      openedAt: 1,
+    };
+
+    useDocumentHistoryStore.getState().pushBack(artifact);
+    useDocumentHistoryStore.getState().pushBack({
+      ...artifact,
+      pointerMemoId: 'pointer-2',
+      openedAt: 2,
+    });
+
+    expect(useDocumentHistoryStore.getState().backStack).toEqual([artifact, {
+      ...artifact,
+      pointerMemoId: 'pointer-2',
+      openedAt: 2,
+    }]);
+  });
 });

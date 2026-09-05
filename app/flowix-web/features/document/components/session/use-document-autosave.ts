@@ -13,6 +13,7 @@ import {
 } from '@features/document';
 import { translate } from '@/lib/i18n';
 import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
+import { replaceBrowserColumnMemoPath } from '@features/workspace/use-cases/browser-column-navigation';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { toast } from '@/lib/toast';
 import { formatDateTime } from '@/lib/utils';
@@ -102,11 +103,11 @@ export function useDocumentAutosave({
     }, DERIVED_STATS_DEBOUNCE_MS);
   }, [clearDerivedStatsTimer, setState]);
 
-  const saveDoc = useCallback(async (content: string, path: string, options?: { force?: boolean }) => {
-    if (!path) return;
+  const saveDoc = useCallback(async (content: string, path: string, options?: { force?: boolean }): Promise<boolean> => {
+    if (!path) return false;
     const buf = getDocumentBuffer(identity);
 
-    await saveDocumentContent({
+    return saveDocumentContent({
       path,
       identity,
       content,
@@ -131,9 +132,12 @@ export function useDocumentAutosave({
           // + 重用或新建 buffer, 保留 buf 内容)。
           if (writtenPath !== path) {
             applyLoadedDocumentContent(identity, writtenPath, writtenContent, { preservePending: true });
-            if (!isolatedSession && !isExternalDocument && memoId) {
-              markSelfDocumentPathUpdate(memoId, writtenPath);
-              replaceActiveMemoPath(memoId, writtenPath);
+            if (!isExternalDocument && memoId) {
+              replaceBrowserColumnMemoPath(memoId, writtenPath);
+              if (!isolatedSession) {
+                markSelfDocumentPathUpdate(memoId, writtenPath);
+                replaceActiveMemoPath(memoId, writtenPath);
+              }
             }
             // 旧 path buf 已在 buffer-registry 的 Map 里残留 ── 不删, 等
             // GC。后续 use-external-document-change-watch 看到旧 path
@@ -199,6 +203,17 @@ export function useDocumentAutosave({
     memoId,
     setState,
   ]);
+
+  /** Flush an isolated browser tab before React unmounts its editor. */
+  const flushDocument = useCallback(async (): Promise<boolean> => {
+    const flushedContent = flushPendingContent?.() ?? null;
+    const draft = getDocumentDraft(identity, filePath);
+    const content = flushedContent ?? draft?.content;
+    const path = draft?.path ?? filePath;
+    clearSaveTimer();
+    if (content == null || !path || !hasDocumentUnsavedChanges(identity)) return true;
+    return saveDoc(content, path);
+  }, [clearSaveTimer, filePath, flushPendingContent, identity, saveDoc]);
   // visibilitychange 强保存的 disk-aware 版本 ── 设计动机见 hook 顶部注释。
   // 触发点是 "切走前", 因为内部要引用 saveDoc, 所以定义在 saveDoc 之后。
   const maybeSaveOrReloadOnHide = useCallback(async (content: string, path: string) => {
@@ -314,14 +329,23 @@ export function useDocumentAutosave({
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      // An isolated editor can be removed because its browser tab is closed,
+      // the host is hidden, or the surface is replaced outside the tab header.
+      // The header normally flushes before those transitions, but keeping a
+      // final best-effort flush here closes the lifecycle gap for programmatic
+      // unmounts and React error/recovery paths.
+      if (isolatedSession) {
+        void flushDocument();
+      }
       isMountedRef.current = false;
       clearSaveTimer();
       clearDerivedStatsTimer();
     };
-  }, [filePath, flushPendingContent, saveDoc, clearSaveTimer, clearDerivedStatsTimer, maybeSaveOrReloadOnHide, identity]);
+  }, [filePath, flushDocument, flushPendingContent, saveDoc, clearSaveTimer, clearDerivedStatsTimer, maybeSaveOrReloadOnHide, identity, isolatedSession]);
 
   return {
     clearSaveTimer,
+    flushDocument,
     handleChange,
     maybeSaveOrReloadOnHide,
     saveDoc,

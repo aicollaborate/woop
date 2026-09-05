@@ -18,4 +18,4 @@ pub mod search;
 pub mod secret;
 pub mod service;
 
-pub use service::{FlowixError, MemoService};
+pub use service::{FlowixError, MemoPage, MemoService};

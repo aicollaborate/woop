@@ -339,9 +339,7 @@ pub(super) fn validate_manifest(manifest: &PluginManifest) -> Result<PluginDefin
         // Output paths are host-owned. A plugin manifest may still contain
         // the pre-migration `.plugin-output/...` value, but all new writes
         // must converge on `.flowix/plugin/<plugin-id>`.
-        output_directory: PathBuf::from(".flowix")
-            .join("plugin")
-            .join(&manifest.id),
+        output_directory: PathBuf::from(".flowix").join("plugin").join(&manifest.id),
         extension: output_extension(&manifest.output.extension),
         note_type: note_type.to_string(),
     })

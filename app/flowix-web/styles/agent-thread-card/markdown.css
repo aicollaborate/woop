@@ -325,7 +325,7 @@
     color-mix(in oklch, var(--muted-foreground) 12%, transparent);
 }
 
-/* 内联 code ── 严格对齐 .markdown-editor .tiptap p code 的视觉口径:
+/* 内联 code ── 严格对齐 .markdown-editor .tiptap:not(.agent-thread-card__composer-editor) p code 的视觉口径:
  *   border: 1px solid color-mix(in oklch, var(--border) 90%, transparent)
  *   border-radius: 0.4rem
  *   padding: 0 0.3rem
@@ -433,7 +433,7 @@
   font-size: calc(var(--app-font-size, 15px) * 0.9); /* was 0.84rem ≈ 13.44px */
 }
 
-/* fenced code 块 ── 严格对齐 .markdown-editor .tiptap pre / pre code
+/* fenced code 块 ── 严格对齐 .markdown-editor .tiptap:not(.agent-thread-card__composer-editor) pre / pre code
  * 的视觉口径: 把"边框 / 底色 / 圆角 / padding / 字号 / 行高"全部
  * 挂在 pre 上 (跟编辑器一致), pre code 只还原 padding 与透明背景
  * (让内层 code 不再叠加边框/底色 ── 避免双层视觉)。
@@ -661,13 +661,12 @@
   width: 212px;
   max-height: 280px;
   overflow-y: auto;
-  padding: 0.375rem 0.25rem 0.25rem;
+  padding: 0.25rem;
   border: 1px solid var(--border-popup);
-  border-radius: 8px;
+  border-radius: 0.75rem;
   background: var(--card);
   color: var(--agent-foreground);
-  box-shadow: 0 10px 30px
-    color-mix(in oklch, var(--foreground) 16%, transparent);
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
   opacity: 0;
   transform: scale(0.96);
   transform-origin: top left;
@@ -713,8 +712,8 @@
 .agent-thread-card__codex-settings-divider {
   margin: 0.25rem 0.5rem;
   border: 0;
-  border-top: 1px solid var(--border);
-  opacity: 0.5;
+  border-top: 1px solid var(--border-popup);
+  opacity: 0.6;
 }
 
 .agent-thread-card__codex-settings-item {
@@ -722,11 +721,11 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 32px;
+  min-height: 28px;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--foreground);
   font-size: calc(var(--app-font-size, 15px) * 0.9);
@@ -738,7 +737,15 @@
 
 .agent-thread-card__codex-settings-item:hover,
 .agent-thread-card__codex-settings-item:focus-visible {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
+}
+
+.agent-thread-card__codex-settings-item:hover
+  .agent-thread-card__codex-settings-item-description,
+.agent-thread-card__codex-settings-item:focus-visible
+  .agent-thread-card__codex-settings-item-description {
+  color: var(--primary-foreground);
 }
 
 .agent-thread-card__codex-settings-item-label {
@@ -772,6 +779,13 @@
   height: 14px;
   flex: 0 0 auto;
   color: var(--primary);
+}
+
+.agent-thread-card__codex-settings-item:hover
+  .agent-thread-card__copy-icon,
+.agent-thread-card__codex-settings-item:focus-visible
+  .agent-thread-card__copy-icon {
+  color: var(--primary-foreground);
 }
 
 /* DSH 模式选择器: 田字格双列布局, 每个 cell 内标题在上、副标题在下。

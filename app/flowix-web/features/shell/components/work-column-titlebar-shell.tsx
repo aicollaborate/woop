@@ -3,7 +3,11 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { isMac } from '@features/shortcuts';
 
-interface ThirdColumnTitlebarShellProps {
+/** Shared titlebar fade used by the work column and browser-column tabs. */
+export const WORK_COLUMN_TITLEBAR_GRADIENT =
+  'linear-gradient(to bottom, var(--bg-titlebar), transparent)';
+
+interface WorkColumnTitlebarShellProps {
   isWindows: boolean;
   showTrafficLightSpacer?: boolean;
   className?: string;
@@ -11,14 +15,14 @@ interface ThirdColumnTitlebarShellProps {
   children: ReactNode;
 }
 
-/** Shared frame for the third-column document and Agent titlebars. */
-export function ThirdColumnTitlebarShell({
+/** Shared frame for the work-column document and Agent titlebars. */
+export function WorkColumnTitlebarShell({
   isWindows,
   showTrafficLightSpacer = false,
   className = '',
   style,
   children,
-}: ThirdColumnTitlebarShellProps) {
+}: WorkColumnTitlebarShellProps) {
   return (
     <div
       data-tauri-drag-region

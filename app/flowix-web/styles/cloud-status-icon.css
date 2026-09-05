@@ -24,15 +24,18 @@
 .flowix-cloud-status-icon__sync-arrow {
   opacity: 0;
   transform-origin: 50% 50%;
-  will-change: opacity, transform;
+  /* Do not reserve a compositor layer for the usual (non-connecting) state. */
+  will-change: auto;
 }
 
 .flowix-cloud-status-icon__sync-arrow--down {
   animation: flowix-cloud-sync-arrow-down 2.4s cubic-bezier(.45, 0, .25, 1) infinite;
+  will-change: opacity, transform;
 }
 
 .flowix-cloud-status-icon__sync-arrow--up {
   animation: flowix-cloud-sync-arrow-up 2.4s cubic-bezier(.45, 0, .25, 1) infinite;
+  will-change: opacity, transform;
 }
 
 @keyframes flowix-cloud-sync-arrow-down {
@@ -53,6 +56,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flowix-cloud-status-icon__sync-arrow { animation: none; opacity: 0; transform: none; }
+  .flowix-cloud-status-icon__sync-arrow {
+    animation: none;
+    opacity: 0;
+    transform: none;
+    will-change: auto;
+  }
   .flowix-cloud-status-icon__sync-arrow--down { opacity: 1; }
 }

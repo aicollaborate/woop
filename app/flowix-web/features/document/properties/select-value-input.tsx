@@ -56,14 +56,21 @@ export function SelectValueInput({
       >
         <SelectValue placeholder={t('document.properties.select.placeholder')} />
       </SelectTrigger>
-      <SelectContent align="start" className="min-w-[160px]">
+      <SelectContent
+        align="start"
+        className="min-w-[160px] rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+      >
         {options.length === 0 ? (
           <div className="px-3 py-2 text-xs text-[var(--muted-foreground)]">
             {t('document.properties.select.empty')}
           </div>
         ) : (
           options.map((option) => (
-            <SelectItem key={option} value={option}>
+            <SelectItem
+              key={option}
+              value={option}
+              className="h-7 !min-h-7 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)] hover:[&>svg]:text-[var(--primary-foreground)]"
+            >
               {formatOptionLabel(option)}
             </SelectItem>
           ))

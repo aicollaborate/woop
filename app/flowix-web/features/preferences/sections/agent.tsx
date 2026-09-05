@@ -1441,7 +1441,7 @@ export function AgentSection({
               </span>
             )}
           </SelectTrigger>
-          <SelectContent align="start" fitViewport>
+          <SelectContent align="start" fitViewport className="flowix-preferences-select-content">
             {visibleProviderOptions.map((opt) => (
               <SelectItem key={opt.id} value={opt.id}>
                 <span className="flex items-center gap-2 min-w-0">
@@ -1486,7 +1486,7 @@ export function AgentSection({
                     />
                   </div>
                 </SelectTrigger>
-                <SelectContent align="start" fitViewport>
+                <SelectContent align="start" fitViewport className="flowix-preferences-select-content">
                   {(modelOptions ?? dynamicModelOptions ?? []).map((model) => (
                     <SelectItem key={model} value={model}>{model}</SelectItem>
                   ))}
@@ -1603,7 +1603,7 @@ export function AgentSection({
                 </span>
               )}
             </SelectTrigger>
-            <SelectContent align="start" fitViewport>
+            <SelectContent align="start" fitViewport className="flowix-preferences-select-content">
               {visibleProviderOptions.map((opt) => (
                 <SelectItem key={opt.id} value={opt.id}>
                   <span className="flex items-center gap-2 min-w-0">
@@ -1653,7 +1653,7 @@ export function AgentSection({
                   />
                 </div>
               </SelectTrigger>
-              <SelectContent align="start" fitViewport>
+              <SelectContent align="start" fitViewport className="flowix-preferences-select-content">
                 {(modelOptions ?? dynamicModelOptions ?? []).map((model) => (
                   <SelectItem key={model} value={model}>
                     {model}
@@ -1938,7 +1938,7 @@ function CustomProviderInlineForm({
               })}
             >
               <SelectTrigger className="w-full" />
-              <SelectContent align="start" fitViewport>
+              <SelectContent align="start" fitViewport className="flowix-preferences-select-content">
                 {CUSTOM_PROVIDER_PROTOCOLS.map((protocol) => (
                   <SelectItem key={protocol} value={protocol}>{protocol}</SelectItem>
                 ))}

@@ -10,6 +10,8 @@ pub mod agent_wire;
 mod app;
 mod app_update;
 mod apple_sign_in;
+mod artifact;
+mod browser_column;
 mod cli_link;
 mod commands;
 pub mod config;

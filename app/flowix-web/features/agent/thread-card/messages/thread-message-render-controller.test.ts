@@ -451,7 +451,7 @@ describe("ThreadMessageRenderController run-end re-parse", () => {
 });
 
 describe("ThreadMessageRenderController tool batch previews", () => {
-  it("replaces the outside preview with each new batch and folds it on assistant input", () => {
+  it("starts with in-flight tools, replaces the preview with each new batch, and folds it on assistant input", () => {
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
       return undefined as unknown as number;
@@ -479,7 +479,9 @@ describe("ThreadMessageRenderController tool batch previews", () => {
         isThreadCacheLoading: false,
       });
       expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
-        .toHaveLength(2);
+        .toHaveLength(1);
+      expect(body.querySelector(".agent-thread-card__tool-group-preview")?.textContent)
+        .toContain("t2.md");
 
       const t3 = tool("t3", true);
       controller.render({
@@ -522,7 +524,108 @@ describe("ThreadMessageRenderController tool batch previews", () => {
       expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
         .toHaveLength(0);
       expect(body.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+        .toHaveLength(0);
+      body.querySelector<HTMLButtonElement>(
+        ".agent-thread-card__tool-group-header",
+      )?.click();
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
         .toHaveLength(3);
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a completed preview mounted for its 300ms fade-out", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return undefined as unknown as number;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("codex");
+      const tool = (id: string, isLoading: boolean) => ({
+        id,
+        role: "tool" as const,
+        content: isLoading ? "" : "done",
+        timestamp: "2026-09-03T00:00:00.000Z",
+        toolName: "read",
+        toolInput: { path: `${id}.md` },
+        isLoading,
+      });
+      const running = tool("running", true);
+
+      controller.render({
+        messages: [tool("done", false), running],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      controller.render({
+        messages: [tool("done", false), tool("running", false), {
+          id: "assistant-1",
+          role: "assistant",
+          content: "next",
+          timestamp: "2026-09-03T00:00:00.000Z",
+        }],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
+        .toHaveLength(0);
+      expect(body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview--exiting",
+      )).toHaveLength(1);
+
+      vi.advanceTimersByTime(299);
+      expect(body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview--exiting",
+      )).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview--exiting",
+      )).toHaveLength(0);
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not expose completed historical tools when a running thread is restored", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return undefined as unknown as number;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("codex");
+      const tool = (id: string) => ({
+        id,
+        role: "tool" as const,
+        content: "done",
+        timestamp: "2026-09-03T00:00:00.000Z",
+        toolName: "read",
+        toolInput: { path: `${id}.md` },
+        isLoading: false,
+      });
+
+      controller.render({
+        messages: [tool("t1"), tool("t2")],
+        isLoading: true,
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      });
+
+      expect(body.querySelectorAll(".agent-thread-card__tool-group-preview"))
+        .toHaveLength(0);
       controller.dispose();
     } finally {
       vi.unstubAllGlobals();

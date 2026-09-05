@@ -11,7 +11,6 @@ import { useUserSettings } from '@features/preferences/hooks/use-user-settings';
 interface NavFilterButtonsProps {
   totalMemoCount: number;
   todoMemoCount: number;
-  onSelectFilter?: () => void;
 }
 
 // 顶部过滤器 (笔记 / 对话 / 待办) ── 从 NoteNavigationPanel 拆出。
@@ -22,33 +21,28 @@ interface NavFilterButtonsProps {
 export function NavFilterButtons({
   totalMemoCount,
   todoMemoCount,
-  onSelectFilter,
 }: NavFilterButtonsProps) {
   const { t } = useI18n();
   const activeFilter = useMemoStore((s) => s.activeFilter);
-  const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
   const setActiveFilter = useMemoStore((s) => s.setActiveFilter);
   const showConversationEntry = useUserSettings((settings) => settings.personalize.showConversationEntry);
   // 文件夹浏览是和全部 / 对话 / 待办 / 标签并列的一个入口。浏览资料时
   // activeFilter 为 all 只是中间列的数据兜底，不能让“全部”也显示选中。
   const isFilterActive = (filter: typeof activeFilter) =>
-    activeFileBrowserPath === null && activeFilter === filter;
+    activeFilter === filter;
 
   // 三个按钮都委托 setActiveFilter: 它在内部把 activePluginId /
-  // activeFileBrowserPath / selectedTagId 全部归位, 互斥单选语义集中
-  // 在一处。无需在这里手动 setSelectedTagId(null)。
+  // selectedTagId 全部归位, 互斥单选语义集中
+  // 在一处。无需在这里手动 setSelectedTagId(null), 也不应影响第三列。
   const handleShowAllTags = () => {
-    onSelectFilter?.();
     setActiveFilter('all');
   };
 
   const handleShowAgentMemos = () => {
-    onSelectFilter?.();
     setActiveFilter('agents');
   };
 
   const handleShowTaskMemos = () => {
-    onSelectFilter?.();
     setActiveFilter('todos');
   };
 

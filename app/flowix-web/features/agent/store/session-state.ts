@@ -12,7 +12,14 @@ export interface AgentSessionMeta {
   activeAgentTypeKey: AgentTypeKey;
   threadTypes: Record<string, AgentTypeKey>;
   threadLists: Partial<Record<AgentTypeKey, ThreadListItem[]>>;
-  currentThreadTitles: Partial<Record<AgentTypeKey, string | undefined>>;
+  /**
+   * Runtime fallback titles keyed by the product-owned thread id.
+   *
+   * This used to be keyed by AgentTypeKey, which made every Codex (or every
+   * DSH) conversation share one mutable title during recovery.  A title is a
+   * property of one product thread, never of an agent runtime.
+   */
+  currentThreadTitles: Partial<Record<string, string | undefined>>;
   externalSessionResolutions: Record<string, string>;
   lastRunningRunsReconciledAt: number | null;
   settings: {

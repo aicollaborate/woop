@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getThirdColumnSurfaceDefinition,
+  getWorkColumnSurfaceDefinition,
   surfaceSupports,
-  thirdColumnSurfaceRegistry,
+  workColumnSurfaceRegistry,
 } from './registry';
-import type { ThirdColumnSurface, ThirdColumnSurfaceKind } from './types';
+import type { WorkColumnSurface, WorkColumnSurfaceKind } from './types';
 
-function surface(kind: ThirdColumnSurfaceKind): ThirdColumnSurface {
+function surface(kind: WorkColumnSurfaceKind): WorkColumnSurface {
   switch (kind) {
     case 'markdown':
       return { kind, instanceKey: 'markdown:1', props: { filePath: '/note.md' } };
@@ -56,9 +56,9 @@ function surface(kind: ThirdColumnSurfaceKind): ThirdColumnSurface {
   }
 }
 
-describe('thirdColumnSurfaceRegistry', () => {
+describe('workColumnSurfaceRegistry', () => {
   it('registers every supported product-level surface kind', () => {
-    expect(Object.keys(thirdColumnSurfaceRegistry).sort()).toEqual([
+    expect(Object.keys(workColumnSurfaceRegistry).sort()).toEqual([
       'agent-conversation',
       'empty',
       'html',
@@ -75,7 +75,7 @@ describe('thirdColumnSurfaceRegistry', () => {
   it('keeps Markdown content actions on the editable Markdown surface', () => {
     const markdown = surface('markdown');
 
-    expect(getThirdColumnSurfaceDefinition(markdown).chrome).toBe('document');
+    expect(getWorkColumnSurfaceDefinition(markdown).chrome).toBe('document');
     expect(surfaceSupports(markdown, 'edit')).toBe(true);
     expect(surfaceSupports(markdown, 'search')).toBe(true);
     expect(surfaceSupports(markdown, 'copy-content')).toBe(true);
@@ -86,7 +86,7 @@ describe('thirdColumnSurfaceRegistry', () => {
   it('exposes canvas controls without leaking pointer-note editing actions', () => {
     const mindmap = surface('mindmap');
 
-    expect(getThirdColumnSurfaceDefinition(mindmap).chrome).toBe('document');
+    expect(getWorkColumnSurfaceDefinition(mindmap).chrome).toBe('document');
     expect(surfaceSupports(mindmap, 'fit')).toBe(true);
     expect(surfaceSupports(mindmap, 'zoom')).toBe(true);
     expect(surfaceSupports(mindmap, 'fullscreen')).toBe(true);
@@ -98,7 +98,7 @@ describe('thirdColumnSurfaceRegistry', () => {
   it('uses agent chrome and conversation-specific capabilities for agents', () => {
     const agent = surface('agent-conversation');
 
-    expect(getThirdColumnSurfaceDefinition(agent).chrome).toBe('agent');
+    expect(getWorkColumnSurfaceDefinition(agent).chrome).toBe('agent');
     expect(surfaceSupports(agent, 'stream-conversation')).toBe(true);
     expect(surfaceSupports(agent, 'edit')).toBe(false);
   });

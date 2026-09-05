@@ -41,7 +41,11 @@ export function NoteMentionDropdown({
   };
 
   return (
-    <div className="mention-note-dropdown" role="listbox" aria-label="Notes">
+    <div
+      className={`mention-note-dropdown${scrollSelectedItem ? ' is-keyboard-navigation' : ''}`}
+      role="listbox"
+      aria-label="Notes"
+    >
       <div className="mention-note-header" aria-label="Mention type">
         <span>{t('editor.noteMention.header')}</span>
         {loading && (
@@ -88,9 +92,6 @@ export function NoteMentionDropdown({
                   }}
                 >
                   <span className="mention-note-title">{item.title}</span>
-                  <span className="mention-note-notebook mention-note-notebook-name">
-                    {item.notebookName}
-                  </span>
                 </button>
               );
             })

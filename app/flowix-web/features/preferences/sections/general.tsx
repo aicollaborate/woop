@@ -75,11 +75,11 @@ function MemoCardVariantOption({
       aria-pressed={active}
       onClick={onSelect}
       className={cn(
-        'group relative min-w-0 rounded-xl border bg-[var(--card)] p-3 text-left transition-all',
-        'hover:border-[color-mix(in_oklch,var(--primary)_60%,transparent)] hover:shadow-sm',
+        'group relative min-w-0 rounded-xl border border-transparent p-2 text-left transition-all',
+        'hover:bg-white hover:shadow-sm',
         active
-          ? 'border-[var(--primary)] ring-2 ring-[color-mix(in_oklch,var(--primary)_28%,transparent)]'
-          : 'border-[var(--border)]',
+          ? 'border-[var(--primary)] bg-white'
+          : '',
       )}
     >
       {active && (
@@ -263,7 +263,7 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
           <SelectTrigger className="w-40">
             <span>{currentLanguageLabel}</span>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="flowix-preferences-select-content">
             {LANGUAGE_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value}>
                 {option.label}
@@ -343,7 +343,7 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
           <SelectTrigger className="w-32">
             <span>{currentResponseLengthLabel}</span>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="flowix-preferences-select-content">
             <SelectItem value="concise">{t('preferences.general.responseLength.concise')}</SelectItem>
             <SelectItem value="standard">{t('preferences.general.responseLength.standard')}</SelectItem>
             <SelectItem value="detailed">{t('preferences.general.responseLength.detailed')}</SelectItem>
@@ -362,7 +362,7 @@ export function GeneralSection({ settings, language, memoCardVariant, updateSett
           <SelectTrigger className="w-40">
             <span>{currentPreferredLanguageLabel}</span>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="flowix-preferences-select-content">
             <SelectItem value="Simplified Chinese">{t('language.zhCN')}</SelectItem>
             <SelectItem value="English">{t('language.enUS')}</SelectItem>
           </SelectContent>

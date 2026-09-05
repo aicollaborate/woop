@@ -138,6 +138,23 @@ pub struct AgentConversationInstance {
     pub updated_at: i64,
 }
 
+/// Stable cursor for the conversation list. The pair mirrors the list's
+/// `updated_at DESC, id DESC` ordering so rows are neither skipped nor
+/// repeated when older rows are loaded incrementally.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConversationCursor {
+    pub updated_at: i64,
+    pub instance_id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConversationTypeCount {
+    pub agent_type: String,
+    pub count: usize,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentExternalEvent {

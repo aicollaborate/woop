@@ -9,7 +9,10 @@ use tokio::process::Command;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn delete_session(mut command: Command, session_id: &str) -> Result<bool, String> {
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     let mut child = command
         .spawn()
         .map_err(|error| format!("failed to start ACP lifecycle process: {error}"))?;
@@ -18,16 +21,19 @@ pub async fn delete_session(mut command: Command, session_id: &str) -> Result<bo
         let stdout = child.stdout.take().ok_or("ACP stdout unavailable")?;
         let mut stdout = BufReader::new(stdout);
 
-        write_request(&mut stdin, json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": 1,
-                "clientCapabilities": {},
-                "clientInfo": { "name": "Flowix", "version": env!("CARGO_PKG_VERSION") }
-            }
-        }))
+        write_request(
+            &mut stdin,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {},
+                    "clientInfo": { "name": "Flowix", "version": env!("CARGO_PKG_VERSION") }
+                }
+            }),
+        )
         .await?;
         let initialize = read_response(&mut stdout, 1).await?;
         let supported = initialize
@@ -37,12 +43,15 @@ pub async fn delete_session(mut command: Command, session_id: &str) -> Result<bo
             return Ok(false);
         }
 
-        write_request(&mut stdin, json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "session/delete",
-            "params": { "sessionId": session_id }
-        }))
+        write_request(
+            &mut stdin,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/delete",
+                "params": { "sessionId": session_id }
+            }),
+        )
         .await?;
         read_response(&mut stdout, 3).await?;
         Ok(true)
@@ -65,7 +74,10 @@ async fn write_request(stdin: &mut tokio::process::ChildStdin, value: Value) -> 
         .map_err(|error| format!("failed to flush ACP lifecycle request: {error}"))
 }
 
-async fn read_response(stdout: &mut BufReader<tokio::process::ChildStdout>, id: u64) -> Result<Value, String> {
+async fn read_response(
+    stdout: &mut BufReader<tokio::process::ChildStdout>,
+    id: u64,
+) -> Result<Value, String> {
     loop {
         let mut line = String::new();
         let bytes = stdout

@@ -36,7 +36,7 @@ fn cleanup_with_policy(
     let mut total = files.iter().map(|(_, size, _)| *size).sum::<u64>();
     files.sort_by_key(|(_, _, modified)| *modified);
     for (path, size, _) in files {
-    if total <= max_bytes {
+        if total <= max_bytes {
             break;
         }
         let _ = std::fs::remove_file(&path);

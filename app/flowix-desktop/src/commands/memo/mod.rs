@@ -43,6 +43,10 @@ use flowix_core::search::MemoSearchHit;
 #[derive(Serialize)]
 pub struct GetMemosResponse {
     pub memos: Vec<Memo>,
+    #[serde(rename = "nextCursor")]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
 }
 
 #[derive(Serialize)]

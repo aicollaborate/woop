@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { StarFourIcon } from '@phosphor-icons/react';
-import { Cloud, FileCog, Keyboard, Link2, History, Plug, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
+import { PlugIcon, StarFourIcon } from '@phosphor-icons/react';
+import { Cloud, FileCog, Keyboard, Link2, History, SquareTerminal, SquareMousePointer, Type, Palette, Settings } from 'lucide-react';
 import {
 	useUserSettings,
 	useUserSettingsActions,
@@ -64,7 +64,7 @@ const TAB_GROUPS: { labelKey: I18nKey; tabs: PreferencesTabItem[] }[] = [
 			// 模型配置整段塞到 aiAgent 的 Flowix 卡片里, 不再独立成 tab。
 			{ id: 'aiAgent', labelKey: 'preferences.tabs.aiAgent', icon: <StarFourIcon className="w-4 h-4" weight="regular" /> },
 			{ id: 'cli', labelKey: 'preferences.tabs.cli', icon: <SquareTerminal className="w-4 h-4" /> },
-			{ id: 'mcp', labelKey: 'preferences.tabs.mcp', icon: <Plug className="w-4 h-4" /> },
+			{ id: 'mcp', labelKey: 'preferences.tabs.mcp', icon: <PlugIcon className="w-4 h-4" /> },
 			{ id: 'connections', labelKey: 'preferences.tabs.connections', icon: <Link2 className="w-4 h-4" /> },
 			{ id: 'tools', labelKey: 'preferences.tabs.tools', icon: <SquareMousePointer className="w-4 h-4" /> },
 		],

@@ -120,7 +120,9 @@ fn switch_notebook(
                     }
                 }
                 Ok(_) => {}
-                Err(error) => tracing::warn!(notebook = %notebook_id, "notebook internal migration failed: {error}"),
+                Err(error) => {
+                    tracing::warn!(notebook = %notebook_id, "notebook internal migration failed: {error}")
+                }
             }
             memo_file
                 .get_notebook_config_by_id(notebook_id)

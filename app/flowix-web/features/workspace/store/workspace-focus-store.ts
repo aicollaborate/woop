@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type WorkspaceHostId = 'main-third' | 'fourth-column';
+export type WorkspaceHostId = 'main-third' | 'browser-column';
 
 interface WorkspaceFocusState {
   focusedHostId: WorkspaceHostId;

@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { MEMO_COLORS, MEMO_COLOR_HEX, type ColorFilterValue, type MemoColor } from '@features/memo';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -42,7 +43,7 @@ export function ColorFilterSubmenuContent({
         onClick={() => onSelect(next)}
         onMouseDown={(event) => event.preventDefault()}
         className={cn(
-          'mention-note-item cursor-pointer hover:bg-[var(--muted)] focus-visible:bg-[var(--muted)] focus-visible:outline-none',
+          'memo-navigation-submenu-item mention-note-item cursor-pointer hover:bg-[var(--brand)] focus-visible:bg-[var(--brand)] focus-visible:outline-none',
           isActive && 'is-selected',
         )}
       >
@@ -52,6 +53,7 @@ export function ColorFilterSubmenuContent({
           </span>
           <span className="min-w-0 truncate">{label}</span>
         </span>
+        {isActive && <Check className="h-4 w-4 shrink-0 text-[var(--brand)]" aria-hidden="true" />}
       </button>
     );
   };

@@ -4,42 +4,44 @@ import type {
 } from '@features/document/store/document-store';
 import { useDocumentStore } from '@features/document/store/document-store';
 
-import { useWorkspaceStore } from './workspace-store';
+import { useWorkColumnStore } from './work-column-store';
 import type {
-  NavigationFailure,
-  WorkspaceNavigationState,
-  WorkspaceTarget,
-} from './workspace-target';
+  WorkColumnNavigationFailure,
+  WorkColumnNavigationState,
+  WorkColumnTarget,
+} from './work-column-target';
 
-export type ThirdColumnSession =
+export type WorkColumnSession
+  =
   | { kind: 'memo'; session: MemoDocumentSession }
   | { kind: 'external'; session: ExternalDocumentSession }
   | { kind: 'agent-conversation'; instanceId: string };
 
-export type ThirdColumnContentState =
+export type WorkColumnContentState
+  =
   | { status: 'empty' }
-  | { status: 'ready'; target: WorkspaceTarget; session: ThirdColumnSession | null }
+  | { status: 'ready'; target: WorkColumnTarget; session: WorkColumnSession | null }
   | {
       status: 'transitioning';
-      from: WorkspaceTarget;
-      to: WorkspaceTarget;
-      session: ThirdColumnSession | null;
+      from: WorkColumnTarget;
+      to: WorkColumnTarget;
+      session: WorkColumnSession | null;
     }
   | {
       status: 'failed';
-      target: WorkspaceTarget;
-      attemptedTarget: WorkspaceTarget;
-      session: ThirdColumnSession | null;
-      failure: NavigationFailure;
+      target: WorkColumnTarget;
+      attemptedTarget: WorkColumnTarget;
+      session: WorkColumnSession | null;
+      failure: WorkColumnNavigationFailure;
     };
 
-interface ThirdColumnDocumentSnapshot {
+interface WorkColumnDocumentSnapshot {
   activeMemoSession: MemoDocumentSession | null;
   activeExternalSession: ExternalDocumentSession | null;
   activeAgentConversationId: string | null;
 }
 
-function activeSession(document: ThirdColumnDocumentSnapshot): ThirdColumnSession | null {
+function activeSession(document: WorkColumnDocumentSnapshot): WorkColumnSession | null {
   if (document.activeMemoSession) {
     return { kind: 'memo', session: document.activeMemoSession };
   }
@@ -53,14 +55,13 @@ function activeSession(document: ThirdColumnDocumentSnapshot): ThirdColumnSessio
 }
 
 /**
- * Read model for the third column. Navigation owns intent and transaction
- * status; DocumentStore owns the loaded editable session. This function only
- * combines those sources and never introduces another persisted state.
+ * Read model for workColumn content. Navigation owns target intent and
+ * transaction status; DocumentStore owns loaded editable sessions.
  */
-export function resolveThirdColumnContentState(
-  navigation: WorkspaceNavigationState,
-  document: ThirdColumnDocumentSnapshot,
-): ThirdColumnContentState {
+export function resolveWorkColumnContentState(
+  navigation: WorkColumnNavigationState,
+  document: WorkColumnDocumentSnapshot,
+): WorkColumnContentState {
   const session = activeSession(document);
 
   if (navigation.phase === 'loading' && navigation.pendingTarget) {
@@ -87,9 +88,10 @@ export function resolveThirdColumnContentState(
 }
 
 /** Imperative read entry for use-cases outside React rendering. */
-export function getThirdColumnContentState(): ThirdColumnContentState {
-  return resolveThirdColumnContentState(
-    useWorkspaceStore.getState().navigation,
+export function getWorkColumnContentState(): WorkColumnContentState {
+  return resolveWorkColumnContentState(
+    useWorkColumnStore.getState().navigation,
     useDocumentStore.getState(),
   );
 }
+

@@ -14,9 +14,14 @@ impl DeepSeekHarnessManager {
         let model_id = config.model.trim().to_string();
         let host = match self.model_host().await {
             Ok(host) => host,
-            Err(error) => return harness_probe_failure(
-                &model_id, started, TestConnectionErrorKind::Other, error,
-            ),
+            Err(error) => {
+                return harness_probe_failure(
+                    &model_id,
+                    started,
+                    TestConnectionErrorKind::Other,
+                    error,
+                )
+            }
         };
         let route = if config.provider_id.trim().is_empty() {
             config.provider.trim()
@@ -38,9 +43,9 @@ impl DeepSeekHarnessManager {
                 summary: String::new(),
                 error: None,
             },
-            Err(error) => harness_probe_failure(
-                &model_id, started, TestConnectionErrorKind::Other, error,
-            ),
+            Err(error) => {
+                harness_probe_failure(&model_id, started, TestConnectionErrorKind::Other, error)
+            }
         }
     }
 }

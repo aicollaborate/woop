@@ -1,41 +1,42 @@
 import { create } from 'zustand';
 
 import {
-  EMPTY_WORKSPACE_TARGET,
-  type WorkspaceNavigationState,
-  type WorkspaceTarget,
-} from './workspace-target';
+  EMPTY_WORK_COLUMN_TARGET,
+  type WorkColumnNavigationState,
+  type WorkColumnTarget,
+} from './work-column-target';
 
 /**
- * Runtime navigation state for the main workspace.
+ * Runtime state owned by the workColumn.
  *
- * This store intentionally does not contain restore data, document content,
- * React props, or component callbacks. Domain stores own those concerns;
- * callers only publish the active third-column navigation target here.
- * During a transition, `navigation.target` remains the committed intent while
- * DocumentStore may still hold the outgoing loaded session. Read both through
- * `resolveThirdColumnContentState` when code needs a combined view.
+ * This store owns target intent and navigation transactions only. Document
+ * data and editable sessions remain in DocumentStore; list and notebook
+ * selection remain in MemoStore.
  */
-interface WorkspaceStore {
-  navigation: WorkspaceNavigationState;
-  beginNavigation: (pendingTarget: WorkspaceTarget, retryToken: string | null) => number;
-  commitNavigation: (requestId: number, target: WorkspaceTarget) => boolean;
+export interface WorkColumnStore {
+  navigation: WorkColumnNavigationState;
+  beginNavigation: (
+    pendingTarget: WorkColumnTarget,
+    retryToken: string | null,
+    preservePreviousTarget?: boolean,
+  ) => number;
+  commitNavigation: (requestId: number, target: WorkColumnTarget) => boolean;
   failNavigation: (requestId: number, error: unknown) => boolean;
   dismissNavigationFailure: () => string | null;
   isCurrentNavigation: (requestId: number) => boolean;
 }
 
-export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
+export const useWorkColumnStore = create<WorkColumnStore>()((set, get) => ({
   navigation: {
     phase: 'idle',
     requestId: 0,
-    target: EMPTY_WORKSPACE_TARGET,
+    target: EMPTY_WORK_COLUMN_TARGET,
     pendingTarget: null,
     previousTarget: null,
     failure: null,
     retryToken: null,
   },
-  beginNavigation: (pendingTarget, retryToken) => {
+  beginNavigation: (pendingTarget, retryToken, preservePreviousTarget = false) => {
     const requestId = get().navigation.requestId + 1;
     set((state) => ({
       navigation: {
@@ -43,7 +44,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
         requestId,
         target: state.navigation.target,
         pendingTarget,
-        previousTarget: state.navigation.target,
+        previousTarget: preservePreviousTarget
+          ? state.navigation.previousTarget
+          : state.navigation.target,
         failure: null,
         retryToken,
       },

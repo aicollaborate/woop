@@ -123,6 +123,7 @@ describe("BadgeHoverCard", () => {
               secondary: { usedPercent: 30, windowDurationMins: 10080 },
             },
           },
+          rateLimitResetCredits: { availableCount: 2 },
         },
       },
     });
@@ -146,7 +147,40 @@ describe("BadgeHoverCard", () => {
     expect(host.textContent).toContain("80%");
     expect(host.textContent).toContain("70%");
     expect(host.textContent).toContain("codex-session-1");
+    expect(host.querySelector<HTMLElement>(".agent-thread-card__codex-reset-count")?.textContent)
+      .toBe("2");
     expect(host.textContent).not.toContain("codex-local-thread");
+
+    await act(async () => root.unmount());
+  });
+
+  it("hides the Codex reset count when no reset credits are available", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const requestRuntimeInfo = vi.fn().mockResolvedValue({
+      usage: { input_tokens: 10, output_tokens: 2 },
+      codex: {
+        rateLimits: {
+          rateLimitResetCredits: { availableCount: 0 },
+        },
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(BadgeHoverCard, {
+          codex: true,
+          onRequestRuntimeInfo: requestRuntimeInfo,
+        }),
+      );
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-open="true"]')?.click();
+    });
+
+    expect(host.querySelector(".agent-thread-card__codex-reset-count")).toBeNull();
 
     await act(async () => root.unmount());
   });

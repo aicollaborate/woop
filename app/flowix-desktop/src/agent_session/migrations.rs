@@ -191,6 +191,9 @@ impl super::store::ThreadManager {
                 updated_at INTEGER NOT NULL
             );
 
+            CREATE INDEX IF NOT EXISTS idx_agent_instances_notebook_updated
+                ON agent_instances(notebook_id, updated_at DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS threads_index (
                 id TEXT PRIMARY KEY,
                 instance_id TEXT NOT NULL UNIQUE,

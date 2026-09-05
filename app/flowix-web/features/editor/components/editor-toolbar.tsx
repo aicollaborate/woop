@@ -157,23 +157,28 @@ export function EditorToolbar({ editor, collapsed, onCollapsedChange }: EditorTo
               <ChevronDown size={12} className="opacity-50" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" sideOffset={5} align="center" className="p-1 w-auto min-w-[120px]">
+          <DropdownMenuContent
+            side="top"
+            sideOffset={5}
+            align="center"
+            className="w-auto min-w-[144px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+          >
             {headingConfigs.map(({ level, icon, symbol }) => (
               <DropdownMenuItem
                 key={level}
-                className={`gap-3 rounded-md justify-between hover:bg-[var(--muted)] ${state.heading === level ? 'active' : ''}`}
+                className={`group h-7 items-center justify-start gap-3 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)] ${state.heading === level ? 'bg-[var(--brand)] text-[var(--primary-foreground)]' : ''}`}
                 onClick={() => editor.chain().focus().toggleHeading({ level }).run()}
               >
                 {icon}
-                <span className="text-[var(--muted-foreground)]">{symbol}</span>
+                <span className={state.heading === level ? 'text-[var(--primary-foreground)]' : 'text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]'}>{symbol}</span>
               </DropdownMenuItem>
             ))}
             <DropdownMenuItem
-              className={`gap-3 rounded-md justify-between hover:bg-[var(--muted)] ${!state.heading ? 'active' : ''}`}
+              className={`group h-7 items-center justify-start gap-3 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)] ${!state.heading ? 'bg-[var(--brand)] text-[var(--primary-foreground)]' : ''}`}
               onClick={() => editor.chain().focus().setParagraph().run()}
             >
               {paragraphIcon}
-              <span className="text-[var(--muted-foreground)]">{t('editor.toolbar.paragraph')}</span>
+              <span className={!state.heading ? 'text-[var(--primary-foreground)]' : 'text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]'}>{t('editor.toolbar.paragraph')}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -267,23 +272,28 @@ export function EditorToolbar({ editor, collapsed, onCollapsedChange }: EditorTo
                 <MoreHorizontal size={18} />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" sideOffset={5} align="center" className="p-1 w-auto min-w-[136px]">
+            <DropdownMenuContent
+              side="top"
+              sideOffset={5}
+              align="center"
+              className="w-auto min-w-[136px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+            >
               <DropdownMenuItem
-                className="gap-3 rounded-md hover:bg-[var(--muted)]"
+                className="group h-7 items-center justify-start gap-3 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 onClick={() => editor.chain().focus().toggleCodeBlock().run()}
               >
                 <CodeIcon size={16} weight="bold" />
                 <span>{t('editor.toolbar.insertCodeBlock')}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
-                className={`gap-3 rounded-md hover:bg-[var(--muted)] ${state.strikethrough ? 'active' : ''}`}
+                className={`group h-7 items-center justify-start gap-3 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)] ${state.strikethrough ? 'bg-[var(--brand)] text-[var(--primary-foreground)]' : ''}`}
                 onClick={() => editor.chain().focus().toggleStrike().run()}
               >
                 <TextStrikethroughIcon size={16} weight="bold" />
                 <span>{t('editor.toolbar.strikethrough')}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
-                className="gap-3 rounded-md hover:bg-[var(--muted)]"
+                className="group h-7 items-center justify-start gap-3 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                 onClick={() => editor.commands.openFileDialog()}
               >
                 <PaperclipIcon size={16} weight="bold" />

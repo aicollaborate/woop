@@ -3,7 +3,8 @@
 use super::ThreadManager;
 use crate::agent_session::error::ThreadError;
 use crate::agent_session::types::{
-    AgentConversationInstance, AgentConversationRole, AgentConversationSource,
+    AgentConversationCursor, AgentConversationInstance, AgentConversationRole, AgentConversationSource,
+    AgentConversationTypeCount,
     UpsertAgentConversationInstance,
 };
 use rusqlite::{params, OptionalExtension};
@@ -35,16 +36,27 @@ impl ThreadManager {
 
     pub async fn list_agent_conversation_instances_page(
         self: &Arc<Self>,
-        offset: usize,
+        notebook_id: Option<String>,
+        agent_type: Option<String>,
+        cursor: Option<AgentConversationCursor>,
         limit: usize,
     ) -> Result<Vec<AgentConversationInstance>, ThreadError> {
-        self.run_blocking(move |tm| tm.list_agent_conversation_instances_page_inner(offset, limit))
-            .await
+        self.run_blocking(move |tm| {
+            tm.list_agent_conversation_instances_page_inner(
+                notebook_id,
+                agent_type,
+                cursor,
+                limit,
+            )
+        })
+        .await
     }
 
     fn list_agent_conversation_instances_page_inner(
         &self,
-        offset: usize,
+        notebook_id: Option<String>,
+        agent_type: Option<String>,
+        cursor: Option<AgentConversationCursor>,
         limit: usize,
     ) -> Result<Vec<AgentConversationInstance>, ThreadError> {
         let conn = self.lock_conn();
@@ -67,20 +79,64 @@ impl ThreadManager {
              FROM agent_instances i
              LEFT JOIN threads_index ti ON ti.instance_id = i.id
              LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
-             WHERE NOT (
+             WHERE (?1 IS NULL OR i.notebook_id IS NULL OR i.notebook_id = ?1)
+               AND (?2 IS NULL OR i.agent = ?2)
+               AND (
+                   ?3 IS NULL
+                   OR i.updated_at < ?3
+                   OR (i.updated_at = ?3 AND i.id < ?4)
+               )
+               AND NOT (
                  i.agent = 'opencode'
                  AND ti.id GLOB 'ses_*'
                  AND i.id = 'legacy-' || ti.id
                  AND legacy.instance_id IS NULL
              )
              ORDER BY i.updated_at DESC, i.id DESC
-             LIMIT ?1 OFFSET ?2",
+             LIMIT ?5",
         )?;
         let rows = stmt.query_map(
-            params![limit as i64, offset as i64],
+            params![
+                notebook_id,
+                agent_type,
+                cursor.as_ref().map(|value| value.updated_at),
+                cursor.as_ref().map(|value| value.instance_id.as_str()),
+                limit as i64,
+            ],
             Self::row_to_agent_conversation_instance,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub async fn list_agent_conversation_type_counts_by_notebook(
+        self: &Arc<Self>,
+        notebook_id: Option<String>,
+    ) -> Result<Vec<AgentConversationTypeCount>, ThreadError> {
+        self.run_blocking(move |tm| {
+            let conn = tm.lock_conn();
+            let mut stmt = conn.prepare(
+                "SELECT i.agent, COUNT(*)
+                 FROM agent_instances i
+                 LEFT JOIN threads_index ti ON ti.instance_id = i.id
+                 LEFT JOIN agent_conversation_instances legacy ON legacy.instance_id = i.id
+                 WHERE (?1 IS NULL OR i.notebook_id IS NULL OR i.notebook_id = ?1)
+                   AND NOT (
+                       i.agent = 'opencode'
+                       AND ti.id GLOB 'ses_*'
+                       AND i.id = 'legacy-' || ti.id
+                       AND legacy.instance_id IS NULL
+                   )
+                 GROUP BY i.agent",
+            )?;
+            let rows = stmt.query_map(params![notebook_id], |row| {
+                Ok(AgentConversationTypeCount {
+                    agent_type: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as usize,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
     }
 
     fn list_agent_conversation_instances_inner(

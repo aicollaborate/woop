@@ -1,5 +1,5 @@
-mod catalog;
 mod app_server;
+mod catalog;
 mod config;
 mod discovery;
 mod error;

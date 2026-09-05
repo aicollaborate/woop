@@ -8,12 +8,23 @@ import type { MemoColor, MemoItem } from '@/types/memo-item';
 
 // 颜色筛选二级选项。'any' = 任意带色 (memo.colors.length > 0),
 // 'none' = 无色 (memo.colors.length === 0), 其它值是具体颜色单选。
-// 走前端 store 过滤, 不下发后端 — 后端 `filter_memos` 不识别 'color'。
+// 颜色值会通过独立的后端分页参数下发, 保证颜色筛选和分页结果一致。
 export type ColorFilterValue = 'any' | 'none' | MemoColor;
 
-// FilterType 增加了前端专用的 'color' 维度。后端不识别时, `loadMemos`
-// 会把它转译成 'all' 走全量, 由前端在 useMemo 里按 `colorFilter` 二次过滤。
+// FilterType 增加了中间列专用的 'color' 维度。后端 filter 仍使用 all,
+// 具体颜色通过 color 参数传递。
 export type ExtendedFilterType = FilterType | 'color';
+
+export type MemoLibraryStartupPhase = 'idle' | 'loading' | 'ready' | 'error';
+
+interface MemoListPageQuery {
+  notebookId?: string;
+  filter: ExtendedFilterType;
+  sort: SortType;
+  tagId?: string;
+  color?: ColorFilterValue;
+  pluginId: string | null;
+}
 
 // 文档颜色标签 — 跟后端 `MemoColor` 镜像 (`#[serde(rename_all = "lowercase")]`),
 // 写入 memo index。单文档可挂多个色, 空数组即"无颜色"。色值在
@@ -62,11 +73,6 @@ export interface Notebook {
 }
 
 /** 最近在资料文件树中打开的文档。只持久化路径，不缓存文档内容。 */
-export interface ActiveFileBrowserDocument {
-  path: string;
-  scopePath: string;
-}
-
 function compareMemoItems(sort: SortType) {
   return (a: MemoItem, b: MemoItem) => {
     // 置顶优先于任何 sort 维度: pinned memo 始终靠前.
@@ -76,10 +82,10 @@ function compareMemoItems(sort: SortType) {
     }
 
     if (sort === 'updatedAt') {
-      return b.updatedAt - a.updatedAt;
+      return (b.updatedAt - a.updatedAt) || b.id.localeCompare(a.id);
     }
 
-    return b.createdAt - a.createdAt;
+    return (b.createdAt - a.createdAt) || b.id.localeCompare(a.id);
   };
 }
 
@@ -140,6 +146,11 @@ export interface MemoStore {
   notebooks: Notebook[];
   /** Whether the backend notebook collection has completed its first load. */
   notebooksInitialized: boolean;
+  /** Lifecycle of the main-window notebook + initial memo bootstrap. */
+  startupPhase: MemoLibraryStartupPhase;
+  startupError: string | null;
+  /** Query satisfied by the initial memo load, if startup reached ready. */
+  initialMemoQueryKey: string | null;
   // Selection state
   selectedMemo: MemoItem | null;
   /** Stable persisted identity; the full entity is hydrated from backend data. */
@@ -150,22 +161,24 @@ export interface MemoStore {
   // UI filter/sort
   activeFilter: ExtendedFilterType;
   activePluginId: string | null;
-  // 资料文件夹浏览态 ── 非 null 时中间列渲染 VSCode 风格文件树 (替代
-  // MemoList / AgentConversationList), 值为资料文件夹根路径。置 null 恢复
-  // 普通 memo 列表。与 activeFilter 互斥: 任一切换都清掉对方。
-  activeFileBrowserPath: string | null;
-  /** 资料文件树中最近打开的文本/代码文档, 用于启动时恢复。 */
-  activeFileBrowserDocument: ActiveFileBrowserDocument | null;
   activeSort: SortType;
   // 'color' 二级弹窗用的具体颜色值。'any'/'none'/具体颜色 (MEMO_COLORS)。
   // 当 activeFilter !== 'color' 时此值仍然保留, 切回颜色筛选时恢复。
   colorFilter: ColorFilterValue;
   // Reload trigger
   refreshTrigger: number;
+  /** Cursor state for the currently loaded memo query. Not persisted. */
+  memoListQueryKey: string | null;
+  memoListQuery: MemoListPageQuery | null;
+  memoListNextCursor: string | null;
+  memoListHasMore: boolean;
+  memoListLoadingMore: boolean;
 
   // Setters
   setMemos: (memos: MemoItem[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
+  setStartupPhase: (phase: MemoLibraryStartupPhase, error?: string | null) => void;
+  setStartupReady: (initialMemoQueryKey: string) => void;
   setSelectedMemo: (memo: MemoItem | null) => void;
   setSelectedNotebook: (notebook: Notebook | null) => void;
   /**
@@ -176,10 +189,6 @@ export interface MemoStore {
   reorderNotebooks: (nextOrderIds: string[]) => Promise<void>;
   setActiveFilter: (filter: ExtendedFilterType) => void;
   setActivePluginId: (pluginId: string | null) => void;
-  /** 打开 / 关闭资料文件夹文件树视图。打开时清 activeFilter 互斥态。 */
-  setActiveFileBrowserPath: (path: string | null) => void;
-  /** 记录 / 清除资料文件树中最近打开的文档。 */
-  setActiveFileBrowserDocument: (document: ActiveFileBrowserDocument | null) => void;
   setActiveSort: (sort: SortType) => void;
   setColorFilter: (color: ColorFilterValue) => void;
   triggerRefresh: () => void;
@@ -189,7 +198,8 @@ export interface MemoStore {
   // 即可, 不动 preview / tags / todos 这些派生字段 (rename 期间 body 不变)。
   updateMemoMeta: (id: string, meta: Partial<Pick<MemoItem, 'updatedAt' | 'preview' | 'thumbnail' | 'favorited' | 'filename'>>) => void;
   // Data loading
-  loadMemos: (params?: { notebookId?: string; filter?: ExtendedFilterType; sort?: SortType; tagId?: string }) => Promise<void>;
+  loadMemos: (params?: { notebookId?: string; filter?: ExtendedFilterType; sort?: SortType; tagId?: string }) => Promise<boolean>;
+  loadMoreMemos: () => Promise<boolean>;
   loadNotebooks: () => Promise<void>;
   createMemo: (tag?: string, notebookId?: string) => Promise<MemoItem>;
   deleteMemo: (id: string) => Promise<boolean>;
@@ -219,10 +229,6 @@ function omitUndefined<T extends object>(value: T): Partial<T> {
   ) as Partial<T>;
 }
 
-function comparablePath(path: string): string {
-  return path.trim().replace(/[\\/]+$/, '').toLowerCase();
-}
-
 export function getVisibleCreateFilter(filter: ExtendedFilterType): ExtendedFilterType {
   return filter === 'agents' || filter === 'todos' || filter === 'color' ? 'all' : filter;
 }
@@ -240,25 +246,45 @@ function isSidebarNavigationFilter(
 
 let loadMemosRequestSeq = 0;
 
+function invalidatePendingMemoLoads(): void {
+  loadMemosRequestSeq += 1;
+}
+
 export const useMemoStore = create<MemoStore>()(
   persist(
     (set, get) => ({
       memos: [],
       notebooks: [],
       notebooksInitialized: false,
+      startupPhase: 'idle',
+      startupError: null,
+      initialMemoQueryKey: null,
       selectedMemo: null,
       selectedMemoId: null,
       selectedNotebook: null,
       selectedNotebookId: null,
       activeFilter: 'all',
       activePluginId: null,
-      activeFileBrowserPath: null,
-      activeFileBrowserDocument: null,
       activeSort: 'createdAt',
       colorFilter: 'any',
       refreshTrigger: 0,
+      memoListQueryKey: null,
+      memoListQuery: null,
+      memoListNextCursor: null,
+      memoListHasMore: false,
+      memoListLoadingMore: false,
 
-      setMemos: (memos) => set({ memos }),
+      setMemos: (memos) => {
+        invalidatePendingMemoLoads();
+        set({
+          memos,
+          memoListQueryKey: null,
+          memoListQuery: null,
+          memoListNextCursor: null,
+          memoListHasMore: false,
+          memoListLoadingMore: false,
+        });
+      },
       setNotebooks: (notebooks) => set((state) => {
         // Prefer the persisted id. The object fallback keeps tests and
         // pre-migration in-memory callers compatible while the first backend
@@ -276,6 +302,16 @@ export const useMemoStore = create<MemoStore>()(
           notebooksInitialized: true,
         };
       }),
+      setStartupPhase: (startupPhase, startupError = null) => set({
+        startupPhase,
+        startupError,
+        ...(startupPhase === 'loading' ? { initialMemoQueryKey: null } : {}),
+      }),
+      setStartupReady: (initialMemoQueryKey) => set({
+        startupPhase: 'ready',
+        startupError: null,
+        initialMemoQueryKey,
+      }),
       setSelectedMemo: (memo) => set({
         selectedMemo: memo,
         selectedMemoId: memo?.id ?? null,
@@ -292,8 +328,6 @@ export const useMemoStore = create<MemoStore>()(
             selectedNotebookId: nextNotebookId,
             activeFilter: 'all',
             activePluginId: null,
-            activeFileBrowserPath: null,
-            activeFileBrowserDocument: null,
           });
           return;
         }
@@ -304,67 +338,33 @@ export const useMemoStore = create<MemoStore>()(
       // 霸着中间列。
       setActiveFilter: (filter) => {
         const previous = get();
-        if (previous.activeFilter === filter && previous.activeFileBrowserPath === null) return;
+        const selectedTagId = useTagStore.getState().selectedTagId;
+        const shouldClearTag = filter !== 'tagged';
+        // Artifact plugins use `activeFilter: 'all'` as their list fallback.
+        // Clicking the notes entry must still leave that plugin view, even
+        // when the filter value itself is already `all`.
+        if (
+          previous.activeFilter === filter
+          && previous.activePluginId === null
+          && (!shouldClearTag || selectedTagId === null)
+        ) return;
         set({
           activeFilter: filter,
           activePluginId: null,
-          activeFileBrowserPath: null,
-          activeFileBrowserDocument: null,
         });
-        if (filter !== 'tagged') {
+        if (shouldClearTag && selectedTagId !== null) {
           useTagStore.getState().setSelectedTagId(null);
         }
       },
       setActivePluginId: (pluginId) => set({
         activePluginId: pluginId,
-        activeFileBrowserPath: null,
-        activeFileBrowserDocument: null,
       }),
-      // 打开文件树时把 filter / plugin 归位 (中间列被文件树接管); 关闭
-      // (传 null) 时回到 'all' 列表。同值重复 set 直接 no-op，保持单选
-      // 控件的语义；打开任意资料项时清掉标签选择，避免状态残留。
-      setActiveFileBrowserPath: (path) => {
-        const previous = get();
-        if (previous.activeFileBrowserPath === path) return;
-        const keepDocument = path !== null
-          && previous.activeFileBrowserDocument !== null
-          && comparablePath(previous.activeFileBrowserDocument.scopePath) === comparablePath(path);
-        set({
-          activeFileBrowserPath: path,
-          activeFileBrowserDocument: keepDocument ? previous.activeFileBrowserDocument : null,
-          ...(path
-            ? { activeFilter: 'all' as const, activePluginId: null }
-            : path === null && previous.activeFileBrowserPath !== null
-              ? { activeFilter: 'all' as const }
-              : {}),
-        });
-        if (path !== null || previous.activeFileBrowserPath !== null) {
-          useTagStore.getState().setSelectedTagId(null);
-        }
-      },
-      setActiveFileBrowserDocument: (document) => {
-        if (!document) {
-          if (get().activeFileBrowserDocument === null) return;
-          set({ activeFileBrowserDocument: null });
-          return;
-        }
-        const next = {
-          path: document.path,
-          scopePath: document.scopePath,
-        };
-        const previous = get().activeFileBrowserDocument;
-        if (
-          previous
-          && comparablePath(previous.path) === comparablePath(next.path)
-          && comparablePath(previous.scopePath) === comparablePath(next.scopePath)
-        ) return;
-        set({ activeFileBrowserDocument: next });
-      },
       setActiveSort: (sort) => set({ activeSort: sort }),
       setColorFilter: (color) => set({ colorFilter: color }),
       triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
 
       upsertMemo: (memo) => {
+        invalidatePendingMemoLoads();
         set((state) => ({
           memos: state.memos.some((item) => item.id === memo.id)
             ? upsertSortedMemo(state.memos, memo, state.activeFilter, state.activeSort)
@@ -377,6 +377,7 @@ export const useMemoStore = create<MemoStore>()(
       },
 
       updateMemoMeta: (id, meta) => {
+        invalidatePendingMemoLoads();
         const nextMeta = omitUndefined(meta);
         set((state) => ({
           memos: state.memos.map((m) => m.id === id ? { ...m, ...nextMeta } : m),
@@ -394,39 +395,128 @@ export const useMemoStore = create<MemoStore>()(
         const pluginId = state.activePluginId;
         const sort = params?.sort || state.activeSort;
         const tagId = params?.tagId;
-        // 'color' 是前端专用, 转 'all' 走全量, 由 useMemo 按 colorFilter 过滤。
+        const color = filter === 'color' ? state.colorFilter : undefined;
+        const queryKey = JSON.stringify({
+          notebookId: notebookId ?? null,
+          filter,
+          sort,
+          tagId: tagId ?? null,
+          color: color ?? null,
+          pluginId: pluginId ?? null,
+        });
         const response = pluginId && notebookId
-          ? { memos: await memoRepository.listPluginNotes(pluginId, notebookId) }
+          ? {
+              memos: await memoRepository.listPluginNotes(pluginId, notebookId),
+              nextCursor: null,
+              hasMore: false,
+            }
           : await memoRepository.list({
               notebookId,
               filter: toBackendFilter(filter),
               sort,
               tagId,
+              color,
+              limit: 50,
             });
         if (requestSeq !== loadMemosRequestSeq) {
-          return;
+          return false;
         }
         const nextMemos = response.memos as MemoItem[];
+        const latestState = get();
         // Loading a list only updates the second column. The selected memo is
-        // the source of the third-column document and may legitimately be
+        // the source of the work-column document and may legitimately be
         // absent from a filtered result (for example when switching to
         // todos/tags), so do not derive document selection from this query.
         // Explicit actions such as opening, deleting, or changing notebook
         // still update `selectedMemo` through their own store actions.
-        const restoredMemo = state.selectedMemoId
-          ? nextMemos.find((memo) => memo.id === state.selectedMemoId)
+        const restoredMemo = latestState.selectedMemoId
+          ? nextMemos.find((memo) => memo.id === latestState.selectedMemoId)
           : null;
         set({
           memos: nextMemos,
+          memoListQueryKey: queryKey,
+          memoListQuery: {
+            notebookId,
+            filter,
+            sort,
+            tagId,
+            color,
+            pluginId: pluginId ?? null,
+          },
+          memoListNextCursor: response.nextCursor ?? null,
+          memoListHasMore: response.hasMore ?? Boolean(response.nextCursor),
+          memoListLoadingMore: false,
           ...(restoredMemo
             ? {
                 selectedMemo: {
                   ...restoredMemo,
-                  isOpen: state.selectedMemo?.isOpen,
+                  isOpen: latestState.selectedMemo?.isOpen,
                 },
               }
             : {}),
         });
+        return true;
+      },
+
+      loadMoreMemos: async () => {
+        const state = get();
+        const query = state.memoListQuery;
+        if (
+          !state.memoListHasMore
+          || state.memoListLoadingMore
+          || !state.memoListNextCursor
+          || !state.memoListQueryKey
+          || !query?.notebookId
+          || query.pluginId
+        ) {
+          return false;
+        }
+
+        // Do not let a scroll event from the previous query append into a new
+        // notebook/filter while its first page is still in flight.
+        const currentQueryKey = JSON.stringify({
+          notebookId: state.selectedNotebook?.id ?? null,
+          filter: state.activeFilter,
+          sort: state.activeSort,
+          tagId: state.activeFilter === 'tagged'
+            ? useTagStore.getState().selectedTagId ?? null
+            : null,
+          color: state.activeFilter === 'color' ? state.colorFilter : null,
+          pluginId: state.activePluginId ?? null,
+        });
+        if (currentQueryKey !== state.memoListQueryKey) return false;
+
+        const requestSeq = ++loadMemosRequestSeq;
+        const cursor = state.memoListNextCursor;
+        set({ memoListLoadingMore: true });
+        try {
+          const response = await memoRepository.list({
+            notebookId: query.notebookId,
+            filter: toBackendFilter(query.filter),
+            sort: query.sort,
+            tagId: query.tagId,
+            color: query.color,
+            cursor,
+            limit: 50,
+          });
+          if (requestSeq !== loadMemosRequestSeq) return false;
+
+          set((current) => {
+            const byId = new Map(current.memos.map((memo) => [memo.id, memo]));
+            for (const memo of response.memos) byId.set(memo.id, memo);
+            return {
+              memos: [...byId.values()],
+              memoListNextCursor: response.nextCursor ?? null,
+              memoListHasMore: response.hasMore ?? Boolean(response.nextCursor),
+              memoListLoadingMore: false,
+            };
+          });
+          return true;
+        } finally {
+          if (requestSeq === loadMemosRequestSeq) {
+            set({ memoListLoadingMore: false });
+          }
+        }
       },
 
       loadNotebooks: async () => {
@@ -471,6 +561,7 @@ export const useMemoStore = create<MemoStore>()(
         }
         const createTag = tag ?? (createFilter === 'tagged' ? selectedTagId ?? undefined : undefined);
         const memo = await memoRepository.create(createTag, notebookId);
+        invalidatePendingMemoLoads();
         set({
           memos: upsertSortedMemo(get().memos, memo as MemoItem, createFilter, state.activeSort),
         });
@@ -484,6 +575,7 @@ export const useMemoStore = create<MemoStore>()(
       deleteMemo: async (id) => {
         const success = await memoRepository.delete(id);
         if (success) {
+          invalidatePendingMemoLoads();
           const state = get();
           set({
             memos: state.memos.filter(m => m.id !== id),
@@ -495,10 +587,12 @@ export const useMemoStore = create<MemoStore>()(
       },
 
       favoriteMemo: async (id) => {
+        invalidatePendingMemoLoads();
         return await memoRepository.favorite(id);
       },
 
       unfavoriteMemo: async (id) => {
+        invalidatePendingMemoLoads();
         return await memoRepository.unfavorite(id);
       },
 
@@ -506,6 +600,7 @@ export const useMemoStore = create<MemoStore>()(
       // 后端 `set_memo_colors` 写 memo index + emit `Updated` 事件,
       // 后续 `useMemoEvents` 收到后调 `readMemo` 把权威值回灌, 自然收敛。
       setMemoColors: async (id, colors) => {
+        invalidatePendingMemoLoads();
         const state = get();
         const next = state.memos.map((m) => m.id === id ? { ...m, colors } : m);
         const nextSelected = state.selectedMemo?.id === id
@@ -521,6 +616,7 @@ export const useMemoStore = create<MemoStore>()(
       // 由 dispatcher 根据 derivedChanged 信号交给 tag/todo store。
 
       handleMemoCreated: (memo, options) => {
+        invalidatePendingMemoLoads();
         if (!memo) {
           get().triggerRefresh();
           return;
@@ -545,6 +641,7 @@ export const useMemoStore = create<MemoStore>()(
       },
 
       handleMemoUpdated: (memo) => {
+        invalidatePendingMemoLoads();
         // v2: 按 id 决定 update / insert, 保留 selectedMemo.isOpen。
         // - memos 数组里有这条 id: 替换为后端发来的权威 memo, 重排
         // - 没有: 直接 push 进数组 (罕见, 但 reconcile / external tool create
@@ -560,6 +657,7 @@ export const useMemoStore = create<MemoStore>()(
       },
 
       handleMemoDeleted: (id) => {
+        invalidatePendingMemoLoads();
         set((state) => ({
           memos: state.memos.filter((m) => m.id !== id),
           selectedMemo:
@@ -581,8 +679,6 @@ export const useMemoStore = create<MemoStore>()(
         activeFilter: isSidebarNavigationFilter(state.activeFilter)
           ? state.activeFilter
           : 'all',
-        activeFileBrowserPath: state.activeFileBrowserPath,
-        activeFileBrowserDocument: state.activeFileBrowserDocument,
       }),
       // Migrate the old persisted shape, which stored full selected entities.
       // Do not rehydrate those stale objects into runtime state.

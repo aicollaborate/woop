@@ -205,7 +205,12 @@ export function GlobalSearchCommand({ open, onOpenChange }: GlobalSearchCommandP
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} showOverlay={false}>
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      showOverlay={false}
+      className="flowix-global-search-command rounded-xl border-[var(--border-popup)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+    >
       <Command
         shouldFilter={false}
         // cmdk 默认 pointermove 接管选区: 鼠标移到 item 上就选中, 跟 ↑↓ / click
@@ -245,7 +250,7 @@ export function GlobalSearchCommand({ open, onOpenChange }: GlobalSearchCommandP
           )}
         />
         {filterPanelOpen && (
-          <div className="border-b border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_28%,transparent)] px-3 py-2">
+          <div className="flowix-global-search-filter-panel border-b border-[var(--border-popup)] bg-[color-mix(in_oklch,var(--muted)_28%,transparent)] px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-xs font-medium text-[var(--foreground)]">{t('shell.commandPalette.propertyFilter.heading')}</div>
@@ -607,7 +612,7 @@ function StaticGroups({ onClose }: StaticGroupsProps) {
     onClose();
   };
 
-  /** 新建笔记本 — memo-list 监听了 flowix:open-create-notebook 事件, 会打开
+  /** 新建笔记本 — MemoListServicesHost 监听了 flowix:open-create-notebook 事件, 会打开
    *  现有 Dialog 走选路径 + 命名流程. 直接 dispatch 复用. */
   const handleCreateFromTemplate = async (template: MemoTemplate) => {
     const state = useMemoStore.getState();

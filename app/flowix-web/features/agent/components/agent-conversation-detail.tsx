@@ -35,6 +35,7 @@ import { AgentBackgroundTerminals } from '@features/agent/components/agent-backg
 import { buildInitialInstanceRuntimeConfig } from '@features/agent/store/initial-runtime-config';
 import { defaultThreadTitle } from '@features/agent/store/thread-titles';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
+import { openPath, openUrl } from '@platform/tauri/opener';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -116,7 +117,7 @@ export function AgentConversationDetail({
   const bodyRef = useRef<HTMLDivElement>(null);
   const composerMountRef = useRef<HTMLDivElement>(null);
   const loadingIndicatorRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
   const messagesControllerRef = useRef<AgentThreadCardMessagesController | null>(null);
   const composerControllerRef = useRef<ComposerController | null>(null);
   const composerImagesControllerRef = useRef<ComposerImageController | null>(null);
@@ -181,11 +182,11 @@ export function AgentConversationDetail({
     // 线程绑定是异步的; submittingRef 挡住"创建中"期间的重入。Codex
     // 已有运行时允许本次提交转入队列，其它 agent 仍等待当前运行结束。
     if (submittingRef.current || (isLoadingRef.current && typeKeyRef.current !== 'codex')) return;
-    const input = inputRef.current;
+    const composerController = composerControllerRef.current;
     const currentInstance = instanceRef.current;
-    const content = input?.value.trim() ?? '';
+    const content = composerController?.getPrompt().trim() ?? '';
     const imagePaths = composerImagesControllerRef.current?.readyImages.map((image) => image.path) ?? [];
-    if (!input || (!content && imagePaths.length === 0) || !currentInstance) return;
+    if (!composerController || (!content && imagePaths.length === 0) || !currentInstance) return;
 
     submittingRef.current = true;
     try {
@@ -211,11 +212,11 @@ export function AgentConversationDetail({
         runtimeConfig = ensured.runtimeConfig;
       }
 
-      input.value = '';
+      composerController.clear();
       persistDetailDraft(currentInstance.instanceId, null);
-      composerControllerRef.current?.resetHistoryNavigation();
-      composerControllerRef.current?.clearDraft();
-      composerControllerRef.current?.updateMultiLineState();
+      composerController.resetHistoryNavigation();
+      composerController.clearDraft();
+      composerController.updateMultiLineState();
       composerImagesControllerRef.current?.clearAfterSubmit();
       await useAgentSessionStore.getState().sendMessageToThread(
         targetThreadId,
@@ -262,8 +263,11 @@ export function AgentConversationDetail({
     const loadingIndicator = loadingIndicatorRef.current;
     if (!dom || !body || !composerMount || !loadingIndicator) return;
 
+    const restoredDraft = readDetailDraft(instanceId);
+    draftRef.current = restoredDraft || null;
     const composerParts = createAgentComposerDom({
       variant: 'expanded',
+      inputDraft: restoredDraft,
       t: (key) => tRef.current(key),
     });
     composerMount.append(composerParts.composer);
@@ -279,6 +283,52 @@ export function AgentConversationDetail({
       sendButtonMount,
     } = composerParts;
     inputRef.current = input;
+
+    const handleMessageLinkClick = (event: MouseEvent): void => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const link = target.closest<HTMLAnchorElement>('a[href]');
+      if (!link) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      const rawHref = link.getAttribute('href');
+      void (async () => {
+        const { normalizePlainLinkHref } = await import(
+          '@features/editor/extensions/markdown-link'
+        );
+        const href = normalizePlainLinkHref(rawHref);
+        if (!href) return;
+        if (/^https?:\/\//i.test(href)) {
+          const { openBrowserColumnWebpage } = await import(
+            '@features/workspace/use-cases/browser-column-navigation'
+          );
+          await openBrowserColumnWebpage(href);
+          return;
+        }
+        const { localFilePathFromAgentHref } = await import(
+          '@features/agent/thread-card/link-navigation'
+        );
+        const localPath = localFilePathFromAgentHref(rawHref);
+        if (!localPath) {
+          await openUrl(href);
+          return;
+        }
+        const { isEditableTextFilePath } = await import('@features/editor/code-file');
+        if (isEditableTextFilePath(localPath)) {
+          const scopePath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
+          const { openBrowserColumnText } = await import(
+            '@features/workspace/use-cases/browser-column-navigation'
+          );
+          await openBrowserColumnText(localPath, scopePath);
+          return;
+        }
+        await openPath(localPath);
+      })().catch((error) => {
+        logger.error('Failed to open conversation link', { error });
+      });
+    };
+    body.addEventListener('click', handleMessageLinkClick);
 
     destroyedRef.current = false;
     const externalSettings = new ExternalAgentSettingsController({
@@ -307,11 +357,6 @@ export function AgentConversationDetail({
         persistDetailDraft(instanceId, draft);
       },
     });
-    const restoredDraft = readDetailDraft(instanceId);
-    if (restoredDraft) {
-      input.value = restoredDraft;
-      draftRef.current = restoredDraft;
-    }
     const composerImagesController = new ComposerImageController({
       input,
       container: composerImages,
@@ -330,6 +375,7 @@ export function AgentConversationDetail({
       loadingIndicator,
       composer,
       input,
+      inputDraft: restoredDraft,
       sendButtonMount,
       messageOptions: {
         bottomFollowThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX,
@@ -388,7 +434,7 @@ export function AgentConversationDetail({
         getUserHistoryMessages: () => getAgentThreadCardUserHistoryMessagesFromMessages(messagesRef.current),
         getSendLabel: (wantStop) => tRef.current(wantStop ? 'editor.threadCard.stop' : 'editor.threadCard.send'),
         getSendButtonWantsStop: () =>
-          isLoadingRef.current && !(typeKeyRef.current === 'codex' && !!inputRef.current?.value.trim()),
+          isLoadingRef.current && !(typeKeyRef.current === 'codex' && !!composerControllerRef.current?.getPrompt().trim()),
         getHasAttachments: () => composerImagesController.hasImages,
         getHasPendingAttachments: () => composerImagesController.hasPending,
         submit: () => submitRef.current(),
@@ -418,15 +464,7 @@ export function AgentConversationDetail({
       },
       consumeOutsidePointer: () => undefined,
       injectMemoReference: (ref) => {
-        // 文档引用注入到当前 composer, 以 markdown 深链形式追加,
-        // 与 thread-card-view 里的 injectMemoReference 走相同 pattern。
-        const link = `[${ref.title}](flowix://memo/${ref.id})`;
-        const current = input.value;
-        const needsLeadingSpace = current.length > 0 && !/\s$/.test(current);
-        const separator = needsLeadingSpace ? '\n\n' : '';
-        composerController.setHistoryValue(current + separator + link, { persistDraft: true });
-        composerController.resetHistoryNavigation();
-        input.focus();
+        composerController.insertMemoReference(ref);
       },
       triggerManagedExternally: true,
     });
@@ -467,6 +505,7 @@ export function AgentConversationDetail({
 
     return () => {
       destroyedRef.current = true;
+      body.removeEventListener('click', handleMessageLinkClick);
       composerController.flushPendingDraft();
       surface.dispose();
       composerImagesController.dispose();

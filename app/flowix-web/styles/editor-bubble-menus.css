@@ -256,13 +256,11 @@
   max-height: 20rem;
   overflow: hidden;
   border: 1px solid var(--border-popup);
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   background: var(--card);
   color: var(--foreground);
-  box-shadow:
-    0 10px 15px -3px oklch(0 0 0 / 0.10),
-    0 4px 6px -4px oklch(0 0 0 / 0.10);
-  padding: 0.375rem 0.25rem 0.25rem;
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
+  padding: 0.25rem;
 }
 
 .slash-menu-header {
@@ -278,8 +276,8 @@
 .slash-menu-divider {
   margin: 0.25rem 0.5rem;
   border: 0;
-  border-top: 1px solid var(--border);
-  opacity: 0.5;
+  border-top: 1px solid var(--border-popup);
+  opacity: 0.6;
 }
 
 .slash-menu-items-frame {
@@ -288,6 +286,9 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* 弹窗保留 p-1, 但把滚动条所在 frame 向右延伸到外框内沿。
+   * 右侧的内容由 scroller 的 padding-right 补回, 因此 item 仍不会贴边。 */
+  margin-right: -0.25rem;
 }
 
 .slash-menu-items {
@@ -297,16 +298,19 @@
   flex-direction: column;
   gap: 0.125rem;
   overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .slash-menu-item {
   display: flex;
   align-items: center;
+  height: 1.75rem;
+  min-height: 1.75rem;
   width: 100%;
   gap: 0.75rem;
-  padding: 0.375rem 0.75rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -314,14 +318,31 @@
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:hover,
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:focus-visible,
 .slash-menu-item.is-selected {
-  background: var(--muted);
-  color: var(--foreground);
+  background: var(--brand);
+  color: var(--primary-foreground);
+  outline: none;
+}
+
+/* 智能体 SVG 有两种渲染方式: 品牌图标是 img, 主题自适应图标是 mask。
+ * slash item 进入品牌色背景后，两者都统一显示为白色。 */
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:hover .slash-menu-agent-icon > img,
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:focus-visible .slash-menu-agent-icon > img,
+.slash-menu-item.is-selected .slash-menu-agent-icon > img {
+  filter: brightness(0) invert(1);
+}
+
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:hover .slash-menu-agent-icon .agent-icon--masked,
+.slash-menu-dropdown:not(.is-keyboard-navigation) .slash-menu-item:focus-visible .slash-menu-agent-icon .agent-icon--masked,
+.slash-menu-item.is-selected .slash-menu-agent-icon .agent-icon--masked {
+  background-color: #fff;
 }
 
 .slash-menu-item-label {
   overflow: hidden;
-  color: var(--foreground);
+  color: currentColor;
   font-size: 0.875rem;
   line-height: 1.25rem;
   text-overflow: ellipsis;
@@ -352,11 +373,13 @@
 .slash-menu-empty--cta {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
-  padding: 0.375rem 0.75rem;
+  height: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   background: transparent;
   color: var(--muted-foreground);
   font: inherit;
@@ -367,7 +390,8 @@
 
 .slash-menu-empty--cta:hover,
 .slash-menu-empty--cta:focus-visible {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
   outline: none;
 }
 
@@ -388,13 +412,11 @@
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--border-popup);
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   background: var(--card);
   color: var(--foreground);
-  box-shadow:
-    0 10px 15px -3px oklch(0 0 0 / 0.10),
-    0 4px 6px -4px oklch(0 0 0 / 0.10);
-  padding: 0.375rem 0.25rem 0.25rem;
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
+  padding: 0.25rem;
 }
 
 .tag-mention-dropdown {
@@ -436,6 +458,8 @@
   min-height: 0;
   max-height: calc(var(--mention-note-max-height, 288px) - 24px);
   overflow: hidden;
+  /* 与 slash 菜单相同: scrollbar 贴外框右内沿, item 保留右侧呼吸位。 */
+  margin-right: -0.25rem;
 }
 
 .mention-note-items {
@@ -446,6 +470,7 @@
   flex-direction: column;
   gap: 0.125rem;
   overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .mention-note-item {
@@ -453,10 +478,12 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
+  height: 1.75rem;
+  min-height: 1.75rem;
   gap: 0.75rem;
-  padding: 0.45rem 0.625rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: 0.25rem;
+  border-radius: 0.5rem;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -464,9 +491,40 @@
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.mention-note-item.is-selected {
-  background: var(--muted);
-  color: var(--foreground);
+/* The middle-column navigation submenu is rendered outside the mention
+ * dropdown wrapper, so it needs its own hover color propagation for labels
+ * and icons with explicit muted colors. */
+.memo-navigation-submenu-item:hover,
+.memo-navigation-submenu-item:focus-visible {
+  color: var(--primary-foreground);
+}
+
+.memo-navigation-submenu-item:hover .mention-note-title,
+.memo-navigation-submenu-item:focus-visible .mention-note-title,
+.memo-navigation-submenu-item:hover .mention-note-notebook,
+.memo-navigation-submenu-item:focus-visible .mention-note-notebook,
+.memo-navigation-submenu-item:hover .mention-tag-separator,
+.memo-navigation-submenu-item:focus-visible .mention-tag-separator,
+.memo-navigation-submenu-item:hover .mention-tag-icon,
+.memo-navigation-submenu-item:focus-visible .mention-tag-icon,
+.memo-navigation-submenu-item:hover svg,
+.memo-navigation-submenu-item:focus-visible svg {
+  color: var(--primary-foreground);
+}
+
+.memo-navigation-submenu-trigger:hover > span:last-child,
+.memo-navigation-submenu-trigger:focus-visible > span:last-child,
+.memo-navigation-submenu-trigger:hover > span:last-child > *,
+.memo-navigation-submenu-trigger:focus-visible > span:last-child > * {
+  color: var(--primary-foreground);
+}
+
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:hover,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:focus-visible,
+.mention-note-dropdown .mention-note-item.is-selected {
+  background: var(--brand);
+  color: var(--primary-foreground);
+  outline: none;
 }
 
 .mention-note-title,
@@ -482,6 +540,18 @@
   color: var(--foreground);
   font-size: 0.875rem;
   font-weight: 500;
+}
+
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:hover .mention-note-title,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:focus-visible .mention-note-title,
+.mention-note-dropdown .mention-note-item.is-selected .mention-note-title,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:hover .mention-tag-icon,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:focus-visible .mention-tag-icon,
+.mention-note-dropdown .mention-note-item.is-selected .mention-tag-icon,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:hover .mention-tag-separator,
+.mention-note-dropdown:not(.is-keyboard-navigation) .mention-note-item:focus-visible .mention-tag-separator,
+.mention-note-dropdown .mention-note-item.is-selected .mention-tag-separator {
+  color: var(--primary-foreground);
 }
 
 .mention-tag-title {
@@ -563,14 +633,22 @@
 }
 
 .mention-note-more {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  min-height: 1.75rem;
   width: 100%;
   border: 0;
-  border-radius: 0.25rem;
+  border-radius: 0.5rem;
   background: transparent;
   cursor: pointer;
+  padding: 0 0.5rem;
+  text-align: left;
 }
 
-.mention-note-more:hover {
-  background: var(--muted);
-  color: var(--foreground);
+.mention-note-dropdown .mention-note-more:hover,
+.mention-note-dropdown .mention-note-more:focus-visible {
+  background: var(--brand);
+  color: var(--primary-foreground);
+  outline: none;
 }

@@ -1,6 +1,12 @@
 import type { ThreadState } from "@features/agent/store/thread-runtime-state";
-import type { AppLanguage } from "@/lib/i18n";
-import { translate } from "@/lib/i18n";
+import type {
+  AgentMessage,
+  AgentThreadCardMessageRenderContext,
+} from "@features/agent/thread-card/messages/message-render-context";
+export type {
+  AgentMessage,
+  AgentThreadCardMessageRenderContext,
+} from "@features/agent/thread-card/messages/message-render-context";
 import {
   createAgentMessageViewModel,
   shouldRenderAgentMessage,
@@ -11,11 +17,14 @@ import {
   renderAgentThreadCardBudgetedMarkdown,
 } from "@features/agent/thread-card/messages/message-item-renderer";
 import {
+  createToolGroupElement,
+  updateToolGroupElement,
+} from "@features/agent/thread-card/messages/tool-group-renderer";
+import {
   areAgentRenderItemsEqual,
   groupAgentMessages,
   type AgentRenderItem,
 } from "@features/agent/thread-card/messages/tool-grouping";
-import { createChevronIcon } from "@features/agent/thread-card/agent-thread-card-icons";
 
 export function getRenderedAgentMessages(
   messages: ThreadState["messages"],
@@ -23,31 +32,9 @@ export function getRenderedAgentMessages(
   return messages.filter(shouldRenderAgentMessage);
 }
 
-type AgentMessage = ThreadState["messages"][number];
-
 export interface RenderedAgentMessageCache {
   list: HTMLDivElement | null;
   refs: AgentRenderItem[];
-}
-
-export interface AgentThreadCardMessageRenderContext {
-  language: AppLanguage;
-  /** True while the current turn is still producing items. */
-  isLoading: boolean;
-  getReasoningCollapsed: (message: AgentMessage) => boolean;
-  setReasoningCollapsed: (messageId: string, collapsed: boolean) => void;
-  getDisplayExpanded: (message: AgentMessage) => boolean;
-  setDisplayExpanded: (messageId: string, expanded: boolean) => void;
-  getToolGroupExpanded?: (groupId: string) => boolean;
-  setToolGroupExpanded?: (groupId: string, expanded: boolean) => void;
-  toolGroupPreview?: ReadonlyMap<string, AgentMessage[]>;
-  /**
-   * 消息是否仍在流式增长 ── 由 controller 按 `isLoading && 末条 && !isCompleted`
-   * 判定。流式中的末条走块级增量, 其余(历史 / 已完成 / 完成态触发)走全量 re-parse
-   * 修正块切分。见 [renderAgentThreadCardBudgetedMarkdown]。
-   */
-  isStreaming: (message: AgentMessage) => boolean;
-  onForkMessage?: (message: AgentMessage) => void | Promise<void>;
 }
 
 export function getRenderedAgentItems(
@@ -57,98 +44,6 @@ export function getRenderedAgentItems(
   return groupAgentMessages(messages, toolGroupPreview).filter(
     (item) => item.kind === "tool-group" || shouldRenderAgentMessage(item.message),
   );
-}
-
-function getToolGroupLabel(
-  group: Extract<AgentRenderItem, { kind: "tool-group" }>,
-  language: AppLanguage,
-): string {
-  const key =
-    group.status === "running"
-      ? "agent.tools.runningSteps"
-      : group.status === "failed"
-        ? "agent.tools.failedSteps"
-        : "agent.tools.completedSteps";
-  return translate(language, key, { count: group.totalCount });
-}
-
-function createToolGroupElement(options: {
-  group: Extract<AgentRenderItem, { kind: "tool-group" }>;
-  context: AgentThreadCardMessageRenderContext;
-}): HTMLElement {
-  const { group, context } = options;
-  const wrapper = document.createElement("div");
-  wrapper.className = `agent-thread-card__tool-group agent-thread-card__tool-group--${group.status}`;
-  wrapper.dataset.toolGroupId = group.id;
-
-  const header = document.createElement("button");
-  header.type = "button";
-  header.className = "agent-thread-card__tool-group-header";
-  header.append(createChevronIcon(context.getToolGroupExpanded?.(group.id) ? "down" : "right"));
-  const label = document.createElement("span");
-  label.textContent = getToolGroupLabel(group, context.language);
-  header.append(label);
-
-  const tools = document.createElement("div");
-  tools.className = "agent-thread-card__tool-group-tools";
-  for (const tool of group.tools) {
-    const rendered = createAgentThreadCardMessageElement({
-      message: tool,
-      language: context.language,
-      getReasoningCollapsed: context.getReasoningCollapsed,
-      setReasoningCollapsed: context.setReasoningCollapsed,
-      getDisplayExpanded: context.getDisplayExpanded,
-      setDisplayExpanded: context.setDisplayExpanded,
-      isStreaming: context.isStreaming(tool),
-      showActions: false,
-      canFork: false,
-      onForkMessage: context.onForkMessage,
-    });
-    if (rendered) tools.append(rendered.element);
-  }
-
-  const previews = (group.previewTools ?? []).map((tool) =>
-    createAgentThreadCardMessageElement({
-      message: tool,
-      language: context.language,
-      getReasoningCollapsed: context.getReasoningCollapsed,
-      setReasoningCollapsed: context.setReasoningCollapsed,
-      getDisplayExpanded: context.getDisplayExpanded,
-      setDisplayExpanded: context.setDisplayExpanded,
-      isStreaming: context.isStreaming(tool),
-      showActions: false,
-      canFork: false,
-      onForkMessage: context.onForkMessage,
-    }),
-  ).filter((rendered): rendered is NonNullable<typeof rendered> => rendered !== null);
-  for (const preview of previews) {
-    preview.element.classList.add("agent-thread-card__tool-group-preview");
-  }
-
-  const applyExpanded = (expanded: boolean) => {
-    wrapper.classList.toggle("agent-thread-card__tool-group--expanded", expanded);
-    header.setAttribute("aria-expanded", String(expanded));
-    header.replaceChildren(
-      createChevronIcon(expanded ? "down" : "right"),
-      label,
-    );
-    for (const preview of previews) {
-      preview.element.setAttribute("aria-hidden", String(expanded));
-    }
-  };
-  header.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const expanded = !wrapper.classList.contains("agent-thread-card__tool-group--expanded");
-    context.setToolGroupExpanded?.(group.id, expanded);
-    applyExpanded(expanded);
-  });
-  header.addEventListener("mousedown", (event) => event.stopPropagation());
-
-  wrapper.append(header);
-  for (const preview of previews) wrapper.append(preview.element);
-  wrapper.append(tools);
-  applyExpanded(context.getToolGroupExpanded?.(group.id) ?? false);
-  return wrapper;
 }
 
 /**
@@ -304,6 +199,79 @@ export interface AgentThreadCardMessagePatchOptions {
   force?: boolean;
 }
 
+function isSameToolGroup(
+  left: AgentRenderItem | undefined,
+  right: AgentRenderItem | undefined,
+): boolean {
+  return Boolean(
+    left?.kind === "tool-group" &&
+      right?.kind === "tool-group" &&
+      left.id === right.id,
+  );
+}
+
+function updateChangedToolGroups(
+  nextItems: AgentRenderItem[],
+  previousItems: AgentRenderItem[],
+  list: HTMLDivElement,
+  context: AgentThreadCardMessageRenderContext,
+): boolean | null {
+  if (nextItems.length < previousItems.length) return null;
+  if (list.children.length < previousItems.length) return null;
+
+  let changed = false;
+  for (let index = 0; index < previousItems.length; index += 1) {
+    const previous = previousItems[index];
+    const next = nextItems[index];
+    if (areAgentRenderItemsEqual(previous, next)) continue;
+    if (!isSameToolGroup(previous, next)) return null;
+    changed = true;
+  }
+
+  if (!changed) return false;
+
+  for (let index = 0; index < previousItems.length; index += 1) {
+    const previous = previousItems[index];
+    const next = nextItems[index];
+    if (areAgentRenderItemsEqual(previous, next) || !isSameToolGroup(previous, next)) {
+      continue;
+    }
+    const nextGroup = next.kind === "tool-group" ? next : null;
+    const element = list.children[index] as HTMLElement | undefined;
+    if (
+      !element ||
+      !nextGroup ||
+      !updateToolGroupElement(element, { group: nextGroup, context })
+    ) {
+      return null;
+    }
+  }
+  return true;
+}
+
+export function updateRenderedAgentToolGroups(
+  messages: ThreadState["messages"],
+  options: AgentThreadCardMessagePatchOptions,
+): AgentRenderItem[] | null {
+  const { body, cache, context, afterRender } = options;
+  const list = cache.list;
+  if (!list || !body.contains(list)) return null;
+
+  const nextItems = getRenderedAgentItems(messages, context.toolGroupPreview);
+  if (
+    nextItems.length !== cache.refs.length ||
+    list.children.length !== cache.refs.length
+  ) {
+    return null;
+  }
+
+  if (!updateChangedToolGroups(nextItems, cache.refs, list, context)) {
+    return null;
+  }
+  afterRender();
+  return nextItems;
+}
+
 export function patchLastRenderedAgentMessage(
   messages: ThreadState["messages"],
   options: AgentThreadCardMessagePatchOptions,
@@ -418,9 +386,13 @@ export function appendRenderedAgentMessagesToTail(
   if (newRendered.length <= oldRefs.length) return null;
   if (list.children.length !== oldRefs.length) return null;
 
-  for (let i = 0; i < oldRefs.length; i += 1) {
-    if (!areAgentRenderItemsEqual(newRendered[i], oldRefs[i])) return null;
-  }
+  const updatedToolGroups = updateChangedToolGroups(
+    newRendered,
+    oldRefs,
+    list,
+    context,
+  );
+  if (updatedToolGroups === null) return null;
 
   const appended = newRendered.slice(oldRefs.length);
   let appendedCount = 0;

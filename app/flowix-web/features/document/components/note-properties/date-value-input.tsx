@@ -143,7 +143,7 @@ export function DateValueInput({
       <PopoverContent
         align="start"
         sideOffset={6}
-        className="w-[272px] rounded-xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-xl"
+        className="w-[272px] rounded-xl border border-[var(--border-popup)] bg-[var(--card)] p-2 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
       >
         <div className="rounded-lg bg-[var(--card)]">
           <div className="mb-2 flex items-center justify-between px-1">
@@ -205,5 +205,4 @@ export function DateValueInput({
     </Popover>
   );
 }
-
 

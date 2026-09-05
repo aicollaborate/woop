@@ -208,6 +208,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(crate::browser_column::init())
         .manage(crate::app_update::AppUpdateState::default())
         .manage(memo_watcher.clone())
         .setup(move |app| {
@@ -326,7 +327,7 @@ pub fn run() {
             );
             // Watch every configured notebook. MCP/external tools may write to
             // a background notebook, and those creates must still reach the
-            // main Webview so it can route the note into the fourth column.
+            // main Webview so it can route the note into the browser column.
             let initial_notebooks = {
                 let memo_file = crate::lock_utils::read_lock(&memo_file_arc, "memo_file");
                 memo_file.read_notebook_configs().unwrap_or_default()
@@ -501,6 +502,7 @@ pub fn run() {
             commands::plugin::plugin_run_stop,
             commands::plugin::plugin_list_notes,
             commands::plugin::plugin_resolve_note,
+            commands::artifact::artifact_resolve,
             commands::settings::get_preference,
             commands::settings::set_preference,
             commands::settings::get_deepseek_harness_config,
@@ -655,6 +657,7 @@ pub fn run() {
             commands::thread::agent_conversation_list,
             commands::thread::agent_conversation_list_page,
             commands::thread::agent_conversation_count_by_notebook,
+            commands::thread::agent_conversation_type_counts_by_notebook,
             commands::thread::agent_conversation_get,
             commands::thread::agent_conversation_find_by_thread,
             commands::thread::agent_conversation_upsert,

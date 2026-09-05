@@ -1240,18 +1240,12 @@ mod tests {
 
     #[test]
     fn stable_dsh_plugin_keys_match_their_legacy_index_keys() {
-        assert!(dsh_plugin_keys_equivalent(
-            "host:0:memory",
-            "host:memory"
-        ));
+        assert!(dsh_plugin_keys_equivalent("host:0:memory", "host:memory"));
         assert!(dsh_plugin_keys_equivalent(
             "preset:default:12:memory",
             "preset:default:memory"
         ));
-        assert!(dsh_plugin_keys_equivalent(
-            "host:memory",
-            "host:0:memory"
-        ));
+        assert!(dsh_plugin_keys_equivalent("host:memory", "host:0:memory"));
     }
 
     #[test]

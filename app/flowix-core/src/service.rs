@@ -7,17 +7,43 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::memo_file::{
-    base_filename, normalize_search_tag_filter, resolve_filename_conflict, Memo, MemoFile,
-    MemoIndexEntry, MemoTodoEntry, MemoVersionMeta, MemoVersionSource, NotebookConfig,
+    base_filename, normalize_search_tag_filter, resolve_filename_conflict, Memo, MemoColor,
+    MemoFile, MemoIndexEntry, MemoTodoEntry, MemoVersionMeta, MemoVersionSource, NotebookConfig,
 };
 use crate::search::{self, NotebookSearchResults};
 
 const MAX_SEARCH_LIMIT: usize = 200;
+const DEFAULT_MEMO_PAGE_SIZE: usize = 50;
+const MAX_MEMO_PAGE_SIZE: usize = 100;
+const MAX_MEMO_CURSOR_BYTES: usize = 4096;
 
 type TagUsageSummary = (Vec<String>, Vec<(String, usize)>, usize, usize, usize);
+
+/// Opaque-to-transport cursor for a memo list query. The query identity is
+/// included so a cursor cannot accidentally be reused after changing notebook,
+/// filter, tag, color, or sort.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MemoListCursor {
+    notebook_id: Option<String>,
+    filter: String,
+    sort: String,
+    tag_id: Option<String>,
+    color: Option<String>,
+    favorited: bool,
+    sort_value: i64,
+    id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoPage {
+    pub memos: Vec<Memo>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
 
 #[derive(Debug, Error)]
 pub enum FlowixError {
@@ -130,6 +156,110 @@ impl<'a> MemoService<'a> {
     ) -> Vec<Memo> {
         self.memo_file
             .read_all_memos_filtered_for_notebook_id(notebook_id, filter, sort, tag_id)
+    }
+
+    /// Return one stable page from a memo query.
+    ///
+    /// The current index implementation still scans the local metadata index
+    /// to apply the existing filters, but only the requested page crosses the
+    /// transport boundary. This is intentionally layered on top of the
+    /// existing list query so filtering and ordering semantics stay identical.
+    pub fn list_memos_filtered_page(
+        &mut self,
+        notebook_id: Option<&str>,
+        filter: &str,
+        sort: &str,
+        tag_id: Option<&str>,
+        color: Option<&str>,
+        cursor: Option<&str>,
+        requested_limit: Option<usize>,
+    ) -> Result<MemoPage, FlowixError> {
+        let limit = requested_limit
+            .unwrap_or(DEFAULT_MEMO_PAGE_SIZE)
+            .clamp(1, MAX_MEMO_PAGE_SIZE);
+        let normalized_color = color.map(str::to_string);
+        if let Some(value) = normalized_color.as_deref() {
+            match value {
+                "any" | "none" | "red" | "orange" | "yellow" | "green" | "cyan" | "blue"
+                | "gray" => {}
+                _ => {
+                    return Err(FlowixError::InvalidInput(format!(
+                        "unsupported memo color filter `{value}`"
+                    )))
+                }
+            }
+        }
+
+        let mut all = self.list_memos_filtered(notebook_id, filter, sort, tag_id);
+        if let Some(color) = normalized_color.as_deref() {
+            all.retain(|memo| match color {
+                "any" => !memo.colors.is_empty(),
+                "none" => memo.colors.is_empty(),
+                value => memo
+                    .colors
+                    .iter()
+                    .any(|memo_color| memo_color_name(*memo_color) == value),
+            });
+        }
+
+        let parsed_cursor = cursor
+            .map(|value| {
+                if value.len() > MAX_MEMO_CURSOR_BYTES {
+                    return Err(FlowixError::InvalidInput(
+                        "memo list cursor is too large".to_string(),
+                    ));
+                }
+                serde_json::from_str::<MemoListCursor>(value)
+                    .map_err(|_| FlowixError::InvalidInput("invalid memo list cursor".to_string()))
+            })
+            .transpose()?;
+        if let Some(ref page_cursor) = parsed_cursor {
+            if page_cursor.notebook_id.as_deref() != notebook_id
+                || page_cursor.filter != filter
+                || page_cursor.sort != sort
+                || page_cursor.tag_id.as_deref() != tag_id
+                || page_cursor.color != normalized_color
+            {
+                return Err(FlowixError::InvalidInput(
+                    "memo list cursor does not match the current query".to_string(),
+                ));
+            }
+        }
+
+        let start = parsed_cursor
+            .as_ref()
+            .map(|page_cursor| {
+                all.iter()
+                    .position(|memo| memo_is_after_cursor(memo, page_cursor, sort))
+                    .unwrap_or(all.len())
+            })
+            .unwrap_or(0);
+        let end = start.saturating_add(limit).min(all.len());
+        let memos = all[start..end].to_vec();
+        let has_more = end < all.len();
+        let next_cursor = if has_more {
+            memos.last().map(|memo| {
+                serde_json::to_string(&MemoListCursor {
+                    notebook_id: notebook_id.map(str::to_string),
+                    filter: filter.to_string(),
+                    sort: sort.to_string(),
+                    tag_id: tag_id.map(str::to_string),
+                    color: normalized_color.clone(),
+                    favorited: memo.favorited,
+                    sort_value: memo_sort_value(memo, sort),
+                    id: memo.id.clone(),
+                })
+                .expect("memo list cursor serialization cannot fail")
+            })
+        } else {
+            None
+        };
+
+        Ok(MemoPage {
+            memos,
+            next_cursor,
+            has_more,
+        })
     }
 
     pub fn list_all_memos(&mut self, notebook_id: Option<&str>) -> Vec<Memo> {
@@ -620,6 +750,34 @@ impl<'a> MemoService<'a> {
     }
 }
 
+fn memo_sort_value(memo: &Memo, sort: &str) -> i64 {
+    if sort == "updatedAt" {
+        memo.updated_at
+    } else {
+        memo.created_at
+    }
+}
+
+fn memo_color_name(color: MemoColor) -> &'static str {
+    match color {
+        MemoColor::Red => "red",
+        MemoColor::Orange => "orange",
+        MemoColor::Yellow => "yellow",
+        MemoColor::Green => "green",
+        MemoColor::Cyan => "cyan",
+        MemoColor::Blue => "blue",
+        MemoColor::Gray => "gray",
+    }
+}
+
+fn memo_is_after_cursor(memo: &Memo, cursor: &MemoListCursor, sort: &str) -> bool {
+    // The list is sorted descending by each key, so a lower key is later.
+    memo.favorited < cursor.favorited
+        || (memo.favorited == cursor.favorited
+            && (memo_sort_value(memo, sort) < cursor.sort_value
+                || (memo_sort_value(memo, sort) == cursor.sort_value && memo.id < cursor.id)))
+}
+
 fn derive_title(body: &str) -> String {
     body.lines()
         .map(str::trim)
@@ -680,6 +838,78 @@ mod tests {
         let deleted = service.delete_memo(&created.memo.id).unwrap();
         assert!(deleted.file_removed);
         assert!(!deleted.path.exists());
+    }
+
+    #[test]
+    fn memo_pages_are_stable_and_do_not_repeat_items() {
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
+        for index in 0..5 {
+            service
+                .create_memo("work", &format!("# Page note {index}\n"))
+                .unwrap();
+        }
+
+        let first = service
+            .list_memos_filtered_page(Some("work"), "all", "createdAt", None, None, None, Some(2))
+            .unwrap();
+        assert_eq!(first.memos.len(), 2);
+        assert!(first.has_more);
+        let second = service
+            .list_memos_filtered_page(
+                Some("work"),
+                "all",
+                "createdAt",
+                None,
+                None,
+                first.next_cursor.as_deref(),
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(second.memos.len(), 2);
+        assert!(second.has_more);
+        assert!(first
+            .memos
+            .iter()
+            .all(|memo| !second.memos.iter().any(|next| next.id == memo.id)));
+
+        let third = service
+            .list_memos_filtered_page(
+                Some("work"),
+                "all",
+                "createdAt",
+                None,
+                None,
+                second.next_cursor.as_deref(),
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(third.memos.len(), 1);
+        assert!(!third.has_more);
+        assert!(third.next_cursor.is_none());
+    }
+
+    #[test]
+    fn memo_page_rejects_a_cursor_from_another_query() {
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
+        service.create_memo("work", "# Cursor note\n").unwrap();
+        service.create_memo("work", "# Cursor note two\n").unwrap();
+        let first = service
+            .list_memos_filtered_page(Some("work"), "all", "createdAt", None, None, None, Some(1))
+            .unwrap();
+        let error = service
+            .list_memos_filtered_page(
+                Some("work"),
+                "favorited",
+                "createdAt",
+                None,
+                None,
+                first.next_cursor.as_deref(),
+                Some(1),
+            )
+            .unwrap_err();
+        assert!(matches!(error, FlowixError::InvalidInput(_)));
     }
 
     #[test]

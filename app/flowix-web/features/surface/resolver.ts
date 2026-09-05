@@ -1,18 +1,18 @@
-import { getPluginNoteInfo, type PluginArtifactRendererId } from '@features/plugin/plugin-note';
+import type { PluginArtifactRendererId } from '@features/plugin/plugin-note';
 import { canonicalPath } from '@/lib/path';
 import type {
   DocumentSurfaceContext,
   PluginWorkbenchContext,
-  ResolveWorkspaceSurfaceInput,
-  ThirdColumnSurface,
+  ResolveWorkColumnSurfaceInput,
+  WorkColumnSurface,
 } from './types';
-import type { WorkspaceTarget } from '@features/workspace/store/workspace-target';
+import type { WorkColumnTarget } from '@features/workspace/store/work-column-target';
 
 function assertNever(value: never): never {
   throw new Error(`Unsupported plugin artifact renderer: ${String(value)}`);
 }
 
-function emptySurface(message: string): ThirdColumnSurface {
+function emptySurface(message: string): WorkColumnSurface {
   return { kind: 'empty', instanceKey: 'empty', message };
 }
 
@@ -21,7 +21,7 @@ function artifactSurface(
   memoId: string,
   transitionId: number | undefined,
   renderer: PluginArtifactRendererId | null,
-): ThirdColumnSurface {
+): WorkColumnSurface {
   const base = { instanceKey, renderer, props: { memoId, transitionId } };
   switch (renderer) {
     case 'markmap': return { ...base, kind: 'mindmap', renderer };
@@ -35,21 +35,21 @@ function artifactSurface(
   }
 }
 
-function resolveDocumentSurface(document: DocumentSurfaceContext): ThirdColumnSurface {
-  if (document.artifact) {
-    const noteInfo = getPluginNoteInfo(document.memo);
-    if (noteInfo) {
-      const renderer = noteInfo.renderer
-        ?? (noteInfo.noteType === 'mindmap' ? 'markmap' : null);
-      return artifactSurface(
-        `artifact:${document.artifact.memoId}`,
-        document.artifact.memoId,
-        document.artifact.transitionId,
-        renderer,
-      );
-    }
-  }
+function resolveDocumentSurface(document: DocumentSurfaceContext): WorkColumnSurface {
   return document.markdown;
+}
+
+function resolveArtifactTargetSurface(
+  target: Extract<WorkColumnTarget, { kind: 'artifact' }>,
+): WorkColumnSurface {
+  const pointerMemoId = target.pointerMemoId.trim();
+  if (!pointerMemoId) return emptySurface('');
+  return artifactSurface(
+    `artifact:${pointerMemoId}`,
+    pointerMemoId,
+    undefined,
+    target.renderer,
+  );
 }
 
 function samePath(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -62,7 +62,7 @@ function sameTransition(left: number | null | undefined, right: number | null): 
 
 /** Reject adjacent-render stale contexts instead of mounting them under a new target. */
 function isMemoDocumentContext(
-  target: Extract<WorkspaceTarget, { kind: 'memo' }>,
+  target: Extract<WorkColumnTarget, { kind: 'memo' }>,
   document: DocumentSurfaceContext,
 ): boolean {
   const props = document.markdown.props;
@@ -80,15 +80,11 @@ function isMemoDocumentContext(
       || samePath(props.notebookPath, target.notebookPath))
     && !props.isExternalDocument
     && samePath(props.filePath, target.path)
-    && sameTransition(props.transitionId, target.transitionId)
-    && (!document.artifact || (
-      document.artifact.memoId === target.memoId
-      && sameTransition(document.artifact.transitionId, target.transitionId)
-    ));
+    && sameTransition(props.transitionId, target.transitionId);
 }
 
 function isExternalDocumentContext(
-  target: Extract<WorkspaceTarget, { kind: 'external' }>,
+  target: Extract<WorkColumnTarget, { kind: 'external' }>,
   document: DocumentSurfaceContext,
 ): boolean {
   const props = document.markdown.props;
@@ -103,21 +99,20 @@ function isExternalDocumentContext(
     && samePath(props.filePath, target.path)
     && ((props.externalScopePath == null && target.scopePath == null)
       || samePath(props.externalScopePath, target.scopePath))
-    && sameTransition(props.transitionId, target.transitionId)
-    && !document.artifact;
+    && sameTransition(props.transitionId, target.transitionId);
 }
 
 function isPluginWorkbenchContext(
-  target: Extract<WorkspaceTarget, { kind: 'plugin-workbench' }>,
+  target: Extract<WorkColumnTarget, { kind: 'plugin-workbench' }>,
   context: PluginWorkbenchContext,
 ): boolean {
   return context.plugin.manifest.id === target.plugin.manifest.id;
 }
 
-function resolveWorkspaceTarget(
-  target: WorkspaceTarget,
-  input: Pick<ResolveWorkspaceSurfaceInput, 'document' | 'pluginWorkbench' | 'emptyMessage'>,
-): ThirdColumnSurface {
+function resolveWorkColumnTarget(
+  target: WorkColumnTarget,
+  input: Pick<ResolveWorkColumnSurfaceInput, 'document' | 'pluginWorkbench' | 'emptyMessage'>,
+): WorkColumnSurface {
   switch (target.kind) {
     case 'empty':
       return emptySurface(input.emptyMessage);
@@ -136,6 +131,8 @@ function resolveWorkspaceTarget(
         props: context,
       };
     }
+    case 'artifact':
+      return resolveArtifactTargetSurface(target);
     case 'memo':
       return input.document && isMemoDocumentContext(target, input.document)
         ? resolveDocumentSurface(input.document)
@@ -150,6 +147,6 @@ function resolveWorkspaceTarget(
 }
 
 /** Resolve the main workspace target with presentation data supplied by the host. */
-export function resolveWorkspaceSurface(input: ResolveWorkspaceSurfaceInput): ThirdColumnSurface {
-  return resolveWorkspaceTarget(input.navigation.target, input);
+export function resolveWorkColumnSurface(input: ResolveWorkColumnSurfaceInput): WorkColumnSurface {
+  return resolveWorkColumnTarget(input.navigation.target, input);
 }

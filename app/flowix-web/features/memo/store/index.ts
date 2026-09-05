@@ -5,9 +5,9 @@ export {
   MEMO_COLOR_HEX,
   type MemoStore,
   type Notebook,
-  type ActiveFileBrowserDocument,
   type ColorFilterValue,
   type ExtendedFilterType,
+  type MemoLibraryStartupPhase,
 } from '@features/memo/store/memo-store';
 export { type MemoItem, type MemoColor } from '@/types/memo-item';
 export { useTagStore, type MemoTagItem } from '@features/memo/store/tag-store';

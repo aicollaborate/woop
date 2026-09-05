@@ -37,14 +37,16 @@ function createActions(selectedNotebookId = 'notebook-a'): MainWindowMemoEventAc
   return {
     getSelectedNotebookId: vi.fn(() => selectedNotebookId),
     invalidateMentionCaches: vi.fn(),
-    openMemoInFourthColumn: vi.fn().mockResolvedValue(undefined),
+    openMemoInBrowserColumn: vi.fn().mockResolvedValue(undefined),
     reportOpenFailure: vi.fn(),
     handleMemoCreated: vi.fn(),
     handleMemoUpdated: vi.fn(),
     handleMemoDeleted: vi.fn(),
+    removeBrowserColumnTabsByMemoId: vi.fn(),
     handleTagsRenamed: vi.fn(),
     handleTagsDeleted: vi.fn(),
     replaceActiveMemoPath: vi.fn(),
+    replaceBrowserColumnMemoPath: vi.fn(),
     refreshSelectedNotebookMetadata: vi.fn(),
     refreshBackgroundTodoCount: vi.fn(),
   };
@@ -56,7 +58,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
-    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInBrowserColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
@@ -67,7 +69,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
-    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInBrowserColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
   });
@@ -90,7 +92,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
+    expect(actions.openMemoInBrowserColumn).not.toHaveBeenCalled();
     expect(actions.handleMemoCreated).toHaveBeenCalledWith(memo);
     expect(actions.refreshSelectedNotebookMetadata).toHaveBeenCalledWith(event);
   });
@@ -101,7 +103,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInBrowserColumn).toHaveBeenCalledWith('memo-b');
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
   });
@@ -112,7 +114,7 @@ describe('handleMainWindowMemoEvent', () => {
 
     handleMainWindowMemoEvent(event, actions);
 
-    expect(actions.openMemoInFourthColumn).toHaveBeenCalledWith('memo-b');
+    expect(actions.openMemoInBrowserColumn).toHaveBeenCalledWith('memo-b');
   });
 
   it('updates metadata and the active path for a current-notebook update', () => {
@@ -131,13 +133,14 @@ describe('handleMainWindowMemoEvent', () => {
 
     expect(actions.handleMemoUpdated).toHaveBeenCalledWith(event.memo);
     expect(actions.replaceActiveMemoPath).toHaveBeenCalledWith(memo.id, event.path);
-    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
+    expect(actions.replaceBrowserColumnMemoPath).toHaveBeenCalledWith(memo.id, event.path);
+    expect(actions.openMemoInBrowserColumn).not.toHaveBeenCalled();
   });
 
   it('reports automatic window-open failures', async () => {
     const error = new Error('window unavailable');
     const actions = createActions('notebook-a');
-    vi.mocked(actions.openMemoInFourthColumn).mockRejectedValue(error);
+    vi.mocked(actions.openMemoInBrowserColumn).mockRejectedValue(error);
 
     handleMainWindowMemoEvent(createdEvent(), actions);
 
@@ -165,10 +168,11 @@ describe('handleMainWindowMemoEvent', () => {
     expect(actions.handleMemoUpdated).not.toHaveBeenCalled();
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.handleMemoDeleted).not.toHaveBeenCalled();
+    expect(actions.removeBrowserColumnTabsByMemoId).not.toHaveBeenCalled();
     expect(actions.replaceActiveMemoPath).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.refreshBackgroundTodoCount).not.toHaveBeenCalled();
-    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
+    expect(actions.openMemoInBrowserColumn).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
   });
 
@@ -209,10 +213,11 @@ describe('handleMainWindowMemoEvent', () => {
     expect(actions.handleMemoUpdated).not.toHaveBeenCalled();
     expect(actions.handleMemoCreated).not.toHaveBeenCalled();
     expect(actions.handleMemoDeleted).not.toHaveBeenCalled();
+    expect(actions.removeBrowserColumnTabsByMemoId).not.toHaveBeenCalled();
     expect(actions.replaceActiveMemoPath).not.toHaveBeenCalled();
     expect(actions.refreshSelectedNotebookMetadata).not.toHaveBeenCalled();
     expect(actions.refreshBackgroundTodoCount).not.toHaveBeenCalled();
-    expect(actions.openMemoInFourthColumn).not.toHaveBeenCalled();
+    expect(actions.openMemoInBrowserColumn).not.toHaveBeenCalled();
     expect(actions.invalidateMentionCaches).toHaveBeenCalledOnce();
   });
 

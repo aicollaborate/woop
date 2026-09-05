@@ -147,7 +147,7 @@ export function DocumentPropertiesSection() {
                             {t(getPropertyTypeLabelKey(currentDraft.type as PropertyKind))}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent align="start">
+                        <SelectContent align="start" className="flowix-preferences-select-content">
                           {PROPERTY_KINDS.map((kind) => (
                             <SelectItem key={kind} value={kind}>
                               {t(getPropertyTypeLabelKey(kind))}

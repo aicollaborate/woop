@@ -1,12 +1,12 @@
 /* composer 圆角胶囊容器 ── grid auto 行, 高度由内容决定 (auto 行
  * 在子元素 display: none 时收缩到 0, 这是折叠态没有空白区块的关键)。
  * 外层 max-height: --atc-composer-max-h (200px) 兜底封顶; 内部
- * textarea 在 field-sizing: content 配合自身 max-height (= 外层
- * max-height - padding-y) 下, 内容超出时走 overflow-y 内部滚动,
+ * contenteditable 编辑器在自身 max-height (= 外层 max-height - padding-y)
+ * 下, 内容超出时走 overflow-y 内部滚动,
  * composer 容器不被撑破。
  *
  * 背景统一用 var(--document-bg) ── 跟文档背景融合 (与全屏态视觉一致),
- * 1px border 保留, 仍能围出胶囊形状; textarea 自身 transparent, 直接
+ * 1px border 保留, 仍能围出胶囊形状; 编辑器自身 transparent, 直接
  * 透出 composer 背景。多行状态由 .--multi-line 修饰类切到 flex-end
  * (按钮贴底, 始终维持 --atc-bottom-pad 距离)。 类切换由 agent-thread-card.tsx
  * 的 input 事件控制。 */
@@ -17,13 +17,13 @@
   gap: 5px;
   align-self: end;
   width: calc(100% - 24px);
-  /* 这是 container 的 grid item; min-width:auto 会把 textarea 的
+  /* 这是 container 的 grid item; min-width:auto 会把编辑器的
    * content-sized min-content 宽度带回 grid，长连续字符串因此可能把
    * composer 撑出卡片。明确允许它在 grid track 内收缩。 */
   min-width: 0;
   max-width: calc(100% - 24px);
   margin: 0 0.8rem 0.6rem;
-  padding: 0.4rem 0.4rem 0.4rem 0.8rem;
+  padding: 0 0.4rem 0 0.8rem;
   border: 1px solid var(--border);
   border-radius: 1rem;
   background: var(--document-bg);
@@ -31,7 +31,7 @@
   max-height: 15rem;
   user-select: none;
   /* ── 空区域点击聚焦的视觉暗示 ──
-   * composer 容器大部分位置都是 textarea 之外的"占位", 用户不知道点
+   * composer 容器大部分位置都是编辑器之外的"占位", 用户不知道点
    * 这里能把键盘焦点抢回输入框; 默认 cursor: auto / default 看起来
    * 像死区。 给容器本体的"非交互元素"位置统一标 text 光标, 配合
    * composer-dom-factory.ts 里的 pointerdown 委托, 形成"整片都是
@@ -40,6 +40,14 @@
    * 用 :where() 选非交互后代让优先级保持在 0, 不压过下面的 button /
    * image-remove 等子选择器 ── 按钮仍是 pointer 光标。 */
   cursor: text;
+}
+
+/* 非全屏单行 composer 的外层高度基线。仅约束输入框容器，不改变
+ * Tiptap 编辑器自身的内容高度；左右操作按钮以该容器为基准垂直居中。 */
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__composer {
+  min-height: 42px;
 }
 
 /* Codex background terminals sit in the small layer immediately above the
@@ -158,6 +166,15 @@
   align-items: flex-end;
 }
 
+/* 非全屏输入内容变多时，输入编辑器可以继续增高，但两侧操作按钮
+ * 仍应相对整个 composer 上下居中；底部对齐只保留给 expanded/fullscreen
+ * 的独立操作行布局。 */
+.markdown-editor
+  .agent-thread-card:not(.agent-thread-card--fullscreen)
+  .agent-thread-card__composer--multi-line {
+  align-items: center;
+}
+
 .markdown-editor .agent-thread-card__composer--has-images {
   flex-wrap: wrap;
   border-radius: 0.85rem;
@@ -216,8 +233,8 @@
   grid-template-rows: auto minmax(1.6rem, auto) auto;
   align-items: end;
   row-gap: 0.35rem;
-  /* 上方留白移入 textarea，避免滚动文案时占据不可滚动的固定区域。 */
-  padding: 0 0.6rem 0.55rem 0.8rem;
+  /* 上方留白移入编辑器，避免滚动文案时占据不可滚动的固定区域。 */
+  padding: 0.55rem 0.6rem 0.55rem 0.8rem;
 }
 
 .markdown-editor
@@ -234,8 +251,8 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
-  textarea,
-.markdown-editor .agent-composer--expanded textarea {
+  .agent-thread-card__composer-input,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-input {
   grid-column: 1 / -1;
   grid-row: 2;
   align-self: stretch;
@@ -520,12 +537,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
   align-self: center;
-  /* add (+) 按钮与右侧 模型/权限/空间 控件的额外呼吸位, 叠加在
-   * __composer-actions 行 gap 之上。 */
+  /* Add 略小于发送按钮, 但仍通过 align-self: center 保持上下居中。
+   * 额外呼吸位叠加在 __composer-actions 行 gap 之上。 */
   margin-right: 0.2rem;
   overflow: hidden;
   border: 0;
@@ -544,7 +561,7 @@
 
 /* 之前 `hidden` 时 display: none ── 现在 composerRoleIcon 永远是 button,
  * 不再设 hidden 属性, 这条规则保留作兜底, 防止后续调用方误设 hidden 时
- * 留下 24px 空白 (auto 行高 collapse 已处理, 但显式更稳)。 */
+ * 留下按钮空白 (auto 行高 collapse 已处理, 但显式更稳)。 */
 .markdown-editor .agent-thread-card__composer-role-icon[hidden] {
   display: none;
 }
@@ -596,19 +613,17 @@
   color: #fff;
 }
 
-.markdown-editor .agent-thread-card__composer textarea {
+.markdown-editor .agent-thread-card__composer-input {
   display: block;
   flex: 1 1 0;
-  /* field-sizing: content 保留用于纵向自动增高；width:0 让 flex
-   * 从可收缩的基准宽度开始分配空间，避免内容的固有宽度参与横向布局。 */
+  /* width:0 让 flex 从可收缩的基准宽度开始分配空间，避免内容的固有
+   * 宽度参与横向布局。编辑器自身通过 max-height + overflow-y 增长。 */
   width: 0;
   min-width: 0;
   max-width: 100%;
   min-height: 1rem;
   max-height: calc(var(--atc-composer-max-h) - 8px - var(--atc-bottom-pad));
   height: auto;
-  field-sizing: content;
-  resize: none;
   overflow-x: hidden;
   overflow-y: auto;
   overflow-wrap: anywhere;
@@ -623,7 +638,29 @@
   font-size: calc(var(--app-font-size, 15px) * 0.9);
   cursor: text;
   outline: none;
-  user-select: none;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+/* composer 编辑器挂载节点同时带有 Tiptap/ProseMirror class；强制透明，
+ * 避免全局编辑器背景覆盖输入框外层的统一底色。 */
+.markdown-editor .agent-thread-card__composer-editor {
+  background: transparent !important;
+}
+
+.markdown-editor .agent-thread-card__composer-input > p {
+  min-height: 1rem;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  white-space: pre-wrap;
+}
+
+/* 全局编辑器会给首个 ProseMirror block 增加 margin-top；composer 内的
+ * 段落必须贴合输入区域顶部，不保留这段文档编辑器间距。 */
+.markdown-editor
+.agent-thread-card__composer-input
+  > p:first-of-type {
+  margin-top: 0 !important;
 }
 
 .markdown-editor .agent-thread-card__composer-input-row {
@@ -632,21 +669,24 @@
   min-width: 0;
   flex: 1 1 0;
   gap: 0.35rem;
+  cursor: text;
+  user-select: text;
 }
 
-.markdown-editor .agent-thread-card__composer-input-row textarea {
+.markdown-editor .agent-thread-card__composer-input-row .agent-thread-card__composer-input {
   flex: 1 1 0;
 }
 
 .markdown-editor .agent-thread-card__slash-token {
-  flex: 0 0 auto;
-  padding: 0.15rem 0.42rem;
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0 0.42rem;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--brand);
   font: inherit;
-  font-size: calc(var(--app-font-size, 15px) * 0.86);
+  font-size: inherit;
   line-height: 1.5;
   cursor: pointer;
 }
@@ -663,14 +703,12 @@
   z-index: 10000;
   max-height: min(22rem, 48vh);
   overflow-y: auto;
-  padding: 0.3rem;
+  padding: 0.25rem;
   border: 1px solid var(--border-popup);
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   background: var(--card);
   color: var(--agent-foreground);
-  box-shadow:
-    0 0 15px -3px rgb(0 0 0 / 0.1),
-    0 0 6px -4px rgb(0 0 0 / 0.1);
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
   box-sizing: border-box;
 }
 
@@ -678,9 +716,10 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  align-items: baseline;
+  align-items: center;
   gap: 0.75rem;
-  padding: 0.35rem 0.6rem;
+  min-height: 1.75rem;
+  padding: 0.125rem 0.5rem;
   border: 0;
   border-radius: 0.5rem;
   background: transparent;
@@ -693,7 +732,24 @@
 }
 
 .agent-composer-slash-menu__item--active {
-  background: var(--accent);
+  background: var(--brand);
+  color: var(--primary-foreground);
+}
+
+.agent-composer-slash-menu__item:hover {
+  background: var(--brand);
+  color: var(--primary-foreground);
+}
+
+.agent-composer-slash-menu__item:hover
+  .agent-composer-slash-menu__name,
+.agent-composer-slash-menu__item:hover
+  .agent-composer-slash-menu__description,
+.agent-composer-slash-menu__item--active
+  .agent-composer-slash-menu__name,
+.agent-composer-slash-menu__item--active
+  .agent-composer-slash-menu__description {
+  color: var(--primary-foreground);
 }
 
 .agent-composer-slash-menu__name {
@@ -710,18 +766,13 @@
   white-space: nowrap;
 }
 
-.markdown-editor .agent-thread-card__composer textarea:focus {
+.markdown-editor .agent-thread-card__composer-input:focus {
   /* base 已 border: 0, 这里只压掉默认 focus ring 的 box-shadow */
   box-shadow: none;
 }
 
-.markdown-editor .agent-thread-card__composer textarea::placeholder {
-  color: var(--muted-foreground);
-  opacity: 0.6;
-}
-
 /* 发送按钮 ── 28×28 圆形, 内嵌 16×16 Phosphor 图标。
- * 尺寸取自 --atc-send-size, 与 textarea min-height 公式联动。 */
+ * 尺寸取自 --atc-send-size, 与输入区 min-height 公式联动。 */
 .agent-thread-card__access-trigger {
   display: inline-flex;
   align-items: center;
@@ -745,7 +796,7 @@
   color: var(--foreground);
 }
 
-/* Keep expanded overrides after the base textarea rules above. The input keeps
+/* Keep expanded overrides after the base editor rules above. The input keeps
  * its compact height when empty, grows with content, and scrolls after five
  * line-heights. */
 .markdown-editor
@@ -770,31 +821,29 @@
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer-input-row
-  textarea,
-.markdown-editor .agent-composer--expanded .agent-thread-card__composer-input-row textarea {
-  width: 0;
-  flex: 1 1 0;
-  padding-top: 0.55rem;
-}
-
-.markdown-editor
-  .agent-thread-card--fullscreen
-  .agent-thread-card__composer-input-row
-  .agent-thread-card__slash-token {
-  padding-top: 0.55rem;
+  .agent-thread-card__composer-input,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-input-row .agent-thread-card__composer-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  align-self: stretch;
+  padding-top: 0;
+  text-align: left;
 }
 
 .markdown-editor
   .agent-thread-card--fullscreen
   .agent-thread-card__composer
-  textarea,
-.markdown-editor .agent-composer--expanded textarea {
-  width: auto;
-  height: auto;
-  min-height: 1.6rem;
+  .agent-thread-card__composer-input,
+.markdown-editor .agent-composer--expanded .agent-thread-card__composer-input {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
   max-height: calc(5 * 1.35em);
   flex: none;
-  field-sizing: content;
-  align-self: center;
-  padding-top: 0.55rem;
+  align-self: stretch;
+  padding-top: 0;
+  text-align: left;
 }

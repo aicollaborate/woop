@@ -14,9 +14,9 @@ const FULLSCREEN_CHANGE_EVENT = 'flowix:agent-thread-card-fullscreen-change';
 // 写到外层变量。这里同时探针两个 host 的 active / info, 断言互不串扰。
 interface HostScopeProbeState {
   mainThirdActive: boolean;
-  fourthColumnActive: boolean;
+  browserColumnActive: boolean;
   mainThirdInfo: ReturnType<typeof useFullscreenAgentThreadCardInfo>;
-  fourthColumnInfo: ReturnType<typeof useFullscreenAgentThreadCardInfo>;
+  browserColumnInfo: ReturnType<typeof useFullscreenAgentThreadCardInfo>;
 }
 
 let probeState: HostScopeProbeState | null = null;
@@ -24,23 +24,23 @@ let probeState: HostScopeProbeState | null = null;
 function HostScopeProbe() {
   probeState = {
     mainThirdActive: useAgentThreadCardFullscreenActive('main-third'),
-    fourthColumnActive: useAgentThreadCardFullscreenActive('fourth-column'),
+    browserColumnActive: useAgentThreadCardFullscreenActive('browser-column'),
     mainThirdInfo: useFullscreenAgentThreadCardInfo('main-third'),
-    fourthColumnInfo: useFullscreenAgentThreadCardInfo('fourth-column'),
+    browserColumnInfo: useFullscreenAgentThreadCardInfo('browser-column'),
   };
   return null;
 }
 
 function buildWorkspaceHosts(): {
   mainThird: HTMLElement;
-  fourthColumn: HTMLElement;
+  browserColumn: HTMLElement;
 } {
   const mainThird = document.createElement('div');
   mainThird.dataset.workspaceHost = 'main-third';
-  const fourthColumn = document.createElement('div');
-  fourthColumn.dataset.workspaceHost = 'fourth-column';
-  document.body.append(mainThird, fourthColumn);
-  return { mainThird, fourthColumn };
+  const browserColumn = document.createElement('div');
+  browserColumn.dataset.workspaceHost = 'browser-column';
+  document.body.append(mainThird, browserColumn);
+  return { mainThird, browserColumn };
 }
 
 // 全屏卡片 position: fixed 但 DOM 仍在原列内 ── 这里按真实结构挂到
@@ -70,25 +70,25 @@ describe('AgentThreadCard fullscreen host scoping', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
   let mainThird: HTMLElement | null = null;
-  let fourthColumn: HTMLElement | null = null;
+  let browserColumn: HTMLElement | null = null;
 
   beforeEach(() => {
     probeState = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    ({ mainThird, fourthColumn } = buildWorkspaceHosts());
+    ({ mainThird, browserColumn } = buildWorkspaceHosts());
   });
 
   afterEach(() => {
     act(() => root?.unmount());
     mainThird?.remove();
-    fourthColumn?.remove();
+    browserColumn?.remove();
     container?.remove();
     root = null;
     container = null;
     mainThird = null;
-    fourthColumn = null;
+    browserColumn = null;
     probeState = null;
   });
 
@@ -98,27 +98,27 @@ describe('AgentThreadCard fullscreen host scoping', () => {
     });
   }
 
-  it('第四列卡片全屏: 第四列 hook 拿到信息, 第三列不激活', () => {
-    mountFullscreenCard(fourthColumn!, {
-      title: '第四列对话',
+  it('浏览器列卡片全屏: 浏览器列 hook 拿到信息, 第三列不激活', () => {
+    mountFullscreenCard(browserColumn!, {
+      title: '浏览器列对话',
       agentType: 'claude',
       instanceId: 'inst-4',
       threadId: 'thread-4',
     });
     mountProbe();
 
-    expect(probeState?.fourthColumnActive).toBe(true);
+    expect(probeState?.browserColumnActive).toBe(true);
     expect(probeState?.mainThirdActive).toBe(false);
     expect(probeState?.mainThirdInfo).toBeNull();
-    expect(probeState?.fourthColumnInfo).toEqual({
-      title: '第四列对话',
+    expect(probeState?.browserColumnInfo).toEqual({
+      title: '浏览器列对话',
       typeKey: 'claude',
       instanceId: 'inst-4',
       threadId: 'thread-4',
     });
   });
 
-  it('第三列卡片全屏: 第三列 hook 拿到信息, 第四列不激活', () => {
+  it('第三列卡片全屏: 第三列 hook 拿到信息, 浏览器列不激活', () => {
     mountFullscreenCard(mainThird!, {
       title: '第三列对话',
       agentType: 'codex',
@@ -128,8 +128,8 @@ describe('AgentThreadCard fullscreen host scoping', () => {
     mountProbe();
 
     expect(probeState?.mainThirdActive).toBe(true);
-    expect(probeState?.fourthColumnActive).toBe(false);
-    expect(probeState?.fourthColumnInfo).toBeNull();
+    expect(probeState?.browserColumnActive).toBe(false);
+    expect(probeState?.browserColumnInfo).toBeNull();
     expect(probeState?.mainThirdInfo).toEqual({
       title: '第三列对话',
       typeKey: 'codex',
@@ -141,21 +141,21 @@ describe('AgentThreadCard fullscreen host scoping', () => {
   it('fullscreen-change 事件驱动 hook 状态更新', () => {
     mountProbe();
     expect(probeState?.mainThirdActive).toBe(false);
-    expect(probeState?.fourthColumnActive).toBe(false);
+    expect(probeState?.browserColumnActive).toBe(false);
 
-    const card = mountFullscreenCard(fourthColumn!, { title: '后来全屏' });
+    const card = mountFullscreenCard(browserColumn!, { title: '后来全屏' });
     act(() => notifyFullscreenChange());
-    expect(probeState?.fourthColumnActive).toBe(true);
-    expect(probeState?.fourthColumnInfo?.title).toBe('后来全屏');
+    expect(probeState?.browserColumnActive).toBe(true);
+    expect(probeState?.browserColumnInfo?.title).toBe('后来全屏');
 
     card.remove();
     act(() => notifyFullscreenChange());
-    expect(probeState?.fourthColumnActive).toBe(false);
-    expect(probeState?.fourthColumnInfo).toBeNull();
+    expect(probeState?.browserColumnActive).toBe(false);
+    expect(probeState?.browserColumnInfo).toBeNull();
   });
 
   it('退出按钮只对所属 host 的全屏卡片渲染', () => {
-    function renderExitButton(host: 'main-third' | 'fourth-column'): void {
+    function renderExitButton(host: 'main-third' | 'browser-column'): void {
       act(() => {
         root?.render(createElement(AgentThreadCardFullscreenExitButton, {
           host,
@@ -164,15 +164,15 @@ describe('AgentThreadCard fullscreen host scoping', () => {
       });
     }
 
-    // 第三列卡片全屏: 第四列退出按钮不渲染
+    // 第三列卡片全屏: 浏览器列退出按钮不渲染
     mountFullscreenCard(mainThird!, { title: '第三列对话' });
-    renderExitButton('fourth-column');
+    renderExitButton('browser-column');
     expect(container?.querySelector('button.agent-thread-card-fullscreen-exit-btn')).toBeNull();
 
-    // 换成第四列卡片全屏: 第四列退出按钮出现
-    mountFullscreenCard(fourthColumn!, { title: '第四列对话' });
+    // 换成浏览器列卡片全屏: 浏览器列退出按钮出现
+    mountFullscreenCard(browserColumn!, { title: '浏览器列对话' });
     act(() => notifyFullscreenChange());
-    renderExitButton('fourth-column');
+    renderExitButton('browser-column');
     const button = container?.querySelector('button.agent-thread-card-fullscreen-exit-btn');
     expect(button).not.toBeNull();
     expect(button?.getAttribute('aria-label')).toBeTruthy();

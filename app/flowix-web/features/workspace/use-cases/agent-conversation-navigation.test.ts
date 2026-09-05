@@ -7,13 +7,21 @@ const mocks = vi.hoisted(() => ({
   failNavigation: vi.fn().mockReturnValue(true),
   isCurrentNavigation: vi.fn().mockReturnValue(true),
   activeAgentConversationId: 'conversation-a',
+  activeFilter: 'all',
+  hydrateInstance: vi.fn(),
   selectAgentConversation: vi.fn(),
+  agentRestore: {
+    selectedInstanceId: 'conversation-a' as string | null,
+    detailOpen: true,
+  },
   setActivePluginId: vi.fn(),
   setSelectedMemo: vi.fn(),
 }));
 
 vi.mock('@features/agent/store/agent-session-store', () => ({
-  useAgentSessionStore: { getState: vi.fn() },
+  useAgentSessionStore: {
+    getState: () => ({ hydrateInstance: mocks.hydrateInstance }),
+  },
 }));
 
 vi.mock('@features/document/store/document-store', () => ({
@@ -28,6 +36,7 @@ vi.mock('@features/document/store/document-store', () => ({
 vi.mock('@features/memo/store/memo-store', () => ({
   useMemoStore: {
     getState: () => ({
+      activeFilter: mocks.activeFilter,
       setActivePluginId: mocks.setActivePluginId,
       setSelectedMemo: mocks.setSelectedMemo,
     }),
@@ -37,13 +46,14 @@ vi.mock('@features/memo/store/memo-store', () => ({
 vi.mock('@features/workspace/store/workspace-restore-store', () => ({
   useWorkspaceRestoreStore: {
     getState: () => ({
+      agentConversation: mocks.agentRestore,
       selectAgentConversation: mocks.selectAgentConversation,
     }),
   },
 }));
 
-vi.mock('@features/workspace/store/workspace-store', () => ({
-  useWorkspaceStore: {
+vi.mock('@features/workspace/store/work-column-store', () => ({
+  useWorkColumnStore: {
     getState: () => ({
       navigation: { phase: 'committed', requestId: 1, target: { kind: 'plugin-workbench', plugin: { manifest: { id: 'plugin-a' } } }, pendingTarget: null, previousTarget: null, failure: null, retryToken: null },
       beginNavigation: mocks.beginNavigation,
@@ -55,13 +65,19 @@ vi.mock('@features/workspace/store/workspace-store', () => ({
 }));
 
 import { selectAndOpenAgentConversation } from './agent-conversation-navigation';
-import { useFourthColumnStore } from '@features/workspace/store/fourth-column-store';
+import { useBrowserColumnStore } from '@features/workspace/store/browser-column-store';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
 describe('agent conversation navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useFourthColumnStore.getState().reset();
+    mocks.activeFilter = 'all';
+    mocks.hydrateInstance.mockResolvedValue({ instanceId: 'conversation-a' });
+    mocks.agentRestore = {
+      selectedInstanceId: 'conversation-a',
+      detailOpen: true,
+    };
+    useBrowserColumnStore.getState().reset();
   });
 
   it('commits the agent target and clears stale workspace selection', async () => {
@@ -77,8 +93,8 @@ describe('agent conversation navigation', () => {
     expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a', true);
   });
 
-  it('activates an existing fourth-column conversation without reopening it in the third column', async () => {
-    useFourthColumnStore.getState().openTab({
+  it('activates an existing browser-column conversation without reopening it in the third column', async () => {
+    useBrowserColumnStore.getState().openTab({
       id: 'agent:conversation-a',
       title: 'Conversation A',
       icon: null,
@@ -89,11 +105,21 @@ describe('agent conversation navigation', () => {
     await selectAndOpenAgentConversation('conversation-a');
 
     expect(mocks.openAgentConversation).not.toHaveBeenCalled();
-    expect(useFourthColumnStore.getState()).toMatchObject({
+    expect(useBrowserColumnStore.getState()).toMatchObject({
       visible: true,
       activeTabId: 'agent:conversation-a',
     });
-    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('fourth-column');
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
     expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a', false);
+  });
+
+  it('restores the work-column conversation even when the middle column is on notes', async () => {
+    const { restoreAgentConversationWorkspace } = await import('./agent-conversation-navigation');
+
+    await restoreAgentConversationWorkspace();
+
+    expect(mocks.hydrateInstance).toHaveBeenCalledWith('conversation-a');
+    expect(mocks.openAgentConversation).toHaveBeenCalledWith('conversation-a', { history: 'skip' });
+    expect(mocks.selectAgentConversation).toHaveBeenCalledWith('conversation-a', true);
   });
 });

@@ -43,7 +43,10 @@ mod tests {
 
         rotate_one(&path, 4, 3).unwrap();
         assert!(!path.exists());
-        assert_eq!(std::fs::read_to_string(dir.path().join("app.log.1")).unwrap(), "12345");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("app.log.1")).unwrap(),
+            "12345"
+        );
 
         std::fs::write(&path, "1234").unwrap();
         rotate_one(&path, 5, 3).unwrap();

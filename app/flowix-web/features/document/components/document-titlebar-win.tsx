@@ -14,7 +14,10 @@ import {
   useAgentThreadCardFullscreenActive,
 } from '@features/document/components/document-titlebar-shared';
 import { useI18n } from '@/lib/i18n';
-import { ThirdColumnTitlebarShell } from '@features/shell/components/third-column-titlebar-shell';
+import {
+  WORK_COLUMN_TITLEBAR_GRADIENT,
+  WorkColumnTitlebarShell,
+} from '@features/shell/components/work-column-titlebar-shell';
 
 const ICON_BTN = DOCUMENT_TITLEBAR_ICON_BUTTON_WIN;
 
@@ -63,10 +66,10 @@ export function DocumentTitlebarWin({
       : 'empty';
 
   return (
-    <ThirdColumnTitlebarShell
+      <WorkColumnTitlebarShell
       isWindows
       className={isAgentThreadCardFullscreen ? 'agent-thread-card-fullscreen-titlebar' : ''}
-      style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: 'linear-gradient(to bottom, var(--bg-titlebar), transparent)' }}
+      style={isAgentThreadCardFullscreen ? undefined : { backgroundImage: WORK_COLUMN_TITLEBAR_GRADIENT }}
     >
       <div className="flex shrink-0 items-center gap-1">
         {isSidebarHidden && (
@@ -114,7 +117,7 @@ export function DocumentTitlebarWin({
 
       <div
         data-tauri-drag-region
-        className="ml-auto flex shrink-0 items-center gap-2 pr-4"
+        className="ml-auto flex shrink-0 items-center gap-2 pr-3"
       >
         <AgentThreadCardFullscreenExitButton className="agent-thread-card-fullscreen-exit-btn" />
         {documentState === 'external' && (
@@ -143,6 +146,6 @@ export function DocumentTitlebarWin({
           />
         )}
       </div>
-    </ThirdColumnTitlebarShell>
+      </WorkColumnTitlebarShell>
   );
 }

@@ -38,13 +38,13 @@ const toastMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
-vi.mock("@features/workspace/use-cases/fourth-column-navigation", () => ({
-  openFourthColumnMarkdown: vi.fn(() => ({
-    host: 'fourth-column',
-    tabId: 'external_markdown:/Users/rop/Documents/Outside Note.md',
+vi.mock("@features/workspace/use-cases/browser-column-navigation", () => ({
+  openBrowserColumnText: vi.fn(() => "file:/Users/rop/Documents/Outside Text.txt"),
+  openBrowserColumnWebpage: vi.fn(() => ({
+    host: 'browser-column',
+    tabId: 'web:https://example.com/docs',
     alreadyOpen: false,
   })),
-  openFourthColumnText: vi.fn(() => "external_text:/Users/rop/Documents/Outside Text.txt"),
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -173,6 +173,45 @@ async function flushAnimationFrame(): Promise<void> {
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+type ComposerInput = HTMLDivElement & { editor?: Editor };
+
+function getComposerInput(root: ParentNode): ComposerInput {
+  const input = root.querySelector<HTMLDivElement>(
+    ".agent-thread-card__composer-input",
+  ) as ComposerInput | null;
+  if (!input) throw new Error("Composer input not found");
+  return input;
+}
+
+function getComposerEditor(input: ComposerInput): Editor {
+  if (!input.editor) throw new Error("Composer editor not mounted");
+  return input.editor;
+}
+
+function getComposerValue(input: ComposerInput): string {
+  return getComposerEditor(input).getMarkdown().replace(/ {2}\n/g, "\n");
+}
+
+function setComposerText(input: ComposerInput, value: string): void {
+  const editor = getComposerEditor(input);
+  editor.commands.setContent(value, { contentType: "markdown" });
+  editor.commands.focus("end", { scrollIntoView: false });
+}
+
+function setComposerCaret(input: ComposerInput, textOffset: number): void {
+  const editor = getComposerEditor(input);
+  const { doc } = editor.state;
+  let position = 1;
+  for (let candidate = 1; candidate <= doc.content.size; candidate += 1) {
+    if (doc.textBetween(0, candidate, "\n", "\n").length >= textOffset) {
+      position = candidate;
+      break;
+    }
+    position = candidate;
+  }
+  editor.commands.setTextSelection(position);
 }
 
 // ThreadMessageRenderController 在流式态把 render 合并到 trailing rAF (D),
@@ -482,16 +521,16 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 
-  it("routes an assistant Markdown link through the fourth column", async () => {
+  it("routes an assistant Markdown link through the browser column", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { openPath } = await import("@tauri-apps/plugin-opener");
-    const { openFourthColumnMarkdown } = await import(
-      "@features/workspace/use-cases/fourth-column-navigation",
+    const { openBrowserColumnText } = await import(
+      "@features/workspace/use-cases/browser-column-navigation",
     );
     vi.mocked(openPath).mockClear();
-    vi.mocked(openFourthColumnMarkdown).mockClear();
+    vi.mocked(openBrowserColumnText).mockClear();
 
     const threadId = "thread-card-markdown-link";
     const host = document.createElement("div");
@@ -533,8 +572,9 @@ describe("AgentThreadCard NodeView streaming", () => {
     )?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flushPromises();
 
-    expect(openFourthColumnMarkdown).toHaveBeenCalledWith(
+    expect(openBrowserColumnText).toHaveBeenCalledWith(
       "/Users/rop/Documents/Outside Note.md",
+      "/Users/rop/Documents",
     );
     expect(openPath).not.toHaveBeenCalled();
   });
@@ -884,7 +924,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
       currentThreadTitles: {
         ...meta.currentThreadTitles,
-        codex: "Unrelated active title",
+        "legacy-codex-key": "Unrelated active title",
       },
     }));
     const host = document.createElement("div");
@@ -943,12 +983,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card");
-    const input = card?.querySelector<HTMLTextAreaElement>("textarea");
+    const input = card ? getComposerInput(card) : null;
     expect(card).not.toBeNull();
     expect(input).not.toBeNull();
 
-    input!.value = "write a short answer";
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    setComposerText(input!, "write a short answer");
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
     await vi.waitFor(() => expect(agent.chatStream).toHaveBeenCalled());
@@ -1016,9 +1055,8 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card")!;
-    const input = card.querySelector<HTMLTextAreaElement>("textarea")!;
-    input.value = "first message waits";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const input = getComposerInput(card);
+    setComposerText(input, "first message waits");
     (await waitForEnabledSendButton(card)).click();
     await flushPromises();
     expect(agent.chatStream).not.toHaveBeenCalled();
@@ -1053,9 +1091,8 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card")!;
-    const input = card.querySelector<HTMLTextAreaElement>("textarea")!;
-    input.value = "must not be sent";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const input = getComposerInput(card);
+    setComposerText(input, "must not be sent");
     (await waitForEnabledSendButton(card)).click();
     await vi.waitFor(() => {
       expect(toastMock.error).toHaveBeenCalledWith("thread initialization failed");
@@ -1091,13 +1128,10 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
     });
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card textarea",
-    );
+    const input = getComposerInput(host);
     expect(input).not.toBeNull();
 
-    input!.value = "unfinished message";
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    setComposerText(input, "unfinished message");
 
     // 立刻读还没落盘 ── debounce 期间 ProseMirror attr 保持旧值。
     expect(editor.getJSON().content?.[0]?.attrs?.inputDraft ?? null).toBeNull();
@@ -1139,19 +1173,16 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
     });
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card textarea",
-    );
+    const input = getComposerInput(host);
     expect(input).not.toBeNull();
 
-    input!.value = "x".repeat(501);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    setComposerText(input, "x".repeat(501));
 
     // debounce 期间 attr 仍是 "short", 推进 2s 后才被空字符串覆盖。
     expect(editor.getJSON().content?.[0]?.attrs?.inputDraft).toBe("short");
     vi.advanceTimersByTime(2100);
     expect(editor.getJSON().content?.[0]?.attrs?.inputDraft).toBeNull();
-    expect(input!.value).toHaveLength(501);
+    expect(getComposerValue(input!)).toHaveLength(501);
 
     vi.useRealTimers();
   });
@@ -1185,10 +1216,8 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
     });
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card textarea",
-    );
-    expect(input?.value).toBe("send me");
+    const input = getComposerInput(host);
+    expect(getComposerValue(input)).toBe("send me");
     const sendButton = await waitForEnabledSendButton(host);
 
     sendButton.click();
@@ -1196,7 +1225,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     vi.advanceTimersByTime(0);
 
     expect(editor.getJSON().content?.[0]?.attrs?.inputDraft).toBeNull();
-    expect(input!.value).toBe("");
+    expect(getComposerValue(input)).toBe("");
 
     vi.useRealTimers();
   });
@@ -1251,12 +1280,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card");
-    const input = card?.querySelector<HTMLTextAreaElement>("textarea");
+    const input = card ? getComposerInput(card) : null;
     expect(card).not.toBeNull();
     expect(input).not.toBeNull();
 
-    input!.value = "check workspace";
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    setComposerText(input!, "check workspace");
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
     await vi.waitFor(() => expect(agent.chatStream).toHaveBeenCalled());
@@ -2275,6 +2303,53 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(editor.state.selection.toJSON()).toEqual(selectionBefore);
   });
 
+  it("focuses the composer input row after entering fullscreen", async () => {
+    const { AgentThreadCard } =
+      await import("@features/agent/thread-card");
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "agentThreadCard",
+            attrs: {
+              threadId: "thread-card-fullscreen-input-focus",
+              title: "Fullscreen Input Focus",
+              typeKey: "deepseek-harness",
+              collapsed: false,
+            },
+          },
+        ],
+      },
+    });
+
+    host
+      .querySelector<HTMLButtonElement>(".agent-thread-card__fullscreen")
+      ?.click();
+    await flushAnimationFrame();
+
+    const input = getComposerInput(host);
+    const row = input.parentElement;
+    expect(row?.classList.contains("agent-thread-card__composer-input-row")).toBe(true);
+
+    input.blur();
+    row?.dispatchEvent(
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }),
+    );
+
+    expect(document.activeElement).toBe(input);
+    expect(getComposerEditor(input).view.hasFocus()).toBe(true);
+  });
+
   it("does not refocus the editor when clicking non-interactive card content", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");
@@ -2406,7 +2481,7 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(editor.state.selection).toBeInstanceOf(NodeSelection);
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card");
-    const input = card?.querySelector<HTMLTextAreaElement>("textarea");
+    const input = card ? getComposerInput(card) : null;
     expect(card).not.toBeNull();
     expect(input).not.toBeNull();
     expect(card!.classList.contains("ProseMirror-selectednode")).toBe(true);
@@ -2448,9 +2523,7 @@ describe("AgentThreadCard NodeView streaming", () => {
       },
     });
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card textarea",
-    );
+    const input = getComposerInput(host);
     expect(input).not.toBeNull();
     host.scrollTop = 123;
     input!.focus();
@@ -2510,12 +2583,11 @@ describe("AgentThreadCard NodeView streaming", () => {
     });
 
     const card = host.querySelector<HTMLElement>(".agent-thread-card");
-    const input = card?.querySelector<HTMLTextAreaElement>("textarea");
+    const input = card ? getComposerInput(card) : null;
     expect(card).not.toBeNull();
     expect(input).not.toBeNull();
 
-    input!.value = "first codex request";
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    setComposerText(input!, "first codex request");
     const sendButton = await waitForEnabledSendButton(card!);
     sendButton.click();
     await vi.waitFor(() => expect(chatStreamMock).toHaveBeenCalled());
@@ -2682,7 +2754,7 @@ describe("AgentThreadCard input history navigation", () => {
     vi.useRealTimers();
   });
 
-  function dispatchKey(input: HTMLTextAreaElement, key: string): KeyboardEvent {
+  function dispatchKey(input: ComposerInput, key: string): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
       key,
       bubbles: true,
@@ -2692,9 +2764,8 @@ describe("AgentThreadCard input history navigation", () => {
     return event;
   }
 
-  function typeText(input: HTMLTextAreaElement, value: string): void {
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+  function typeText(input: ComposerInput, value: string): void {
+    setComposerText(input, value);
   }
 
   it("does nothing when the thread has no user messages", async () => {
@@ -2724,13 +2795,11 @@ describe("AgentThreadCard input history navigation", () => {
     });
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
     typeText(input, "draft");
     dispatchKey(input, "ArrowUp");
 
-    expect(input.value).toBe("draft");
+    expect(getComposerValue(input)).toBe("draft");
   });
 
   it("Up on empty input fills with the most recent user message", async () => {
@@ -2797,20 +2866,18 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
-    expect(input.value).toBe("");
+    const input = getComposerInput(host);
+    expect(getComposerValue(input)).toBe("");
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("second question");
+    expect(getComposerValue(input)).toBe("second question");
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("first question");
+    expect(getComposerValue(input)).toBe("first question");
 
     // 已经在最老一条, 再按 Up 应该 clamp 不动。
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("first question");
+    expect(getComposerValue(input)).toBe("first question");
   });
 
   it("saves the existing draft as preNavDraft and restores it on Down past newest", async () => {
@@ -2865,22 +2932,20 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
     typeText(input, "my draft");
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("older");
+    expect(getComposerValue(input)).toBe("older");
 
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
 
     // 越过最新一条 → 恢复进入 nav 之前的草稿。
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("my draft");
+    expect(getComposerValue(input)).toBe("my draft");
   });
 
   it("does not persist previewed history entries over the latest draft", async () => {
@@ -2935,9 +3000,7 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
 
     vi.useFakeTimers();
 
@@ -2948,24 +3011,24 @@ describe("AgentThreadCard input history navigation", () => {
     );
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
     await vi.advanceTimersByTimeAsync(2000);
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
     expect(editor.getJSON().content?.[0]?.attrs?.inputDraft).toBe(
       "my latest draft",
     );
 
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("my latest draft");
+    expect(getComposerValue(input)).toBe("my latest draft");
 
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("my latest draft");
+    expect(getComposerValue(input)).toBe("my latest draft");
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
 
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("my latest draft");
+    expect(getComposerValue(input)).toBe("my latest draft");
 
     vi.useRealTimers();
   });
@@ -3021,13 +3084,11 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
     typeText(input, "draft");
     // 未进入 nav 态, Down 不动作 (preventDefault 仍调用, 所以光标不移动)。
     dispatchKey(input, "ArrowDown");
-    expect(input.value).toBe("draft");
+    expect(getComposerValue(input)).toBe("draft");
   });
 
   it("typing in nav mode exits navigation but keeps the edited text", async () => {
@@ -3082,20 +3143,18 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("second");
+    expect(getComposerValue(input)).toBe("second");
 
     // 用户在历史条目上追加内容 ── input 事件把 historyCursor 清回 null,
     // 退出 nav 态; 当前编辑内容保留。
     typeText(input, "second (edited)");
-    expect(input.value).toBe("second (edited)");
+    expect(getComposerValue(input)).toBe("second (edited)");
 
     // 再次按 Up: 重新拍 preNavDraft, 跳到最新 user 消息。
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("second");
+    expect(getComposerValue(input)).toBe("second");
   });
 
   it("lets native Up and Down move the caret until the composer reaches a boundary line", async () => {
@@ -3150,25 +3209,23 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
 
     typeText(input, "draft\nmiddle\nend");
-    input.setSelectionRange("draft\n".length, "draft\n".length);
+    setComposerCaret(input, "draft\n".length);
     const middleUp = dispatchKey(input, "ArrowUp");
     expect(middleUp.defaultPrevented).toBe(false);
-    expect(input.value).toBe("draft\nmiddle\nend");
+    expect(getComposerValue(input)).toBe("draft\nmiddle\nend");
 
-    input.setSelectionRange("draft\nmiddle".length, "draft\nmiddle".length);
+    setComposerCaret(input, "draft\nmiddle".length);
     const middleDown = dispatchKey(input, "ArrowDown");
     expect(middleDown.defaultPrevented).toBe(false);
-    expect(input.value).toBe("draft\nmiddle\nend");
+    expect(getComposerValue(input)).toBe("draft\nmiddle\nend");
 
-    input.setSelectionRange(0, 0);
+    setComposerCaret(input, 0);
     const boundaryUp = dispatchKey(input, "ArrowUp");
     expect(boundaryUp.defaultPrevented).toBe(true);
-    expect(input.value).toBe("newer\nline");
+    expect(getComposerValue(input)).toBe("newer\nline");
   });
 
   it("keeps the current history position when the selected history text is not modified", async () => {
@@ -3223,18 +3280,16 @@ describe("AgentThreadCard input history navigation", () => {
     await seedRenderableMessages("deepseek-harness", threadId, messages);
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
 
     dispatchKey(input, "ArrowUp");
-    expect(input.value).toBe("newer");
+    expect(getComposerValue(input)).toBe("newer");
 
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.setSelectionRange(0, 0);
+    setComposerCaret(input, 0);
     dispatchKey(input, "ArrowUp");
 
-    expect(input.value).toBe("older");
+    expect(getComposerValue(input)).toBe("older");
   });
 });
 
@@ -3286,9 +3341,8 @@ describe("AgentThreadCard input latency optimizations", () => {
     vi.useRealTimers();
   });
 
-  function typeText(input: HTMLTextAreaElement, value: string): void {
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+  function typeText(input: ComposerInput, value: string): void {
+    setComposerText(input, value);
   }
 
   it("keeps the existing message DOM when only the inputDraft attr changes", async () => {
@@ -3377,9 +3431,7 @@ describe("AgentThreadCard input latency optimizations", () => {
     });
     const initialNodeIds = initialMessageNodes.map((node) => node.dataset.testid);
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
 
     // 用户开始打字 ── debounce 期间 inputDraft attr 不变, ProseMirror
     // 不会派发任何事务, update(node) 不会被调用 ── 这是 B 的效果。
@@ -3489,16 +3541,13 @@ describe("AgentThreadCard composer during agent run", () => {
     }));
     await flushAnimationFrame();
 
-    const input = host.querySelector<HTMLTextAreaElement>(
-      ".agent-thread-card__composer textarea",
-    )!;
+    const input = getComposerInput(host);
     // 输入框不被 disabled ── 用户运行期可继续打字。
-    expect(input.disabled).toBe(false);
+    expect(input.contentEditable).toBe("true");
 
     // 用户在运行期继续打字 ── 草稿留在 input 里。
-    input.value = "next draft message";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(input.value).toBe("next draft message");
+    setComposerText(input, "next draft message");
+    expect(getComposerValue(input)).toBe("next draft message");
 
     // Enter / send 按钮在运行期都被拦截 ── submit() 早返, 不触发
     // sendMessageToThread, 也不清空 input (草稿保留)。
@@ -3510,6 +3559,6 @@ describe("AgentThreadCard composer during agent run", () => {
       }),
     );
     await flushPromises();
-    expect(input.value).toBe("next draft message");
+    expect(getComposerValue(input)).toBe("next draft message");
   });
 });

@@ -146,7 +146,7 @@ export function ShortcutRecorder({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="rounded-xl border border-[var(--border-popup)] bg-[var(--card)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
         <DialogHeader>
           <DialogTitle>{t('preferences.shortcuts.recorder.title')}</DialogTitle>
           <DialogDescription>

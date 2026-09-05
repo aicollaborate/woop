@@ -403,18 +403,29 @@ impl CodexAppServerManager {
         app_handle: &tauri::AppHandle,
     ) -> Result<(), String> {
         self.ensure_connection().await?;
-        let active = self.inner.active_turns.lock().await.get(flowix_thread_id)
+        let active = self
+            .inner
+            .active_turns
+            .lock()
+            .await
+            .get(flowix_thread_id)
             .map(|turn| (turn.codex_thread_id.clone(), turn.codex_turn_id.clone()))
             .ok_or_else(|| "Codex has no steerable active turn".to_string())?;
         let mut input = vec![json!({
             "type": "text",
             "text": message.llm_content.unwrap_or(message.content),
         })];
-        input.extend(message.image_paths.iter()
-            .filter(|path| std::path::Path::new(path).is_file())
-            .filter(|path| is_image_attachment(path))
-            .map(|path| json!({ "type": "localImage", "path": path })));
-        let attached_files = message.image_paths.iter()
+        input.extend(
+            message
+                .image_paths
+                .iter()
+                .filter(|path| std::path::Path::new(path).is_file())
+                .filter(|path| is_image_attachment(path))
+                .map(|path| json!({ "type": "localImage", "path": path })),
+        );
+        let attached_files = message
+            .image_paths
+            .iter()
             .filter(|path| std::path::Path::new(path).is_file())
             .filter(|path| !is_image_attachment(path))
             .map(|path| format!("- {path}"))
@@ -422,12 +433,16 @@ impl CodexAppServerManager {
         if !attached_files.is_empty() {
             input.push(json!({ "type": "text", "text": format!("\n<attached_files>\n{}\n</attached_files>", attached_files.join("\n")) }));
         }
-        self.request("turn/steer", json!({
-            "threadId": active.0,
-            "expectedTurnId": active.1,
-            "clientUserMessageId": client_user_message_id,
-            "input": input,
-        })).await?;
+        self.request(
+            "turn/steer",
+            json!({
+                "threadId": active.0,
+                "expectedTurnId": active.1,
+                "clientUserMessageId": client_user_message_id,
+                "input": input,
+            }),
+        )
+        .await?;
         let _ = app_handle;
         Ok(())
     }
@@ -633,9 +648,38 @@ impl CodexAppServerManager {
                 .and_then(Value::as_str)
                 .map(str::to_string);
             if cursor.is_none() {
-                return Ok(threads);
+                break;
             }
         }
+
+        // The App Server owns provider session ids, while Flowix owns the
+        // product thread ids used by conversation instances and titles.  The
+        // UI must receive the product id for every known binding; otherwise
+        // a title lookup compares `threads.title` against a provider id and
+        // falls back to a runtime-wide title slot.
+        let bindings = self
+            .inner
+            .thread_manager
+            .list_external_session_bindings(AGENT_TYPE)
+            .await
+            .map_err(|error| error.to_string())?;
+        for thread in &mut threads {
+            let Some(product_thread_id) = bindings.get(&thread.thread_id) else {
+                continue;
+            };
+            if let Some(product_info) = self
+                .inner
+                .thread_manager
+                .get_thread_info(product_thread_id)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                *thread = product_info;
+            } else {
+                thread.thread_id = product_thread_id.clone();
+            }
+        }
+        Ok(threads)
     }
 
     pub async fn get_thread_messages(&self, thread_id: &str) -> Result<Vec<ChatMessage>, String> {
@@ -1161,7 +1205,9 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
         }
         "item/completed" => {
             if let Some(item) = params.get("item") {
-                if let Some((chunk, metadata)) = completed_message_chunk(&flowix_thread_id, item, turn_id.as_deref()) {
+                if let Some((chunk, metadata)) =
+                    completed_message_chunk(&flowix_thread_id, item, turn_id.as_deref())
+                {
                     emit_notification_chunk_with_metadata(
                         inner,
                         &flowix_thread_id,
@@ -1355,8 +1401,14 @@ fn item_metadata(item: &Value) -> AgentChunkMetadata {
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
     let mut metadata = item_metadata_from_id(item_id);
-    metadata.codex_turn_id = item.get("turnId").and_then(Value::as_str).map(str::to_string);
-    metadata.client_user_message_id = item.get("clientId").and_then(Value::as_str).map(str::to_string);
+    metadata.codex_turn_id = item
+        .get("turnId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    metadata.client_user_message_id = item
+        .get("clientId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     metadata
 }
 
@@ -1428,7 +1480,11 @@ fn completed_message_chunk(
     let chunk = if kind == "userMessage" {
         AgentChunk::UserMessage {
             thread_id: thread_id.to_string(),
-            id: item.get("id").and_then(Value::as_str).unwrap_or("codex-user").to_string(),
+            id: item
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("codex-user")
+                .to_string(),
             text,
             timestamp: chrono::Utc::now().timestamp_millis(),
         }
@@ -1539,8 +1595,13 @@ fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
             .flatten()
             .enumerate()
         {
-            if let Some(message) = app_server_item_message(item, &timestamp, turn_index, item_index, turn_id.as_deref())
-            {
+            if let Some(message) = app_server_item_message(
+                item,
+                &timestamp,
+                turn_index,
+                item_index,
+                turn_id.as_deref(),
+            ) {
                 messages.push(message);
             }
         }

@@ -441,11 +441,11 @@
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 0.75rem;
   background: var(--card);
-  box-shadow: 0 12px 32px color-mix(in oklch, var(--foreground) 14%, transparent);
-  padding: 0.3rem;
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
+  padding: 0.25rem;
 }
 
 .markdown-editor .frontmatter-property__value-menu[hidden] {
@@ -456,6 +456,8 @@
   display: grid;
   width: 100%;
   min-width: 0;
+  height: 1.75rem;
+  min-height: 1.75rem;
   grid-template-columns: minmax(0, 1fr) 1rem;
   align-items: center;
   gap: 0.4rem;
@@ -467,13 +469,16 @@
   cursor: pointer;
   font: inherit;
   outline: none;
-  padding: 0.4rem 0.5rem;
+  padding: 0 0.5rem;
   text-align: left;
 }
 
 .markdown-editor .frontmatter-property__value-option:hover,
-.markdown-editor .frontmatter-property__value-option:focus-visible {
-  background: var(--muted);
+.markdown-editor .frontmatter-property__value-option:focus-visible,
+.markdown-editor .frontmatter-property__value-option[aria-selected='true'] {
+  background: var(--brand);
+  color: var(--primary-foreground);
+  outline: none;
 }
 
 .markdown-editor .frontmatter-property__value-option-label {
@@ -490,6 +495,15 @@
   align-items: center;
   justify-content: center;
   color: var(--primary);
+}
+
+.markdown-editor .frontmatter-property__value-option:hover
+  .frontmatter-property__value-option-check,
+.markdown-editor .frontmatter-property__value-option:focus-visible
+  .frontmatter-property__value-option-check,
+.markdown-editor .frontmatter-property__value-option[aria-selected='true']
+  .frontmatter-property__value-option-check {
+  color: var(--primary-foreground);
 }
 
 .markdown-editor .frontmatter-property__value-option-check svg {
@@ -671,11 +685,11 @@
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-popup);
   border-radius: 0.75rem;
   background: var(--card);
-  box-shadow: 0 12px 32px color-mix(in oklch, var(--foreground) 14%, transparent);
-  padding: 0.3rem;
+  box-shadow: 0 4px 24px -3px rgb(0 0 0 / 24%);
+  padding: 0.25rem;
 }
 
 .markdown-editor .frontmatter-property__key-menu[hidden] {
@@ -696,7 +710,8 @@
   cursor: pointer;
   font: inherit;
   outline: none;
-  padding: 0.4rem 0.5rem;
+  min-height: 1.75rem;
+  padding: 0.125rem 0.5rem;
   text-align: left;
 }
 
@@ -710,7 +725,8 @@
 
 .markdown-editor .frontmatter-property__key-option:hover,
 .markdown-editor .frontmatter-property__key-option:focus-visible {
-  background: var(--muted);
+  background: var(--brand);
+  color: var(--primary-foreground);
 }
 
 .markdown-editor .frontmatter-property__key-option:disabled {
@@ -724,6 +740,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.markdown-editor .frontmatter-property__key-option:hover
+  .frontmatter-property__key-option-code,
+.markdown-editor .frontmatter-property__key-option:focus-visible
+  .frontmatter-property__key-option-code,
+.markdown-editor .frontmatter-property__key-option:hover
+  .frontmatter-property__key-option-added,
+.markdown-editor .frontmatter-property__key-option:focus-visible
+  .frontmatter-property__key-option-added {
+  color: var(--primary-foreground);
 }
 
 .markdown-editor .frontmatter-property__key-option-label {
@@ -745,6 +772,13 @@
   align-items: center;
   justify-content: center;
   color: var(--primary);
+}
+
+.markdown-editor .frontmatter-property__key-option:hover
+  .frontmatter-property__key-option-check,
+.markdown-editor .frontmatter-property__key-option:focus-visible
+  .frontmatter-property__key-option-check {
+  color: var(--primary-foreground);
 }
 
 .markdown-editor .frontmatter-property__key-option-added {

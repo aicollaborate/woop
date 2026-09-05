@@ -21,6 +21,7 @@ interface NotebookListProps {
   onSelectNotebook: (notebook: Notebook) => void;
   onEditNotebook: (notebook: Notebook) => void;
   onDeleteNotebook: (notebook: Notebook) => void;
+  onCreateNotebook: () => void;
 }
 
 // 笔记本路径行 ── 纯 CSS 头部省略: 溢出时浏览器在左缘画 "…", 尾部 (笔记本名)
@@ -48,6 +49,7 @@ export function NotebookList({
   onSelectNotebook,
   onEditNotebook,
   onDeleteNotebook,
+  onCreateNotebook,
 }: NotebookListProps) {
   const { t } = useI18n();
   const experimental = useExperimentalMode();
@@ -131,10 +133,6 @@ export function NotebookList({
     };
   }, [cloudSyncedNotebookIds, experimental]);
 
-  const handleCreateNotebook = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'));
-  }, []);
-
   return (
     <div className="flex min-h-0 max-h-[52px] shrink-0 flex-col">
       <OverlayScrollbar
@@ -150,7 +148,7 @@ export function NotebookList({
           ) : notebooks.length === 0 ? (
             <button
               type="button"
-              onClick={handleCreateNotebook}
+              onClick={onCreateNotebook}
               className="flex h-12 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
             >
               {t('status.newNotebook')}
@@ -177,6 +175,7 @@ export function NotebookList({
                   onSelect={onSelectNotebook}
                   onEdit={onEditNotebook}
                   onDelete={onDeleteNotebook}
+                  onCreateNotebook={onCreateNotebook}
                   onRefresh={setNotebooks}
                   cloudSyncedNotebookIds={cloudSyncedNotebookIds}
                   cloudSyncAvailable={cloudSyncAvailable}

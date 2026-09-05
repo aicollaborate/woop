@@ -1,36 +1,16 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use super::manifest::PluginParser;
 use super::PluginDescriptor;
+
+pub(super) use crate::artifact::{
+    ArtifactPointer as PluginArtifactPointer, ArtifactPointerMemo as PluginNoteFrontmatter,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct ParsedPluginOutput {
     pub(super) content: String,
     pub(super) title: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PluginArtifactPointer {
-    pub path: String,
-    pub format: String,
-    pub parser: String,
-    pub renderer: String,
-    pub title: String,
-    pub content_hash: String,
-    pub created_at: String,
-    #[serde(default)]
-    pub source_note: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct PluginNoteFrontmatter {
-    pub flowix_note_type: String,
-    pub flowix_plugin: String,
-    pub flowix_plugin_version: String,
-    pub flowix_artifact: PluginArtifactPointer,
 }
 
 pub(super) fn parse_plugin_output(

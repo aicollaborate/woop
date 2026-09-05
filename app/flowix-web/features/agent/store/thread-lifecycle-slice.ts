@@ -14,6 +14,7 @@ import {
   defaultThreadTitle,
   normalizeThreadTitle,
 } from "@features/agent/store/thread-titles";
+import { resolveProductThreadId } from "@features/agent/store/external-session";
 import { replayExternalEventsForThread } from "@features/agent/store/external-event-replay";
 import { useDocumentStore } from "@features/document/store/document-store";
 import { useWorkspaceRestoreStore } from "@features/workspace/store/workspace-restore-store";
@@ -109,7 +110,7 @@ async function loadThread(
       },
       currentThreadTitles: {
         ...current.currentThreadTitles,
-        [type.key]: threadInfo?.title ?? defaultThreadTitle(type.key),
+        [threadId]: threadInfo?.title ?? defaultThreadTitle(type.key),
       },
     }));
     get().setThreadProjection(threadId, (projection) => ({
@@ -164,6 +165,8 @@ async function reloadThreadListForType(
 function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
   set((state) => {
     const removedType = state.sessionMeta.threadTypes[threadId];
+    const currentThreadTitles = { ...state.sessionMeta.currentThreadTitles };
+    delete currentThreadTitles[threadId];
     const { [threadId]: _removedProjection, ...threadProjections } =
       state.threadProjections;
     const { [threadId]: _removedType, ...threadTypes } =
@@ -179,6 +182,7 @@ function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
         ...state.sessionMeta,
         threadTypes,
         externalSessionResolutions,
+        currentThreadTitles,
         ...(removedType
           ? {
               threadLists: {
@@ -195,10 +199,6 @@ function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
                 ...state.sessionMeta.activeThreadIds,
                 [removedType]: undefined,
               },
-              currentThreadTitles: {
-                ...state.sessionMeta.currentThreadTitles,
-                [removedType]: undefined,
-              },
             }
           : {}),
       },
@@ -206,7 +206,7 @@ function tearDownLocalThreadState(set: SessionSet, threadId: string): void {
   });
 }
 
-/** Close the third-column conversation view when its underlying thread is
+/** Close the work-column conversation view when its underlying thread is
  * torn down, so the titlebar unmounts before the next render. */
 function closeConversationIfActive(threadId: string, get: SessionGet): void {
   const doc = useDocumentStore.getState();
@@ -247,7 +247,7 @@ export function createThreadLifecycleSlice(
     );
     get().invalidateThread(threadId);
     // Provider action must succeed before touching local state. Keeping the
-    // cleanup out of `finally` prevents the third-column conversation from
+    // cleanup out of `finally` prevents the work-column conversation from
     // disappearing while archive/delete is still pending or has failed.
     if (action === "archive") {
       await agentClient.archiveAgentThread(typeKey.key, threadId);
@@ -319,26 +319,69 @@ export function createThreadLifecycleSlice(
       const type = getAgentType(
         typeKey ?? before.threadTypes[threadId] ?? before.activeAgentTypeKey,
       );
-      const previousListTitle = (before.threadLists[type.key] ?? []).find(
-        (item) => item.threadId === threadId,
-      )?.title;
-      const previousActiveTitle = before.currentThreadTitles[type.key];
+      // The backend accepts either a product thread id or a provider session
+      // id.  Keep the optimistic title keyed by the product identity whenever
+      // this webview already knows the mapping; never key it by AgentTypeKey.
+      const initialProductThreadId = resolveProductThreadId(
+        threadId,
+        before.externalSessionResolutions,
+      );
+      const initialIds = new Set([threadId, initialProductThreadId]);
+      const previousList = before.threadLists[type.key] ?? [];
+      const previousThreadTitles = before.currentThreadTitles;
+      const applyTitle = (meta: typeof before, productThreadId: string) => {
+        const currentThreadTitles = { ...meta.currentThreadTitles };
+        for (const id of initialIds) {
+          if (id !== productThreadId) delete currentThreadTitles[id];
+        }
+        currentThreadTitles[productThreadId] = nextTitle;
+
+        const threadLists = (meta.threadLists[type.key] ?? []).map((item) =>
+          initialIds.has(item.threadId)
+            ? { ...item, threadId: productThreadId, title: nextTitle }
+            : item,
+        );
+        const activeThreadIds = { ...meta.activeThreadIds };
+        if (initialIds.has(activeThreadIds[type.key] ?? "")) {
+          activeThreadIds[type.key] = productThreadId;
+        }
+        const externalSessionResolutions =
+          productThreadId !== threadId
+            ? { ...meta.externalSessionResolutions, [productThreadId]: threadId }
+            : meta.externalSessionResolutions;
+
+        return {
+          ...meta,
+          threadTypes: {
+            ...meta.threadTypes,
+            [threadId]: type.key,
+            [productThreadId]: type.key,
+          },
+          activeThreadIds,
+          currentThreadTitles,
+          threadLists: {
+            ...meta.threadLists,
+            [type.key]: threadLists,
+          },
+          externalSessionResolutions,
+        };
+      };
       get().setSessionMeta((meta) => ({
-        ...meta,
-        threadTypes: { ...meta.threadTypes, [threadId]: type.key },
-        currentThreadTitles: {
-          ...meta.currentThreadTitles,
-          [type.key]: nextTitle,
-        },
-        threadLists: {
-          ...meta.threadLists,
-          [type.key]: (meta.threadLists[type.key] ?? []).map((item) =>
-            item.threadId === threadId ? { ...item, title: nextTitle } : item,
-          ),
-        },
+        ...applyTitle(meta, initialProductThreadId),
       }));
       try {
-        await agentClient.updateThreadTitle(threadId, nextTitle, type.key);
+        const persisted = await agentClient.updateThreadTitle(
+          threadId,
+          nextTitle,
+          type.key,
+        );
+        const persistedProductThreadId =
+          persisted?.threadId ?? initialProductThreadId;
+        if (persistedProductThreadId !== initialProductThreadId) {
+          get().setSessionMeta((meta) => ({
+            ...applyTitle(meta, persistedProductThreadId),
+          }));
+        }
         // The title and conversation instances are already updated
         // optimistically above. Provider history reloads can wake an external
         // runtime and take several seconds, so they must not block saving.
@@ -349,16 +392,11 @@ export function createThreadLifecycleSlice(
         get().setSessionMeta((meta) => ({
           ...meta,
           currentThreadTitles: {
-            ...meta.currentThreadTitles,
-            [type.key]: previousActiveTitle,
+            ...previousThreadTitles,
           },
           threadLists: {
             ...meta.threadLists,
-            [type.key]: (meta.threadLists[type.key] ?? []).map((item) =>
-              item.threadId === threadId && previousListTitle !== undefined
-                ? { ...item, title: previousListTitle }
-                : item,
-            ),
+            [type.key]: previousList,
           },
         }));
         console.error("Failed to update thread title:", error);
@@ -373,10 +411,17 @@ export function createThreadLifecycleSlice(
         session.getInstance(instanceId) ??
         (threadId ? session.findByThreadId(threadId) : null);
       const targetThreadId = threadId ?? instance?.threadId ?? null;
+      const productThreadId = targetThreadId
+        ? resolveProductThreadId(
+            targetThreadId,
+            session.sessionMeta.externalSessionResolutions,
+          )
+        : null;
       const renamed = Object.values(session.conversationRegistry.instances)
         .filter(
           (candidate) =>
             candidate.instanceId === instance?.instanceId ||
+            (!!productThreadId && candidate.threadId === productThreadId) ||
             (!!targetThreadId && candidate.threadId === targetThreadId),
         )
         .map((candidate) => ({ id: candidate.instanceId, title: candidate.title }));

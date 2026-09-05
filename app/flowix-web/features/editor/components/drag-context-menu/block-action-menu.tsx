@@ -42,16 +42,15 @@ export function BlockActionMenu({
       aria-label="Block actions"
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="fixed z-[1500] bg-[var(--card)] border border-[var(--border-popup)] rounded-lg shadow-lg p-1"
+      className="fixed z-[1500] rounded-xl border border-[var(--border-popup)] bg-[var(--card)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
       style={{ ...style, outline: 'none' }}
     >
       <div ref={scrollerRef}>
         {actions.map((action, index) => {
-          const isDanger = action.group === 'danger'
           return (
             <Fragment key={action.id}>
               {index > 0 && actions[index - 1]?.group !== action.group && (
-                <hr className="my-1 mx-2 border-t border-[var(--divider)]" />
+                <hr className="mx-2 my-1 border-t border-[var(--border-popup)] opacity-60" />
               )}
               <button
                 ref={(node) => {
@@ -64,15 +63,15 @@ export function BlockActionMenu({
                   event.preventDefault()
                   action.onSelect()
                 }}
-                className={`relative flex items-center w-full px-3 py-1.5 text-sm cursor-pointer active:bg-[var(--accent)] text-left rounded text-[var(--foreground)]${mouseHoverEnabled ? ' hover:bg-[var(--muted)]' : ''}${index === selectedIndex ? ' bg-[var(--muted)]' : ''}${isDanger && mouseHoverEnabled ? ' hover:text-[var(--destructive)]' : ''}`}
-                style={{ gap: 12, outline: 'none', boxShadow: 'none' }}
+                className={`group relative flex h-7 min-h-7 w-full items-center justify-start gap-3 rounded-lg px-2 py-0 text-left text-sm text-[var(--foreground)] transition-colors${mouseHoverEnabled ? ' hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]' : ''}${index === selectedIndex ? ' bg-[var(--brand)] text-[var(--primary-foreground)]' : ''}`}
+                style={{ outline: 'none', boxShadow: 'none' }}
               >
                 {action.icon}
                 <span className="min-w-0 flex-1">{action.label}</span>
                 {action.shortcut && (
                   <Kbd
                     chord={action.shortcut}
-                    className="shrink-0 text-[var(--muted-foreground)]"
+                    className={`shrink-0 ${index === selectedIndex ? 'text-[var(--primary-foreground)]' : 'text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]'}`}
                   />
                 )}
               </button>

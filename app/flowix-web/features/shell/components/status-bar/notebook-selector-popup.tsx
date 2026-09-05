@@ -18,6 +18,7 @@ export interface NotebookSelectorPopupProps {
   onSelect: (notebook: Notebook) => void;
   onEdit: (notebook: Notebook) => void;
   onDelete: (notebook: Notebook) => void;
+  onCreateNotebook: () => void;
   onRefresh: (notebooks: Notebook[]) => void;
   cloudSyncedNotebookIds?: ReadonlySet<string>;
   cloudSyncAvailable?: boolean;
@@ -86,6 +87,7 @@ export function NotebookSelectorPopup({
   onSelect,
   onEdit,
   onDelete,
+  onCreateNotebook,
   onRefresh,
   cloudSyncedNotebookIds,
   cloudSyncAvailable = false,
@@ -364,7 +366,7 @@ export function NotebookSelectorPopup({
         sideOffset={sideOffset}
         onExitComplete={handleExitComplete}
         className={cn(
-          'flowix-notebook-selector-popup ml-1.5 flex h-auto max-h-[calc(100vh-8px)] w-[390px] flex-col overflow-hidden rounded-xl bg-[var(--popover)] pb-2',
+          'flowix-notebook-selector-popup ml-1.5 flex h-auto max-h-[calc(100vh-8px)] w-[390px] flex-col overflow-hidden rounded-xl border-[var(--border-popup)] bg-[var(--popover)] pb-2 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]',
           side === 'bottom' && 'flowix-notebook-selector-popup--bottom',
         )}
       >
@@ -495,11 +497,7 @@ export function NotebookSelectorPopup({
             })}
             <button
               type="button"
-              onClick={() => {
-                closeThen(() => {
-                  window.dispatchEvent(new CustomEvent('flowix:open-create-notebook'));
-                });
-              }}
+              onClick={() => closeThen(onCreateNotebook)}
               className="group relative flex min-h-[124px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-transparent text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/50 hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
               aria-label={t('status.newNotebook')}
               title={t('status.newNotebook')}

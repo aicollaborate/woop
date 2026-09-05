@@ -35,7 +35,9 @@ impl DeepSeekHarnessManager {
             .await
             .map_err(|error| error.to_string())?;
 
-        let Some(session_id) = session_id else { return Ok(None) };
+        let Some(session_id) = session_id else {
+            return Ok(None);
+        };
         let host = self.model_host().await?;
         let request = protocol::app_session_usage_request(host.next_request_id(), &session_id);
         let result = timed_host_request(&host.client(), request).await?;

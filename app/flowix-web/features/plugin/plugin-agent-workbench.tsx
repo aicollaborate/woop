@@ -10,22 +10,31 @@ import {
   SpinnerIcon,
 } from '@phosphor-icons/react';
 import { AGENT_TYPES, isAgentTypeSelectable } from '@/lib/agent-types';
+import { canonicalPath } from '@/lib/path';
 import type { AgentTypeKey } from '@/types/agent';
 import { useMemoStore } from '@features/memo';
-import { openMemoSession } from '@features/memo/use-cases/open-memo-session';
+import { openArtifactTarget } from '@features/workspace/use-cases/workspace-navigation';
 import {
   memos,
-  type PluginArtifact,
   type PluginDescriptor,
   type PluginField,
 } from '@platform/tauri/client';
-import { openFourthColumnMarkdown } from '@features/workspace/use-cases/fourth-column-navigation';
-import { listenToPluginRuns } from '@platform/tauri/client/plugin';
-import { isPluginRunning, runPlugin } from './plugin-runner';
+import {
+  openBrowserColumnArtifact,
+  openBrowserColumnMarkdown,
+} from '@features/workspace/use-cases/browser-column-navigation';
+import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
+import { runPlugin } from './plugin-runner';
+import {
+  ensurePluginRunStoreSubscription,
+  pluginRunContextKey,
+  usePluginRunStore,
+} from './plugin-run-store';
 import {
   PluginArtifactRenderer,
   type PluginArtifactRendererHandle,
 } from './plugin-artifact-renderer';
+import { normalizePluginArtifactRenderer } from './plugin-note';
 import {
   isEmptyPluginFieldValue,
   pluginFieldLabel,
@@ -56,15 +65,23 @@ export function AgentPluginWorkbench({
 }) {
   const [values, setValues] = useState<Record<string, PluginFieldValue>>({ prompt: '' });
   const [agentType, setAgentType] = useState<AgentTypeKey>(DEFAULT_AGENT_TYPE_KEY);
-  const [artifact, setArtifact] = useState<PluginArtifact | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<PluginArtifactRendererHandle>(null);
   const selectedNotebook = useMemoStore((state) => state.selectedNotebook);
+  const runNotebookPath = notebookPath ?? selectedNotebook?.path ?? null;
+  const latestRunId = usePluginRunStore((state) => (
+    runNotebookPath
+      ? state.latestRunIdByContext[pluginRunContextKey(plugin.manifest.id, runNotebookPath)]
+      : undefined
+  ));
+  const run = usePluginRunStore((state) => latestRunId ? state.runs[latestRunId] ?? null : null);
+  const artifact = run?.artifact ?? null;
+  const running = run?.status === 'queued' || run?.status === 'running';
+  const error = requestError ?? run?.error ?? null;
+  const runStatus = run?.status ?? null;
   const hasCanvasControls = artifact?.renderer === 'markmap';
   const agentOptions = useMemo(
     () => AGENT_TYPES.filter((item) => isAgentTypeSelectable(item.key)),
@@ -84,7 +101,20 @@ export function AgentPluginWorkbench({
     .join('\n');
   const canGenerate = !running && !missingRequiredField && Boolean(prompt.trim() || requestFields.trim());
 
-  useEffect(() => { setRunning(isPluginRunning(plugin.manifest.id)); }, [plugin.manifest.id]);
+  const handleOpenArtifact = useCallback(() => {
+    if (!artifact) return;
+    const opening = artifact.noteId
+      ? openBrowserColumnArtifact(
+          artifact.noteId,
+          normalizePluginArtifactRenderer(artifact.renderer),
+        )
+      : openBrowserColumnMarkdown(artifact.path);
+    void opening.catch((error) => {
+      console.error('[AgentPluginWorkbench] Failed to open artifact', error);
+    });
+  }, [artifact]);
+
+  useEffect(() => { ensurePluginRunStoreSubscription(); }, [plugin.manifest.id]);
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === canvasRef.current);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -97,22 +127,9 @@ export function AgentPluginWorkbench({
     else await canvasRef.current.requestFullscreen();
   }, []);
 
-  useEffect(() => {
-    const unlisten = listenToPluginRuns((event) => {
-      if (event.pluginId !== plugin.manifest.id) return;
-      setRunStatus(event.status);
-      if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') setRunning(false);
-      if (event.status === 'failed' && event.error) setError(event.error);
-      if (event.status === 'completed' && event.artifact) setArtifact(event.artifact);
-    });
-    return () => unlisten();
-  }, [plugin.manifest.id]);
-
   const handleGenerate = useCallback(async () => {
     if (!notebookPath) return;
-    setRunning(true);
-    setError(null);
-    setRunStatus(null);
+    setRequestError(null);
     try {
       const context = [
         `当前笔记本路径: ${notebookPath}`,
@@ -132,15 +149,38 @@ export function AgentPluginWorkbench({
         notebookPath,
         sourceNote: currentNotePath || undefined,
       });
-      setArtifact(next);
       if (next.noteId) {
+        // Completion belongs to the run store. Only an explicit, still-active
+        // workbench may opt into opening the produced pointer memo; switching
+        // notebook, memo, conversation, or plugin while the run continues
+        // must not steal the workColumn back.
+        const isCurrentWorkbenchContext = () => {
+          const currentTarget = useWorkColumnStore.getState().navigation.target;
+          const currentNotebook = useMemoStore.getState().selectedNotebook;
+          return currentTarget.kind === 'plugin-workbench'
+            && currentTarget.plugin.manifest.id === plugin.manifest.id
+            && currentNotebook?.path != null
+            && canonicalPath(currentNotebook.path) === canonicalPath(notebookPath);
+        };
+        if (!isCurrentWorkbenchContext()) return;
         const note = await memos.readMemo(next.noteId);
-        if (note && selectedNotebook) await openMemoSession(note, selectedNotebook);
+        if (!isCurrentWorkbenchContext()) return;
+        const currentNotebook = useMemoStore.getState().selectedNotebook;
+        if (note && currentNotebook) {
+          // The run produces a durable pointer memo. Opening it changes only
+          // the workColumn target; the editable DocumentStore session is not
+          // replaced by a plugin-owned artifact session.
+          await openArtifactTarget({
+            pointerMemoId: note.id,
+            notebook: currentNotebook,
+            pluginId: next.pluginId,
+            renderer: normalizePluginArtifactRenderer(next.renderer),
+            memo: note,
+          });
+        }
       }
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : String(runError));
-    } finally {
-      setRunning(false);
+      setRequestError(runError instanceof Error ? runError.message : String(runError));
     }
   }, [agentType, currentNoteContent, currentNotePath, notebookPath, plugin.manifest.execution?.runtime, plugin.manifest.id, prompt, requestFields, selectedNotebook]);
 
@@ -172,13 +212,13 @@ export function AgentPluginWorkbench({
           onFit={() => rendererRef.current?.fit?.()}
           onZoomIn={() => rendererRef.current?.zoomIn?.()}
           onZoomOut={() => rendererRef.current?.zoomOut?.()}
-          onOpenArtifact={artifact ? () => { openFourthColumnMarkdown(artifact.path); } : undefined}
+          onOpenArtifact={artifact ? handleOpenArtifact : undefined}
           onToggleFullscreen={() => { void toggleFullscreen(); }}
         />
       )}
       {!hasCanvasControls && (
         <div className="pointer-events-auto absolute right-4 top-4 z-20 flex items-center gap-1 rounded-xl border border-[var(--divider)] bg-[var(--card)]/90 p-1 shadow-lg backdrop-blur">
-          {artifact && <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => openFourthColumnMarkdown(artifact.path)} title="打开产物" aria-label="打开产物"><ArrowSquareOutIcon size={16} weight="bold" /></button>}
+          {artifact && <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={handleOpenArtifact} title="打开产物" aria-label="打开产物"><ArrowSquareOutIcon size={16} weight="bold" /></button>}
           <button className="rounded-lg p-2 hover:bg-[var(--muted)]" onClick={() => void toggleFullscreen()} title={isFullscreen ? '退出全屏' : '全屏'} aria-label={isFullscreen ? '退出全屏' : '全屏'}>{isFullscreen ? <CornersInIcon size={16} weight="bold" /> : <CornersOutIcon size={16} weight="bold" />}</button>
         </div>
       )}

@@ -84,7 +84,7 @@ function canPersistThreadTitle(_type: AgentTypeKey): boolean {
 /**
  * 三段 fallback 拿到 thread 的可显示标题:
  * 1. 真实 threadLists 中的 title
- * 2. 若是当前 active thread, 用 currentThreadTitles 的当前标题
+ * 2. product threadId 对应的 currentThreadTitles 标题
  * 3. runtime 的 default title / "新会话" i18n 文本
  *
  * reconcileRunningRunsFromSnapshot 走这条路径生成 thread card 标题。
@@ -92,8 +92,7 @@ function canPersistThreadTitle(_type: AgentTypeKey): boolean {
 function getConversationTitleForThread(
   state: {
     threadLists: Partial<Record<AgentTypeKey, ThreadListItem[]>>;
-    activeThreadIds: Partial<Record<AgentTypeKey, string | undefined>>;
-    currentThreadTitles: Partial<Record<AgentTypeKey, string | undefined>>;
+    currentThreadTitles: Partial<Record<string, string | undefined>>;
   },
   type: AgentTypeKey,
   threadId: string,
@@ -101,11 +100,8 @@ function getConversationTitleForThread(
   const list = state.threadLists[type] ?? [];
   const fromList = list.find((item) => item.threadId === threadId)?.title;
   if (fromList !== undefined) return fromList;
-  const fromActive =
-    state.activeThreadIds[type] === threadId
-      ? state.currentThreadTitles[type]
-      : undefined;
-  if (fromActive !== undefined) return fromActive;
+  const fromThread = state.currentThreadTitles[threadId];
+  if (fromThread !== undefined) return fromThread;
   return isExternalAgentType(type)
     ? defaultExternalThreadTitle(type)
     : translate(getLanguage(), "agent.chat.newConversation");

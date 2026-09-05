@@ -247,7 +247,7 @@ export function createConversationSlice(
             if (deletedInstanceIds.has(normalized.instanceId)) continue;
             const existing = next[normalized.instanceId];
             const hydrated =
-              normalized.title === "" && existing?.threadId == null
+              existing && normalized.title === "" && existing.threadId == null
                 ? { ...normalized, title: existing.title }
                 : normalized;
             if (!existing || normalized.updatedAt >= existing.updatedAt) {

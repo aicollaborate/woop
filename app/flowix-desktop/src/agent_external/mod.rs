@@ -8,8 +8,8 @@
 //! �?run_id 写到 chunk payload 顶层)�?//!
 //! 入口模块就两�? `shared` �?��正的 cross-runtime 工具, 其余每个 runtime
 //! 都是 `cli + history` (history �?��有�?�?session 文件�?vendor 里有意义)�?
-pub mod claude;
 pub(crate) mod acp_lifecycle;
+pub mod claude;
 pub mod cli_resolver;
 pub mod codex;
 pub mod deepseek_harness;

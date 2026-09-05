@@ -430,7 +430,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
 
     useChatStore.setState({
       activeThreadIds: { "deepseek-harness": activeThreadId },
-      currentThreadTitles: { "deepseek-harness": "A title" },
+      currentThreadTitles: { [activeThreadId]: "A title" },
     });
 
     await useChatStore.getState().sendMessageToThread(
@@ -444,7 +444,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       },
     );
 
-    expect(useChatStore.getState().currentThreadTitles["deepseek-harness"]).toBe("A title");
+    expect(useChatStore.getState().currentThreadTitles[activeThreadId]).toBe("A title");
     expect(useChatStore.getState().threadLists["deepseek-harness"]).toEqual([]);
     expect(
       useAgentConversationStore
@@ -2482,7 +2482,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       .renameThread(threadId, "  New   title  ", "gemini");
 
     const state = useChatStore.getState();
-    expect(state.currentThreadTitles.gemini).toBe("New title");
+    expect(state.currentThreadTitles[threadId]).toBe("New title");
     expect(state.threadLists.gemini?.[0]?.title).toBe("New title");
     expect(agent.updateThreadTitle).toHaveBeenCalledWith(
       threadId,
@@ -2590,6 +2590,84 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     ).toBe("Database title");
   });
 
+  it("renames only the selected Codex fork, not its source or sibling fork", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
+    const { useAgentConversationStore } = await import(
+      "@features/agent/store/agent-session-test-facade"
+    );
+    const sourceThreadId = "019f-product-source";
+    const firstForkThreadId = "019f-product-fork-1";
+    const secondForkThreadId = "019f-product-fork-2";
+    const instances = [
+      useAgentConversationStore.getState().createInstance({
+        agentType: "codex",
+        title: "Original",
+        threadId: sourceThreadId,
+        source: { kind: "thread-card" },
+      }),
+      useAgentConversationStore.getState().createInstance({
+        agentType: "codex",
+        title: "Original (fork 1)",
+        threadId: firstForkThreadId,
+        source: { kind: "thread-card" },
+      }),
+      useAgentConversationStore.getState().createInstance({
+        agentType: "codex",
+        title: "Original (fork 2)",
+        threadId: secondForkThreadId,
+        source: { kind: "thread-card" },
+      }),
+    ];
+    useChatStore.setState({
+      threadTypes: {
+        [sourceThreadId]: "codex",
+        [firstForkThreadId]: "codex",
+        [secondForkThreadId]: "codex",
+      },
+      currentThreadTitles: {
+        [sourceThreadId]: "Original",
+        [firstForkThreadId]: "Original (fork 1)",
+        [secondForkThreadId]: "Original (fork 2)",
+      },
+      threadLists: {
+        codex: [
+          { threadId: sourceThreadId, title: "Original", createdAt: 1, updatedAt: 1 },
+          { threadId: firstForkThreadId, title: "Original (fork 1)", createdAt: 2, updatedAt: 2 },
+          { threadId: secondForkThreadId, title: "Original (fork 2)", createdAt: 3, updatedAt: 3 },
+        ],
+      },
+    });
+
+    await useChatStore.getState().renameAgentConversation({
+      instanceId: instances[1].instanceId,
+      threadId: firstForkThreadId,
+      title: "Renamed fork",
+      typeKey: "codex",
+    });
+
+    const state = useChatStore.getState();
+    expect(state.currentThreadTitles[sourceThreadId]).toBe("Original");
+    expect(state.currentThreadTitles[firstForkThreadId]).toBe("Renamed fork");
+    expect(state.currentThreadTitles[secondForkThreadId]).toBe("Original (fork 2)");
+    expect(state.threadLists.codex).toEqual([
+      { threadId: sourceThreadId, title: "Original", createdAt: 1, updatedAt: 1 },
+      { threadId: firstForkThreadId, title: "Renamed fork", createdAt: 2, updatedAt: 2 },
+      { threadId: secondForkThreadId, title: "Original (fork 2)", createdAt: 3, updatedAt: 3 },
+    ]);
+    expect(
+      instances.map((instance) =>
+        useAgentConversationStore.getState().getInstance(instance.instanceId)?.title,
+      ),
+    ).toEqual(["Original", "Renamed fork", "Original (fork 2)"]);
+    expect(agent.updateThreadTitle).toHaveBeenCalledTimes(1);
+    expect(agent.updateThreadTitle).toHaveBeenCalledWith(
+      firstForkThreadId,
+      "Renamed fork",
+      "codex",
+    );
+  });
+
   it("rolls every title snapshot back when product persistence fails", async () => {
     const { agent } = await import("@platform/tauri/client");
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
@@ -2610,7 +2688,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
       activeThreadIds: { ...state.activeThreadIds, codex: threadId },
       currentThreadTitles: {
         ...state.currentThreadTitles,
-        codex: "Original title",
+        [threadId]: "Original title",
       },
       threadTypes: { ...state.threadTypes, [threadId]: "codex" },
       threadLists: {
@@ -2633,7 +2711,7 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     expect(useChatStore.getState().threadLists.codex?.[0]?.title).toBe(
       "Original title",
     );
-    expect(useChatStore.getState().currentThreadTitles.codex).toBe(
+    expect(useChatStore.getState().currentThreadTitles[threadId]).toBe(
       "Original title",
     );
     expect(

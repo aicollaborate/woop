@@ -22,7 +22,7 @@ import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
 import { agent } from "@platform/tauri/client/agent";
 import { normalizePlainLinkHref } from "@features/editor/extensions/markdown-link";
-import { isCodeTextFilePath } from "@features/editor/code-file";
+import { isEditableTextFilePath } from "@features/editor/code-file";
 import { normalizeAgentTypeKey } from "@/lib/agent-types";
 import { useUserSettingsStore } from "@features/preferences/store/user-settings-store";
 import type { AgentRuntimeSettingKind } from "@features/agent/runtime/agent-runtime-spec";
@@ -54,9 +54,9 @@ import { AgentConversationSurfaceController } from "@features/agent/thread-card/
 import { getAgentConversationRuntimeCwd } from "@features/agent/conversation-presentation";
 import { selectAndOpenAgentConversation } from "@features/workspace/use-cases/agent-conversation-navigation";
 import {
-  openFourthColumnMarkdown,
-  openFourthColumnText,
-} from "@features/workspace/use-cases/fourth-column-navigation";
+  openBrowserColumnText,
+  openBrowserColumnWebpage,
+} from "@features/workspace/use-cases/browser-column-navigation";
 
 const logger = createLogger("agent-thread-card");
 import {
@@ -78,7 +78,6 @@ import {
   selectAgentThreadCardRuntimeView,
 } from "@features/agent/thread-card/agent-thread-card-selectors";
 import {
-  isMarkdownFilePath,
   agentFileScopePath,
   localFilePathFromAgentHref,
 } from "@features/agent/thread-card/link-navigation";
@@ -128,7 +127,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private node: ProseMirrorNode;
   private view: EditorView;
   private getPos: (() => number | undefined) | undefined;
-  private input: HTMLTextAreaElement;
+  private input: HTMLDivElement;
   private sendButtonMount: HTMLSpanElement;
   private body: HTMLElement;
   private composer: HTMLElement;
@@ -285,13 +284,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         event.stopPropagation();
         this.toggleCollapsed();
       },
-      onBodyClick: this.handleBodyClick,
+      onBodyClick: (event) => this.handleBodyClick(event),
       onBodyScroll: this.boundHandleBodyScroll,
       // composer 空区域 → 输入框 focus 已由 createAgentComposerDom
       // 工厂内部挂的 pointerdown 委托统一处理 (详见
       // composer-dom-factory.ts COMPOSER_FOCUS_INTERACTIVE_SELECTOR),
       // 这里不再单独接 onComposerMouseDown ── 否则会与工厂委托重复
-      // 触发, 同一次点击会跑两遍 focus + setSelectionRange, caret 闪烁。
+      // 触发, 同一次点击会跑两遍 focus, caret 闪烁。
     });
 
     this.dom = domParts.dom;
@@ -448,6 +447,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       loadingIndicator: this.loadingIndicator,
       composer: this.composer,
       input: this.input,
+      inputDraft: this.inputDraft,
       sendButtonMount: this.sendButtonMount,
       messageOptions: {
       bottomFollowThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX,
@@ -482,8 +482,8 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       onForkMessage: (message) => this.forkFromMessage(message),
       },
       composerOptions: {
-      draft: this.composerDraft,
-      inputDraftMaxChars: AGENT_THREAD_CARD_INPUT_DRAFT_MAX_CHARS,
+        draft: this.composerDraft,
+        inputDraftMaxChars: AGENT_THREAD_CARD_INPUT_DRAFT_MAX_CHARS,
       getCurrentInputDraft: () => this.inputDraft,
       getUserHistoryMessages: () => this.getUserHistoryMessages(),
       getSendLabel: (wantStop) =>
@@ -492,7 +492,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
           : this.t("editor.threadCard.send"),
       getSendButtonWantsStop: () =>
         this.currentRuntimeView().sendButtonWantsStop &&
-        !(this.typeKey === "codex" && !!this.input.value.trim()),
+        !(this.typeKey === "codex" && !!this.composerController?.getPrompt().trim()),
       getHasAttachments: () => this.composerImages.hasImages,
       getHasPendingAttachments: () => this.composerImages.hasPending,
       submit: () => {
@@ -768,8 +768,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const initialPrompt = this.consumeInitialPrompt();
     if (!initialPrompt) return;
 
-    this.input.value = initialPrompt;
-    this.composerController.updateMultiLineState();
+    this.composerController.setHistoryValue(initialPrompt);
 
     requestAnimationFrame(() => {
       if (this.isDestroyed) return;
@@ -826,19 +825,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     this.agentRolePicker.refreshIcon();
   }
 
-  /** 文档引用 → composer 注入: 把 `flowix://memo/<id>` 形式的深链追加到现有输入末尾,
-   *  保留光标位置不动 + 持久化 draft。 这样发送后, 后端 agent 运行时能反查 memo body
-   *  作为参考阅读材料。 */
+  /** 文档引用 → composer 注入为一个可独立选中/删除的行内笔记卡片。 */
   private injectMemoReference(ref: { id: string; filename: string; title: string }): void {
-    const link = `[${ref.title}](flowix://memo/${ref.id})`;
-    const current = this.input.value;
-    const needsLeadingSpace = current.length > 0 && !/\s$/.test(current);
-    const separator = needsLeadingSpace ? "\n\n" : "";
-    const next = current + separator + link;
-    this.composerController.setHistoryValue(next, { persistDraft: true });
-    this.composerController.resetHistoryNavigation();
-    this.composerController.updateMultiLineState();
-    this.input.focus();
+    this.composerController.insertMemoReference(ref);
   }
 
   private applyResolvedExternalSessionId(
@@ -945,16 +934,9 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       this.loadCodexDefaultModel();
     }
     this.refreshComposerRoleIcon();
-    if (
-      this.composerDraft.oversizedValue !== null &&
-      this.input.value === this.composerDraft.oversizedValue
-    ) {
-      // Oversized drafts are intentionally not persisted, but the user should
-      // still be able to keep typing and send the current in-DOM value.
-    }
-    // Do not rewrite input.value from attrs during refresh. The textarea is
-    // the live editing source; inputDraft is only the persisted remount value.
-    // submit / initial prompt / history navigation update the DOM explicitly.
+    // Do not rewrite the live editor from attrs during refresh. inputDraft is
+    // only the persisted remount value; submit and history navigation update
+    // the editor explicitly.
     this.renderCollapseState();
     this.renderFullscreenState();
   }
@@ -1237,7 +1219,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     }
 
     // A document containing only cards has no valid text cursor position.
-    // Leave a gap cursor beside this card so the textarea can own keyboard
+    // Leave a gap cursor beside this card so the composer can own keyboard
     // input without keeping a destructive NodeSelection on the card.
     if (nextSelection instanceof NodeSelection) {
       nextSelection = new GapCursor(doc.resolve(afterPos));
@@ -1253,7 +1235,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private focusFullscreenSurface(): void {
     window.requestAnimationFrame(() => {
       if (!this.isFullscreen || this.isDestroyed) return;
-      this.input.focus({ preventScroll: true });
+      this.composerController.focus();
     });
   }
 
@@ -1354,18 +1336,17 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const rawHref = a.getAttribute("href");
     const localPath = localFilePathFromAgentHref(rawHref);
     if (localPath) {
-      if (isMarkdownFilePath(localPath)) {
-        void Promise.resolve(openFourthColumnMarkdown(localPath)).catch((error) => {
+      if (isEditableTextFilePath(localPath)) {
+        const scopePath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
+        void Promise.resolve(openBrowserColumnText(localPath, scopePath)).catch((error) => {
           logger.error("Failed to open Markdown link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
         return;
       }
-      const scopePath = isCodeTextFilePath(localPath)
-        ? this.scopePathForLocalFile(localPath)
-        : null;
+      const scopePath = this.scopePathForLocalFile(localPath);
       if (scopePath) {
-        void Promise.resolve(openFourthColumnText(localPath, scopePath)).catch((error) => {
+        void Promise.resolve(openBrowserColumnText(localPath, scopePath)).catch((error) => {
           logger.error("Failed to open text file link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
@@ -1381,6 +1362,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     if (!href) return;
     if (href.startsWith("flowix://")) {
       void openNoteByDeepLink(href);
+      return;
+    }
+    if (/^https?:\/\//i.test(href)) {
+      void Promise.resolve(openBrowserColumnWebpage(href)).catch((error) => {
+        logger.error("Failed to open webpage link in browser column", { error });
+      });
       return;
     }
     void openUrl(href).catch((error) => {
@@ -1508,14 +1495,14 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // 落盘待写草稿 ── 提交时 input 即将被清空, 之前的 debounce 必须
     // 立刻写入 ProseMirror attr, 否则卡片重新挂载会丢稿。
     this.flushPendingDraft();
-    const rawPrompt = this.input.value.trim();
+    const rawPrompt = this.composerController.getPrompt().trim();
     const imagePaths = this.composerImages.readyImages.map((image) => image.path);
     if ((!rawPrompt && imagePaths.length === 0) || this.composerImages.hasPending) return;
 
     // 运行期 (thread state isLoading / 正在创建 thread) 阻止发送 ──
     // 输入框保持可用 (允许用户继续输入 / 改稿), 但 Enter 与 send 按钮
     // (按钮在 isLoading 时是 stop 图标) 都无法真正投递消息。 当前草稿
-    // 保留在 this.input.value, 不调 persistInputDraft("") / input.value=""
+    // 保留在编辑器内, 不调 persistInputDraft("") / 直接改 DOM 清空。
     // 清空; 用户可在运行结束后再次按 Enter 投递同一段草稿。
     //
     // 输入框不 disabled; busy 时只阻止发送, 用户仍可继续编辑草稿。
@@ -1527,13 +1514,13 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const documentContext = extractDocumentContext(this.view);
     const submitGeneration = ++this.submitGeneration;
 
-    this.input.value = "";
     this.composerController.resetHistoryNavigation();
     // 清空草稿是"已知终态", 不必走 debounce ── 直接 updateAttrs 同步
     // 落 ProseMirror attr, 避免后续 reload / 跨卡片挂载时拿到旧 draft。
     // 同时把 pending draft 清掉 (若之前有未触发的 debounce), 防止空 input
     // 被旧 snapshot 误保护。
     this.composerController.clearDraft();
+    this.composerController.clear();
     this.composerImages.clearAfterSubmit();
     this.updateAttrs({ inputDraft: null, inputImages: [] });
     this.composerController.updateMultiLineState();

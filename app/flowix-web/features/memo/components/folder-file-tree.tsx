@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { ChevronRight, MoreHorizontal } from 'lucide-react';
 import { ArrowClockwiseIcon, CaretRightIcon, FolderSimpleIcon, MinusSquareIcon } from '@phosphor-icons/react';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -16,11 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
-import { useDocumentStore } from '@features/document/store';
-import { useMemoStore } from '@features/memo';
 import { canonicalPath } from '@/lib/path';
-import { useAgentAccessStore } from '@features/agent/store/agent-access-store';
-import { normalizeFilesDefaults } from '@/lib/agent-access-defaults';
 import {
   flattenVisibleTree,
   useFolderTree,
@@ -28,13 +24,16 @@ import {
 } from '@features/memo/components/use-folder-tree';
 import { FileTypeIcon } from '@features/memo/components/file-type-icon';
 import { useI18n } from '@/lib/i18n';
-import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
-import { openExternalTarget } from '@features/workspace/use-cases/workspace-navigation';
 
 const TREE_EDGE_GUTTER = 6;
 const ITEM_INLINE_PADDING = 6;
 const ITEM_ICON_SIZE = 16;
 const INDENT_PER_LEVEL = 20;
+const FOLDER_MENU_CLASS =
+  'min-w-[188px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]';
+const FOLDER_MENU_ITEM_CLASS =
+  'h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]';
+const FOLDER_MENU_DIVIDER_CLASS = 'mx-1 my-1 h-px bg-[var(--border-popup)] opacity-60';
 
 /** 字节数 → 人类可读大小 (e.g. 36.6 KB)；末尾 0 去掉，folder 传 null 不显示。 */
 function formatFileSize(bytes: number | null): string {
@@ -62,8 +61,8 @@ function formatTimestamp(ms: number | null): string {
  * - 惰性展开: 后端单层列举, 展开 folder 时才拉子级 (`useFolderTree`)。
  * - 缩进: depth × 20px 外边距; 展开的 folder 子树沿父级图标中心显示
  *   竖向引导线。folder 默认显示 FolderSimple, hover 时原位替换成展开箭头。
- * - 交互: folder 行单击切展开; 所有文件单击后由第三列按类型处理:
- *   文本交给 CodeMirror, 图片直接预览, 其他文件显示无法查看。
+ * - 交互: folder 行单击切展开; 文件单击后通过 Browser Column 导航用例打开，
+ *   由统一的 document surface 按类型处理文本、图片和不支持的文件。
  * - 右键菜单: 新建笔记 / 新建文件夹 (folder 上), 重命名, 删除, 复制
  *   路径, 在 Finder 显示。写操作走 `files.*` IPC, 成功后局部 `refresh`
  *   父目录。
@@ -73,9 +72,17 @@ function formatTimestamp(ms: number | null): string {
 export function FolderFileTree({
   folderPath,
   folderName,
+  embedded = false,
+  onRequestClose,
+  activeFilePath = null,
+  onFileSelect,
 }: {
   folderPath: string;
   folderName: string;
+  embedded?: boolean;
+  onRequestClose?: () => void;
+  activeFilePath?: string | null;
+  onFileSelect?: (filePath: string, scopePath: string) => void;
 }) {
   const { t } = useI18n();
   const tree = useFolderTree(folderPath);
@@ -87,33 +94,13 @@ export function FolderFileTree({
   // 点击其他按钮 / 其他位置时由 DropdownMenu 的 pointerdown 收起逻辑驱动 onOpenChange(false)。
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  const currentDocumentPath = useDocumentStore((s) => s.currentDocumentPath);
-  const currentDocumentSource = useDocumentStore((s) => s.currentDocumentSource);
-  const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
-  const setActiveFileBrowserPath = useMemoStore((s) => s.setActiveFileBrowserPath);
-  const setActiveFileBrowserDocument = useMemoStore((s) => s.setActiveFileBrowserDocument);
-  const accessConfig = useAgentAccessStore((s) => s.config);
-  const setDefaultFiles = useAgentAccessStore((s) => s.setDefaultFiles);
-  const notebookId = selectedNotebook?.id;
-  const defaultFiles = notebookId
-    ? normalizeFilesDefaults(accessConfig.defaults?.files)[notebookId]
-    : undefined;
-  const folderPaths = defaultFiles?.folders ?? [];
-  const workspace = defaultFiles?.workspace;
-  const legacyFoldersFirst = workspace === undefined ? folderPaths[0] : undefined;
-  const effectiveWorkspace =
-    (workspace && folderPaths.includes(workspace) ? workspace : undefined) ??
-    legacyFoldersFirst ??
-    selectedNotebook?.path;
-  const isCurrentFolderTracked = folderPaths.includes(folderPath);
-  const isWorkspace = effectiveWorkspace === folderPath;
   // The persisted document may be nested below a collapsed folder. Once the
   // root has loaded, expand its parent chain so the restored selection is
   // actually visible in the tree.
   useEffect(() => {
-    if (tree.loading || currentDocumentSource !== 'external' || !currentDocumentPath) return;
-    void tree.expandTo(currentDocumentPath);
-  }, [currentDocumentPath, currentDocumentSource, tree.expandTo, tree.loading]);
+    if (tree.loading || !activeFilePath) return;
+    void tree.expandTo(activeFilePath);
+  }, [activeFilePath, tree.expandTo, tree.loading]);
 
   // 滚动 / 缩放时收起「…」下拉 (对齐右键菜单的消失逻辑, DropdownMenu 自身不含此逻辑)。
   useEffect(() => {
@@ -130,23 +117,8 @@ export function FolderFileTree({
   const visibleNodes = useMemo(() => flattenVisibleTree(tree), [tree]);
 
   const openDocument = useCallback((item: DocTreeItem) => {
-    // Selection clearing and rollback belong to the navigation transaction;
-    // the persisted file target is still written only after commit.
-    void openExternalTarget(item.fullPath, { scopePath: folderPath })
-      .then((location) => {
-        if (location) {
-          // 文档已在第三列/第四列打开，导航事务已经聚焦到该列，
-          // 不要再写持久化路径（避免把"已激活"的访问覆盖成"新打开"的会话）。
-          toast.info(t('workspace.alreadyOpen'));
-          return;
-        }
-        setActiveFileBrowserDocument({ path: item.fullPath, scopePath: folderPath });
-      })
-      .catch(() => {
-        // 文档切换失败时保留原来的持久化选择，避免下次启动恢复到
-        // 实际没有打开成功的文件。
-      });
-  }, [folderPath, setActiveFileBrowserDocument, t]);
+    onFileSelect?.(item.fullPath, folderPath);
+  }, [folderPath, onFileSelect]);
 
   const handleDelete = useCallback(async (item: DocTreeItem) => {
     const ok = await files.delete(item.fullPath, folderPath);
@@ -211,51 +183,6 @@ export function FolderFileTree({
     }
   }, [t]);
 
-  const handleCopyFolderPath = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(folderPath);
-      toast.success(t('memo.fileTree.pathCopied'));
-    } catch {
-      toast.error(t('memo.fileTree.copyFailed'));
-    }
-  }, [folderPath, t]);
-
-  const handleSetWorkspace = useCallback(async () => {
-    if (!notebookId || !isCurrentFolderTracked) return;
-    const saved = await setDefaultFiles(notebookId, {
-      workspace: folderPath,
-      folders: folderPaths,
-      notebooks: defaultFiles?.notebooks ?? [],
-    });
-    if (!saved) toast.error(t('agent.access.saveFailed'));
-  }, [defaultFiles, folderPath, folderPaths, isCurrentFolderTracked, notebookId, setDefaultFiles, t]);
-
-  const handleUnsetWorkspace = useCallback(async () => {
-    if (!notebookId || !isCurrentFolderTracked) return;
-    const saved = await setDefaultFiles(notebookId, {
-      workspace: null,
-      folders: folderPaths,
-      notebooks: defaultFiles?.notebooks ?? [],
-    });
-    if (!saved) toast.error(t('agent.access.saveFailed'));
-  }, [defaultFiles, folderPaths, isCurrentFolderTracked, notebookId, setDefaultFiles, t]);
-
-  const handleRemoveFolder = useCallback(async () => {
-    if (!notebookId || !isCurrentFolderTracked) return;
-    const nextFolders = folderPaths.filter((path) => path !== folderPath);
-    const saved = await setDefaultFiles(notebookId, {
-      workspace: isWorkspace ? null : workspace ?? null,
-      folders: nextFolders,
-      notebooks: defaultFiles?.notebooks ?? [],
-    });
-    if (!saved) {
-      toast.error(t('agent.access.saveFailed'));
-      return;
-    }
-    toast.success(t('agent.access.folderDeleted', { name: folderName }));
-    setActiveFileBrowserPath(null);
-  }, [defaultFiles, folderName, folderPath, folderPaths, isCurrentFolderTracked, isWorkspace, notebookId, setActiveFileBrowserPath, setDefaultFiles, t, workspace]);
-
   const handleReveal = useCallback((item: DocTreeItem) => {
     void openPath(item.type === 'folder' ? item.fullPath : item.fullPath.slice(0, item.fullPath.lastIndexOf('/')));
   }, []);
@@ -270,9 +197,8 @@ export function FolderFileTree({
     const isExpanded = tree.expanded.has(itemKey);
     const children = isFolder ? (tree.nodes.get(itemKey)?.children ?? []) : [];
     const openable = !isFolder;
-    const isActive = currentDocumentSource === 'external'
-      && !!currentDocumentPath
-      && canonicalPath(currentDocumentPath) === canonicalPath(item.fullPath);
+    const isActive = !!activeFilePath
+      && canonicalPath(activeFilePath) === canonicalPath(item.fullPath);
     const isRenamingRow = renaming?.item.id === item.id;
     const creationParentPath = isFolder
       ? item.fullPath
@@ -377,8 +303,8 @@ export function FolderFileTree({
                         <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" side="bottom" className="min-w-[188px] space-y-1 px-1 py-1.5">
-                      <div className="select-text rounded-md px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
+                    <DropdownMenuContent align="end" side="bottom" className={FOLDER_MENU_CLASS}>
+                      <div className="select-text rounded-lg px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
                         <div className="flex items-center gap-0.5">
                           <span className="opacity-70">{t('memo.fileTree.createdAt')}</span>
                           <span className="tabular-nums">{formatTimestamp(item.createdMs)}</span>
@@ -388,41 +314,41 @@ export function FolderFileTree({
                           <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
                         </div>
                       </div>
-                      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+                      <div role="separator" aria-hidden="true" className={FOLDER_MENU_DIVIDER_CLASS} />
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                        className={FOLDER_MENU_ITEM_CLASS}
                       >
                         {t('memo.fileTree.newDocument')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'folder', value: '' })}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                        className={FOLDER_MENU_ITEM_CLASS}
                       >
                         {t('memo.fileTree.newFolder')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setRenaming({ item, value: item.name })}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                        className={FOLDER_MENU_ITEM_CLASS}
                       >
                         {t('memo.fileTree.rename')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => void handleCopyPath(item)}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                        className={FOLDER_MENU_ITEM_CLASS}
                       >
                         {t('memo.fileTree.copyPath')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => handleReveal(item)}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                        className={FOLDER_MENU_ITEM_CLASS}
                       >
                         {t('memo.fileTree.reveal')}
                       </DropdownMenuItem>
-                      <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+                      <div role="separator" aria-hidden="true" className={FOLDER_MENU_DIVIDER_CLASS} />
                       <DropdownMenuItem
                         onClick={() => void handleDelete(item)}
-                        className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+                        className={cn(FOLDER_MENU_ITEM_CLASS, 'text-[var(--destructive)]')}
                       >
                         {t('memo.fileTree.delete')}
                       </DropdownMenuItem>
@@ -432,8 +358,8 @@ export function FolderFileTree({
               )}
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="min-w-[188px] space-y-1 px-1 py-1.5">
-            <div className="select-text rounded-md px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
+          <ContextMenuContent className={FOLDER_MENU_CLASS}>
+            <div className="select-text rounded-lg px-2 py-1 text-[11px] leading-[1.6] text-[var(--muted-foreground)]">
               <div className="flex items-center gap-0.5">
                 <span className="opacity-70">{t('memo.fileTree.createdAt')}</span>
                 <span className="tabular-nums">{formatTimestamp(item.createdMs)}</span>
@@ -443,41 +369,41 @@ export function FolderFileTree({
                 <span className="tabular-nums">{formatTimestamp(item.modifiedMs)}</span>
               </div>
             </div>
-            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+            <div role="separator" aria-hidden="true" className={FOLDER_MENU_DIVIDER_CLASS} />
             <ContextMenuItem
               onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'file', value: '' })}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+              className={FOLDER_MENU_ITEM_CLASS}
             >
               {t('memo.fileTree.newDocument')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => setDraftRow({ parentPath: creationParentPath, kind: 'folder', value: '' })}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+              className={FOLDER_MENU_ITEM_CLASS}
             >
               {t('memo.fileTree.newFolder')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => setRenaming({ item, value: item.name })}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+              className={FOLDER_MENU_ITEM_CLASS}
             >
               {t('memo.fileTree.rename')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => void handleCopyPath(item)}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+              className={FOLDER_MENU_ITEM_CLASS}
             >
               {t('memo.fileTree.copyPath')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => handleReveal(item)}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+              className={FOLDER_MENU_ITEM_CLASS}
             >
               {t('memo.fileTree.reveal')}
             </ContextMenuItem>
-            <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
+            <div role="separator" aria-hidden="true" className={FOLDER_MENU_DIVIDER_CLASS} />
             <ContextMenuItem
               onClick={() => void handleDelete(item)}
-              className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+              className={cn(FOLDER_MENU_ITEM_CLASS, 'text-[var(--destructive)]')}
             >
               {t('memo.fileTree.delete')}
             </ContextMenuItem>
@@ -504,54 +430,30 @@ export function FolderFileTree({
   });
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]">
+    <div className={cn(
+      'relative flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]',
+      embedded && 'border-l-0',
+    )}>
       {/* 标题行 ── 标题右侧下拉菜单用于在访达中显示当前资料文件夹。 */}
-      <div className="flex items-center justify-between px-3 pb-2 gap-2">
-        <div className="min-w-0 flex-1">
-          <MemoNavigationDropdown
-            title={closeLabel}
-            titleTooltip={tree.error ? t('memo.fileTree.unreadable') : folderName}
-            ariaLabel={t('memo.fileTree.navigationMenu')}
+      <div className="flex items-center justify-between px-3 py-1.5 gap-2">
+        <div className="-ml-2 flex min-w-0 flex-1 items-center gap-1">
+          {embedded && onRequestClose && (
+            <button
+              type="button"
+              aria-label="收起文件树"
+              title="收起文件树"
+              onClick={onRequestClose}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+            >
+              <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <div
+            className="truncate text-sm font-medium text-[var(--foreground)]"
+            title={tree.error ? t('memo.fileTree.unreadable') : folderPath}
           >
-            <div className="space-y-1">
-              <DropdownMenuItem
-                onClick={() => void handleCopyFolderPath()}
-                className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-              >
-                {t('memo.fileTree.copyPath')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => void openPath(folderPath)}
-                className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-              >
-                {t('memo.fileTree.reveal')}
-              </DropdownMenuItem>
-              {isCurrentFolderTracked && !isWorkspace && (
-                <DropdownMenuItem
-                  onClick={() => void handleSetWorkspace()}
-                  className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-                >
-                  {t('agent.access.contextSetWorkspace')}
-                </DropdownMenuItem>
-              )}
-              {isCurrentFolderTracked && isWorkspace && (
-                <DropdownMenuItem
-                  onClick={() => void handleUnsetWorkspace()}
-                  className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)]"
-                >
-                  {t('agent.access.contextUnsetWorkspace')}
-                </DropdownMenuItem>
-              )}
-              {isCurrentFolderTracked && (
-                <DropdownMenuItem
-                  onClick={() => void handleRemoveFolder()}
-                  className="cursor-pointer rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
-                >
-                  {t('agent.access.contextDelete')}
-                </DropdownMenuItem>
-              )}
-            </div>
-          </MemoNavigationDropdown>
+            {closeLabel}
+          </div>
         </div>
         <div className="flex items-center gap-0 shrink-0">
           <button

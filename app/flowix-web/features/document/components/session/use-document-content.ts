@@ -11,6 +11,7 @@ import {
 } from '@features/document';
 import { translate } from '@/lib/i18n';
 import { replaceActiveMemoPath } from '@features/workspace/use-cases/workspace-navigation';
+import { replaceBrowserColumnMemoPath } from '@features/workspace/use-cases/browser-column-navigation';
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store';
 import { formatDateTime } from '@/lib/utils';
 import {
@@ -196,6 +197,7 @@ export function useDocumentContent({
             if (retryContent !== null && retryContent !== undefined) {
               readPath = latestPath;
               fullContent = retryContent;
+              replaceBrowserColumnMemoPath(memoId!, latestPath);
               if (!isolatedSession) {
                 setActiveDocumentPath(identity, latestPath);
                 replaceActiveMemoPath(memoId!, latestPath);

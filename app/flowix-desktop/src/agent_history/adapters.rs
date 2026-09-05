@@ -29,9 +29,7 @@ pub(super) fn builtin_adapters(
             threads: threads.clone(),
             client: codex,
         }),
-        Arc::new(DshHistoryAdapter {
-            client: dsh,
-        }),
+        Arc::new(DshHistoryAdapter { client: dsh }),
         Arc::new(OpenCodeHistoryAdapter { client: opencode }),
         Arc::new(ClaudeHistoryAdapter {
             threads: threads.clone(),

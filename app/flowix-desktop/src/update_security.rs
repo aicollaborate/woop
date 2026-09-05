@@ -42,7 +42,9 @@ pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
     if actual.eq_ignore_ascii_case(expected.trim()) {
         Ok(())
     } else {
-        Err(format!("sha256 mismatch: expected {expected}, got {actual}"))
+        Err(format!(
+            "sha256 mismatch: expected {expected}, got {actual}"
+        ))
     }
 }
 

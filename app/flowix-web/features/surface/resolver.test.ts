@@ -2,11 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { MemoItem } from '@/types/memo-item';
 import type { PluginDescriptor } from '@platform/tauri/client';
 import type { MarkdownSurface } from './types';
-import type {
-  WorkspaceNavigationState,
-  WorkspaceTarget,
-} from '@features/workspace/store/workspace-target';
-import { resolveWorkspaceSurface } from './resolver';
+import type { WorkColumnNavigationState, WorkColumnTarget } from '@features/workspace/store/work-column-target';
+import { resolveWorkColumnSurface } from './resolver';
 
 function memo(properties: Record<string, unknown>, id = 'memo-1'): MemoItem {
   return {
@@ -82,7 +79,7 @@ const memoTarget = {
   transitionId: 1,
 };
 
-function navigation(target: WorkspaceTarget | WorkspaceNavigationState) {
+function navigation(target: WorkColumnTarget | WorkColumnNavigationState) {
   return 'phase' in target
     ? target
     : {
@@ -119,13 +116,13 @@ function documentIdentity(
 describe('surface resolvers', () => {
   it('resolves memo, external, plugin, agent, web, and empty workspace targets', () => {
     const markdown = markdownSurface({ transitionId: 1 });
-    expect(resolveWorkspaceSurface({
+    expect(resolveWorkColumnSurface({
       navigation: navigation(memoTarget),
       document: { identity: documentIdentity({ transitionId: 1 }), memo: memo({}), markdown },
       emptyMessage: 'empty',
     })).toBe(markdown);
 
-    expect(resolveWorkspaceSurface({
+    expect(resolveWorkColumnSurface({
       navigation: navigation({
         kind: 'external',
         path: '/files/readme.md',
@@ -146,7 +143,7 @@ describe('surface resolvers', () => {
       emptyMessage: 'empty',
     }).kind).toBe('markdown');
 
-    expect(resolveWorkspaceSurface({
+    expect(resolveWorkColumnSurface({
       navigation: navigation({ kind: 'plugin-workbench', plugin: plugin('plugin-a') }),
       pluginWorkbench: {
         plugin: plugin('plugin-a'),
@@ -157,48 +154,56 @@ describe('surface resolvers', () => {
       emptyMessage: 'empty',
     }).kind).toBe('plugin-workbench');
 
-    expect(resolveWorkspaceSurface({
+    expect(resolveWorkColumnSurface({
       navigation: navigation({ kind: 'agent-conversation', instanceId: 'conversation-1' }),
       emptyMessage: 'empty',
     }).kind).toBe('agent-conversation');
-    expect(resolveWorkspaceSurface({
+    expect(resolveWorkColumnSurface({
       navigation: navigation({ kind: 'web', url: 'https://example.com' }),
       emptyMessage: 'empty',
     }).kind).toBe('web');
-    expect(resolveWorkspaceSurface({ navigation: navigation({ kind: 'empty' }), emptyMessage: 'empty' })).toEqual({
+    expect(resolveWorkColumnSurface({ navigation: navigation({ kind: 'empty' }), emptyMessage: 'empty' })).toEqual({
       kind: 'empty',
       instanceKey: 'empty',
       message: 'empty',
     });
   });
 
-  it('maps artifact renderer metadata to the product surface', () => {
-    const surface = resolveWorkspaceSurface({
-      navigation: navigation(memoTarget),
+  it('resolves an artifact target without depending on the active document session', () => {
+    const surface = resolveWorkColumnSurface({
+      navigation: navigation({
+        kind: 'artifact',
+        pointerMemoId: 'pointer-1',
+        notebookId: 'notebook-1',
+        notebookPath: '/notebook',
+        pluginId: 'mindmap',
+        renderer: 'markmap',
+      }),
       document: {
-        identity: documentIdentity({ transitionId: 1 }),
-        memo: memo({
-          flowix_note_type: 'mindmap',
-          flowix_plugin: 'mindmap',
-          flowix_artifact: { renderer: 'markmap' },
-        }),
-        markdown: markdownSurface({ transitionId: 1 }),
-        artifact: { memoId: 'memo-1', transitionId: 1 },
+        identity: documentIdentity({ path: '/notebook/other.md', transitionId: 8 }),
+        memo: memo({}, 'other-memo'),
+        markdown: markdownSurface({ filePath: '/notebook/other.md', transitionId: 8 }),
       },
       emptyMessage: 'empty',
     });
-    expect(surface).toMatchObject({ kind: 'mindmap', instanceKey: 'artifact:memo-1', renderer: 'markmap' });
+
+    expect(surface).toMatchObject({
+      kind: 'mindmap',
+      instanceKey: 'artifact:pointer-1',
+      renderer: 'markmap',
+      props: { memoId: 'pointer-1' },
+    });
   });
 
   it('rejects stale or cross-identity workspace contexts', () => {
-    const stale = resolveWorkspaceSurface({
+    const stale = resolveWorkColumnSurface({
       navigation: navigation(memoTarget),
       document: { identity: documentIdentity({ transitionId: 1 }), memo: memo({}, 'other-memo'), markdown: markdownSurface({ transitionId: 1 }) },
       emptyMessage: 'empty',
     });
     expect(stale.kind).toBe('empty');
 
-    const wrongPath = resolveWorkspaceSurface({
+    const wrongPath = resolveWorkColumnSurface({
       navigation: navigation(memoTarget),
       document: {
         identity: documentIdentity({ path: '/notebook/old.md', transitionId: 1 }),
@@ -209,7 +214,7 @@ describe('surface resolvers', () => {
     });
     expect(wrongPath.kind).toBe('empty');
 
-    const wrongPlugin = resolveWorkspaceSurface({
+    const wrongPlugin = resolveWorkColumnSurface({
       navigation: navigation({ kind: 'plugin-workbench', plugin: plugin('plugin-a') }),
       pluginWorkbench: {
         plugin: plugin('plugin-b'),

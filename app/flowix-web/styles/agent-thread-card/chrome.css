@@ -170,7 +170,7 @@
 }
 
 .markdown-editor .agent-thread-card--fullscreen {
-  /* Fullscreen is scoped to the third-column document container. Keeping the
+  /* Fullscreen is scoped to the work-column document container. Keeping the
    * card in that containing block makes it follow panel movement when the
    * memo list is shown or hidden. */
   position: fixed;
@@ -221,7 +221,7 @@
   user-select: none;
 }
 
-/* Fullscreen Thread Cards use the third-column titlebar as their chrome, so
+/* Fullscreen Thread Cards use the work-column titlebar as their chrome, so
  * the embedded card header is removed and its grid track is collapsed. */
 .markdown-editor
   .agent-thread-card--fullscreen
@@ -251,7 +251,7 @@
  *   (现代浏览器 outline 已支持 border-radius, 但显式写更稳)
  * - 选择器特异性: .agent-thread-card.ProseMirror-selectednode = (0,2,0)
  *   高于全局 .ProseMirror-selectednode = (0,1,0), 本规则胜出 */
-.markdown-editor .ProseMirror .agent-thread-card.ProseMirror-selectednode {
+.markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) .agent-thread-card.ProseMirror-selectednode {
   outline: 1px solid var(--brand);
   outline-offset: -1px;
   border-radius: 8px;

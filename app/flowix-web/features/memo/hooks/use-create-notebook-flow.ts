@@ -16,7 +16,7 @@ const NOTEBOOK_CREATE_SCAN_TIMEOUT_MS = 30_000;
 
 interface CreateNotebookInput {
   name: string;
-  path: string;
+  path?: string;
   icon?: string | null;
   cloudNotebookId?: string;
 }
@@ -73,8 +73,8 @@ export function useCreateNotebookFlow({
   const createNotebook = useCallback(
     async ({ name, path, icon, cloudNotebookId }: CreateNotebookInput): Promise<Notebook | null> => {
       const notebookName = name.trim();
-      const notebookPath = path.trim();
-      if (!notebookName || !notebookPath) return null;
+      const notebookPath = path?.trim() || undefined;
+      if (!notebookName || (cloudNotebookId && !notebookPath)) return null;
 
       setCreationState({ status: 'creating' });
       setBlockingLoadingText(t('memo.list.scanningLibrary'));
@@ -89,8 +89,9 @@ export function useCreateNotebookFlow({
       });
 
       try {
+        const pathForCreate = notebookPath ?? '';
         const created = await (cloudNotebookId
-          ? notebookRepository.createFromCloud(cloudNotebookId, notebookName, notebookPath, icon)
+          ? notebookRepository.createFromCloud(cloudNotebookId, notebookName, pathForCreate, icon)
           : notebookRepository.create(notebookName, notebookPath, icon)) as Notebook | null;
 
         if (!created) {

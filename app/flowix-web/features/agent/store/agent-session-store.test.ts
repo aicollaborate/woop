@@ -46,6 +46,8 @@ describe("useAgentSessionStore", () => {
       sessionMeta: DEFAULT_AGENT_SESSION_META,
       conversationRegistry: { instances: {} },
       threadProjections: {},
+      threadRunSignatures: {},
+      runStateVersion: 0,
     });
   });
 
@@ -68,13 +70,17 @@ describe("useAgentSessionStore", () => {
   it("dispatch chain (stream_start → text_delta → stream_end) updates only one projection atomically", () => {
     const { dispatch } = useAgentSessionStore.getState();
     dispatch(streamStart("r1"));
+    const afterStart = useAgentSessionStore.getState().runStateVersion;
     dispatch(textDelta("hello", "r1"));
+    // Text-only projection updates must not invalidate the conversation list.
+    expect(useAgentSessionStore.getState().runStateVersion).toBe(afterStart);
     dispatch(streamEnd("r1"));
 
     const proj = useAgentSessionStore.getState().threadProjections["t1"];
     expect(proj?.runs.isLoading).toBe(false);
     expect(proj?.runs.lastRun?.status).toBe("completed");
     expect(proj?.messages).toHaveLength(1);
+    expect(useAgentSessionStore.getState().runStateVersion).toBe(afterStart + 1);
     expect(proj?.messages[0]).toMatchObject({
       role: "assistant",
       content: "hello",
@@ -156,6 +162,7 @@ describe("useAgentSessionStore", () => {
     expect(useAgentSessionStore.getState().threadProjections["t1"]).toBeDefined();
     useAgentSessionStore.getState().removeThreadProjection("t1");
     expect(useAgentSessionStore.getState().threadProjections["t1"]).toBeUndefined();
+    expect(useAgentSessionStore.getState().threadRunSignatures["t1"]).toBeUndefined();
   });
 
   it("resetThreadProjections replaces specified entries with empty", () => {
@@ -201,7 +208,8 @@ describe("useAgentSessionStore persist", () => {
     expect(meta.activeAgentTypeKey).toBe("codex");
     expect(meta.activeThreadIds.codex).toBe("codex-thread-1");
     expect(meta.threadTypes["codex-thread-1"]).toBe("codex");
-    expect(meta.currentThreadTitles.codex).toBe("Codex Title");
+    expect(meta.currentThreadTitles["codex-thread-1"]).toBe("Codex Title");
+    expect(meta.currentThreadTitles["codex"]).toBeUndefined();
     expect(meta.settings.agentPermissionMode).toBe("read-only");
     expect(meta.settings.agentCodexModel).toBe("claude-opus-4-8");
     expect(meta.settings.agentCodexReasoningEffort).toBe("high");

@@ -169,7 +169,10 @@ function MemoCardMoreMenu({
             <MoreHorizontal className="h-4 w-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[180px] space-y-1 px-1 py-1.5">
+        <DropdownMenuContent
+          align="end"
+          className="w-[180px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
+        >
           <MemoCardActions
             memo={memo}
             onOpenInSplit={
@@ -248,7 +251,7 @@ function MemoCardShell({
           />
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-[180px] space-y-1 px-1 py-1.5">
+      <ContextMenuContent className="w-[180px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
         <MemoCardActions
           memo={memo}
           onFavoriteToggle={onFavoriteToggle}

@@ -12,7 +12,7 @@ export interface AgentComposerDomParts {
   composerActions: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
   composerAddPopover: HTMLDivElement;
-  input: HTMLTextAreaElement;
+  input: HTMLDivElement;
   codexSettingsPopover: HTMLDivElement;
   composerRolePopover: HTMLDivElement;
   sendButtonMount: HTMLSpanElement;
@@ -23,8 +23,8 @@ export interface AgentComposerDomParts {
 // ────────────────────────────────────────────────────────────────────
 //
 // composer 胶囊容器的空白区域 (尤其是 expanded / fullscreen grid 布局下,
-// textarea 之外的 grid row 1 / row 2-col2 / row 3-col1 等缝隙) 必须能
-// 一点就把焦点抢回输入框, 不然用户只能挤进 textarea 才能打字, 体感极差。
+// 编辑器之外的 grid row 1 / row 2-col2 / row 3-col1 等缝隙) 必须能
+// 一点就把焦点抢回输入框, 不然用户只能挤进编辑器才能打字, 体感极差。
 //
 // 这里把委托逻辑封进工厂, 两个消费方 (note 内嵌 thread-card 与
 // standalone agent-conversation-detail) 自动共享, 避免单边漏装导致
@@ -37,7 +37,7 @@ export interface AgentComposerDomParts {
 //     "send 按钮被瞬间触到" 的二次 dispatch。
 //
 // 委托短路条件 (target 命中以下任一即放行, 不抢焦点):
-//   - textarea / input / select ── 输入框本体
+//   - contenteditable / input / select ── 输入框本体
 //   - button / a[href] / [role="button"] ── 显式交互元素
 //   - [data-no-composer-focus] ── 显式逃生口 (例如未来某些 hover 装饰)
 //   - popover 内 ── popover 挂在 body 上, 但 mousedown 可能在合成事件
@@ -47,16 +47,15 @@ export interface AgentComposerDomParts {
 // 抢焦后 caret 处理: 把 caret 钉在文本末尾 ── 用户的直觉是 "我把光标
 // 拉到这里只是为了让键盘响应这个 composer", 而不是 "我要改这段中间的
 // 某个字", 钉末尾省一次 setSelectionRange, 也避免在折叠态下用户明明
-// 没碰 textarea 但 caret 莫名跳到行中的违和感。
+// 没碰编辑器但 caret 莫名跳到行中的违和感。
 // ────────────────────────────────────────────────────────────────────
 const COMPOSER_FOCUS_INTERACTIVE_SELECTOR = [
-  'textarea',
+  '[contenteditable="true"]',
   'input',
   'select',
   'button',
   'a[href]',
   '[role="button"]',
-  '[contenteditable="true"]',
   '[data-no-composer-focus]',
 ].join(',');
 
@@ -68,17 +67,10 @@ function isComposerInteractiveTarget(composer: HTMLElement, target: Element): bo
   return interactive !== null && composer.contains(interactive);
 }
 
-function focusComposerInput(composer: HTMLElement, input: HTMLTextAreaElement): void {
+function focusComposerInput(composer: HTMLElement, input: HTMLDivElement): void {
   if (document.activeElement === input) return;
   if (!composer.isConnected) return;
   input.focus({ preventScroll: true });
-  // 钉末尾 ── 见上方注释
-  const end = input.value.length;
-  try {
-    input.setSelectionRange(end, end);
-  } catch {
-    // type=number 等不支持的 input 才抛, 这里 textarea 不会, 留兜底
-  }
 }
 
 function handleComposerPointerDown(event: PointerEvent): void {
@@ -94,7 +86,7 @@ function handleComposerPointerDown(event: PointerEvent): void {
   // 所以不会影响发送、角色选择、模型选择等按钮的 click 行为。
   event.preventDefault();
   event.stopPropagation();
-  const input = composer.querySelector<HTMLTextAreaElement>('textarea');
+  const input = composer.querySelector<HTMLDivElement>('.agent-thread-card__composer-input');
   if (!input) return;
   focusComposerInput(composer, input);
 }
@@ -105,7 +97,7 @@ function handleComposerClick(event: MouseEvent): void {
   const target = event.target as Element | null;
   if (!target || isComposerInteractiveTarget(composer, target)) return;
   event.stopPropagation();
-  const input = composer.querySelector<HTMLTextAreaElement>('textarea');
+  const input = composer.querySelector<HTMLDivElement>('.agent-thread-card__composer-input');
   if (!input) return;
   focusComposerInput(composer, input);
 }
@@ -129,10 +121,20 @@ export function createAgentComposerDom(
   composerRoleIcon.setAttribute('aria-expanded', 'false');
   composerRoleIcon.setAttribute('aria-label', options.t('editor.threadCard.selectRole'));
   composerRoleIcon.title = options.t('editor.threadCard.roleIconTooltip');
-  const input = document.createElement('textarea');
-  input.rows = 1;
-  input.placeholder = options.t('editor.threadCard.inputPlaceholder');
-  input.value = options.inputDraft ?? '';
+  // The composer is a small, independent Tiptap editor. Keeping the mount
+  // point as a plain div lets the same imperative DOM contract work for both
+  // the note-embedded NodeView and the standalone conversation surface.
+  const input = document.createElement('div');
+  input.className = 'agent-thread-card__composer-input';
+  input.contentEditable = 'true';
+  // Explicitly tabbable so the mount point remains focusable before Tiptap
+  // initializes (and in embedded WebViews/jsdom where contenteditable alone
+  // is not always treated as a focus target).
+  input.tabIndex = 0;
+  input.setAttribute('role', 'textbox');
+  input.setAttribute('aria-multiline', 'true');
+  input.dataset.composerInitialDraft = options.inputDraft ?? '';
+  input.spellcheck = true;
   const sendButtonMount = document.createElement('span');
   sendButtonMount.className = 'agent-thread-card__send-tooltip';
   const composerActions = document.createElement('div');

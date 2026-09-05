@@ -14,10 +14,10 @@ import { useMemoStore } from '@features/memo';
 import { agentClient } from '@features/agent/store/agent-client';
 import {
   isAgentConversationRunning,
-  useConversationRunIndex,
 } from '@features/agent/store/conversation-run-index';
 import { AGENT_TYPES, getAgentType, isAgentTypeSelectable } from '@/lib/agent-types';
 import type { AgentTypeKey } from '@/types/agent';
+import type { AgentConversationCursor } from '@platform/tauri/client/agent';
 import { formatTimeAgo } from '@/lib/format-time-ago';
 import { createLogger } from '@/lib/logger';
 import { toast } from '@/lib/toast';
@@ -32,11 +32,18 @@ import {
   DropdownMenuTrigger,
 } from '@shared/ui/dropdown-menu';
 import { AgentIcon } from '@features/agent/components/agent-icon';
-import { MemoNavigationDropdown } from '@features/memo/components/memo-navigation-dropdown';
-import { DROPDOWN_DIVIDER_SKIN } from '@shared/ui/dropdown-divider';
+import { MemoListViewTabs } from '@features/memo/components/memo-list-view-tabs';
 import { Input } from '@shared/ui/input';
 import { Button } from '@shared/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@shared/ui/dialog';
+import { useFixedVirtualList, type FixedVirtualListItem } from './use-fixed-virtual-list';
+import {
+  EMPTY_CONVERSATION_PAGE_STATE,
+  mergeConversationPage,
+  mergeLiveConversation,
+  updateConversationTitle,
+  type ConversationPageState,
+} from './conversation-list-pagination';
 
 /**
  * The "Conversations" navigation view. It deliberately lists conversation
@@ -45,6 +52,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@shared/ui/dia
  * source note is retained only as conversation metadata/context, not navigated.
  */
 type ConversationGroupKey = 'today' | 'yesterday' | 'last7Days' | 'earlier';
+type ConversationSectionKey = ConversationGroupKey | 'favorites';
+
+type ConversationListItem = FixedVirtualListItem & (
+  | {
+      kind: 'heading';
+      sectionKey: ConversationSectionKey;
+    }
+  | {
+      kind: 'conversation';
+      instance: AgentConversationInstance;
+    }
+  | {
+      kind: 'loading';
+    }
+);
 
 // 日期分组标题文案 key ── 用 as const 让每个 value 都是字面量 I18nKey, 直接喂 t()
 // 无需 cast。分组顺序固定: 今天 → 昨天 → 最近 7 天 → 更早。
@@ -56,60 +78,6 @@ const CONVERSATION_GROUP_LABEL_KEY = {
 } as const;
 const logger = createLogger('agent-conversation-list');
 const CONVERSATION_PAGE_SIZE = 30;
-
-// A thread can temporarily be represented by two instance records while an
-// old local/external identity is being reconciled.  `instanceId` is the card
-// identity, but `threadId` is the conversation identity shown in this list.
-// Keep the record with the useful product title when repairing that state;
-// otherwise a later runtime fallback such as "Codex session" can hide the
-// title derived from the user's first prompt.
-function isFallbackConversationTitle(title: string, agentType: AgentTypeKey): boolean {
-  const normalized = title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
-  if (!normalized) return true;
-  const fallbackTitles = new Set([
-    `${agentType} session`,
-    `${agentType} 会话`,
-    'codex session',
-    'codex 会话',
-    'claude code session',
-    'claude code 会话',
-    'hermes session',
-    'hermes 会话',
-    'gemini cli session',
-    'gemini cli 会话',
-    'opencode session',
-    'opencode 会话',
-    'openclaw session',
-    'openclaw 会话',
-  ]);
-  return fallbackTitles.has(normalized);
-}
-
-function preferConversationInstance(
-  current: AgentConversationInstance,
-  candidate: AgentConversationInstance,
-): AgentConversationInstance {
-  const currentFallback = isFallbackConversationTitle(current.title, current.agentType);
-  const candidateFallback = isFallbackConversationTitle(candidate.title, candidate.agentType);
-  if (currentFallback !== candidateFallback) return currentFallback ? candidate : current;
-  if (candidate.updatedAt !== current.updatedAt) {
-    return candidate.updatedAt > current.updatedAt ? candidate : current;
-  }
-  return candidate.instanceId > current.instanceId ? candidate : current;
-}
-
-/** Collapse malformed/legacy duplicate rows without collapsing unbound cards. */
-function dedupeConversationInstances(
-  source: Iterable<AgentConversationInstance>,
-): AgentConversationInstance[] {
-  const byIdentity = new Map<string, AgentConversationInstance>();
-  for (const instance of source) {
-    const identity = instance.threadId ? `thread:${instance.threadId}` : `instance:${instance.instanceId}`;
-    const previous = byIdentity.get(identity);
-    byIdentity.set(identity, previous ? preferConversationInstance(previous, instance) : instance);
-  }
-  return [...byIdentity.values()];
-}
 
 /** OpenCode history listing previously materialized provider-only sessions as
  * `legacy-ses_...` instances. They have no Flowix-owned conversation and must
@@ -126,18 +94,28 @@ export function AgentConversationList() {
   const instances = useAgentSessionStore((state) => state.conversationRegistry.instances);
   const threadTombstones = useAgentSessionStore((state) => state.threadTombstones);
   const lifecycleVersion = useAgentSessionStore((state) => state.lifecycleVersion);
+  // This map changes only when lifecycle fields change, not for text chunks.
+  // Rows can therefore read their running state in O(1) without rebuilding an
+  // index by scanning every loaded conversation.
+  const conversationRunIndex = useAgentSessionStore((state) => state.threadRunSignatures);
   const currentNotebookId = useMemoStore((state) => state.selectedNotebook?.id ?? null);
+  const activeFilter = useMemoStore((state) => state.activeFilter);
+  const setActiveFilter = useMemoStore((state) => state.setActiveFilter);
   const selectedInstanceId = useWorkspaceRestoreStore(
     (state) => state.agentConversation.selectedInstanceId,
   );
   const conversationDetailOpen = useWorkspaceRestoreStore(
     (state) => state.agentConversation.detailOpen,
   );
-  const [persistedInstances, setPersistedInstances] = useState<Record<string, AgentConversationInstance>>({});
+  const [conversationPage, setConversationPage] = useState<ConversationPageState>(
+    EMPTY_CONVERSATION_PAGE_STATE,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const loadedCountRef = useRef(0);
+  const [agentTypeCounts, setAgentTypeCounts] = useState<Readonly<Record<string, number>>>({});
+  const nextCursorRef = useRef<AgentConversationCursor | null>(null);
+  const listQueryKeyRef = useRef('');
   const loadingMoreRef = useRef(false);
   const [filterType, setFilterType] = useState<AgentTypeKey | null>(null);
   const [showScrollTopHint, setShowScrollTopHint] = useState(false);
@@ -192,30 +170,22 @@ export function AgentConversationList() {
       // briefly return the old snapshot. Update this list's durable snapshot
       // too so the renamed title is visible immediately and cannot be
       // overwritten by the merge on the next render.
-      setPersistedInstances((current) => {
-        const existing = current[target.instanceId];
-        if (!existing) return current;
-        return {
-          ...current,
-          [target.instanceId]: {
-            ...existing,
-            title: nextTitle,
-            updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
-          },
-        };
-      });
+      setConversationPage((current) => updateConversationTitle(
+        current,
+        target.instanceId,
+        nextTitle,
+        Math.max(Date.now(), target.updatedAt + 1),
+      ));
       setRenameTarget(null);
       setRenameSaving(false);
       await renamePromise;
     } catch {
-      setPersistedInstances((current) => {
-        const existing = current[target.instanceId];
-        if (!existing) return current;
-        return {
-          ...current,
-          [target.instanceId]: { ...existing, title: target.title, updatedAt: target.updatedAt },
-        };
-      });
+      setConversationPage((current) => updateConversationTitle(
+        current,
+        target.instanceId,
+        target.title,
+        target.updatedAt,
+      ));
       toast.error(t('agent.chat.conversation.renameFailed'));
     } finally {
       setRenameSaving(false);
@@ -239,24 +209,28 @@ export function AgentConversationList() {
     }
   }, [t]);
 
-  // The list owns a durable snapshot from the backend. Zustand remains useful
-  // for live rows created in this window, but a webview reload must never turn
-  // the persisted history into an empty list while the shared store rehydrates.
+  // The list owns a durable paged snapshot from the backend. Zustand is only
+  // merged for live rows created or mounted in this window; history is never
+  // hydrated wholesale just to render the sidebar.
   useEffect(() => {
     let active = true;
-    // lifecycleVersion can trigger a fresh backend snapshot after the view
-    // has already been mounted. Keep the list honest during that request too.
+    const queryKey = `${currentNotebookId ?? ''}\u001f${filterType ?? ''}`;
+    const query = { notebookId: currentNotebookId, agentType: filterType, cursor: null } as const;
+    listQueryKeyRef.current = queryKey;
+    nextCursorRef.current = null;
+    setConversationPage(EMPTY_CONVERSATION_PAGE_STATE);
+    setHasMore(true);
+    // Lifecycle changes can trigger a fresh first page after the view is
+    // mounted, keeping deletion/archive state aligned with the backend.
     setIsLoading(true);
-    void agentClient.listConversationInstancesPage(0, CONVERSATION_PAGE_SIZE)
-      .then(({ items, hasMore: nextHasMore }) => {
+    void agentClient.listConversationInstancesPage(query, CONVERSATION_PAGE_SIZE)
+      .then(({ items, hasMore: nextHasMore, nextCursor }) => {
         if (!active) return;
-        loadedCountRef.current = items.length;
+        nextCursorRef.current = nextCursor;
         setHasMore(nextHasMore);
-        setPersistedInstances(Object.fromEntries(
-          items.map((instance) => {
-            const normalized = normalizeBackendInstance(instance);
-            return [normalized.instanceId, normalized];
-          }),
+        setConversationPage(mergeConversationPage(
+          EMPTY_CONVERSATION_PAGE_STATE,
+          items.map(normalizeBackendInstance),
         ));
       })
       .catch((error) => {
@@ -268,60 +242,72 @@ export function AgentConversationList() {
     return () => {
       active = false;
     };
-  }, [lifecycleVersion]);
+  }, [currentNotebookId, filterType, lifecycleVersion]);
+
+  // Facets stay small even when the conversation history is large. This lets
+  // the agent filter describe the complete notebook while the conversation
+  // rows themselves remain cursor-paginated.
+  useEffect(() => {
+    let active = true;
+    void agentClient.listConversationTypeCountsByNotebook(currentNotebookId)
+      .then((counts) => {
+        if (!active) return;
+        setAgentTypeCounts(Object.fromEntries(
+          counts.map(({ agentType, count }) => [agentType, count]),
+        ));
+      })
+      .catch((error) => {
+        logger.error('failed to load conversation type counts', { error });
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentNotebookId, lifecycleVersion]);
 
   const loadMoreConversations = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore) return;
     loadingMoreRef.current = true;
     setIsLoadingMore(true);
+    const queryKey = `${currentNotebookId ?? ''}\u001f${filterType ?? ''}`;
     try {
-      const { items, hasMore: nextHasMore } = await agentClient.listConversationInstancesPage(
-        loadedCountRef.current,
+      const query = { notebookId: currentNotebookId, agentType: filterType, cursor: nextCursorRef.current };
+      const { items, hasMore: nextHasMore, nextCursor } = await agentClient.listConversationInstancesPage(
+        query,
         CONVERSATION_PAGE_SIZE,
       );
-      loadedCountRef.current += items.length;
+      if (listQueryKeyRef.current !== queryKey) return;
+      nextCursorRef.current = nextCursor;
       setHasMore(nextHasMore);
-      setPersistedInstances((current) => {
-        const next = { ...current };
-        for (const item of items) {
-          const normalized = normalizeBackendInstance(item);
-          next[normalized.instanceId] = normalized;
-        }
-        return next;
-      });
+      setConversationPage((current) => mergeConversationPage(
+        current,
+        items.map(normalizeBackendInstance),
+      ));
     } catch (error) {
       logger.error('failed to load more conversations', { error });
     } finally {
       loadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [hasMore]);
+  }, [currentNotebookId, filterType, hasMore]);
 
   const conversations = useMemo(() => {
     // The backend snapshot is the durable source of truth. An editor card is
     // intentionally not mounted in every document/webview, so using the
     // in-memory registry as an allow-list makes valid conversations disappear
     // whenever a card is temporarily unmounted or hydration is still pending.
-    const merged = { ...persistedInstances };
+    let merged = conversationPage;
     for (const instance of Object.values(instances)) {
-      const persisted = merged[instance.instanceId];
-      if (!persisted || instance.updatedAt >= persisted.updatedAt) {
-        merged[instance.instanceId] = instance;
-      }
+      if (filterType && instance.agentType !== filterType) continue;
+      const notebookId = instance.source?.notebookId;
+      if (currentNotebookId && notebookId && notebookId !== currentNotebookId) continue;
+      merged = mergeLiveConversation(merged, instance);
     }
-    return dedupeConversationInstances(Object.values(merged))
+    return merged.orderedIdentities
+      .map((identity) => merged.itemsByIdentity[identity])
+      .filter((instance): instance is AgentConversationInstance => !!instance)
       .filter((instance) => !isSyntheticOpenCodeHistoryInstance(instance))
-      .filter((instance) => !instance.threadId || !threadTombstones[instance.threadId])
-      .sort((a, b) => b.createdAt - a.createdAt);
-  }, [instances, persistedInstances, threadTombstones]);
-
-  // 运行态来自 canonical thread projections；使用合并后的列表作为索引输入，
-  // 这样后端持久化列表中的对话也能在运行时显示外框 loading。
-  const conversationInstances = useMemo(
-    () => Object.fromEntries(conversations.map((instance) => [instance.instanceId, instance])),
-    [conversations],
-  );
-  const conversationRunIndex = useConversationRunIndex(conversationInstances);
+      .filter((instance) => !instance.threadId || !threadTombstones[instance.threadId]);
+  }, [conversationPage, currentNotebookId, filterType, instances, threadTombstones]);
 
   // 跟踪每个 instanceId 上一帧的 running 状态 ── 用 ref 而不是 state, 避免
   // 把上一帧值注入到 React 渲染链路后引发额外渲染。effect 在 commit 之后跑,
@@ -394,14 +380,21 @@ export function AgentConversationList() {
   // 毫无视觉变化的按钮只会让用户困惑。
   const activeAgentTypes = useMemo(() => {
     const counts = new Map<AgentTypeKey, number>();
-    for (const instance of scopedConversations) {
-      if (!isAgentTypeSelectable(instance.agentType)) continue;
-      counts.set(instance.agentType, (counts.get(instance.agentType) ?? 0) + 1);
+    if (Object.keys(agentTypeCounts).length > 0) {
+      for (const type of AGENT_TYPES) {
+        const count = agentTypeCounts[type.key];
+        if (count && isAgentTypeSelectable(type.key)) counts.set(type.key, count);
+      }
+    } else {
+      for (const instance of scopedConversations) {
+        if (!isAgentTypeSelectable(instance.agentType)) continue;
+        counts.set(instance.agentType, (counts.get(instance.agentType) ?? 0) + 1);
+      }
     }
     return AGENT_TYPES
       .filter((type) => counts.has(type.key))
       .map((type) => ({ type, count: counts.get(type.key) ?? 0 }));
-  }, [scopedConversations]);
+  }, [agentTypeCounts, scopedConversations]);
 
   // 对话可能在筛选期间变成空集 (例如全部删除) ── 若当前筛选的类型已不再激活，
   // 自动回退到"全部"，避免列表卡在空状态。
@@ -423,7 +416,7 @@ export function AgentConversationList() {
     [visibleConversations, favoriteIds],
   );
 
-  // 按日期分桶 (基于 createdAt)。visibleConversations 已按 createdAt DESC 排好,
+  // 按日期分桶 (基于 updatedAt)。visibleConversations 已按 updatedAt DESC 排好,
   // 逐条归入桶即保持桶内顺序; 只渲染非空桶, 桶间用 mt-3 分隔。
   const conversationGroups = useMemo(() => {
     const now = new Date();
@@ -438,7 +431,7 @@ export function AgentConversationList() {
       earlier: [],
     };
     for (const instance of nonFavoriteConversations) {
-      const ts = instance.createdAt;
+      const ts = instance.updatedAt;
       if (ts >= startOfToday) buckets.today.push(instance);
       else if (ts >= startOfYesterday) buckets.yesterday.push(instance);
       else if (ts >= startOf7Days) buckets.last7Days.push(instance);
@@ -452,6 +445,40 @@ export function AgentConversationList() {
   const conversationSections = favoriteConversations.length > 0
     ? [{ key: 'favorites' as const, items: favoriteConversations }, ...conversationGroups]
     : conversationGroups;
+
+  const conversationListItems = useMemo<ConversationListItem[]>(() => {
+    const items: ConversationListItem[] = [];
+    conversationSections.forEach((group, groupIndex) => {
+      items.push({
+        kind: 'heading',
+        key: `heading:${group.key}`,
+        sectionKey: group.key,
+        // The heading uses a 24px line height. Keep the 12px section margin
+        // and 4px outer flex gap in the virtual item.
+        size: 24 + (groupIndex > 0 ? 16 : 0),
+      });
+      group.items.forEach((instance, itemIndex) => {
+        items.push({
+          kind: 'conversation',
+          key: `conversation:${instance.instanceId}`,
+          instance,
+          // h-9 row plus the existing gap-0.5 between rows.
+          size: 36 + (itemIndex < group.items.length - 1 ? 2 : 0),
+        });
+      });
+    });
+    if (isLoadingMore) {
+      items.push({ kind: 'loading', key: 'loading-more', size: 36 });
+    }
+    return items;
+  }, [conversationSections, isLoadingMore]);
+
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const {
+    totalSize,
+    virtualItems,
+    onScroll: onVirtualListScroll,
+  } = useFixedVirtualList(conversationListItems, scrollerRef, { overscan: 8 });
 
   const displayName = (type: (typeof AGENT_TYPES)[number]): string =>
     type.nameKey ? t(type.nameKey as Parameters<typeof t>[0]) : type.name;
@@ -517,11 +544,14 @@ export function AgentConversationList() {
       {/* 标题行 ── 与 MemoList / FolderFileTree 共用同一套中间列头部结构:
           左侧标题占据剩余空间, 右侧保留本列表自己的筛选控件。 */}
       <div className="flex items-center justify-between px-3 pb-2 gap-2">
-          <div className="flex min-w-0 flex-1 items-center">
-            <MemoNavigationDropdown
-              title={t('memo.navigation.conversations')}
-              ariaLabel={t('memo.navigation.menuTitle')}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <MemoListViewTabs
+              activeTab={activeFilter === 'agents' ? 'conversations' : 'notes'}
+              onChange={(tab) => setActiveFilter(tab === 'conversations' ? 'agents' : 'all')}
             />
+            <span className="min-w-0 truncate text-[15px] font-medium text-[var(--foreground)]">
+              {t('memo.navigation.conversations')}
+            </span>
             {activeAgentTypes.length >= 2 && (
               <div
                 className="flex shrink-0 items-center gap-1"
@@ -564,7 +594,7 @@ export function AgentConversationList() {
                   disabled={!currentNotebookId}
                   aria-label={t('agent.chat.newThread')}
                   title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] p-0 text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--primary)] p-0 text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <PlusIcon
                     className="h-4 w-4 transition-[filter] duration-150 group-hover:brightness-105"
@@ -573,7 +603,7 @@ export function AgentConversationList() {
                   />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 px-1 py-1.5">
+              <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
                 <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
                   {t('agent.chat.newThread')}
                 </DropdownMenuLabel>
@@ -582,7 +612,7 @@ export function AgentConversationList() {
                     key={type.key}
                     disabled={!currentNotebookId}
                     onClick={() => createConversation(type.key)}
-                    className="justify-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--muted)]"
+                    className="agent-conversation-new-agent-item group h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
                   >
                     <AgentIcon typeKey={type.key} alt="" className="h-4 w-4 shrink-0 object-contain" />
                     <span className="min-w-0 flex-1 truncate">{displayName(type)}</span>
@@ -595,9 +625,11 @@ export function AgentConversationList() {
       <div className="relative min-h-0 flex-1">
         <OverlayScrollbar
           className="h-full"
-          scrollerClassName="flex h-full flex-col overflow-y-auto px-1 py-2"
+          scrollerRef={scrollerRef}
+          scrollerClassName="h-full overflow-y-auto px-1 py-2"
           onScroll={(event) => {
             const target = event.currentTarget;
+            onVirtualListScroll(event);
             setShowScrollTopHint(target.scrollTop > 0);
             if (hasMore && target.scrollTop + target.clientHeight >= target.scrollHeight - 80) {
               void loadMoreConversations();
@@ -618,34 +650,65 @@ export function AgentConversationList() {
               {t('status.agent.noConversations')}
             </div>
           ) : (
-            <div className="flex flex-col gap-1">
-              {conversationSections.map((group, index) => (
-                <div key={group.key} className={cn('flex flex-col gap-0.5', index > 0 && 'mt-3')}>
-                  <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
-                    {group.key === 'favorites' ? t('agent.chat.conversation.favorites') : t(CONVERSATION_GROUP_LABEL_KEY[group.key])}
-                  </h3>
-                  {/* 与 MemoList 卡片间分割线同款, 落在时间分组标题下方 */}
-                  <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
-                  {group.items.map((instance) => {
-                    const agent = getAgentType(instance.agentType);
-                    const selected = instance.instanceId === selectedInstanceId;
-                    const running = isAgentConversationRunning(instance, conversationRunIndex);
-                    return (
-                      <div
-                        key={instance.instanceId}
-                        className={cn(
-                          'group relative flex h-9 w-full items-center rounded-lg text-left transition-colors',
-                          selected ? 'bg-[var(--muted)]' : 'hover:bg-[var(--muted)]',
-                        )}
+            <div className="relative min-h-full" style={{ height: totalSize }}>
+              {virtualItems.map(({ item, start, size }) => {
+                if (item.kind === 'heading') {
+                  return (
+                    <div
+                      key={item.key}
+                      className="absolute inset-x-0 top-0 flex flex-col justify-end gap-0.5"
+                      style={{ height: size, transform: `translateY(${start}px)` }}
+                    >
+                      <h3 className="px-2 text-xs leading-6 font-medium text-[var(--muted-foreground)]">
+                        {item.sectionKey === 'favorites'
+                          ? t('agent.chat.conversation.favorites')
+                          : t(CONVERSATION_GROUP_LABEL_KEY[item.sectionKey])}
+                      </h3>
+                    </div>
+                  );
+                }
+
+                if (item.kind === 'loading') {
+                  return (
+                    <div
+                      key={item.key}
+                      className="absolute inset-x-0 top-0 pt-3 pb-2 text-center text-xs text-[var(--muted-foreground)]"
+                      style={{ height: size, transform: `translateY(${start}px)` }}
+                      aria-live="polite"
+                    >
+                      {t('memo.list.loadingLibrary')}
+                    </div>
+                  );
+                }
+
+                const instance = item.instance;
+                const agent = getAgentType(instance.agentType);
+                const selected = instance.instanceId === selectedInstanceId;
+                const running = isAgentConversationRunning(instance, conversationRunIndex);
+                return (
+                  <div
+                    key={item.key}
+                    className="absolute inset-x-0 top-0"
+                    style={{ height: size, transform: `translateY(${start}px)` }}
+                  >
+                    <div
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setOpenMenuId(instance.instanceId);
+                      }}
+                      className={cn(
+                        'group relative flex h-9 w-full items-center rounded-lg px-2 text-left transition-colors',
+                        selected ? 'bg-[var(--muted)]' : 'hover:bg-[var(--muted)]',
+                      )}
                       >
                         <button
                           type="button"
                           onClick={() => void revealConversation(instance)}
                           title={t('status.agent.openConversation')}
-                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[var(--foreground)]"
+                          className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left text-[var(--foreground)]"
                         >
                         <span className={cn(
-                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--border)]',
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full',
                           running && 'agent-conversation-list__icon--running',
                         )}>
                           <AgentIcon typeKey={agent.key} alt="" className="h-3.5 w-3.5 object-contain" />
@@ -653,8 +716,8 @@ export function AgentConversationList() {
                         <span className="min-w-0 flex-1 truncate text-sm font-normal">
                           {instance.title?.trim() || t('common.untitled')}
                         </span>
-                        <time className="shrink-0 text-xs text-[var(--muted-foreground)]" dateTime={new Date(instance.createdAt).toISOString()}>
-                          {formatTimeAgo(instance.createdAt, t, { compact: true })}
+                        <time className="shrink-0 text-xs text-[var(--muted-foreground)] group-hover:hidden" dateTime={new Date(instance.updatedAt).toISOString()}>
+                          {formatTimeAgo(instance.updatedAt, t, { compact: true })}
                         </time>
                         {running ? (
                           // 绿色: agent 正在运行
@@ -665,49 +728,65 @@ export function AgentConversationList() {
                           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]" />
                         ) : null}
                         </button>
-                        <DropdownMenu
-                          open={openMenuId === instance.instanceId}
-                          onOpenChange={(open) => setOpenMenuId(open ? instance.instanceId : null)}
-                          className="absolute right-0 top-1/2 z-10 -translate-y-1/2"
-                        >
-                          <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
-                            <button
-                              type="button"
-                              aria-label={t('agent.chat.conversation.more')}
-                              className={cn(
-                                'mr-1 rounded bg-[var(--muted)] p-1 text-[var(--muted-foreground)] opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-[var(--foreground)] focus-visible:opacity-100',
-                                openMenuId === instance.instanceId && 'opacity-100',
-                              )}
-                            >
-                              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-[160px] space-y-0.5 px-1 py-1.5">
-                            <DropdownMenuItem onClick={() => toggleFavorite(instance.instanceId)} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
-                              <StarIcon className="h-4 w-4" weight={favoriteIds.has(instance.instanceId) ? 'fill' : 'regular'} />
-                              {favoriteIds.has(instance.instanceId) ? t('agent.chat.conversation.unfavorite') : t('agent.chat.conversation.favorite')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => renameConversation(instance)} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
-                              <PencilSimpleIcon className="h-4 w-4" /> {t('agent.chat.conversation.rename')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => void removeConversation(instance, 'archive')} className="gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--muted)]">
-                              <ArchiveIcon className="h-4 w-4" /> {t('document.agent.archiveConversation')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => void removeConversation(instance, 'delete')} className="gap-2 rounded-md px-2 py-1.5 text-[var(--destructive)] hover:bg-[var(--muted)]">
-                              <TrashSimpleIcon className="h-4 w-4" /> {t('document.agent.deleteConversation')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-              {isLoadingMore && (
-                <div className="py-2 text-center text-xs text-[var(--muted-foreground)]" aria-live="polite">
-                  {t('memo.list.loadingLibrary')}
-                </div>
-              )}
+                        <>
+                          <DropdownMenu
+                            open={openMenuId === instance.instanceId}
+                            onOpenChange={(open) => setOpenMenuId(open ? instance.instanceId : null)}
+                            className={cn(
+                              'flex w-0 shrink-0 overflow-hidden opacity-0 transition-[width,opacity] duration-[37.5ms] group-focus-within:w-6 group-focus-within:opacity-100 group-hover:w-6 group-hover:opacity-100',
+                              openMenuId === instance.instanceId && 'w-6 opacity-100',
+                            )}
+                          >
+                            <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
+                              <button
+                                type="button"
+                                aria-label={t('agent.chat.conversation.more')}
+                                className={cn(
+                                  'rounded bg-[var(--muted)] p-1 text-[var(--muted-foreground)] transition-[opacity,color] hover:text-[var(--foreground)] focus-visible:opacity-100',
+                                )}
+                              >
+                                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-[160px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
+                              <DropdownMenuItem onClick={() => toggleFavorite(instance.instanceId)} className="group h-7 items-center gap-2 rounded-lg px-2 py-0 hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
+                                <StarIcon className="h-4 w-4" weight={favoriteIds.has(instance.instanceId) ? 'fill' : 'regular'} />
+                                {favoriteIds.has(instance.instanceId) ? t('agent.chat.conversation.unfavorite') : t('agent.chat.conversation.favorite')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => renameConversation(instance)} className="group h-7 items-center gap-2 rounded-lg px-2 py-0 hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
+                                <PencilSimpleIcon className="h-4 w-4" /> {t('agent.chat.conversation.rename')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void removeConversation(instance, 'archive')} className="group h-7 items-center gap-2 rounded-lg px-2 py-0 hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
+                                <ArchiveIcon className="h-4 w-4" /> {t('document.agent.archiveConversation')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void removeConversation(instance, 'delete')} className="group h-7 items-center gap-2 rounded-lg px-2 py-0 text-[var(--destructive)] hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]">
+                                <TrashSimpleIcon className="h-4 w-4" /> {t('document.agent.deleteConversation')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <button
+                            type="button"
+                            aria-label={favoriteIds.has(instance.instanceId) ? t('agent.chat.conversation.unfavorite') : t('agent.chat.conversation.favorite')}
+                            aria-pressed={favoriteIds.has(instance.instanceId)}
+                            title={favoriteIds.has(instance.instanceId) ? t('agent.chat.conversation.unfavorite') : t('agent.chat.conversation.favorite')}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleFavorite(instance.instanceId);
+                            }}
+                            className={cn(
+                              'shrink-0 overflow-hidden rounded p-1 text-[var(--muted-foreground)] transition-[width,opacity,color] duration-[37.5ms] hover:text-[var(--foreground)] focus-visible:opacity-100',
+                              favoriteIds.has(instance.instanceId)
+                                ? 'w-6 opacity-100'
+                                : 'w-0 opacity-0 group-focus-within:w-6 group-focus-within:opacity-100 group-hover:w-6 group-hover:opacity-100',
+                            )}
+                          >
+                            <StarIcon className="h-4 w-4" weight={favoriteIds.has(instance.instanceId) ? 'fill' : 'regular'} aria-hidden="true" />
+                          </button>
+                        </>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </OverlayScrollbar>
@@ -720,7 +799,7 @@ export function AgentConversationList() {
         />
       </div>
       <Dialog open={renameTarget !== null} onOpenChange={(open) => !open && !renameSaving && setRenameTarget(null)}>
-        <DialogContent>
+        <DialogContent className="rounded-xl border border-[var(--border-popup)] bg-[var(--card)] shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
           <DialogHeader>
             <DialogTitle>{t('agent.chat.conversation.rename')}</DialogTitle>
           </DialogHeader>

@@ -288,13 +288,17 @@ describe("continuous tool group rendering", () => {
     expect(group.classList.contains("agent-thread-card__tool-group")).toBe(true);
     expect(group.querySelector(".agent-thread-card__tool-group-header")?.textContent)
       .toContain("已完成 3 个步骤");
+    expect(group.querySelector(".agent-thread-card__tool-group-loading-icon"))
+      .toBeNull();
     expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
-      .toHaveLength(3);
+      .toHaveLength(0);
 
     group.querySelector<HTMLButtonElement>(
       ".agent-thread-card__tool-group-header",
     )?.click();
     expect(group.classList.contains("agent-thread-card__tool-group--expanded")).toBe(true);
+    expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+      .toHaveLength(3);
 
     const inputToggle = group.querySelector<HTMLButtonElement>(
       ".agent-thread-card__tool-group-tools .agent-thread-card__message-tool-toggle",
@@ -310,6 +314,12 @@ describe("continuous tool group rendering", () => {
     expect(list.children).toHaveLength(1);
     expect(list.querySelector(".agent-thread-card__tool-group-header")?.textContent)
       .toContain("已完成 1 个步骤");
+    expect(list.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
+      .toHaveLength(0);
+
+    list.querySelector<HTMLButtonElement>(
+      ".agent-thread-card__tool-group-header",
+    )?.click();
     expect(list.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
       .toHaveLength(1);
   });
@@ -327,10 +337,30 @@ describe("continuous tool group rendering", () => {
 
     expect(group.querySelector(".agent-thread-card__tool-group-header")?.textContent)
       .toContain("正在进行 2 个步骤");
+    expect(group.querySelector(".agent-thread-card__tool-group-loading-icon"))
+      .toBeNull();
+    expect(
+      group.querySelector(
+        ".agent-thread-card__tool-group-preview .agent-thread-card__tool-preview-loading-icon",
+      ),
+    ).not.toBeNull();
+    const preview = group.querySelector<HTMLElement>(
+      ".agent-thread-card__tool-group-preview",
+    );
+    expect(
+      Array.from(preview?.children ?? []).map((child) =>
+        child.getAttribute("class"),
+      ),
+    ).toEqual([
+      "agent-thread-card__message-tool-icon-wrap",
+      "agent-thread-card__tool-preview-loading-icon",
+      "agent-thread-card__message-tool-name",
+      "agent-thread-card__message-tool-content",
+    ]);
     expect(group.querySelector(".agent-thread-card__tool-group-preview"))
       .not.toBeNull();
     expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
-      .toHaveLength(2);
+      .toHaveLength(0);
 
     group.querySelector<HTMLButtonElement>(
       ".agent-thread-card__tool-group-header",

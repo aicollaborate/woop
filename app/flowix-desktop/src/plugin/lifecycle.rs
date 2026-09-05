@@ -37,9 +37,6 @@ impl PluginRunCoordinator {
         agent_type: String,
     ) -> bool {
         let mut runs = self.runs.lock().await;
-        if runs.values().any(|info| info.plugin_id == plugin_id) {
-            return false;
-        }
         runs.insert(
             run_id,
             PluginRunInfo {
@@ -103,7 +100,7 @@ mod tests {
     use super::PluginRunCoordinator;
 
     #[tokio::test]
-    async fn reserves_one_run_per_plugin_and_releases_it() {
+    async fn reserves_independent_runs_by_run_id() {
         let coordinator = PluginRunCoordinator::default();
         assert!(
             coordinator
@@ -111,16 +108,12 @@ mod tests {
                 .await
         );
         assert!(
-            !coordinator
-                .try_reserve("b".into(), "mindmap".into(), "flowix".into())
-                .await
-        );
-        assert!(coordinator.cancel("a").await.is_some());
-        assert!(
             coordinator
                 .try_reserve("b".into(), "mindmap".into(), "flowix".into())
                 .await
         );
+        assert!(coordinator.cancel("a").await.is_some());
+        assert!(coordinator.cancel("b").await.is_some());
     }
 
     #[tokio::test]

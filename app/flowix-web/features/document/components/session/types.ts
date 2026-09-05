@@ -49,6 +49,8 @@ export interface DocumentContainerProps {
   documentSessionMode?: 'main' | 'isolated';
   /** Render the document without edit or metadata mutation controls. */
   readOnly?: boolean;
+  /** Register the active editor flush used by tabbed hosts before switching. */
+  onFlushReady?: (flush: (() => Promise<boolean>) | null) => void;
 }
 
 export const initialDocumentContainerState: DocumentContainerState = {

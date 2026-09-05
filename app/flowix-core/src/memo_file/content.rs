@@ -163,6 +163,9 @@ impl MemoFile {
                     b.favorited
                         .cmp(&a.favorited)
                         .then_with(|| b.updated_at.cmp(&a.updated_at))
+                        // 同一毫秒创建/更新的 memo 也必须有确定顺序, 否则
+                        // 分页时会出现重复或漏项。
+                        .then_with(|| b.id.cmp(&a.id))
                 });
                 sorted
             }
@@ -172,6 +175,7 @@ impl MemoFile {
                     b.favorited
                         .cmp(&a.favorited)
                         .then_with(|| b.created_at.cmp(&a.created_at))
+                        .then_with(|| b.id.cmp(&a.id))
                 });
                 sorted
             }

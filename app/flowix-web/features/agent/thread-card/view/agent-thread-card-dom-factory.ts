@@ -45,7 +45,7 @@ export interface AgentThreadCardDomParts {
   composerActions: HTMLDivElement;
   composerRoleIcon: HTMLButtonElement;
   composerAddPopover: HTMLDivElement;
-  input: HTMLTextAreaElement;
+  input: HTMLDivElement;
   codexSettingsPopover: HTMLDivElement;
   composerRolePopover: HTMLDivElement;
   sendButtonMount: HTMLSpanElement;
@@ -216,7 +216,7 @@ export function createAgentThreadCardDom(
    * composer 自身的 pointerdown 委托 (点击空区域 → focus 输入框) 已由
    * createAgentComposerDom 在工厂内部挂上, 这里不重复添加。 详见
    * composer-dom-factory.ts 的 COMPOSER_FOCUS_INTERACTIVE_SELECTOR
-   * 注释 ── textarea/button/role=button/[data-no-composer-focus]
+   * 注释 ── contenteditable/button/role=button/[data-no-composer-focus]
    * 命中即放行, 其他位置抢焦。
    *
    * loadingIndicator 作为 body 的最后一个持久子节点 (body.append 在此之前完成) —

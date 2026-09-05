@@ -4,7 +4,7 @@ mod tests {
 
     use crate::agent_session::store::ThreadManager;
     use crate::agent_session::types::{
-        AgentConversationSource, ChatMessage, NewAgentExternalEvent,
+        AgentConversationCursor, AgentConversationSource, ChatMessage, NewAgentExternalEvent,
         UpsertAgentConversationInstance,
     };
     use crate::agent_types::AgentId;
@@ -59,6 +59,34 @@ mod tests {
                 .await
                 .expect("add_message");
         }
+    }
+
+    async fn seed_conversation(
+        manager: &Arc<ThreadManager>,
+        instance_id: &str,
+        agent_type: &str,
+        notebook_id: Option<&str>,
+        updated_at: i64,
+    ) {
+        manager
+            .upsert_agent_conversation_instance(UpsertAgentConversationInstance {
+                instance_id: instance_id.to_string(),
+                agent_type: agent_type.to_string(),
+                initial_title: instance_id.to_string(),
+                thread_id: Some(format!("thread-{instance_id}")),
+                runtime_config: None,
+                source: AgentConversationSource {
+                    kind: "dedicated".to_string(),
+                    document_path: None,
+                    memo_id: None,
+                    notebook_id: notebook_id.map(str::to_string),
+                },
+                role: None,
+                created_at: Some(updated_at),
+                updated_at: Some(updated_at),
+            })
+            .await
+            .expect("seed conversation");
     }
 
     #[tokio::test]
@@ -162,6 +190,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.messages.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn conversation_page_filters_and_walks_stable_cursor() {
+        let manager = ThreadManager::for_tests();
+        seed_conversation(&manager, "i-4", "codex", Some("nb-a"), 400).await;
+        seed_conversation(&manager, "i-3", "codex", Some("nb-a"), 300).await;
+        seed_conversation(&manager, "i-2", "claude", Some("nb-a"), 300).await;
+        seed_conversation(&manager, "i-1", "codex", Some("nb-b"), 200).await;
+        seed_conversation(&manager, "i-0", "codex", None, 100).await;
+
+        let first = manager
+            .list_agent_conversation_instances_page(
+                Some("nb-a".to_string()),
+                None,
+                None,
+                2,
+            )
+            .await
+            .expect("first conversation page");
+        assert_eq!(
+            first
+                .iter()
+                .map(|item| item.instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["i-4", "i-3"]
+        );
+
+        let second = manager
+            .list_agent_conversation_instances_page(
+                Some("nb-a".to_string()),
+                None,
+                Some(AgentConversationCursor {
+                    updated_at: first[1].updated_at,
+                    instance_id: first[1].instance_id.clone(),
+                }),
+                2,
+            )
+            .await
+            .expect("second conversation page");
+        assert_eq!(
+            second
+                .iter()
+                .map(|item| item.instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["i-2", "i-0"]
+        );
+
+        let filtered = manager
+            .list_agent_conversation_instances_page(
+                Some("nb-a".to_string()),
+                Some("codex".to_string()),
+                None,
+                10,
+            )
+            .await
+            .expect("filtered conversation page");
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|item| item.instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["i-4", "i-3", "i-0"]
+        );
     }
 
     #[tokio::test]

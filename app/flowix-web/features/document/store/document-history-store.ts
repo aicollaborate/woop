@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { PluginArtifactRendererId } from '@features/plugin/plugin-note';
 
 export type MemoHistoryEntry = {
   kind: 'memo';
@@ -23,10 +24,21 @@ export type AgentConversationHistoryEntry = {
   openedAt: number;
 };
 
+export type ArtifactHistoryEntry = {
+  kind: 'artifact';
+  pointerMemoId: string;
+  notebookId: string | null;
+  notebookPath: string | null;
+  pluginId: string | null;
+  renderer: PluginArtifactRendererId | null;
+  openedAt: number;
+};
+
 export type DocumentHistoryEntry =
   | MemoHistoryEntry
   | ExternalHistoryEntry
-  | AgentConversationHistoryEntry;
+  | AgentConversationHistoryEntry
+  | ArtifactHistoryEntry;
 
 interface DocumentHistoryStore {
   backStack: DocumentHistoryEntry[];
@@ -46,6 +58,7 @@ const MAX_HISTORY_ENTRIES = 30;
 function entryKey(entry: DocumentHistoryEntry): string {
   if (entry.kind === 'memo') return `memo:${entry.memoId}:${entry.path}`;
   if (entry.kind === 'agent-conversation') return `agent-conversation:${entry.instanceId}`;
+  if (entry.kind === 'artifact') return `artifact:${entry.pointerMemoId}`;
   return `external:${entry.path}`;
 }
 

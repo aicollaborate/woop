@@ -8,11 +8,28 @@ import { useDocumentStore } from '@features/document/store/document-store';
 import { useMemoStore } from '@features/memo/store/memo-store';
 import type { MemoItem } from '@/types/memo-item';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
-import { openExternalTarget, openMemoTarget } from '@features/workspace/use-cases/workspace-navigation';
+import {
+  openArtifactTarget,
+  openExternalTarget,
+  openMemoTarget,
+} from '@features/workspace/use-cases/workspace-navigation';
+import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
 
 export type DocumentHistoryDirection = 'back' | 'forward';
 
 function currentHistoryEntry(): DocumentHistoryEntry | null {
+  const workColumnTarget = useWorkColumnStore.getState().navigation.target;
+  if (workColumnTarget.kind === 'artifact') {
+    return {
+      kind: 'artifact',
+      pointerMemoId: workColumnTarget.pointerMemoId,
+      notebookId: workColumnTarget.notebookId,
+      notebookPath: workColumnTarget.notebookPath,
+      pluginId: workColumnTarget.pluginId,
+      renderer: workColumnTarget.renderer,
+      openedAt: Date.now(),
+    };
+  }
   const state = useDocumentStore.getState();
   const memo = state.activeMemoSession;
   if (memo) {
@@ -89,6 +106,7 @@ function historyEntryKey(entry: DocumentHistoryEntry | null): string | null {
   if (!entry) return null;
   if (entry.kind === 'memo') return `memo:${entry.memoId}:${canonicalPath(entry.path)}`;
   if (entry.kind === 'agent-conversation') return `agent-conversation:${entry.instanceId}`;
+  if (entry.kind === 'artifact') return `artifact:${entry.pointerMemoId}`;
   return `external:${canonicalPath(entry.path)}`;
 }
 
@@ -99,6 +117,23 @@ async function openHistoryEntry(entry: DocumentHistoryEntry): Promise<void> {
   }
   if (entry.kind === 'agent-conversation') {
     await selectAndOpenAgentConversation(entry.instanceId, { history: 'skip' });
+    return;
+  }
+  if (entry.kind === 'artifact') {
+    const notebook = entry.notebookId
+      ? useMemoStore.getState().notebooks.find((item) => item.id === entry.notebookId) ?? null
+      : null;
+    const memo = useMemoStore.getState().memos.find((item) => item.id === entry.pointerMemoId) ?? null;
+    await openArtifactTarget({
+      pointerMemoId: entry.pointerMemoId,
+      notebookId: entry.notebookId,
+      notebookPath: entry.notebookPath,
+      pluginId: entry.pluginId,
+      renderer: entry.renderer,
+      history: 'skip',
+      memo,
+      notebook,
+    });
     return;
   }
   await openExternalTarget(entry.path, {

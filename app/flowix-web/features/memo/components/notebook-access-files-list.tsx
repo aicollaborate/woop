@@ -10,7 +10,8 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@shared/ui/tooltip';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@shared/ui/context-menu';
-import { NotebookIcon, useMemoStore, type Notebook } from '@features/memo';
+import { NotebookIcon, type Notebook } from '@features/memo';
+import { openBrowserColumnFileBrowser } from '@features/workspace/use-cases/browser-column-navigation';
 
 /**
  * 选中笔记本的"可访问文件夹"展示 ── 渲染该 notebook 下 agent 的默认
@@ -65,6 +66,10 @@ interface ResolvedItem {
 // resolver so the visual badge follows the persisted workspace value.
 const comparablePath = (path: string): string =>
   path.trim().replace(/[\\/]+$/, '').toLowerCase();
+const ACCESS_MENU_CLASS =
+  'w-[160px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]';
+const ACCESS_MENU_ITEM_CLASS =
+  'h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]';
 
 export function NotebookAccessFilesList({
   notebook,
@@ -74,8 +79,6 @@ export function NotebookAccessFilesList({
   const config = useAgentAccessStore((s) => s.config);
   const addFolderFromPicker = useAgentAccessStore((s) => s.addFolderFromPicker);
   const setDefaultFiles = useAgentAccessStore((s) => s.setDefaultFiles);
-  const setActiveFileBrowserPath = useMemoStore((s) => s.setActiveFileBrowserPath);
-  const activeFileBrowserPath = useMemoStore((s) => s.activeFileBrowserPath);
 
   // 只展示该 notebook 自己的默认 folders, 不 fallback 全局兜底 ── 全局默认
   // 与本笔记本无关, 展示会造成混淆。 未在本笔记本的卡片里勾选过 (无
@@ -228,7 +231,7 @@ export function NotebookAccessFilesList({
         // 单击 = 在中间列打开该文件夹的文件树 (浏览), 主空间切换完全走右键
         // 菜单 ── 消除"单击切主空间"的隐藏语义。missing 行不可浏览。
         const canBrowse = !item.missing;
-        const isBrowsing = canBrowse && activeFileBrowserPath === item.path;
+        const isBrowsing = false;
         return (
           <ContextMenu key={item.path}>
             <ContextMenuTrigger asChild>
@@ -240,7 +243,7 @@ export function NotebookAccessFilesList({
                 aria-current={isBrowsing ? 'true' : undefined}
                 onClick={
                   canBrowse
-                    ? () => setActiveFileBrowserPath(item.path)
+                    ? () => { void openBrowserColumnFileBrowser(item.path); }
                     : undefined
                 }
                 onKeyDown={
@@ -248,7 +251,7 @@ export function NotebookAccessFilesList({
                     ? (event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          setActiveFileBrowserPath(item.path);
+                          void openBrowserColumnFileBrowser(item.path);
                         }
                       }
                     : undefined
@@ -300,13 +303,13 @@ export function NotebookAccessFilesList({
                 )}
               </div>
             </ContextMenuTrigger>
-            <ContextMenuContent className="w-[160px] space-y-1 px-1 py-1.5">
+            <ContextMenuContent className={ACCESS_MENU_CLASS}>
               {/* 设为主空间 ── 该行不是主空间 + 非 missing 时显示。
                   单 folder + workspace=null 也命中 (恢复主空间)。 */}
               {!isWorkspace && isWorkspaceable && (
                 <ContextMenuItem
                   onClick={() => handleSetWorkspace(item.path)}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                  className={ACCESS_MENU_ITEM_CLASS}
                 >
                   {t('agent.access.contextSetWorkspace')}
                 </ContextMenuItem>
@@ -316,7 +319,7 @@ export function NotebookAccessFilesList({
               {isWorkspace && isWorkspaceable && (
                 <ContextMenuItem
                   onClick={handleUnsetWorkspace}
-                  className="gap-2 rounded-md px-2 hover:bg-[var(--muted)]"
+                  className={ACCESS_MENU_ITEM_CLASS}
                 >
                   {t('agent.access.contextUnsetWorkspace')}
                 </ContextMenuItem>
@@ -325,7 +328,7 @@ export function NotebookAccessFilesList({
                   菜单项 look like 离散按钮而非分组列表)。 */}
               <ContextMenuItem
                 onClick={() => handleRemoveFolder(item.path)}
-                className="gap-2 rounded-md px-2 hover:bg-[var(--muted)] hover:text-[var(--destructive)] focus:text-[var(--destructive)]"
+                className={cn(ACCESS_MENU_ITEM_CLASS, 'text-[var(--destructive)]')}
               >
                 {t('agent.access.contextDelete')}
               </ContextMenuItem>

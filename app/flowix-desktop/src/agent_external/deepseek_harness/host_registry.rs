@@ -26,35 +26,82 @@ pub(crate) struct ProcessDshClientFactory;
 #[async_trait::async_trait]
 impl DshClientFactory for ProcessDshClientFactory {
     async fn spawn(&self, spec: &HostLaunchSpec) -> Result<Arc<dyn DshClient>, String> {
-            let (command, args) = app_server_command(&spec.dsh_home)?;
-            // Match the legacy host's strict child environment boundary. Do
-            // not leak arbitrary Desktop variables (especially credentials)
-            // into the App Server process.
-            let allowed = [
-                "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC",
-                "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "HOME", "USERPROFILE",
-                "NODE_USE_ENV_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-                "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-            ];
-            let mut env = allowed.iter().filter_map(|key| std::env::var(key).ok().map(|value| ((*key).to_string(), value))).collect::<std::collections::HashMap<_, _>>();
-            env.insert("FLOWIX_DSH_APPSERVER_STDIO".into(), "1".into());
-            env.insert("DSH_HOME".into(), spec.dsh_home.to_string_lossy().into_owned());
-            env.insert("DSH_PROFILE_DIR".into(), spec.dsh_home.join("profiles").join("flowix").to_string_lossy().into_owned());
-            env.insert("DSH_SETTINGS_PATH".into(), spec.settings_path.to_string_lossy().into_owned());
-            env.insert("DSH_CREDENTIALS_PATH".into(), spec.credentials_path.to_string_lossy().into_owned());
-            env.insert("FLOWIX_DSH_PLUGIN_SETTINGS_PATH".into(), spec.plugin_settings_path.to_string_lossy().into_owned());
-            let client = AppServerClient::spawn(&command, &args, &env).await?;
-            let initialize = protocol::app_initialize_request(
-                client.next_request_id(),
-                env!("CARGO_PKG_VERSION"),
-            );
-            let initialized = client.request(initialize).await?;
-            let version = initialized.get("protocolVersion").and_then(serde_json::Value::as_u64);
-            if version != Some(super::protocol::APP_SERVER_PROTOCOL_VERSION) {
-                return Err(format!("dsh-appserver protocol version mismatch (server={version:?}, client={})", super::protocol::APP_SERVER_PROTOCOL_VERSION));
-            }
-            let client: Arc<dyn DshClient> = client;
-            Ok(client)
+        let (command, args) = app_server_command(&spec.dsh_home)?;
+        // Match the legacy host's strict child environment boundary. Do
+        // not leak arbitrary Desktop variables (especially credentials)
+        // into the App Server process.
+        let allowed = [
+            "PATH",
+            "Path",
+            "PATHEXT",
+            "SystemRoot",
+            "WINDIR",
+            "COMSPEC",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "LANG",
+            "LC_ALL",
+            "HOME",
+            "USERPROFILE",
+            "NODE_USE_ENV_PROXY",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+        ];
+        let mut env = allowed
+            .iter()
+            .filter_map(|key| {
+                std::env::var(key)
+                    .ok()
+                    .map(|value| ((*key).to_string(), value))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        env.insert("FLOWIX_DSH_APPSERVER_STDIO".into(), "1".into());
+        env.insert(
+            "DSH_HOME".into(),
+            spec.dsh_home.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "DSH_PROFILE_DIR".into(),
+            spec.dsh_home
+                .join("profiles")
+                .join("flowix")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        env.insert(
+            "DSH_SETTINGS_PATH".into(),
+            spec.settings_path.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "DSH_CREDENTIALS_PATH".into(),
+            spec.credentials_path.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "FLOWIX_DSH_PLUGIN_SETTINGS_PATH".into(),
+            spec.plugin_settings_path.to_string_lossy().into_owned(),
+        );
+        let client = AppServerClient::spawn(&command, &args, &env).await?;
+        let initialize =
+            protocol::app_initialize_request(client.next_request_id(), env!("CARGO_PKG_VERSION"));
+        let initialized = client.request(initialize).await?;
+        let version = initialized
+            .get("protocolVersion")
+            .and_then(serde_json::Value::as_u64);
+        if version != Some(super::protocol::APP_SERVER_PROTOCOL_VERSION) {
+            return Err(format!(
+                "dsh-appserver protocol version mismatch (server={version:?}, client={})",
+                super::protocol::APP_SERVER_PROTOCOL_VERSION
+            ));
+        }
+        let client: Arc<dyn DshClient> = client;
+        Ok(client)
     }
 }
 
@@ -62,8 +109,10 @@ fn app_server_command(dsh_home: &std::path::Path) -> Result<(String, Vec<String>
     if let Ok(command) = std::env::var("FLOWIX_DSH_APPSERVER_COMMAND") {
         let args = std::env::var("FLOWIX_DSH_APPSERVER_ARGS")
             .ok()
-            .map(|raw| serde_json::from_str::<Vec<String>>(&raw)
-                .map_err(|error| format!("FLOWIX_DSH_APPSERVER_ARGS is invalid: {error}")))
+            .map(|raw| {
+                serde_json::from_str::<Vec<String>>(&raw)
+                    .map_err(|error| format!("FLOWIX_DSH_APPSERVER_ARGS is invalid: {error}"))
+            })
             .transpose()?
             .unwrap_or_default();
         return Ok((command, args));
@@ -75,19 +124,27 @@ fn app_server_command(dsh_home: &std::path::Path) -> Result<(String, Vec<String>
     // install directory leaves that child on an old profile and lets the
     // legacy SDK JSON-RPC server own model/config/read.
     sync_flowix_profile(&launch.root, dsh_home)?;
-    let cli = launch.cli_entrypoint
+    let cli = launch
+        .cli_entrypoint
         .ok_or("managed DSH bundle has no CLI entrypoint for App Server".to_string())?;
     // The dsh CLI boots the named profile; dsh-appserver's profile config owns
     // the stdio transport. `app-server` is not an upstream CLI subcommand and
     // would be forwarded into the profile application as an unknown runtime
     // argument.
-    let args = vec![cli.to_string_lossy().into_owned(), "--profile".into(), "flowix".into()];
+    let args = vec![
+        cli.to_string_lossy().into_owned(),
+        "--profile".into(),
+        "flowix".into(),
+    ];
     // `executable` is the private Node binary for managed JS bundles. Native
     // launchers can still provide an explicit command through the environment.
     Ok((launch.executable.to_string_lossy().into_owned(), args))
 }
 
-fn sync_flowix_profile(bundle_root: &std::path::Path, dsh_home: &std::path::Path) -> Result<(), String> {
+fn sync_flowix_profile(
+    bundle_root: &std::path::Path,
+    dsh_home: &std::path::Path,
+) -> Result<(), String> {
     let source = bundle_root.join("profile").join("flowix");
     let target = dsh_home.join("profiles").join("flowix");
     // Remove obsolete profile plugins instead of leaving them discoverable in
@@ -97,8 +154,9 @@ fn sync_flowix_profile(bundle_root: &std::path::Path, dsh_home: &std::path::Path
         target.join("node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server"),
     ] {
         if obsolete.exists() {
-            std::fs::remove_dir_all(&obsolete)
-                .map_err(|error| format!("remove obsolete DSH plugin {}: {error}", obsolete.display()))?;
+            std::fs::remove_dir_all(&obsolete).map_err(|error| {
+                format!("remove obsolete DSH plugin {}: {error}", obsolete.display())
+            })?;
         }
     }
     for relative in [
@@ -109,7 +167,9 @@ fn sync_flowix_profile(bundle_root: &std::path::Path, dsh_home: &std::path::Path
     ] {
         let from = source.join(relative);
         let to = target.join(relative);
-        if !from.exists() { return Err(format!("managed DSH profile is missing {}", from.display())); }
+        if !from.exists() {
+            return Err(format!("managed DSH profile is missing {}", from.display()));
+        }
         copy_profile_tree(&from, &to)?;
     }
     Ok(())
@@ -117,14 +177,23 @@ fn sync_flowix_profile(bundle_root: &std::path::Path, dsh_home: &std::path::Path
 
 fn copy_profile_tree(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
     if source.is_dir() {
-        std::fs::create_dir_all(target).map_err(|error| format!("create DSH profile directory {}: {error}", target.display()))?;
-        for entry in std::fs::read_dir(source).map_err(|error| format!("read DSH profile directory {}: {error}", source.display()))? {
+        std::fs::create_dir_all(target).map_err(|error| {
+            format!("create DSH profile directory {}: {error}", target.display())
+        })?;
+        for entry in std::fs::read_dir(source)
+            .map_err(|error| format!("read DSH profile directory {}: {error}", source.display()))?
+        {
             let entry = entry.map_err(|error| format!("read DSH profile entry: {error}"))?;
             copy_profile_tree(&entry.path(), &target.join(entry.file_name()))?;
         }
     } else {
-        if let Some(parent) = target.parent() { std::fs::create_dir_all(parent).map_err(|error| format!("create DSH profile parent {}: {error}", parent.display()))?; }
-        std::fs::copy(source, target).map_err(|error| format!("sync DSH profile {}: {error}", target.display()))?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!("create DSH profile parent {}: {error}", parent.display())
+            })?;
+        }
+        std::fs::copy(source, target)
+            .map_err(|error| format!("sync DSH profile {}: {error}", target.display()))?;
     }
     Ok(())
 }
@@ -392,10 +461,7 @@ mod tests {
         let registry = Arc::new(HostRegistry::new(factory.clone()));
         let temp = tempfile::tempdir().unwrap();
         let spec = spec(temp.path().to_path_buf());
-        let (a, b) = tokio::join!(
-            registry.ensure(&spec, None),
-            registry.ensure(&spec, None)
-        );
+        let (a, b) = tokio::join!(registry.ensure(&spec, None), registry.ensure(&spec, None));
         assert!(Arc::ptr_eq(&a.unwrap().client(), &b.unwrap().client()));
         assert_eq!(factory.spawns.load(Ordering::SeqCst), 1);
     }

@@ -1,5 +1,4 @@
 import { useAgentSessionStore } from '@features/agent/store/agent-session-store';
-import { useMemoStore } from '@features/memo/store/memo-store';
 import { useWorkspaceRestoreStore } from '@features/workspace/store/workspace-restore-store';
 import { closeAgentTarget, openAgentTarget } from './workspace-navigation';
 
@@ -37,9 +36,10 @@ export async function restoreAgentConversationWorkspace(): Promise<void> {
     return;
   }
 
-  // Selection belongs to the conversations list. Only reopen the detail when
-  // that list is still the restored middle-column destination.
-  if (restore.detailOpen && useMemoStore.getState().activeFilter === 'agents') {
+  // Selection belongs to the conversations list, while the detail is a
+  // separate work-column target. Reopen it independently of the current
+  // middle-column filter so switching lists does not lose the detail.
+  if (restore.detailOpen) {
     await selectAndOpenAgentConversation(instanceId, { history: 'skip' });
   }
 }

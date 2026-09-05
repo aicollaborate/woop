@@ -9,7 +9,7 @@ use crate::lock_utils::read_lock;
 use crate::memo_events::{MemoChangeSource, MemoDerivedChanged};
 use crate::watcher::path::normalize_for_compare;
 use flowix_core::memo_file::{Memo, MemoFile, MemoTodoEntry};
-use flowix_core::MemoService;
+use flowix_core::{FlowixError, MemoPage, MemoService};
 
 use crate::app::search_index::rebuild_index_in_background;
 use crate::app::state::AppState;
@@ -26,18 +26,50 @@ pub fn get_memos(
     filter: Option<String>,
     sort: Option<String>,
     tag_id: Option<String>,
+    color: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
     state: State<AppState>,
     _app: AppHandle,
-) -> GetMemosResponse {
+) -> Result<GetMemosResponse, String> {
     // Read the requested notebook directly. Do not switch current notebook here;
     // switching would rebind watcher/reconcile/search and slow down list loading.
-    let memos = MemoService::new(&read_lock(&state.memo_file, "memo_file")).list_memos_filtered(
-        notebook_id.as_deref(),
-        filter.as_deref().unwrap_or("all"),
-        sort.as_deref().unwrap_or("createdAt"),
-        tag_id.as_deref(),
-    );
-    GetMemosResponse { memos }
+    let memo_file = read_lock(&state.memo_file, "memo_file");
+    let mut service = MemoService::new(&memo_file);
+    let filter = filter.as_deref().unwrap_or("all");
+    let sort = sort.as_deref().unwrap_or("createdAt");
+    // Preserve the old no-pagination behavior for non-migrated transports.
+    // The desktop frontend always supplies `limit`, so it uses the bounded
+    // page path below without changing the legacy command's result shape.
+    let page = if cursor.is_none() && limit.is_none() && color.is_none() {
+        MemoPage {
+            memos: service.list_memos_filtered(
+                notebook_id.as_deref(),
+                filter,
+                sort,
+                tag_id.as_deref(),
+            ),
+            next_cursor: None,
+            has_more: false,
+        }
+    } else {
+        service
+            .list_memos_filtered_page(
+                notebook_id.as_deref(),
+                filter,
+                sort,
+                tag_id.as_deref(),
+                color.as_deref(),
+                cursor.as_deref(),
+                limit,
+            )
+            .map_err(|error: FlowixError| error.to_string())?
+    };
+    Ok(GetMemosResponse {
+        memos: page.memos,
+        next_cursor: page.next_cursor,
+        has_more: page.has_more,
+    })
 }
 
 #[tauri::command]
@@ -223,7 +255,7 @@ pub fn read_memo(id: String, state: State<AppState>) -> Option<Memo> {
 
 /// Resolve the authoritative memo metadata, path and body in one IPC.
 ///
-/// The fourth-column host uses this at activation time so inactive tabs remain
+/// The browser-column host uses this at activation time so inactive tabs remain
 /// cheap and a document switch does not need separate `read_memo` +
 /// `read_document` calls.
 #[tauri::command]

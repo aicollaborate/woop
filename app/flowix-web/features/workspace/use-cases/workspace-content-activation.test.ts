@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useFourthColumnStore } from '@features/workspace/store/fourth-column-store';
-import { useWorkspaceStore } from '@features/workspace/store/workspace-store';
+import { useBrowserColumnStore } from '@features/workspace/store/browser-column-store';
+import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
 import { activateExistingWorkspaceContent } from './workspace-content-activation';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
 function resetWorkspace() {
-  useWorkspaceStore.setState({
+  useWorkColumnStore.setState({
     navigation: {
       phase: 'idle',
       requestId: 0,
@@ -19,8 +19,8 @@ function resetWorkspace() {
   });
 }
 
-function commitThirdTarget(target: Parameters<ReturnType<typeof useWorkspaceStore.getState>['beginNavigation']>[0]) {
-  const store = useWorkspaceStore.getState();
+function commitWorkColumnTarget(target: Parameters<ReturnType<typeof useWorkColumnStore.getState>['beginNavigation']>[0]) {
+  const store = useWorkColumnStore.getState();
   const requestId = store.beginNavigation(target, null);
   store.commitNavigation(requestId, target);
 }
@@ -28,11 +28,11 @@ function commitThirdTarget(target: Parameters<ReturnType<typeof useWorkspaceStor
 describe('workspace content activation', () => {
   beforeEach(() => {
     resetWorkspace();
-    useFourthColumnStore.getState().reset();
+    useBrowserColumnStore.getState().reset();
   });
 
   it('focuses the third column when the memo is already its active target', () => {
-    commitThirdTarget({
+    commitWorkColumnTarget({
       kind: 'memo',
       memoId: 'memo-a',
       path: '/notes/a.md',
@@ -40,7 +40,7 @@ describe('workspace content activation', () => {
       notebookPath: '/notes',
       transitionId: 1,
     });
-    useWorkspaceFocusStore.getState().focusHost('fourth-column');
+    useWorkspaceFocusStore.getState().focusHost('browser-column');
 
     expect(activateExistingWorkspaceContent({ kind: 'memo', memoId: 'memo-a' })).toEqual({
       host: 'main-third',
@@ -49,9 +49,9 @@ describe('workspace content activation', () => {
     expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
   });
 
-  it('reveals the fourth column and activates its matching tab and host', () => {
-    const fourth = useFourthColumnStore.getState();
-    fourth.openTab({
+  it('reveals the browser column and activates its matching tab and host', () => {
+    const browserColumn = useBrowserColumnStore.getState();
+    browserColumn.openTab({
       id: 'memo:b',
       title: 'B',
       icon: null,
@@ -63,7 +63,7 @@ describe('workspace content activation', () => {
         filePath: '/notes/b.md',
       },
     });
-    fourth.openTab({
+    browserColumn.openTab({
       id: 'memo:a',
       title: 'A',
       icon: null,
@@ -75,27 +75,27 @@ describe('workspace content activation', () => {
         filePath: '/notes/a.md',
       },
     });
-    fourth.commitTab('memo:b');
-    fourth.setVisible(false);
+    browserColumn.commitTab('memo:b');
+    browserColumn.setVisible(false);
 
     expect(activateExistingWorkspaceContent({ kind: 'memo', memoId: 'a' })).toEqual({
-      host: 'fourth-column',
+      host: 'browser-column',
       tabId: 'memo:a',
     });
-    expect(useFourthColumnStore.getState()).toMatchObject({
+    expect(useBrowserColumnStore.getState()).toMatchObject({
       visible: true,
       activeTabId: 'memo:a',
     });
-    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('fourth-column');
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
   });
 
   it('treats Markdown and text views of the same canonical path as one document', () => {
-    useFourthColumnStore.getState().openTab({
-      id: 'external_text:/notes/a.md',
+    useBrowserColumnStore.getState().openTab({
+      id: 'file:/notes/a.md',
       title: 'A',
       icon: null,
       target: {
-        kind: 'external_text',
+        kind: 'file',
         filePath: '/notes\\a.md',
         scopePath: '/notes',
       },
@@ -105,14 +105,14 @@ describe('workspace content activation', () => {
       kind: 'external',
       path: '/notes/a.md',
     })).toEqual({
-      host: 'fourth-column',
-      tabId: 'external_text:/notes/a.md',
+      host: 'browser-column',
+      tabId: 'file:/notes/a.md',
     });
   });
 
   it('prefers the third column when legacy state contains the target twice', () => {
-    commitThirdTarget({ kind: 'agent-conversation', instanceId: 'agent-a' });
-    useFourthColumnStore.getState().openTab({
+    commitWorkColumnTarget({ kind: 'agent-conversation', instanceId: 'agent-a' });
+    useBrowserColumnStore.getState().openTab({
       id: 'agent:agent-a',
       title: 'Agent A',
       icon: null,
@@ -126,8 +126,8 @@ describe('workspace content activation', () => {
     expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
   });
 
-  it('treats a pending third-column open as existing content', () => {
-    useWorkspaceStore.getState().beginNavigation({
+  it('treats a pending work-column open as existing content', () => {
+    useWorkColumnStore.getState().beginNavigation({
       kind: 'memo',
       memoId: 'memo-pending',
       path: '/notes/pending.md',
@@ -140,7 +140,7 @@ describe('workspace content activation', () => {
       kind: 'memo',
       memoId: 'memo-pending',
     })).toEqual({ host: 'main-third', state: 'pending' });
-    expect(useFourthColumnStore.getState().tabs).toEqual([]);
+    expect(useBrowserColumnStore.getState().tabs).toEqual([]);
     expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
   });
 });

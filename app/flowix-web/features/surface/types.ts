@@ -6,9 +6,9 @@ import type { PluginWorkbench } from '@features/plugin/plugin-workbench';
 import type { PluginArtifactRendererId } from '@features/plugin/plugin-note';
 import type { MemoItem } from '@/types/memo-item';
 import type { PluginDescriptor } from '@platform/tauri/client';
-import type { WorkspaceNavigationState } from '@features/workspace/store/workspace-target';
+import type { WorkColumnNavigationState } from '@features/workspace/store/work-column-target';
 
-export type ThirdColumnSurfaceCapability =
+export type WorkColumnSurfaceCapability =
   | 'edit'
   | 'search'
   | 'properties'
@@ -23,7 +23,7 @@ export type ThirdColumnSurfaceCapability =
   | 'run-agent'
   | 'stream-conversation';
 
-export type ThirdColumnSurfaceChrome = 'document' | 'agent';
+export type WorkColumnSurfaceChrome = 'document' | 'agent';
 
 interface SurfaceBase {
   instanceKey: string;
@@ -83,7 +83,7 @@ export interface EmptySurface extends SurfaceBase {
   message: string;
 }
 
-export type ThirdColumnSurface =
+export type WorkColumnSurface =
   | MarkdownSurface
   | MindmapSurface
   | HtmlSurface
@@ -95,17 +95,13 @@ export type ThirdColumnSurface =
   | WebSurface
   | EmptySurface;
 
-export type ThirdColumnSurfaceKind = ThirdColumnSurface['kind'];
+export type WorkColumnSurfaceKind = WorkColumnSurface['kind'];
 
 export interface DocumentSurfaceContext {
   /** Identity captured from the document session, independent of props. */
   identity: DocumentSurfaceIdentity;
   memo: MemoItem | null;
   markdown: MarkdownSurface;
-  artifact?: {
-    memoId: string;
-    transitionId?: number;
-  };
 }
 
 export type DocumentSurfaceIdentity =
@@ -131,8 +127,8 @@ export interface PluginWorkbenchContext {
   currentNoteContent: string;
 }
 
-export interface ResolveWorkspaceSurfaceInput {
-  navigation: WorkspaceNavigationState;
+export interface ResolveWorkColumnSurfaceInput {
+  navigation: WorkColumnNavigationState;
   document?: DocumentSurfaceContext | null;
   pluginWorkbench?: PluginWorkbenchContext | null;
   emptyMessage: string;
