@@ -34,6 +34,38 @@ describe('dsh-appserver protocol', () => {
     expect((page.result as { page: { data: unknown[] } }).page.data).toHaveLength(1)
   })
 
+  it('supports provider-backed thread archive', async () => {
+    const server = new AppServer(null, { adapter: new InMemoryHarnessAdapter() })
+    await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize' })
+    const started = await server.dispatch({ jsonrpc: '2.0', id: 2, method: 'thread/start' })
+    const threadId = (started.result as { thread: { id: string } }).thread.id
+    const archived = await server.dispatch({ jsonrpc: '2.0', id: 3, method: 'thread/archive', params: { threadId } })
+    expect(archived.error).toBeUndefined()
+    expect(archived.result).toEqual({ archived: true })
+  })
+
+  it('forwards turn and command attachments without turning them into paths', async () => {
+    const calls: unknown[] = []
+    const adapter = {
+      subscribe: () => () => {},
+      startThread: async (threadId: string) => ({ id: threadId, status: 'idle', turns: [] }),
+      startTurn: async (_threadId: string, input: unknown) => { calls.push({ kind: 'turn', input }); return { id: 'turn-1', threadId: 'thread-1', status: 'inProgress', items: [] } },
+      executeCommand: async (_threadId: string, command: string, attachments: unknown[]) => { calls.push({ kind: 'command', command, attachments }); return { ok: true } },
+    }
+    const server = new AppServer(null, { adapter })
+    await server.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize' })
+    await server.dispatch({ jsonrpc: '2.0', id: 2, method: 'turn/start', params: {
+      threadId: 'thread-1', input: { text: 'look', attachments: [{ type: 'image', mediaType: 'image/png', data: 'AQ==' }] },
+    } })
+    await server.dispatch({ jsonrpc: '2.0', id: 3, method: 'thread/command', params: {
+      threadId: 'thread-1', command: '/goal look', attachments: [{ type: 'image', mediaType: 'image/png', data: 'AQ==' }],
+    } })
+    expect(calls).toEqual([
+      { kind: 'turn', input: { text: 'look', attachments: [{ type: 'image', mediaType: 'image/png', data: 'AQ==' }] } },
+      { kind: 'command', command: '/goal look', attachments: [{ type: 'image', mediaType: 'image/png', data: 'AQ==' }] },
+    ])
+  })
+
   it('forwards App Server launch context when creating a thread', async () => {
     let launch: Record<string, unknown> | undefined
     const adapter = {

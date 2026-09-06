@@ -39,6 +39,29 @@ describe("agent event mapper", () => {
     });
   });
 
+  it("preserves the provider-owned goal message type", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "user_message",
+        thread_id: "dsh-thread",
+        id: "goal-round-1",
+        text: "目标执行中：在吗（第 1/256 轮）",
+        timestamp: 456,
+        message_type: "goal-round",
+        agent_type: "deepseek-harness",
+        run_id: "run-1",
+      },
+      state(),
+      () => 123,
+    );
+
+    expect(event).toMatchObject({
+      kind: "user_message",
+      messageType: "goal-round",
+      text: "目标执行中：在吗（第 1/256 轮）",
+    });
+  });
+
   it("maps Flowix text chunks to streaming deltas", () => {
     const event = mapAgentChunkToEvent(
       {
@@ -158,6 +181,7 @@ describe("agent event mapper", () => {
         kind: "stream_end",
         thread_id: "codex-local-inst-1",
         reason: null,
+        duration_ms: 69078,
         agent_type: "codex",
         run_id: "run-1",
       },
@@ -173,6 +197,7 @@ describe("agent event mapper", () => {
       kind: "stream_end",
       threadId: "codex-local-inst-1",
       runId: "run-1",
+      durationMs: 69078,
     });
   });
 
@@ -315,5 +340,32 @@ describe("agent event mapper", () => {
       input: { query: "OpenAI latest model" },
     });
     expect(event).not.toHaveProperty("display");
+  });
+
+  it("maps DSH command operation lifecycle chunks", () => {
+    const event = mapAgentChunkToEvent(
+      {
+        kind: "dsh_command",
+        thread_id: "dsh-thread",
+        id: "command-1",
+        name: "compact",
+        args: "",
+        status: "pending",
+        timestamp: 456,
+        agent_type: "deepseek-harness",
+        run_id: "dsh-command-run-1",
+      },
+      state(),
+      () => 123,
+    );
+
+    expect(event).toMatchObject({
+      kind: "dsh_command",
+      id: "command-1",
+      name: "compact",
+      status: "pending",
+      threadId: "dsh-thread",
+      runId: "dsh-command-run-1",
+    });
   });
 });

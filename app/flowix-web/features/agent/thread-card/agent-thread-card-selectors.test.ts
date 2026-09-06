@@ -167,6 +167,29 @@ describe('agent thread card selectors', () => {
     expect(runtime.sendButtonWantsStop).toBe(false);
   });
 
+  it('treats a pending DSH command as thread work without inventing a model run', () => {
+    const runtime = selectAgentThreadCardRuntimeView({
+      state: threadState({
+        dshCommand: {
+          id: 'command-1',
+          name: 'compact',
+          args: '',
+          status: 'pending',
+          startedAt: 40,
+        },
+      }),
+      isCreating: false,
+      isLoading: false,
+      typeKey: 'deepseek-harness',
+    });
+
+    expect(runtime.status).toBe('running');
+    expect(runtime.isRunning).toBe(true);
+    expect(runtime.isBusy).toBe(true);
+    expect(runtime.showLoadingIndicator).toBe(true);
+    expect(runtime.sendButtonWantsStop).toBe(false);
+  });
+
   it('hides the loading indicator when the run truly settled', () => {
     const runtime = selectAgentThreadCardRuntimeView({
       state: threadState({
@@ -224,6 +247,11 @@ describe('agent thread card selectors', () => {
       wantStop: false,
       inputValue: 'hello',
       hasPendingAttachments: true,
+    })).toEqual({ wantStop: false, disabled: true });
+    expect(selectAgentThreadCardSendButtonState({
+      wantStop: false,
+      inputValue: 'hello',
+      isRunning: true,
     })).toEqual({ wantStop: false, disabled: true });
   });
 });

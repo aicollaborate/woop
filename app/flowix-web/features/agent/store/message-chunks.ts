@@ -2,11 +2,13 @@ import type {
   ApplyResult,
   LiveMessageState,
 } from "@features/agent/store/chunk-result";
-import type { AgentErrorDetails } from "@/types/agent";
+import type { ChatMessage } from "@/types";
+import type { AgentErrorDetails, AgentMessageType } from "@/types/agent";
 import { insertAgentMessageBySourceOrder } from "@features/agent/store/message-order";
 
 export interface MessageChunkMetadata {
   id?: string;
+  messageType?: AgentMessageType;
   notice?: "deepseek-harness-reconnect-failed";
   phase?: "started" | "updated" | "completed";
   contentMode?: "delta" | "snapshot";
@@ -25,6 +27,16 @@ export interface MessageChunkMetadata {
 
 let generatedAssistantMessageSequence = 0;
 
+function isGoalControlMessageType(
+  value: AgentMessageType | undefined,
+): value is Extract<AgentMessageType, `goal-${string}`> {
+  return (
+    value === "goal-round" ||
+    value === "goal-complete" ||
+    value === "goal-blocked"
+  );
+}
+
 function generatedAssistantMessageId(): string {
   generatedAssistantMessageSequence += 1;
   return `assistant-${Date.now()}-${generatedAssistantMessageSequence}`;
@@ -35,6 +47,35 @@ export function applyUserMessageChunk(
   text: string,
   metadata: MessageChunkMetadata & { id: string },
 ): ApplyResult {
+  // DSH goal rounds and terminal wrap-up prompts are provider-owned control
+  // messages. Keep them in the timeline as compact system rows, never as a
+  // human turn and never allow them to adopt/replace the optimistic user row.
+  if (isGoalControlMessageType(metadata.messageType)) {
+    const existingIndex = st.messages.findIndex(
+      (message) => message.id === metadata.id,
+    );
+    const message: ChatMessage = {
+      id: metadata.id,
+      role: "system",
+      content: text,
+      messageType: metadata.messageType,
+      timestamp: messageTimestamp(metadata.sourceTimestamp),
+      sourceTimestamp: metadata.sourceTimestamp,
+      sourceSequence: metadata.sourceSequence,
+      sourceSubsequence: metadata.sourceSubsequence,
+      codexTurnId: metadata.codexTurnId,
+      isCompleted: true,
+    };
+    const messages = [...st.messages];
+    if (existingIndex >= 0) messages[existingIndex] = message;
+    else messages.push(message);
+    return {
+      messages,
+      pendingAssistantId: null,
+      pendingReasoningId: null,
+    };
+  }
+
   // Codex relays the provider userMessage item id (with the owning turn id)
   // as soon as the turn starts. Adopt it in place: rewrite the optimistic
   // run-scoped row's id instead of appending a second user row. Position,
@@ -57,6 +98,9 @@ export function applyUserMessageChunk(
       messages[optimisticIndex] = {
         ...optimistic,
         id: metadata.id,
+        // The provider item may contain DSH-injected system-reminder/runtime
+        // context. The optimistic row is the product-owned source of the
+        // user-visible text; keep it when adopting the provider identity.
         codexTurnId: metadata.codexTurnId,
       };
       return {
@@ -87,6 +131,8 @@ export function applyUserMessageChunk(
       messages[index] = {
         ...optimistic,
         id: metadata.id,
+        // See the provider-id adoption path above: runtime context belongs to
+        // the model prompt, never to the rendered user message.
         codexTurnId: metadata.codexTurnId,
       };
       return {

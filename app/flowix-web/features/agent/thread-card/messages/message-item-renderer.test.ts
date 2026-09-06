@@ -153,6 +153,77 @@ describe("renderAgentThreadCardBudgetedMarkdown incremental DOM injection", () =
   });
 });
 
+describe("agent user and assistant Markdown rendering", () => {
+  function renderMessage(role: "user" | "assistant"): HTMLElement {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: `${role}-code-block`,
+        role,
+        content: "说明\n\n```ts\nconst answer = 42;\n```",
+        timestamp: new Date().toISOString(),
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+    if (!result) throw new Error(`Expected ${role} message to render`);
+    return result.element;
+  }
+
+  it("renders a user fenced code block with the same Markdown path as assistant", () => {
+    const userPre = renderMessage("user").querySelector("pre");
+    const assistantPre = renderMessage("assistant").querySelector("pre");
+
+    expect(userPre).not.toBeNull();
+    expect(assistantPre).not.toBeNull();
+    expect(userPre?.outerHTML).toBe(assistantPre?.outerHTML);
+    expect(userPre?.classList.contains("agent-thread-card__message-code-block")).toBe(
+      true,
+    );
+  });
+
+  it("keeps message code blocks out of the parent editor pre rule", () => {
+    const host = document.createElement("div");
+    host.className = "markdown-editor";
+    const editor = document.createElement("div");
+    editor.className = "tiptap";
+    const message = renderMessage("user");
+    const documentPre = document.createElement("pre");
+    editor.append(message, documentPre);
+    host.append(editor);
+    document.body.append(host);
+
+    const editorPreSelector =
+      ".markdown-editor .tiptap:not(.agent-thread-card__composer-editor) " +
+      "pre:where(:not(.agent-thread-card__message, .agent-thread-card__message *)):not(.agent-thread-card__message-code-block)";
+
+    expect(message.querySelector("pre")?.matches(editorPreSelector)).toBe(false);
+    expect(documentPre.matches(editorPreSelector)).toBe(true);
+  });
+
+  it("keeps a first Agent card out of the editor first-block spacing rule", () => {
+    const host = document.createElement("div");
+    host.className = "markdown-editor";
+    const editor = document.createElement("div");
+    editor.className = "ProseMirror";
+    const card = document.createElement("section");
+    card.className = "agent-thread-card";
+    const paragraph = document.createElement("p");
+    editor.append(card, paragraph);
+    host.append(editor);
+    document.body.append(host);
+
+    const firstBlockSelector =
+      ".markdown-editor .ProseMirror:not(.agent-thread-card__composer-editor) " +
+      "> *:not(.editor-datetime-widget, .agent-thread-card):first-of-type";
+
+    expect(card.matches(firstBlockSelector)).toBe(false);
+    expect(paragraph.matches(firstBlockSelector)).toBe(true);
+  });
+});
+
 describe("context compaction message rendering", () => {
   it("renders plain italic text without an icon or card wrapper", () => {
     const result = createAgentThreadCardMessageElement({
@@ -179,6 +250,101 @@ describe("context compaction message rendering", () => {
     expect(content?.textContent).toBe("上下文已自动压缩");
     expect(content?.querySelector("svg")).toBeNull();
     expect(content?.classList.contains("agent-thread-card__message-content")).toBe(false);
+  });
+
+  it("renders the DSH completion result without exposing the compacted summary", () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "dsh-checkpoint-1",
+        role: "system",
+        messageType: "context-compaction",
+        content: "Compacted 36 history items (~11479 tokens).",
+        timestamp: new Date().toISOString(),
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+
+    expect(result?.element.textContent).toBe(
+      "上下文已自动压缩 / Compacted 36 history items (~11479 tokens).",
+    );
+    expect(result?.element.textContent).not.toContain("Current Work");
+  });
+});
+
+describe("DSH command input rendering", () => {
+  it("uses the same user-command class and DSH badge for compact, goal, and plan", () => {
+    const commands = [
+      { name: "compact", content: "/compact", isLoading: true },
+      { name: "goal", content: "/goal ship it", isLoading: false },
+      { name: "plan", content: "/plan inspect it", isLoading: false },
+    ];
+
+    const elements = commands.map(({ name, content, isLoading }) => {
+      const result = createAgentThreadCardMessageElement({
+        message: {
+          id: `dsh-${name}`,
+          role: "user",
+          messageType: "dsh-command",
+          content,
+          timestamp: new Date().toISOString(),
+          isLoading,
+        },
+        language: "zh-CN",
+        getReasoningCollapsed: () => true,
+        setReasoningCollapsed: () => undefined,
+        getDisplayExpanded: () => false,
+        setDisplayExpanded: () => undefined,
+      });
+      if (!result) throw new Error(`Expected ${name} command to render`);
+      return result.element;
+    });
+
+    expect(elements.map((element) => element.className)).toEqual([
+      "agent-thread-card__message agent-thread-card__message--user agent-thread-card__message--dsh-command agent-thread-card__message--dsh-command-loading",
+      "agent-thread-card__message agent-thread-card__message--user agent-thread-card__message--dsh-command",
+      "agent-thread-card__message agent-thread-card__message--user agent-thread-card__message--dsh-command",
+    ]);
+    expect(elements.map((element) => element.querySelector(
+      ".agent-thread-card__message-dsh-badge",
+    )?.textContent)).toEqual(["DSH", "DSH", "DSH"]);
+    expect(elements.map((element) => element.textContent?.includes("/"))).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+});
+
+describe("DSH goal control message rendering", () => {
+  it("renders the compact system row instead of a user bubble", () => {
+    const result = createAgentThreadCardMessageElement({
+      message: {
+        id: "goal-round-1",
+        role: "system",
+        messageType: "goal-round",
+        content: "目标执行中：在吗（第 1/256 轮）",
+        timestamp: new Date().toISOString(),
+      },
+      language: "zh-CN",
+      getReasoningCollapsed: () => true,
+      setReasoningCollapsed: () => undefined,
+      getDisplayExpanded: () => false,
+      setDisplayExpanded: () => undefined,
+    });
+
+    expect(result?.element.classList.contains(
+      "agent-thread-card__message--user",
+    )).toBe(false);
+    expect(result?.element.classList.contains(
+      "agent-thread-card__message--goal-round",
+    )).toBe(true);
+    expect(result?.element.querySelector(
+      ".agent-thread-card__message-goal-control",
+    )?.textContent).toBe("目标执行中：在吗（第 1/256 轮）");
   });
 });
 

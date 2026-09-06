@@ -100,4 +100,20 @@ describe("ComposerController note references", () => {
       "before [Reference](flowix://memo/abc123) after",
     );
   });
+
+  it("restores scoped DSH slash tokens as command prompt text", () => {
+    const { controller } = setup();
+    const editor = controller.editorInstance;
+    editor.commands.setContent(
+      "[/goal](flowix://slash/deepseek-harness/goal) define the milestone",
+      { contentType: "markdown" },
+    );
+    expect(controller.getPrompt()).toBe("/goal define the milestone");
+
+    editor.commands.setContent(
+      "[/feedback](flowix://slash/feedback) ignored",
+      { contentType: "markdown" },
+    );
+    expect(controller.getPrompt()).toBe(" ignored");
+  });
 });

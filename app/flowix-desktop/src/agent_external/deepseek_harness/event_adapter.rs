@@ -6,12 +6,20 @@ pub(crate) fn append_thinking_segments(
     segments: Vec<ThinkingSegment>,
     assistant_segment: u64,
 ) {
-    let source_message_id = format!("assistant-stream-{assistant_segment}");
+    append_thinking_segments_with_metadata(buffer, segments, assistant_segment, None);
+}
+
+pub(crate) fn append_thinking_segments_with_metadata(
+    buffer: &mut StreamingEmitBuffer,
+    segments: Vec<ThinkingSegment>,
+    assistant_segment: u64,
+    base_metadata: Option<&AgentChunkMetadata>,
+) {
     for segment in segments {
-        let metadata = AgentChunkMetadata {
-            source_message_id: Some(source_message_id.clone()),
-            ..AgentChunkMetadata::default()
-        };
+        let mut metadata = base_metadata.cloned().unwrap_or_default();
+        if metadata.source_message_id.is_none() {
+            metadata.source_message_id = Some(format!("assistant-stream-{assistant_segment}"));
+        }
         match segment {
             ThinkingSegment::Text(text) => buffer.append_text_with_metadata(&text, metadata),
             ThinkingSegment::Reasoning(text) => {

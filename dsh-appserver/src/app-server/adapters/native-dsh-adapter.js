@@ -1,4 +1,4 @@
-import { assistantChunkText, itemFromEvent, projectHistoryMessages, projectNotifications, projectTurns, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
+import { assistantChunkText, isPlanSteerPromptEvent, itemFromEvent, projectHistoryMessages, projectNotifications, projectTurns, stableAssistantStreamItemId, stableItemId, stableTurnId, textOf, turnEndStatus } from './event-projector.js'
 
 // Native adapter for Flowix's bundled DeepSeek Harness runtime.
 // It deliberately imports no Flowix bridge package. The host supplies a Cordis ctx.
@@ -8,6 +8,74 @@ import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
+
+// Find the event range containing the requested number of complete turns.
+// This scans boundaries backwards, then projects only the selected range;
+// it does not materialize/project every historical turn on every page.
+function historyTurnEventRange(events, beforeSequence, limit) {
+  const end = Number.isInteger(Number(beforeSequence))
+    ? Math.max(0, events.findIndex(event => Number(event.seq) >= Number(beforeSequence)))
+    : events.length
+  const endIndex = end === -1 ? events.length : end
+  const starts = []
+  for (let index = endIndex - 1; index >= 0; index--) {
+    if (events[index].type === 'turn/start') {
+      starts.push(index)
+      if (starts.length > limit) break
+    }
+  }
+
+  if (starts.length === 0) {
+    // Legacy/session data without turn markers is one atomic history unit.
+    return { events: events.slice(0, endIndex), oldestSequence: events[0]?.seq ?? null, hasMore: false }
+  }
+
+  const oldestTurnIndex = starts[Math.min(limit, starts.length) - 1]
+  let oldestIndex = oldestTurnIndex
+
+  // DSH command/run and command/done are durable operations, but deliberately
+  // do not belong to a turn. A command can therefore precede the first
+  // turn/start in a session (the common case for an initial /goal or /plan).
+  // Keep that prefix with the first turn page so the command is not silently
+  // lost from history. We only pull the prefix when this page reaches the
+  // first turn; commands between later turns are naturally included with the
+  // preceding turn page.
+  const firstTurnIndex = starts[starts.length - 1]
+  if (oldestTurnIndex === firstTurnIndex) {
+    for (let index = firstTurnIndex - 1; index >= 0; index -= 1) {
+      if (isStandaloneTimelineEvent(events[index])) {
+        oldestIndex = index
+        continue
+      }
+      if (index < firstTurnIndex && !events[index]?.type?.startsWith?.('turn/')) continue
+      break
+    }
+  } else {
+    // A compaction checkpoint can sit between two turns. Keep only the
+    // contiguous standalone timeline suffix before this page's oldest turn;
+    // the preceding turn remains on the older page.
+    for (let index = oldestTurnIndex - 1; index >= 0; index -= 1) {
+      if (!isStandaloneTimelineEvent(events[index])) break
+      oldestIndex = index
+    }
+  }
+  return {
+    events: events.slice(oldestIndex, endIndex),
+    oldestSequence: events[oldestIndex]?.seq ?? null,
+    hasMore: starts.length > limit,
+  }
+}
+
+// Commands and compaction checkpoints do not own a model turn, but they are
+// durable timeline rows. Keep a checkpoint immediately before the oldest
+// selected turn on that page; otherwise a long session can hide the compact
+// marker until the user pages into older turns.
+function isStandaloneTimelineEvent(event) {
+  if (event?.type === 'command/run' || event?.type === 'command/done') return true
+  if (event?.type !== 'user/message') return false
+  const source = event.data?.source
+  return source?.kind === 'plugin' && source?.plugin === 'compact'
+}
 
 /**
  * dsh-llm-pi-ai deliberately exposes the complete provider directory through
@@ -45,19 +113,129 @@ export class NativeDshAdapter {
   constructor(ctx) {
     this.ctx = ctx
     this.runtimes = new Map()
+    // Agent activation is process-local and owns the session's write handle.
+    // Several App Server requests can arrive while a session is already being
+    // resumed (for example a command plus a history/status refresh). Keep one
+    // in-flight activation per provider session so those requests converge on
+    // the same Agent instead of opening a second write handle.
+    this.agentResolutions = new Map()
     this.history = new Map()
     this.pendingTurns = new Map()
     this.activeTurns = new Map()
+    // DSH publishes assistant chunks on the process-local agent stream. The
+    // durable session/event feed only contains the final assistant/message.
+    // Keep the transient attempt identity until that durable settlement arrives
+    // so streaming and the final snapshot target one assistant row.
+    this.assistantStreams = new Map()
     this.listeners = new Set()
     this.disposers = [
       ctx.on?.('session/event', (session, event) => { const threadId = String(session.id); this.history.set(threadId, [...(session.events || [])]); this.projectEvent(threadId, event) }),
+      ctx.on?.('agent/assistant-stream', payload => this.projectAssistantStream(payload)),
       ctx.on?.('agent/status', payload => { const threadId = String(payload.agent.session.id); this.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId, status: this.status(payload.status) } }) })
     ].filter(Boolean)
+    // `session-log-download` is a Web bundle contribution and therefore is
+    // not present in Flowix's native/stdio composition. Keep the same DSH
+    // command name available in the native host; the response is enriched by
+    // thread/command with the actual JSON export below.
+    const commands = ctx.commands || ctx.get?.('commands')
+    if (commands?.register) {
+      try {
+        const disposer = commands.register({
+          name: 'export',
+          description: 'Export this DSH session log',
+          handler: invocation => invocation.rawInput.trim() === ''
+            ? { kind: 'success', text: 'Session log export requested.' }
+            : { kind: 'error', text: '/export does not accept arguments' },
+        })
+        if (typeof disposer === 'function') this.disposers.push(disposer)
+      } catch (_) {
+        // A profile may already provide the official export command. Keep its
+        // registration and let thread/command enrich the response below.
+      }
+    }
   }
 
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   emit(event) { for (const listener of this.listeners) listener(event) }
+  assistantStreamState(threadId) {
+    let state = this.assistantStreams.get(threadId)
+    if (!state) {
+      state = { byAttempt: new Map(), byStep: new Map(), bySequence: new Map() }
+      this.assistantStreams.set(threadId, state)
+    }
+    return state
+  }
+  projectAssistantStream(payload) {
+    const session = payload?.agent?.session
+    const frame = payload?.frame
+    if (!session || !frame || typeof frame !== 'object') return
+    const threadId = String(session.id)
+    const state = this.assistantStreamState(threadId)
+    const attemptId = frame.attemptId == null ? undefined : String(frame.attemptId)
+    const stepKey = frame.turn == null || frame.step == null ? undefined : `${frame.turn}:${frame.step}`
+    if (frame.type === 'start') {
+      if (!attemptId) return
+      const itemId = stableAssistantStreamItemId(threadId, attemptId)
+      const entry = { itemId, turn: frame.turn, step: frame.step }
+      state.byAttempt.set(attemptId, entry)
+      if (stepKey) state.byStep.set(stepKey, itemId)
+      return
+    }
+    const entry = attemptId ? state.byAttempt.get(attemptId) : undefined
+    if (frame.type === 'chunk') {
+      const delta = assistantChunkText({ chunk: frame.chunk })
+      if (delta === undefined) return
+      const itemId = entry?.itemId || stableAssistantStreamItemId(threadId, attemptId || stepKey || 'current')
+      this.emit({
+        jsonrpc: '2.0', method: 'item/agentMessage/delta',
+        params: {
+          threadId,
+          turnId: this.activeTurns.get(threadId) || (frame.turn == null ? undefined : stableTurnId(threadId, frame.turn)),
+          itemId,
+          delta,
+          ...(frame.index == null ? {} : { sourceSubsequence: frame.index }),
+        },
+      })
+      return
+    }
+    if (frame.type === 'end') {
+      const outcome = frame.outcome
+      const sequence = outcome?.kind === 'committed' ? outcome.seq : undefined
+      if (entry && sequence != null) state.bySequence.set(String(sequence), entry.itemId)
+      if (entry && stepKey && state.byStep.get(stepKey) === entry.itemId) state.byStep.delete(stepKey)
+      if (attemptId) state.byAttempt.delete(attemptId)
+    }
+  }
+  assistantStreamItemIdForEvent(threadId, event) {
+    if (event.type !== 'assistant/message') return undefined
+    const state = this.assistantStreams.get(threadId)
+    if (!state) return undefined
+    const sequence = event.seq == null ? undefined : state.bySequence.get(String(event.seq))
+    if (sequence) {
+      state.bySequence.delete(String(event.seq))
+      return sequence
+    }
+    const turn = event.data?.turn
+    const step = event.data?.step
+    return turn == null || step == null ? undefined : state.byStep.get(`${turn}:${step}`)
+  }
   projectEvent(threadId, event) {
+    // Goal state is a durable DSH domain event, not a model item. Publish a
+    // small provider notification so transports that keep a session-level
+    // watcher (for example the desktop Goal Round monitor) can observe the
+    // terminal lifecycle without polling or reopening the write handle.
+    if (event.type === 'goal/change') {
+      this.emit({
+        jsonrpc: '2.0',
+        method: 'goal/changed',
+        params: { threadId, sourceSeq: event.seq, change: event.data },
+      })
+      return
+    }
+    // `/plan <prompt>` also persists a user/message for DSH's steer inbox.
+    // The command/run row is the canonical product timeline item; suppress
+    // this model-facing duplicate in live notifications just as history does.
+    if (isPlanSteerPromptEvent(this.history.get(threadId) || [], event)) return
     const turn = event.data?.turn
     if (event.type === 'turn/start') {
       const expected = this.pendingTurns.get(threadId)?.shift()
@@ -76,6 +254,8 @@ export class NativeDshAdapter {
     }
     const item = itemFromEvent(threadId, event)
     if (item) {
+      const streamItemId = this.assistantStreamItemIdForEvent(threadId, event)
+      if (streamItemId) item.id = streamItemId
       const turnId = this.activeTurns.get(threadId)
       this.emit({ jsonrpc: '2.0', method: 'item/started', params: { threadId, turnId, sourceSeq: event.seq, item } })
       if (event.type === 'user/message' || event.type === 'assistant/message' || event.type === 'tool/result' || event.type === 'approval/decided') this.emit({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, sourceSeq: event.seq, item } })
@@ -84,6 +264,9 @@ export class NativeDshAdapter {
   }
 
   async startThread(id, config = {}) {
+    const key = String(id)
+    const existing = this.liveAgent(key)
+    if (existing) return this.thread(existing)
     const handle = await this.ctx.agents.create(this.agentCreateOptions(id, config))
     this.applyPermission(handle.agent, config.permissionMode)
     this.runtimes.set(String(handle.agent.session.id), handle)
@@ -91,16 +274,34 @@ export class NativeDshAdapter {
   }
 
   async resumeThread(id, config = {}) {
-    const existing = this.ctx.agents.get(id)
+    const key = String(id)
+    const existing = this.liveAgent(key)
     if (existing) return this.thread(existing)
-    const handle = await this.ctx.agents.resume(this.agentResumeOptions(id, config))
-    this.applyPermission(handle.agent, config.permissionMode)
-    this.runtimes.set(id, handle)
-    return this.thread(handle.agent)
+    const active = this.agentResolutions.get(key)
+    if (active) return active.then(agent => this.thread(agent))
+
+    const resolution = (async () => {
+      // Re-check after waiting for the event loop. Another request may have
+      // completed start/resume between the fast path and this task.
+      const current = this.liveAgent(key)
+      if (current) return current
+      const handle = await this.ctx.agents.resume(this.agentResumeOptions(key, config))
+      this.applyPermission(handle.agent, config.permissionMode)
+      this.runtimes.set(String(handle.agent.session.id), handle)
+      return handle.agent
+    })()
+    this.agentResolutions.set(key, resolution)
+    try {
+      return this.thread(await resolution)
+    } finally {
+      if (this.agentResolutions.get(key) === resolution) this.agentResolutions.delete(key)
+    }
   }
 
   async forkThread(sourceId, boundarySeq, childId) {
-    const source = this.ctx.sessions.get(sourceId) || (await this.resumeThread(sourceId), this.ctx.sessions.get(sourceId))
+    const source = this.liveAgent(sourceId)?.session
+      || this.ctx.sessions.get(sourceId)
+      || (await this.resumeThread(sourceId), this.ctx.sessions.get(sourceId))
     if (!source) throw new Error(`Session not found: ${sourceId}`)
     const boundary = boundarySeq === undefined ? source.seq - 1 : boundarySeq
     if (!Number.isInteger(Number(boundary)) || Number(boundary) < -1 || Number(boundary) >= source.events.length) throw new Error(`Invalid fork boundary: ${boundary}`)
@@ -176,12 +377,12 @@ export class NativeDshAdapter {
   }
 
   async readThread(id, includeTurns = true) {
-    const live = this.ctx.agents.get(id)
+    const live = this.liveAgent(id)
     if (live) return this.thread(live, includeTurns)
-    const persistence = this.ctx.get?.('sessionPersistence')
-    if (!persistence?.inspect) throw new Error('Session persistence is unavailable')
-    const snapshot = await persistence.inspect(id)
-    if (!snapshot) throw new Error(`Session not found: ${id}`)
+    // Keep thread/read on the same durable source as session/history. The
+    // current DSH persistence service exposes event data through a read
+    // handle; metadata-only inspection is only a legacy fallback.
+    const snapshot = await this.eventSnapshot(id)
     return this.snapshotThread(id, snapshot, includeTurns)
   }
 
@@ -215,10 +416,35 @@ export class NativeDshAdapter {
   }
 
   async eventSnapshot(id) {
-    const persistence = this.ctx.get?.('sessionPersistence')
+    const persistence = this.ctx.sessionPersistence || this.ctx.get?.('sessionPersistence') || this.ctx.get?.('sessionPersistence', false)
     let live
-    try { live = this.ctx.sessions.get(id) } catch { /* the owning agent may have closed its scoped context */ }
-    const snapshot = live ? { events: live.events } : await persistence?.inspect?.(id) || (this.history.has(id) ? { events: this.history.get(id) } : undefined)
+    live = this.runtimes.get(String(id))?.agent?.session
+    if (!live) {
+      try { live = this.ctx.sessions.get(id) } catch { /* the owning agent may have closed its scoped context */ }
+    }
+    let snapshot
+    if (live) {
+      // A live Session keeps appending to its event array. Never expose that
+      // mutable container as a supposedly point-in-time history snapshot.
+      snapshot = { events: [...(live.events || [])] }
+    } else if (typeof persistence?.open === 'function') {
+      // Current DSH exposes durable history through a read handle. `stat` (and
+      // older compatibility `inspect`) only returns session metadata; it does
+      // not contain the event log. Keep the handle scoped to this read so old
+      // sessions are available after restart without taking write ownership.
+      let handle
+      try {
+        handle = await persistence.open(id, 'read')
+        snapshot = { header: handle.header, events: [...await handle.read()] }
+      } finally {
+        await handle?.close?.()
+      }
+    } else if (typeof persistence?.inspect === 'function') {
+      // Compatibility with the pre-handle persistence API.
+      snapshot = await persistence.inspect(id)
+    } else if (this.history.has(id)) {
+      snapshot = { events: this.history.get(id) }
+    }
     if (!snapshot) throw new Error(`Session not found: ${id}`)
     return snapshot
   }
@@ -242,14 +468,34 @@ export class NativeDshAdapter {
     const pending = this.pendingTurns.get(id) || []
     pending.push(turnId)
     this.pendingTurns.set(id, pending)
-    const text = this.textFromInput(input)
-    const message = { id: `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } }
+    const content = await this.admitTurnContent(input)
+    const message = { id: `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'user', content, source: { kind: 'user' } }
     agent.followup ? agent.followup(message) : agent.send(message, 'followup', true)
     return { id: turnId, threadId: id, status: 'inProgress', items: [] }
   }
 
+  async steerTurn(id, input, clientMessageId) {
+    const agent = await this.resolveAgent(id)
+    const content = await this.admitTurnContent(input)
+    const message = {
+      id: typeof clientMessageId === 'string' && clientMessageId.trim()
+        ? clientMessageId.trim()
+        : `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: 'user',
+      content,
+      source: { kind: 'user' },
+    }
+    // DSH's steer() appends to the durable next-step inbox. It is consumed by
+    // the current driver at the next step boundary and remains in the same
+    // turn, which is deliberately different from followup()/turn/start.
+    agent.steer
+      ? agent.steer(message)
+      : agent.send(message, 'next-step', true)
+    return true
+  }
+
   async interruptTurn(id) {
-    const agent = this.ctx.agents.get(id)
+    const agent = this.liveAgent(id)
     if (!agent) return { interrupted: false }
     agent.cancel({ kind: 'user' }, { keepInbox: true })
     return { interrupted: true }
@@ -283,6 +529,99 @@ export class NativeDshAdapter {
     const handle = this.runtimes.get(id)
     if (handle) { this.runtimes.delete(id); await handle.dispose(); return { closed: true } }
     return { closed: false }
+  }
+
+  async archiveThread(id) {
+    // DSH's official archive semantics belong to workspace-controller. This
+    // only hides the durable session from DSH navigation; it does not delete
+    // the session log. Keep this distinct from thread/close, which only
+    // disposes an in-memory runtime.
+    const controller = this.ctx.get?.('workspaceController') || this.ctx.workspaceController
+    if (!controller?.archiveSession) throw new Error('DSH workspace archive service is unavailable')
+    const result = await controller.archiveSession({ sessionId: id })
+    const archived = Array.isArray(result?.archivedSessionIds)
+      ? result.archivedSessionIds.map(String).includes(String(id))
+      : true
+    return { archived }
+  }
+
+  async executeCommand(id, line, submittedAttachments = []) {
+    const agent = await this.resolveAgent(id)
+    const commands = this.ctx.commands || this.ctx.get?.('commands')
+    if (!commands?.execute) throw new Error('DSH command service is unavailable')
+    const execution = await commands.execute(agent, line, submittedAttachments, new AbortController().signal)
+    if (execution === undefined) throw new Error(`Unknown DSH command: ${line}`)
+    const effects = this.commandEffects(line, submittedAttachments, execution)
+    // The native composition does not have the Web download route. Return a
+    // transport-friendly export payload while still executing/logging the DSH
+    // command through ctx.commands above.
+    if (/^\/export(?:[\t\n\r ]*)$/u.test(line)) {
+      const snapshot = await this.eventSnapshot(id)
+      return {
+        execution,
+        effects,
+        export: {
+          filename: `dsh-session-${String(id).replace(/[^a-z0-9_-]+/giu, '_')}.json`,
+          content: JSON.stringify({ sessionId: String(id), events: snapshot.events || [] }, null, 2),
+        },
+      }
+    }
+    return { execution, effects }
+  }
+
+  /**
+   * Describe DSH-owned work that may outlive command/done. The desktop
+   * transport consumes this effect instead of maintaining a second parser for
+   * command names and guessing with a timeout whether a turn will appear.
+   */
+  commandEffects(line, attachments, execution) {
+    const result = execution?.result && typeof execution.result === 'object'
+      ? execution.result
+      : execution
+    if (result?.kind === 'error') return { turn: 'none' }
+
+    const parts = String(line || '').trim().split(/\s+/u)
+    const name = String(parts.shift() || '').replace(/^\//u, '').toLowerCase()
+    const args = parts.join(' ').trim()
+
+    if (name === 'plan') {
+      if (args.toLowerCase() === 'off' && attachments.length === 0) return { turn: 'none' }
+      return args !== '' || attachments.length > 0 ? { turn: 'steer' } : { turn: 'none' }
+    }
+
+    if (name === 'goal') {
+      const control = args.toLowerCase()
+      if (args === '' || control === 'clear' || control === 'pause') return { turn: 'none' }
+      // `/goal resume` and create/edit operations wake the native
+      // goal-round-driver. Attachments additionally create one ordinary
+      // followup before the next goal round.
+      if (control === 'resume' || control !== 'edit' || /^edit\s+/u.test(args)) {
+        return { turn: 'goal-round', ...(attachments.length > 0 ? { followup: true } : {}) }
+      }
+    }
+    return { turn: 'none' }
+  }
+
+  async listSkills(id) {
+    const agent = await this.resolveAgent(id)
+    const presets = this.ctx.get?.('agentPresets')
+    const registry = presets?.serviceFor?.(agent, 'skills')
+      || this.ctx.skills
+      || this.ctx.get?.('skills')
+    if (!registry?.list) throw new Error('DSH skill service is unavailable')
+    const cwd = agent.session?.header?.cwd
+    const skills = await registry.list({ cwd, scope: agent })
+    return {
+      skills: (Array.isArray(skills) ? skills : skills?.candidates || [])
+        .filter(skill => skill?.invocation?.userInvocable !== false)
+        .map(skill => ({
+          name: String(skill.name),
+          description: String(skill.description || ''),
+          ...(skill.whenToUse === undefined ? {} : { whenToUse: String(skill.whenToUse) }),
+          ...(skill.invocation?.modelInvocable === undefined ? {} : { modelInvocable: Boolean(skill.invocation.modelInvocable) }),
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }
   }
 
   async flush(id) {
@@ -324,19 +663,30 @@ export class NativeDshAdapter {
       const name = event.data?.name || event.data?.toolName
       if (callId && name) toolNames.set(String(callId), String(name))
     }
-    const messages = projectHistoryMessages(
-      id,
-      all.filter(event => Number(event.seq) <= ceiling),
-      toolNames,
-    ).filter(message => Number(message.sourceSeq) < before)
     const pageLimit = Math.min(200, Math.max(1, Number(limit) || 50))
-    const page = messages.slice(-pageLimit)
+    // `limit` is deliberately a turn count, rather than a message count. A
+    // turn may contain a user message, multiple tool calls/results, reasoning,
+    // and an assistant message; slicing projected messages would split that
+    // atomic conversation unit across pages.
+    const visibleEvents = all.filter(event => Number(event.seq) <= ceiling)
+    const page = historyTurnEventRange(visibleEvents, before, pageLimit)
+    // Project the selected page against the complete event-log surface. A
+    // replacement checkpoint can shadow events that precede this page, so
+    // giving the projector only page.events would resurrect compacted rows.
+    // Keep aggregation/surface projection bounded by the requested snapshot
+    // ceiling. A historical snapshot must not see a future command/done or a
+    // future compaction checkpoint while paging older rows.
+    const messages = projectHistoryMessages(id, page.events, toolNames, visibleEvents, {
+      // The DSH model context still follows its native surface replacement,
+      // while Flowix renders a durable append-only conversation timeline.
+      preserveCompactedHistory: true,
+    })
     return {
       sessionId: id,
-      messages: page,
-      oldestSequence: page[0]?.sourceSeq ?? null,
+      messages,
+      oldestSequence: page.oldestSequence == null ? null : Number(page.oldestSequence),
       snapshotSequence: ceiling,
-      hasMore: messages.length > page.length,
+      hasMore: page.hasMore,
     }
   }
 
@@ -435,7 +785,7 @@ export class NativeDshAdapter {
   }
 
   capabilitiesReport() {
-    return { protocolVersion: 1, capabilities: ['runtime-events', 'session-control', 'session-dispose', 'run-cancel', 'profile', 'credentials-management', 'model-settings-management'] }
+    return { protocolVersion: 1, capabilities: ['runtime-events', 'session-control', 'session-archive', 'session-dispose', 'run-cancel', 'profile', 'credentials-management', 'model-settings-management'] }
   }
 
   describeCredentials(reference) {
@@ -599,22 +949,89 @@ export class NativeDshAdapter {
     if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 0)) throw new Error('expectedRevision must be a non-negative integer')
   }
 
-  async resolveAgent(id) { return this.ctx.agents.get(id) || (await this.resumeThread(id), this.ctx.agents.get(id)) || (await this.startThread(id), this.ctx.agents.get(id)) }
+  liveAgent(id) {
+    const key = String(id)
+    return this.runtimes.get(key)?.agent || this.ctx.agents?.get?.(key)
+  }
+
+  async resolveAgent(id) {
+    const key = String(id)
+    const existing = this.liveAgent(key)
+    if (existing) return existing
+
+    const active = this.agentResolutions.get(key)
+    if (active) return active
+
+    const resolution = (async () => {
+      const current = this.liveAgent(key)
+      if (current) return current
+      try {
+        const resumed = await this.ctx.agents.resume(this.agentResumeOptions(key, {}))
+        this.applyPermission(resumed.agent, undefined)
+        this.runtimes.set(String(resumed.agent.session.id), resumed)
+        return resumed.agent
+      } catch (error) {
+        if (!this.isMissingSessionError(error)) throw error
+        const currentAfterResume = this.liveAgent(key)
+        if (currentAfterResume) return currentAfterResume
+        const started = await this.ctx.agents.create(this.agentCreateOptions(key, {}))
+        this.runtimes.set(String(started.agent.session.id), started)
+        return started.agent
+      }
+    })()
+    this.agentResolutions.set(key, resolution)
+    try {
+      return await resolution
+    } finally {
+      if (this.agentResolutions.get(key) === resolution) this.agentResolutions.delete(key)
+    }
+  }
+
+  isMissingSessionError(error) {
+    const code = String(error?.code || error?.name || '').toLowerCase()
+    const message = String(error?.message || error || '').toLowerCase()
+    return /not[_ -]?found|missing|unknown[_ -]?session|session.*does not exist|no session/.test(`${code} ${message}`)
+  }
 
   thread(agent, includeTurns = true) { return this.threadFromSession(agent.session, includeTurns, agent.status) }
+  // `thread/read` is the app-server transcript snapshot, not DSH's private
+  // model context. Preserve compacted rows here so it has the same history
+  // semantics as `session/history` and Codex's thread transcript APIs.
   threadFromSession(session, includeTurns = true, status = 'idle') {
     const id = String(session.id)
     const messages = includeTurns ? session.deriveMessages?.() || [] : []
-    return { id, parentThreadId: session.header?.parentSession ? String(session.header.parentSession) : undefined, status: this.status(status), turns: includeTurns ? projectTurns(id, session.events || [], messages) : [] }
+    return { id, parentThreadId: session.header?.parentSession ? String(session.header.parentSession) : undefined, status: this.status(status), turns: includeTurns ? projectTurns(id, session.events || [], messages, { preserveCompactedHistory: true }) : [] }
   }
-  snapshotThread(id, snapshot, includeTurns) { const events = snapshot.events || []; return { id, parentThreadId: snapshot.header?.parentSession ? String(snapshot.header.parentSession) : undefined, status: 'idle', turns: includeTurns ? projectTurns(id, events) : [] } }
+  snapshotThread(id, snapshot, includeTurns) { const events = snapshot.events || []; return { id, parentThreadId: snapshot.header?.parentSession ? String(snapshot.header.parentSession) : undefined, status: 'idle', turns: includeTurns ? projectTurns(id, events, [], { preserveCompactedHistory: true }) : [] } }
   status(status) { return typeof status === 'string' && status.includes('run') ? 'running' : status === 'closed' ? 'closed' : 'idle' }
   textOf(value) { return textOf(value) }
   textFromInput(input) { if (typeof input === 'string') return input; if (Array.isArray(input)) { const text = input.filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n'); return text || JSON.stringify(input) } return typeof input?.text === 'string' ? input.text : JSON.stringify(input) }
+  async admitTurnContent(input) {
+    const text = this.textFromInput(input)
+    const rawAttachments = input && typeof input === 'object' && !Array.isArray(input) && Array.isArray(input.attachments)
+      ? input.attachments
+      : []
+    if (rawAttachments.length === 0) return [{ type: 'text', text }]
+    const parts = rawAttachments.map((attachment, index) => {
+      if (attachment?.type !== 'image' || typeof attachment.mediaType !== 'string' || typeof attachment.data !== 'string') {
+        throw new Error(`Unsupported turn attachment at index ${index}`)
+      }
+      return {
+        type: 'image',
+        mediaType: attachment.mediaType,
+        data: attachment.data,
+        ...(typeof attachment.name === 'string' ? { name: attachment.name } : {}),
+      }
+    })
+    const store = this.ctx.attachments || this.ctx.get?.('attachments')
+    if (!store?.admitPromptContent) throw new Error('DSH attachment service is unavailable')
+    return store.admitPromptContent([{ type: 'text', text }, ...parts])
+  }
   dispose() {
     for (const dispose of this.disposers) dispose?.()
     for (const handle of this.runtimes.values()) void handle.dispose().catch(() => {})
     this.runtimes.clear()
+    this.agentResolutions.clear()
     this.listeners.clear()
   }
 }

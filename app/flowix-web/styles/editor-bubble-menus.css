@@ -267,7 +267,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0.15rem 0.375rem 0.35rem;
+  padding: 0.35rem 0.375rem 0.35rem;
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.2;
@@ -430,7 +430,7 @@
   align-items: center;
   justify-content: space-between;
   flex: 0 0 auto;
-  padding: 0.15rem 0.375rem 0.35rem;
+  padding: 0.35rem 0.375rem 0.35rem;
   font-size: 0.75rem;
   line-height: 1.2;
   color: var(--muted-foreground);

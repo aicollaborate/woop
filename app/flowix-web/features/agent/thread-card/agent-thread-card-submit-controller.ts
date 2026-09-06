@@ -35,18 +35,48 @@ export interface SubmitAgentThreadCardConversationInput {
   }) => void;
 }
 
-export async function submitAgentThreadCardConversation(
-  input: SubmitAgentThreadCardConversationInput,
-): Promise<void> {
+export interface EnsureAgentThreadCardConversationInput {
+  prompt: string;
+  fallbackTitle: string;
+  typeKey: AgentTypeKey;
+  currentThreadId: string | null;
+  currentInstanceId: string | null;
+  currentTitle: string;
+  runtimeHandleId: string;
+  source: AgentConversationSource;
+  role: {
+    memoId: string | null;
+    name: string | null;
+  };
+  buildTitle: (prompt: string, fallback: string) => string;
+  onThreadBound: (binding: {
+    instanceId: string;
+    threadId: string;
+    typeKey: AgentTypeKey;
+  }) => void;
+}
+
+export interface EnsureAgentThreadCardConversationResult {
+  instanceId: string;
+  threadId: string;
+  title: string;
+  typeKey: AgentTypeKey;
+  runtimeConfig: ReturnType<typeof ensureConversationWorkspaceSnapshot>;
+  isFirstMessage: boolean;
+}
+
+/** Bind a card without starting a model turn; DSH commands use this path. */
+export async function ensureAgentThreadCardConversation(
+  input: EnsureAgentThreadCardConversationInput,
+): Promise<EnsureAgentThreadCardConversationResult> {
   let nextThreadId = input.currentThreadId;
   let nextInstanceId = input.currentInstanceId;
   let nextTitle =
     input.currentTitle || input.buildTitle(input.prompt, input.fallbackTitle);
   let nextTypeKey = input.typeKey;
+  const isFirstMessage = !nextThreadId;
 
-  if (!nextInstanceId) {
-    nextInstanceId = createConversationInstanceId();
-  }
+  if (!nextInstanceId) nextInstanceId = createConversationInstanceId();
 
   if (!nextThreadId) {
     const ensured = await ensureAgentThreadCardThread({
@@ -58,7 +88,6 @@ export async function submitAgentThreadCardConversation(
       instanceId: nextInstanceId,
       buildTitle: input.buildTitle,
     });
-
     if (ensured) {
       nextThreadId = ensured.threadId;
       nextTitle = ensured.title;
@@ -66,9 +95,7 @@ export async function submitAgentThreadCardConversation(
     }
   }
 
-  if (!nextThreadId) {
-    throw new Error("Agent thread id was not created");
-  }
+  if (!nextThreadId) throw new Error("Agent thread id was not created");
 
   const conversation = await upsertAgentThreadCardConversationInstance({
     instanceId: nextInstanceId,
@@ -80,10 +107,35 @@ export async function submitAgentThreadCardConversation(
     runtimeConfig: buildInitialInstanceRuntimeConfig(nextTypeKey),
   });
   nextInstanceId = conversation.instanceId;
-  // Freeze the effective cwd / add-dir / notebook paths immediately before
-  // the first run. Existing and migrated conversations reuse this snapshot.
   const runtimeConfig = ensureConversationWorkspaceSnapshot(nextInstanceId);
   markConversationWorkspaceStarted(nextInstanceId);
+  input.onThreadBound({
+    instanceId: nextInstanceId,
+    threadId: nextThreadId,
+    typeKey: nextTypeKey,
+  });
+
+  return {
+    instanceId: nextInstanceId,
+    threadId: nextThreadId,
+    title: nextTitle,
+    typeKey: nextTypeKey,
+    runtimeConfig,
+    isFirstMessage,
+  };
+}
+
+export async function submitAgentThreadCardConversation(
+  input: SubmitAgentThreadCardConversationInput,
+): Promise<void> {
+  const ensured = await ensureAgentThreadCardConversation(input);
+  const {
+    threadId: nextThreadId,
+    instanceId: nextInstanceId,
+    title: nextTitle,
+    typeKey: nextTypeKey,
+    runtimeConfig,
+  } = ensured;
 
   const roleBody =
     input.isFirstMessage && input.role.memoId

@@ -23,6 +23,7 @@ function toThreadState(projection: ThreadProjection): ThreadState {
     isLoading: projection.runs.isLoading,
     activeRunId: projection.runs.activeRunId,
     runs: projection.runs.runs,
+    dshCommand: projection.runs.dshCommand,
     pendingAssistantId: projection.pending.assistantId,
     pendingReasoningId: projection.pending.reasoningId,
     lastRun: projection.runs.lastRun,
@@ -53,6 +54,7 @@ function fromThreadState(
       activeRunId: state.activeRunId,
       runs: state.runs,
       lastRun: state.lastRun,
+      dshCommand: state.dshCommand,
     },
   };
 }

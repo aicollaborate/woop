@@ -36,16 +36,19 @@ import {
 import {
   createCodexSettingsItem,
   createExternalAgentEmptyControl,
+  createExternalAgentEmptyIcon,
   createExternalAgentWorkspaceControl,
   createExternalAgentWorkspaceDisplay,
   updateExternalAgentEmptyControl,
   type ExternalAgentEmptyControlKind,
 } from "@features/agent/thread-card/settings/external-agent-settings";
+import { createChevronIcon } from "@features/agent/thread-card/agent-thread-card-icons";
 import {
   createInitialWorkspaceState,
   normalizeConversationWorkspaceState,
   selectDesiredWorkspace,
 } from "@features/agent/runtime/conversation-workspace";
+import { openBrowserColumnFileBrowser } from "@features/workspace/use-cases/browser-column-navigation";
 
 const CODEX_SETTINGS_POPOVER_WIDTH_PX = 212;
 const CODEX_SETTINGS_POPOVER_MAX_HEIGHT_PX = 280;
@@ -508,12 +511,19 @@ export class ExternalAgentSettingsController {
     empty.className =
       "agent-thread-card__empty agent-thread-card__empty--codex-settings";
 
+    // 控件组独立成行, 让独立对话 / 全屏能在其上方叠加 Agent 图标并整体居中；
+    // 非全屏 thread card 通过 CSS 让这层保持原有的单行 flex 表现。
+    empty.append(createExternalAgentEmptyIcon(this.getTypeKey()));
+    const controls = document.createElement("div");
+    controls.className = "agent-thread-card__empty-controls";
+    empty.append(controls);
+
     this.workspaceDisplay = createExternalAgentWorkspaceDisplay(
       this.t("agent.workspace.title"),
       this.getCurrentWorkspaceLabel(),
       (anchor) => this.toggleWorkspacePopover(anchor),
     );
-    empty.append(this.workspaceDisplay);
+    controls.append(this.workspaceDisplay);
 
     this.modelButton = this.supportsRuntimeSetting("model")
       ? this.createEmptyControl(
@@ -545,7 +555,7 @@ export class ExternalAgentSettingsController {
       this.modeButton,
       this.permissionButton,
     ]) {
-      if (button) empty.append(button);
+      if (button) controls.append(button);
     }
     return empty;
   }
@@ -572,6 +582,18 @@ export class ExternalAgentSettingsController {
     this.composerModelButton = button;
     this.refreshComposerModelButton();
     return button;
+  }
+
+  /** Open the same model picker used by the composer model button. */
+  openComposerModelPicker(): void {
+    if (!this.composerModelButton || !this.supportsRuntimeSetting("model")) return;
+    this.setSettingsPopoverOpen(true, "model", this.composerModelButton);
+  }
+
+  /** Open the same permission picker used by the composer permission button. */
+  openComposerPermissionPicker(): void {
+    if (!this.composerPermissionButton || !this.supportsRuntimeSetting("permission")) return;
+    this.setSettingsPopoverOpen(true, "permission", this.composerPermissionButton);
   }
 
   createComposerWorkspaceButton(): HTMLButtonElement | null {
@@ -1012,6 +1034,27 @@ export class ExternalAgentSettingsController {
       empty.textContent = this.t("agent.workspace.unset");
       this.popover.append(empty);
     }
+
+    const settingsButton = document.createElement("button");
+    settingsButton.type = "button";
+    settingsButton.className =
+      "agent-thread-card__codex-settings-item agent-thread-card__codex-settings-settings";
+    settingsButton.setAttribute("role", "menuitem");
+    settingsButton.setAttribute("aria-label", this.t("agent.workspace.settings"));
+    const settingsLabel = document.createElement("span");
+    settingsLabel.className = "agent-thread-card__codex-settings-item-label";
+    settingsLabel.textContent = this.t("agent.workspace.settings");
+    const chevron = createChevronIcon("right");
+    chevron.setAttribute("class", "agent-thread-card__codex-settings-settings-chevron");
+    settingsButton.append(settingsLabel, chevron);
+    settingsButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.setSettingsPopoverOpen(false);
+      const workspacePath = this.getCurrentWorkspacePath();
+      if (workspacePath) void openBrowserColumnFileBrowser(workspacePath);
+    });
+    settingsButton.addEventListener("mousedown", (event) => event.stopPropagation());
+    this.popover.append(settingsButton);
   }
 
   private selectWorkspace(path: string): void {

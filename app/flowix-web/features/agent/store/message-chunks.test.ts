@@ -149,4 +149,29 @@ describe("user message chunks", () => {
       content: "ask again",
     });
   });
+
+  it("keeps DSH goal notices out of the human user bubble", () => {
+    const state: LiveMessageState = {
+      messages: [optimisticRow],
+      pendingAssistantId: null,
+      pendingReasoningId: null,
+    };
+    const result = applyUserMessageChunk(state, "目标执行中：在吗（第 1/256 轮）", {
+      id: "goal-round-1",
+      messageType: "goal-round",
+      codexTurnId: "turn-1",
+      optimisticId: "user-run-1",
+      phase: "completed",
+      contentMode: "snapshot",
+    });
+
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0]).toBe(optimisticRow);
+    expect(result.messages[1]).toMatchObject({
+      id: "goal-round-1",
+      role: "system",
+      messageType: "goal-round",
+      content: "目标执行中：在吗（第 1/256 轮）",
+    });
+  });
 });

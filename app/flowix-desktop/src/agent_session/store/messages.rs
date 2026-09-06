@@ -348,12 +348,15 @@ impl ThreadManager {
             tool_name: row.get(8)?,
             tool_data: row.get(9)?,
             tool_input: tool_input_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
+            tool_call: None,
+            tool_result: None,
             tool_calls: tool_calls_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
             reasoning: row.get(12)?,
             is_completed: int_to_opt_bool(row.get(13)?),
             error_details: None,
             is_collapsed: int_to_opt_bool(row.get(14)?),
             codex_turn_id: None,
+            turn_duration_ms: None,
             source_sequence: None,
         })
     }

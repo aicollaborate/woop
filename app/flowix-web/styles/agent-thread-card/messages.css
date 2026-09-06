@@ -56,6 +56,78 @@
   font-style: italic;
 }
 
+.markdown-editor .agent-thread-card__message-context-compaction-summary {
+  margin-top: 4px;
+  font-style: normal;
+}
+
+/* DSH goal prompts are internal model-control messages. They remain visible
+ * as a small timeline status row, while their long instructions are removed
+ * by the DSH history projection before this renderer is reached. */
+.markdown-editor .agent-thread-card__message--goal-control {
+  align-self: flex-start;
+  padding: 2px 0;
+  color: var(--muted-foreground);
+  font-size: calc(var(--app-font-size, 15px) * 0.86);
+  line-height: 1.35;
+}
+
+.markdown-editor .agent-thread-card__message-goal-control {
+  font-style: italic;
+}
+
+.markdown-editor .agent-thread-card__message--goal-complete {
+  color: var(--foreground);
+}
+
+.markdown-editor .agent-thread-card__message--goal-blocked {
+  color: var(--destructive, #b42318);
+}
+
+/* DSH slash-command transcript rows are durable command projections, not
+ * ordinary model messages. Keep the visual treatment compact while retaining
+ * the source marker so commands from other agents cannot be confused with
+ * this provider's controls. */
+.markdown-editor .agent-thread-card__message--dsh-command {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+}
+
+.markdown-editor .agent-thread-card__message--dsh-command-loading {
+  opacity: 0.72;
+}
+
+.markdown-editor .agent-thread-card__message--dsh-command-loading::after {
+  content: " …";
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__message--dsh-command-result {
+  align-self: flex-start;
+  color: var(--muted-foreground);
+}
+
+.markdown-editor .agent-thread-card__message--dsh-command-prompt {
+  border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
+}
+
+.markdown-editor .agent-thread-card__message-dsh-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-bottom: 2px;
+  color: var(--muted-foreground);
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.markdown-editor .agent-thread-card__message-dsh-result {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .markdown-editor .agent-thread-card__message-actions {
   display: flex;
   position: relative;
@@ -177,7 +249,8 @@
   height: 12px;
 }
 
-.markdown-editor .agent-thread-card__message-time {
+.markdown-editor .agent-thread-card__message-time,
+.markdown-editor .agent-thread-card__message-duration {
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 22px;
@@ -338,15 +411,33 @@
 }
 
 .markdown-editor .agent-thread-card__tool-group-header:hover {
-  color: var(--primary);
+  color: var(--brand);
 }
 
 .markdown-editor .agent-thread-card__tool-group--expanded
   .agent-thread-card__tool-group-header {
-  color: var(--primary);
+  color: var(--brand);
 }
 
-.markdown-editor .agent-thread-card__tool-group-header svg {
+.markdown-editor .agent-thread-card__tool-group-toggle,
+.markdown-editor .agent-thread-card__message-tool-toggle {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  line-height: 18px;
+}
+
+.markdown-editor .agent-thread-card__tool-group-toggle {
+  color: currentColor;
+}
+
+.markdown-editor .agent-thread-card__tool-group-toggle svg,
+.markdown-editor .agent-thread-card__message-tool-toggle svg {
   width: 13px;
   height: 13px;
   flex: 0 0 auto;
@@ -402,13 +493,13 @@
   align-self: center;
 }
 
-/* Keep a leaving preview mounted until its fade-out completes. */
+/* Keep a leaving preview mounted for its 800ms exit timeline. */
 .markdown-editor .agent-thread-card__tool-group-preview--exiting {
   display: flex;
   align-items: center;
   padding-left: 19px;
   pointer-events: none;
-  animation: agent-thread-card-tool-preview-fade-out 300ms ease both;
+  animation: agent-thread-card-tool-preview-fade-out 800ms linear both;
 }
 
 .markdown-editor .agent-thread-card__tool-group-preview--updated {
@@ -425,27 +516,31 @@
 }
 
 @keyframes agent-thread-card-tool-preview-fade-out {
-  from {
+  0%,
+  62.5% {
     opacity: 1;
   }
-  to {
+  100% {
     opacity: 0;
   }
 }
 
 .markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-preview {
+  .agent-thread-card__tool-group-preview:not(
+    .agent-thread-card__tool-group-preview--running
+  ) {
   display: none;
 }
 
 .markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-preview--exiting {
+  .agent-thread-card__tool-group-preview--exiting:not(
+    .agent-thread-card__tool-group-preview--running
+  ) {
   display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .markdown-editor .agent-thread-card__tool-group-preview,
-  .markdown-editor .agent-thread-card__tool-group-preview--exiting {
+  .markdown-editor .agent-thread-card__tool-group-preview {
     animation: none;
   }
 }
@@ -461,7 +556,8 @@
   display: flex;
   position: relative;
   flex: 1 1 auto;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -469,18 +565,21 @@
   line-height: 18px;
 }
 
+.markdown-editor .agent-thread-card__message-tool-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 18px;
+  gap: 4px;
+  line-height: 18px;
+}
+
 .markdown-editor .agent-thread-card__message-tool-toggle {
-  display: inline-grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 4px;
-  padding: 0;
+  margin-left: auto;
   background: transparent;
   color: var(--muted-foreground);
-  line-height: 18px;
   cursor: pointer;
 }
 
@@ -493,16 +592,6 @@
   width: 13px;
   height: 13px;
   transition: transform 150ms ease;
-}
-
-.markdown-editor
-  .agent-thread-card__message-tool-content--expanded
-  .agent-thread-card__message-tool-toggle {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  z-index: 1;
-  background: var(--background);
 }
 
 .markdown-editor
@@ -584,24 +673,12 @@
   white-space: nowrap;
 }
 
-.markdown-editor
-  .agent-thread-card__message-tool-content--expanded
-  .agent-thread-card__message-tool-summary {
-  display: block;
-  padding-right: 24px;
-  overflow: visible;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 18px;
-  text-overflow: clip;
-}
-
 .markdown-editor .agent-thread-card__message-tool-input {
   display: none;
   min-width: 0;
   max-width: 100%;
   margin: 0;
-  padding: 4px 24px 4px 0;
+  padding: 4px 0;
   overflow: visible;
   color: var(--muted-foreground);
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -650,7 +727,9 @@
 
 .markdown-editor
   .agent-thread-card__message-tool-content--expanded {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   overflow: visible;
 }
 
@@ -672,12 +751,6 @@
   text-overflow: clip;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.markdown-editor
-  .agent-thread-card__message-tool-content--expanded
-  .agent-thread-card__command-preview {
-  display: none;
 }
 
 .markdown-editor .agent-thread-card__command-list--nested {

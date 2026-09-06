@@ -77,6 +77,7 @@ await mkdir(nodeDir, { recursive: true })
 await cp(process.execPath, resolve(nodeDir, process.platform === 'win32' ? 'node.exe' : 'node'))
 await writeFile(resolve(bundle, 'dsh-runtime.json'), `${JSON.stringify({
   target,
+  version: process.env.FLOWIX_DSH_VERSION || '1.5.2',
   nodeVersion: process.version,
   nodeAbi: process.versions.modules,
   sourceCommit: JSON.parse(await readFile(resolve(repo, 'dsh/upstream.lock.json'), 'utf8')).commit,

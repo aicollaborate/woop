@@ -65,6 +65,27 @@ function getMessageDateTimeText(message: AgentMessage, language: AppLanguage): s
   }).format(date);
 }
 
+function getMessageDurationText(
+  message: AgentMessage,
+  language: AppLanguage,
+): string | undefined {
+  const durationMs = message.turnDurationMs;
+  if (
+    durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  ) {
+    return undefined;
+  }
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (language === "zh-CN") {
+    return minutes === 0 ? `${seconds}秒` : `${minutes}分${seconds}秒`;
+  }
+  return `Duration ${minutes}m${seconds}s`;
+}
+
 export function attachMessageActions(
   item: HTMLDivElement,
   message: AgentMessage,
@@ -182,6 +203,13 @@ export function attachMessageActions(
   time.className = "agent-thread-card__message-time";
   time.textContent = getMessageDateTimeText(message, language);
   actions.append(time);
+  const durationText = getMessageDurationText(message, language);
+  if (durationText) {
+    const duration = document.createElement("span");
+    duration.className = "agent-thread-card__message-duration";
+    duration.textContent = durationText;
+    actions.append(duration);
+  }
   item.append(actions);
 }
 
@@ -253,6 +281,12 @@ function createExpandableToolContent(options: {
   measureTarget?: HTMLElement;
   /** Used for structured command content with a separate compact preview. */
   alwaysShowToggle?: boolean;
+  /** Compact content rendered in the first row before the toggle. */
+  leadingContent?: HTMLElement;
+  /** Additional expanded content rendered below the first row. */
+  expandedContent?: HTMLElement;
+  /** Whether to render the generic tool input block. */
+  includeInput?: boolean;
 }): HTMLDivElement {
   const {
     message,
@@ -264,19 +298,28 @@ function createExpandableToolContent(options: {
   const content = document.createElement("div");
   content.className = "agent-thread-card__message-tool-content";
 
+  const row = document.createElement("div");
+  row.className = "agent-thread-card__message-tool-row";
+  content.append(row);
+
   const summary = text === undefined ? null : document.createElement("span");
   if (summary) {
     summary.className = "agent-thread-card__message-tool-summary";
     summary.textContent = text ?? "";
     summary.title = text ?? "";
-    content.append(summary);
+    row.append(summary);
+  } else if (options.leadingContent) {
+    row.append(options.leadingContent);
   }
 
-  const fullInput = document.createElement("pre");
-  fullInput.className = "agent-thread-card__message-tool-input";
-  const inputText = agentMessageValueToText(message.toolInput);
-  fullInput.textContent = inputText || translate(language, "agent.tools.noInput");
-  content.append(fullInput);
+  if (options.expandedContent) content.append(options.expandedContent);
+  if (options.includeInput !== false) {
+    const fullInput = document.createElement("pre");
+    fullInput.className = "agent-thread-card__message-tool-input";
+    const inputText = agentMessageValueToText(message.toolInput);
+    fullInput.textContent = inputText || translate(language, "agent.tools.noInput");
+    content.append(fullInput);
+  }
 
   let isExpanded = getDisplayExpanded(message);
   const toggle = document.createElement("button");
@@ -295,7 +338,7 @@ function createExpandableToolContent(options: {
       isExpanded || options.alwaysShowToggle ||
       (target && target.scrollWidth > target.clientWidth + 1),
     );
-    if (shouldShow && !toggle.isConnected) content.append(toggle);
+    if (shouldShow && !toggle.isConnected) row.append(toggle);
     else if (!shouldShow && toggle.isConnected) toggle.remove();
   };
 
@@ -322,7 +365,7 @@ function createExpandableToolContent(options: {
     applyExpandedState(nextExpanded);
   });
   toggle.addEventListener("mousedown", (event) => event.stopPropagation());
-  if (isExpanded) content.append(toggle);
+  if (isExpanded) row.append(toggle);
   applyExpandedState(isExpanded);
   requestAnimationFrame(syncToggleVisibility);
   if (typeof ResizeObserver !== "undefined") {
@@ -588,6 +631,29 @@ export function createAgentThreadCardMessageElement(options: {
     if (message.messageType === "context-compaction") {
       item.classList.add("agent-thread-card__message--context-compaction");
     }
+    if (
+      message.messageType === "goal-round" ||
+      message.messageType === "goal-complete" ||
+      message.messageType === "goal-blocked"
+    ) {
+      item.classList.add(
+        "agent-thread-card__message--goal-control",
+        `agent-thread-card__message--${message.messageType}`,
+      );
+    }
+    if (
+      message.messageType === "dsh-command" ||
+      message.messageType === "dsh-command-result" ||
+      message.messageType === "dsh-command-prompt"
+    ) {
+      item.classList.add(
+        "agent-thread-card__message--dsh-command",
+        `agent-thread-card__message--${message.messageType}`,
+      );
+      if (message.isLoading) {
+        item.classList.add("agent-thread-card__message--dsh-command-loading");
+      }
+    }
   } catch (err) {
     logger.error("Failed to prepare message", {
       error: err,
@@ -625,8 +691,10 @@ export function createAgentThreadCardMessageElement(options: {
           setDisplayExpanded,
           measureTarget: preview,
           alwaysShowToggle: true,
+          leadingContent: preview,
+          expandedContent: details,
+          includeInput: false,
         });
-        content.prepend(preview, details);
         item.append(iconWrap, name, content);
       } else {
         const mcpToolName = getMcpToolName(message);
@@ -659,6 +727,15 @@ export function createAgentThreadCardMessageElement(options: {
       const content = document.createElement("div");
       content.className =
         "agent-thread-card__message-content agent-thread-card__message-content--user-preview";
+      if (
+        message.messageType === "dsh-command" ||
+        message.messageType === "dsh-command-prompt"
+      ) {
+        const badge = document.createElement("span");
+        badge.className = "agent-thread-card__message-dsh-badge";
+        badge.textContent = message.messageType === "dsh-command-prompt" ? "DSH /plan" : "DSH";
+        item.append(badge);
+      }
       item.append(content);
       renderAgentThreadCardBudgetedMarkdown({
         message,
@@ -728,7 +805,23 @@ export function createAgentThreadCardMessageElement(options: {
       content.className = "agent-thread-card__message-content";
       if (message.messageType === "context-compaction") {
         content.className = "agent-thread-card__message-context-compaction";
-        content.textContent = translate(language, "agent.contextCompaction");
+        const compactedResult = message.content.trim().replace(/^DSH\s+/u, "");
+        content.textContent = compactedResult
+          ? `${translate(language, "agent.contextCompaction")} / ${compactedResult}`
+          : translate(language, "agent.contextCompaction");
+      } else if (
+        message.messageType === "goal-round" ||
+        message.messageType === "goal-complete" ||
+        message.messageType === "goal-blocked"
+      ) {
+        content.className = "agent-thread-card__message-goal-control";
+        content.textContent = messageView.visibleContent;
+      } else if (message.messageType === "dsh-command-result") {
+        content.className = "agent-thread-card__message-dsh-result";
+        const badge = document.createElement("span");
+        badge.className = "agent-thread-card__message-dsh-badge";
+        badge.textContent = "DSH";
+        content.append(badge, document.createTextNode(messageView.visibleContent));
       } else {
         content.textContent = messageView.visibleContent;
       }

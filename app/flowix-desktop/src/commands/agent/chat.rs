@@ -115,7 +115,7 @@ pub async fn chat_with_agent_stream(
     result.map(|response| AgentChatResponse { response })
 }
 
-/// Append input to the currently active Codex turn without creating a new run.
+/// Append input to the currently active steerable turn without creating a new run.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn steer_agent_stream(
@@ -125,12 +125,61 @@ pub async fn steer_agent_stream(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    if message.agent_type.as_deref() != Some("codex") {
-        return Err("turn/steer is only supported for Codex".to_string());
+    match message.agent_type.as_deref() {
+        Some("codex") => {
+            state
+                .external_runtimes
+                .steer_codex(&threadId, message, clientUserMessageId, &app_handle)
+                .await
+        }
+        Some("deepseek-harness") | Some("deepseek_harness") | Some("dsh") => {
+            state
+                .external_runtimes
+                .steer_deepseek_harness(&threadId, message, clientUserMessageId, &app_handle)
+                .await
+        }
+        other => Err(format!(
+            "turn/steer is not supported for agent type {}",
+            other.unwrap_or("<missing>")
+        )),
+    }
+}
+
+/// Execute a DeepSeek Harness human slash command. This is deliberately a
+/// separate IPC path from chat/steer: DSH commands are handled by the command
+/// registry and are never sent to the model as ordinary prompt text.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn execute_deepseek_harness_command(
+    threadId: String,
+    command: String,
+    message: AgentUserMessage,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    if !matches!(message.agent_type.as_deref(), Some("deepseek-harness") | Some("deepseek_harness") | Some("dsh") | None) {
+        return Err("DSH slash commands require the deepseek-harness agent".to_string());
     }
     state
-        .external_runtimes
-        .steer_codex(&threadId, message, clientUserMessageId, &app_handle)
+        .deepseek_harness
+        .execute_command(&threadId, &command, &message, &app_handle)
+        .await
+}
+
+/// Read the DSH-native Skill catalog for one provider-owned session.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn deepseek_harness_skill_catalog(
+    threadId: String,
+    message: AgentUserMessage,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    if !matches!(message.agent_type.as_deref(), Some("deepseek-harness") | Some("deepseek_harness") | Some("dsh") | None) {
+        return Err("DSH skills require the deepseek-harness agent".to_string());
+    }
+    state
+        .deepseek_harness
+        .skill_catalog(&threadId, &message)
         .await
 }
 

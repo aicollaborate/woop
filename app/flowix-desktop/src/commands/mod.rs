@@ -38,6 +38,7 @@ pub mod dsh;
 pub mod external_document;
 pub mod external_document_watch;
 pub mod file;
+pub mod file_browser_watch;
 pub mod font;
 pub mod helpers;
 pub mod kv;

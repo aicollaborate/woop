@@ -7,6 +7,13 @@ import { canonicalPath } from '@/lib/path';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('folder-tree');
+const REFRESH_DEDUP_WINDOW_MS = 350;
+
+function canonicalDirectoryPath(path: string): string {
+  const canonical = canonicalPath(path);
+  const trimmed = canonical.replace(/\/+$/, '');
+  return trimmed || (canonical.startsWith('/') ? '/' : canonical);
+}
 
 /**
  * VSCode 风格文件树数据 hook ── 惰性单层加载。
@@ -20,8 +27,8 @@ const logger = createLogger('folder-tree');
  * 展开一个 folder 时才对它调 `getDirChildren`, 结果 merge 进 nodes;
  * 收起再展开不重新拉 (VSCode 同款行为), 刷新走 `refresh(dirPath)`。
  *
- * 帧率保护: 同一目录的并发请求只保留最后一次 (seq 计数), 组件卸载后
- * 的迟到响应直接丢弃。
+ * 帧率保护: 同一目录的并发请求复用同一个 Promise, 组件卸载后迟到响应
+ * 直接丢弃。
  */
 export interface FolderTreeState {
   /** 根目录直接子项 (有序)。 */
@@ -39,11 +46,15 @@ export function useFolderTree(folderPath: string) {
   const [rootChildren, setRootChildren] = useState<DocTreeItem[]>([]);
   const [nodes, setNodes] = useState<Map<string, DocTreeItem>>(() => new Map());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [dirtyDirectories, setDirtyDirectories] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 请求代际: 每次 folderPath 变化 / 手动刷新自增, 迟到响应按代丢弃。
   const generationRef = useRef(0);
   const mountedRef = useRef(true);
+  const directoryRefreshesRef = useRef(new Map<string, Promise<void>>());
+  const lastRefreshAtRef = useRef(new Map<string, number>());
+  const rootRefreshRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -63,6 +74,7 @@ export function useFolderTree(folderPath: string) {
         setRootChildren([]);
         setNodes(new Map());
         setExpanded(new Set());
+        setDirtyDirectories(new Set());
         setError('unreadable');
         return;
       }
@@ -70,6 +82,7 @@ export function useFolderTree(folderPath: string) {
       for (const item of items) next.set(canonicalPath(item.fullPath), item);
       setRootChildren(items);
       setNodes(next);
+      setDirtyDirectories(new Set());
       // 根目录变了, 展开状态整体作废 (旧 path 不可能出现在新根下)。
       setExpanded(new Set());
     } catch (err) {
@@ -83,39 +96,72 @@ export function useFolderTree(folderPath: string) {
     }
   }, [folderPath]);
 
+  const rootKey = canonicalDirectoryPath(folderPath);
+
   useEffect(() => {
     void loadRoot();
   }, [loadRoot]);
 
+  /** Coalesce concurrent reads of the same directory (manual action + watcher). */
+  const refreshDirectory = useCallback((dirPath: string) => {
+    const key = canonicalDirectoryPath(dirPath);
+    const pending = directoryRefreshesRef.current.get(key);
+    if (pending) return pending;
+
+    const generation = generationRef.current;
+    const request = files.getDirChildren(dirPath)
+      .then((children) => {
+        if (!mountedRef.current || generation !== generationRef.current) return;
+        setNodes((prev) => {
+          const next = new Map(prev);
+          for (const child of children) {
+            next.set(canonicalPath(child.fullPath), child);
+          }
+          // 回写父节点 children 占位 (flattenVisibleTree 按它递归拍平)。
+          const parent = next.get(key);
+          if (parent) next.set(key, { ...parent, children });
+          return next;
+        });
+        setDirtyDirectories((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+        lastRefreshAtRef.current.set(key, Date.now());
+      })
+      .catch((err) => {
+        logger.warn('refresh directory failed', { dirPath, err });
+      });
+    directoryRefreshesRef.current.set(key, request);
+    void request.then(
+      () => {
+        if (directoryRefreshesRef.current.get(key) === request) {
+          directoryRefreshesRef.current.delete(key);
+        }
+      },
+      () => {
+        if (directoryRefreshesRef.current.get(key) === request) {
+          directoryRefreshesRef.current.delete(key);
+        }
+      },
+    );
+    return request;
+  }, []);
+
   /** 展开时惰性拉子级; 已有子级的 folder 只切展开态。 */
   const loadChildren = useCallback(async (dirPath: string) => {
-    const key = canonicalPath(dirPath);
+    const key = canonicalDirectoryPath(dirPath);
     const existing = nodes.get(key);
     // children 非空 (或是首层已知的非空列表) 说明已加载过。root 的
     // children 为空数组且确实是空目录时, 每次展开都会重新请求一次,
     // 但空目录请求成本极低, 且能在外部新建文件后自动补上。
-    if (existing?.children && existing.children.length > 0) return;
-    const generation = generationRef.current;
-    try {
-      const children = await files.getDirChildren(dirPath);
-      if (!mountedRef.current || generation !== generationRef.current) return;
-      setNodes((prev) => {
-        const next = new Map(prev);
-        for (const child of children) {
-          next.set(canonicalPath(child.fullPath), child);
-        }
-        // 回写父节点 children 占位 (flattenVisibleTree 按它递归拍平)。
-        const parent = next.get(key);
-        if (parent) next.set(key, { ...parent, children });
-        return next;
-      });
-    } catch (err) {
-      logger.warn('load children failed', { dirPath, err });
-    }
-  }, [nodes]);
+    if (!dirtyDirectories.has(key) && existing?.children && existing.children.length > 0) return;
+    await refreshDirectory(dirPath);
+  }, [dirtyDirectories, nodes, refreshDirectory]);
 
   const toggle = useCallback((dirPath: string) => {
-    const key = canonicalPath(dirPath);
+    const key = canonicalDirectoryPath(dirPath);
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -163,37 +209,119 @@ export function useFolderTree(folderPath: string) {
 
   /** 局部刷新某个目录的子级 (新建/删除/重命名后调用)。 */
   const refresh = useCallback(async (dirPath?: string) => {
-    const generation = generationRef.current;
     try {
-      if (dirPath && dirPath !== folderPath) {
-        const children = await files.getDirChildren(dirPath);
-        if (!mountedRef.current || generation !== generationRef.current) return;
-        const key = canonicalPath(dirPath);
-        setNodes((prev) => {
-          const next = new Map(prev);
-          for (const child of children) {
-            next.set(canonicalPath(child.fullPath), child);
-          }
-          // 局部刷新同样回写父节点 children 占位。
-          const parent = next.get(key);
-          if (parent) next.set(key, { ...parent, children });
-          return next;
-        });
+      if (dirPath && canonicalDirectoryPath(dirPath) !== rootKey) {
+        await refreshDirectory(dirPath);
         return;
       }
       await loadRoot();
+      lastRefreshAtRef.current.set(rootKey, Date.now());
     } catch (err) {
       logger.warn('refresh failed', { dirPath, err });
     }
-  }, [folderPath, loadRoot]);
+  }, [loadRoot, refreshDirectory, rootKey]);
+
+  /** Watcher-only root refresh; unlike the manual reload it preserves expansion. */
+  const refreshRootPreservingExpansion = useCallback(() => {
+    if (rootRefreshRef.current) return rootRefreshRef.current;
+    const generation = generationRef.current;
+    const request = files.getTree(folderPath)
+      .then((items) => {
+        if (!mountedRef.current || generation !== generationRef.current) return;
+        if (items === null) {
+          setRootChildren([]);
+          setNodes(new Map());
+          setExpanded(new Set());
+          setDirtyDirectories(new Set());
+          setError('unreadable');
+          return;
+        }
+        setRootChildren(items);
+        setNodes((prev) => {
+          const next = new Map(prev);
+          for (const item of items) {
+            const itemKey = canonicalPath(item.fullPath);
+            const old = prev.get(itemKey);
+            next.set(itemKey, old?.children ? { ...item, children: old.children } : item);
+          }
+          return next;
+        });
+        setError(null);
+        setDirtyDirectories((prev) => {
+          if (!prev.has(rootKey)) return prev;
+          const next = new Set(prev);
+          next.delete(rootKey);
+          return next;
+        });
+        lastRefreshAtRef.current.set(rootKey, Date.now());
+      })
+      .catch((err) => {
+        logger.warn('refresh root from watcher failed', { folderPath, err });
+      });
+    rootRefreshRef.current = request;
+    void request.then(
+      () => {
+        if (rootRefreshRef.current === request) rootRefreshRef.current = null;
+      },
+      () => {
+        if (rootRefreshRef.current === request) rootRefreshRef.current = null;
+      },
+    );
+    return request;
+  }, [folderPath, rootKey]);
+
+  /**
+   * Reconcile native watcher notifications without throwing away expansion
+   * state. Expanded directories are refreshed immediately; collapsed ones are
+   * marked dirty and reread on their next expand.
+   */
+  const refreshDirectories = useCallback(async (dirPaths: string[]) => {
+    const keys = [...new Set(dirPaths.map((path) => canonicalDirectoryPath(path)))];
+    if (keys.length === 0) return;
+
+    const expandedSnapshot = expanded;
+    const now = Date.now();
+    const refreshNow = keys.filter((key) => (
+      (key === rootKey || expandedSnapshot.has(key))
+      && now - (lastRefreshAtRef.current.get(key) ?? 0) >= REFRESH_DEDUP_WINDOW_MS
+    ));
+    const defer = keys.filter((key) => key !== rootKey && !expandedSnapshot.has(key));
+    const dirty = [...new Set([...refreshNow, ...defer])];
+    if (dirty.length > 0) {
+      setDirtyDirectories((prev) => {
+        const next = new Set(prev);
+        for (const key of dirty) next.add(key);
+        return next;
+      });
+    }
+
+    await Promise.all(refreshNow.map(async (key) => {
+      if (key === rootKey) {
+        await refreshRootPreservingExpansion();
+        return;
+      }
+
+      await refresh(key);
+    }));
+  }, [expanded, refresh, refreshRootPreservingExpansion, rootKey]);
 
   const state: FolderTreeState = useMemo(
     () => ({ rootChildren, nodes, expanded, loading, error }),
     [rootChildren, nodes, expanded, loading, error],
   );
 
-  return { ...state, toggle, expandTo, collapseAll, refresh, reload: loadRoot };
+  return {
+    ...state,
+    toggle,
+    expandTo,
+    collapseAll,
+    refresh,
+    refreshDirectories,
+    reload: loadRoot,
+  };
 }
+
+export type FolderTreeController = ReturnType<typeof useFolderTree>;
 
 /** 渲染辅助 ── 从 rootChildren + nodes + expanded 拍平整棵可见树。 */
 export interface VisibleTreeNode {

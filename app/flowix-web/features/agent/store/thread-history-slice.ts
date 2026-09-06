@@ -4,11 +4,13 @@ import type { AgentConversationMessageState } from "@features/agent/store/agent-
 import type { LiveMessageState } from "@features/agent/store/chunk-result";
 import type { ProjectionSlice } from "@features/agent/store/projection-slice";
 import { emptyProjection } from "@features/agent/store/session-reducer";
+import { getAgentHistoryAdapter } from "@features/agent/store/agent-history-adapters";
 import {
   filterRenderableHistoryMessages,
   getHistoryPage,
   getInitialThreadHistory,
   HISTORY_PAGE_SIZE,
+  replaceHistoricalMessages,
   areMessagesEquivalent,
   historyCoversLiveTurn,
   mergeHistoricalMessages,
@@ -67,6 +69,12 @@ export interface ThreadHistorySlice {
   ): void;
   resetMessageStates(threadIds: string[]): void;
   loadMessages(agentType: AgentTypeKey, threadId: string): Promise<void>;
+  /** Reload the complete provider snapshot and treat it as authoritative. */
+  reloadMessagesFromHistory(
+    agentType: AgentTypeKey,
+    threadId: string,
+    options?: { preserveExistingMessages?: boolean },
+  ): Promise<ChatMessage[]>;
   reconcileCompletedRun(
     agentType: AgentTypeKey,
     threadId: string,
@@ -285,6 +293,49 @@ export function createThreadHistorySlice(
           }));
         }
       }
+    },
+    reloadMessagesFromHistory: async (agentType, threadId, options) => {
+      if (!threadId || get().threadTombstones[threadId]) return [];
+
+      // Invalidate an initial/page request that may have started before a DSH
+      // command committed its surface replacement. The command refresh must
+      // win over that stale response instead of merging the pre-compact rows
+      // back into the projection afterwards.
+      get().invalidateThread(threadId);
+      const requestEpoch = get().threadEpochs[threadId] ?? 0;
+      const history = await getAgentHistoryAdapter(agentType).getFullHistory(threadId);
+      if (!isRequestCurrent(threadId, requestEpoch)) return [];
+
+      const current = get().threadProjections[threadId] ?? emptyProjection();
+      const messages = replaceHistoricalMessages(history, agentType);
+      const existingMessages = options?.preserveExistingMessages
+        ? current.messages.filter(
+            (message) =>
+              !(
+                message.messageType === "dsh-command" &&
+                message.id.startsWith("dsh-command:live:")
+              ),
+          )
+        : current.messages;
+      const nextMessages = options?.preserveExistingMessages
+        ? mergeHistoricalMessages(existingMessages, messages, agentType)
+        : areMessagesEquivalent(current.messages, messages)
+          ? current.messages
+          : messages;
+      get().setThreadProjection(threadId, (projection) => ({
+        ...projection,
+        messages: nextMessages,
+        pagination: {
+          ...projection.pagination,
+          initialStatus: "ready",
+          oldestSequence: null,
+          snapshotSequence: null,
+          hasMoreHistory: false,
+          loadingInitial: false,
+          loadingMore: false,
+        },
+      }));
+      return nextMessages;
     },
     reconcileCompletedRun: async (agentType, threadId, runId) => {
       if (get().threadTombstones[threadId]) return;

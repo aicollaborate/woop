@@ -27,6 +27,7 @@ export function threadMethods(adapter, notify) {
     'thread/turns/list': async p => ({ page: await adapter.listTurns(requiredString(p.threadId, 'threadId'), p.cursor, p.limit) }),
     'thread/events/list': async p => ({ page: await adapter.listEvents(requiredString(p.threadId, 'threadId'), p.afterSeq ?? -1, p.limit) }),
     'thread/close': async p => adapter.closeThread(requiredString(p.threadId, 'threadId')),
+    'thread/archive': async p => adapter.archiveThread(requiredString(p.threadId, 'threadId')),
   }
 }
 

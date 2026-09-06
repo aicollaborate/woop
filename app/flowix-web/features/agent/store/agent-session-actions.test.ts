@@ -326,6 +326,32 @@ describe("chat-store Agent Thread Card streaming flow", () => {
     );
   });
 
+  it("still refreshes active history when the running-thread snapshot is unavailable", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const { reconcileAgentRunsAndRefreshEndedHistory } = await import(
+      "@features/agent/hooks/use-agent-events"
+    );
+    const threadId = "active-history-after-ipc-failure";
+    useChatStore.setState({
+      activeThreadIds: { "deepseek-harness": threadId },
+      threadTypes: { [threadId]: "deepseek-harness" },
+    });
+    vi.mocked(agent.runningThreads).mockRejectedValueOnce(
+      new Error("ipc://localhost/agent_running_threads was blocked"),
+    );
+    const loadMessages = vi
+      .spyOn(useAgentSessionStore.getState(), "loadMessages")
+      .mockResolvedValueOnce();
+
+    await reconcileAgentRunsAndRefreshEndedHistory();
+
+    expect(loadMessages).toHaveBeenCalledWith("deepseek-harness", threadId);
+  });
+
   it("routes streamed assistant text into the same thread state consumed by Thread Card", async () => {
     const { useChatStore } = await import("@features/agent/store/agent-session-test-facade");
     const { useAgentConversationStore } = await import(
@@ -1840,6 +1866,60 @@ describe("chat-store Agent Thread Card streaming flow", () => {
         content: "Database question",
       },
     ]);
+  });
+
+  it("appends DSH compact history without clearing the existing timeline", async () => {
+    const { agent } = await import("@platform/tauri/client");
+    const { useAgentSessionStore } = await import(
+      "@features/agent/store/agent-session-store"
+    );
+    const threadId = "dsh-history-after-compact";
+    const timestamp = new Date().toISOString();
+
+    useAgentSessionStore.getState().setThreadProjection(threadId, (projection) => ({
+      ...projection,
+      messages: [
+        {
+          id: "old-user",
+          role: "user",
+          content: "history that DSH later shadowed",
+          timestamp,
+        },
+      ],
+    }));
+    vi.mocked(agent.getDeepSeekHarnessThread).mockResolvedValueOnce({
+      messages: [
+        {
+          id: "checkpoint-1",
+          role: "system",
+          messageType: "context-compaction",
+          content: "## Current Work\n- continue",
+          timestamp,
+        },
+      ],
+    });
+
+    const messages = await useAgentSessionStore
+      .getState()
+      .reloadMessagesFromHistory("deepseek-harness", threadId, {
+        preserveExistingMessages: true,
+      });
+
+    expect(agent.getDeepSeekHarnessThread).toHaveBeenCalledWith(threadId);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "old-user" }),
+        expect.objectContaining({
+          id: "checkpoint-1",
+          role: "system",
+          messageType: "context-compaction",
+        }),
+      ]),
+    );
+    expect(
+      useAgentSessionStore.getState().threadProjections[threadId]?.messages,
+    ).toEqual(messages);
+    expect(messages.some((message) => message.id === "old-user")).toBe(true);
   });
 
   it("hydrates tool display when loading Codex history", async () => {

@@ -3549,8 +3549,8 @@ describe("AgentThreadCard composer during agent run", () => {
     setComposerText(input, "next draft message");
     expect(getComposerValue(input)).toBe("next draft message");
 
-    // Enter / send 按钮在运行期都被拦截 ── submit() 早返, 不触发
-    // sendMessageToThread, 也不清空 input (草稿保留)。
+    // DSH 运行期提交走 steer()，所以已提交草稿会被清空；输入框仍保持
+    // 可编辑，后续消息进入 next-step steering 队列。
     input.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "Enter",
@@ -3559,6 +3559,6 @@ describe("AgentThreadCard composer during agent run", () => {
       }),
     );
     await flushPromises();
-    expect(getComposerValue(input)).toBe("next draft message");
+    expect(getComposerValue(input)).toBe("");
   });
 });

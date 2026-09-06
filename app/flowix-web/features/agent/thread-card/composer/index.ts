@@ -21,6 +21,7 @@ export {
   COMPOSER_SLASH_COMMANDS,
   ComposerSlashCommandController,
   type ComposerSlashCommand,
+  type ComposerSlashSkill,
   type ComposerSlashCommandControllerOptions,
 } from "./composer-slash-command-controller";
 export {

@@ -526,12 +526,15 @@ fn base_message(id: String, role: &str, content: String, timestamp: String) -> C
         tool_name: None,
         tool_data: None,
         tool_input: None,
+        tool_call: None,
+        tool_result: None,
         tool_calls: None,
         reasoning: None,
         is_completed: None,
         error_details: None,
         is_collapsed: None,
         codex_turn_id: None,
+        turn_duration_ms: None,
         source_sequence: None,
     }
 }

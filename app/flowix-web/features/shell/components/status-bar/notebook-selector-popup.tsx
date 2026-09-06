@@ -370,7 +370,7 @@ export function NotebookSelectorPopup({
           side === 'bottom' && 'flowix-notebook-selector-popup--bottom',
         )}
       >
-        <div className="shrink-0 px-1.5 pb-2 pt-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+        <div className="shrink-0 px-1.5 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
           {t('status.notebookList')}
         </div>
 

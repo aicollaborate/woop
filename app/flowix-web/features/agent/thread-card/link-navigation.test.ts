@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { agentFileScopePath } from "./link-navigation";
+import { agentFileScopePath, localFilePathFromAgentHref } from "./link-navigation";
+
+describe("localFilePathFromAgentHref", () => {
+  it("resolves tauri localhost links and removes the display line suffix", () => {
+    expect(localFilePathFromAgentHref(
+      "tauri://localhost/Users/rop/Desktop/vibe/flowix-main/app/flowix-web/features/agent/components/agent-conversation-detail.tsx:563",
+    )).toBe(
+      "/Users/rop/Desktop/vibe/flowix-main/app/flowix-web/features/agent/components/agent-conversation-detail.tsx",
+    );
+  });
+
+  it("rejects tauri links for non-local hosts", () => {
+    expect(localFilePathFromAgentHref("tauri://example.com/Users/rop/file.ts")).toBeNull();
+  });
+});
 
 describe("agentFileScopePath", () => {
   it("treats the POSIX root as containing absolute descendants", () => {

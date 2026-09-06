@@ -16,6 +16,8 @@ export interface DocTreeItem {
 export const files = {
   getTree: (spacePath: string) => invoke<DocTreeItem[] | null>('get_file_tree', { spacePath }),
   getDirChildren: (dirPath: string) => invoke<DocTreeItem[]>('get_dir_children', { dirPath }),
+  watchRoot: (rootPath: string) => invoke<string>('watch_file_browser_root', { rootPath }),
+  unwatchRoot: (leaseId: string) => invoke<void>('unwatch_file_browser_root', { leaseId }),
   read: (filePath: string, spacePath?: string) => invoke<string | null>('read_file', { filePath, spacePath }),
   readImage: (filePath: string, spacePath?: string) => invoke<string | null>('read_image_file', { filePath, spacePath }),
   write: (filePath: string, content: string, skipValidation?: boolean, spacePath?: string) =>
@@ -51,6 +53,12 @@ export interface ExternalDocumentChangedEvent {
   path: string;
   kind: 'modified' | 'deleted';
   revision: string;
+}
+
+export interface FileBrowserDirectoriesChangedEvent {
+  leaseId: string;
+  rootPath: string;
+  directories: string[];
 }
 
 export const windows = {

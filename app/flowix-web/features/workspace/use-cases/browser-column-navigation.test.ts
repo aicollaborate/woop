@@ -7,6 +7,7 @@ import {
   openBrowserColumnTabInWorkColumn,
   openBrowserColumnTarget,
   openBrowserColumnWebpage,
+  openWorkColumnTargetInBrowserColumn,
 } from './browser-column-navigation';
 import { useBrowserColumnStore } from '@features/workspace/store/browser-column-store';
 import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
@@ -69,6 +70,34 @@ describe('browser column navigation', () => {
       kind: 'file-browser',
       activeFilePath: '/workspace/src/main.ts',
     });
+  });
+
+  it('switches the current file-browser tab folder without changing other tabs', async () => {
+    await openBrowserColumnFileBrowser('/workspace');
+    await openBrowserColumnFileBrowser('/other');
+
+    const store = useBrowserColumnStore.getState();
+    const otherTabId = store.tabs.find((tab) => tab.target.kind === 'file-browser' && tab.target.folderPath === '/other')?.id;
+    const workspaceTab = store.tabs.find((tab) => tab.target.kind === 'file-browser' && tab.target.folderPath === '/workspace');
+    expect(otherTabId).toBeDefined();
+    expect(workspaceTab).toBeDefined();
+    if (!otherTabId || !workspaceTab) return;
+
+    store.selectFileBrowserFile(otherTabId, '/other/readme.md');
+    store.switchFileBrowserFolder(otherTabId, '/next');
+
+    expect(useBrowserColumnStore.getState().tabs).toEqual([
+      workspaceTab,
+      expect.objectContaining({
+        id: otherTabId,
+        title: 'next',
+        target: expect.objectContaining({
+          kind: 'file-browser',
+          folderPath: '/next',
+          activeFilePath: null,
+        }),
+      }),
+    ]);
   });
 
   it('uses the Agent instance as the stable tab target', async () => {
@@ -167,6 +196,31 @@ describe('browser column navigation', () => {
     });
     expect(result).toEqual({ host: 'main-third', alreadyOpen: true });
     expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
+  });
+
+  it('opens the active work-column target in the right column while keeping the left target', async () => {
+    const target = {
+      kind: 'external' as const,
+      path: '/notes/plan.md',
+      scopePath: '/notes',
+      transitionId: 1,
+    };
+    const workColumn = useWorkColumnStore.getState();
+    const requestId = workColumn.beginNavigation(target, null);
+    workColumn.commitNavigation(requestId, target);
+
+    const result = await openWorkColumnTargetInBrowserColumn(target);
+
+    expect(result).toEqual({
+      host: 'browser-column',
+      tabId: 'file:/notes/plan.md',
+      alreadyOpen: false,
+    });
+    expect(useBrowserColumnStore.getState().tabs[0]).toMatchObject({
+      target: { kind: 'file', filePath: '/notes/plan.md', scopePath: '/notes' },
+    });
+    expect(useWorkColumnStore.getState().navigation.target).toEqual({ kind: 'empty' });
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
   });
 
   it('flushes the active editor before a programmatic tab replacement', async () => {

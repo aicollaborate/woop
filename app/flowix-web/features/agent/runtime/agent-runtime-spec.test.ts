@@ -18,9 +18,11 @@ vi.mock("@features/memo/components/notebook-icon", () => ({
 }));
 
 describe("workspace capabilities", () => {
-  it("only runtimes with a resume workspace guarantee allow switching", () => {
+  it("locks the Codex workspace after the conversation starts", () => {
     const codex = getAgentRuntimeSpec("codex").workspace;
-    expect(codex.switchBetweenRuns).toBe(true);
+    expect(codex.selectBeforeFirstRun).toBe(true);
+    expect(codex.switchWhileRunning).toBe(false);
+    expect(codex.switchBetweenRuns).toBe(false);
     expect(codex.switchRequiresRuntimeRestart).toBe(false);
     expect(codex.preservesConversationSession).toBe(true);
     expect(getAgentRuntimeSpec("deepseek-harness").workspace.switchBetweenRuns).toBe(false);

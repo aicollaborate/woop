@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::agent_external::AgentChunkMetadata;
 use crate::agent_wire::{AgentChunk, UsageInfo};
 
 /// Codex-compatible DSH App Server protocol marker. This is intentionally
@@ -67,12 +68,32 @@ pub fn app_thread_resume_request(
     })
 }
 
-pub fn app_turn_start_request(id: u64, thread_id: &str, input: &str) -> Value {
+pub fn app_turn_start_request(id: u64, thread_id: &str, input: impl Into<Value>) -> Value {
+    let input = input.into();
     json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": "turn/start",
         "params": { "threadId": thread_id, "input": input }
+    })
+}
+
+pub fn app_turn_steer_request(
+    id: u64,
+    thread_id: &str,
+    input: impl Into<Value>,
+    client_message_id: &str,
+) -> Value {
+    let input = input.into();
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "turn/steer",
+        "params": {
+            "threadId": thread_id,
+            "input": input,
+            "clientMessageId": client_message_id,
+        }
     })
 }
 
@@ -104,6 +125,42 @@ pub fn app_runtime_dispose_request(id: u64, thread_id: &str) -> Value {
         "id": id,
         "method": "thread/close",
         "params": { "threadId": thread_id }
+    })
+}
+
+pub fn app_thread_archive_request(id: u64, session_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "thread/archive",
+        "params": { "threadId": session_id }
+    })
+}
+
+pub fn app_thread_command_request(id: u64, session_id: &str, command: &str) -> Value {
+    app_thread_command_request_with_attachments(id, session_id, command, &[])
+}
+
+pub fn app_thread_command_request_with_attachments(
+    id: u64,
+    session_id: &str,
+    command: &str,
+    attachments: &[Value],
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "thread/command",
+        "params": { "threadId": session_id, "command": command, "attachments": attachments }
+    })
+}
+
+pub fn app_thread_skills_request(id: u64, session_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "thread/skills",
+        "params": { "threadId": session_id }
     })
 }
 
@@ -236,6 +293,7 @@ pub fn app_server_event_route(message: &Value) -> Option<String> {
             | "item/started"
             | "item/completed"
             | "item/agentMessage/delta"
+            | "goal/changed"
             | "warning"
     ) {
         return None;
@@ -248,6 +306,7 @@ pub fn app_server_event_route(message: &Value) -> Option<String> {
 
 pub enum AdaptedEvent {
     Chunk(AgentChunk),
+    ChunkWithMetadata(AgentChunk, AgentChunkMetadata),
     Completed(Option<String>),
     Ignore,
 }
@@ -371,11 +430,42 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
             .unwrap_or_default();
         let thread_id = delivery_thread_id.to_string();
         return match method {
-            "item/agentMessage/delta" => message
-                .pointer("/params/delta")
-                .and_then(Value::as_str)
-                .map(|text| text_chunk_value(text, thread_id, false))
-                .unwrap_or(AdaptedEvent::Ignore),
+            "item/agentMessage/delta" => {
+                let Some(text) = message.pointer("/params/delta").and_then(Value::as_str)
+                else {
+                    return AdaptedEvent::Ignore;
+                };
+                let message_id = message
+                    .pointer("/params/itemId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let source_sequence = message
+                    .pointer("/params/sourceSeq")
+                    .and_then(Value::as_u64);
+                let source_subsequence = message
+                    .pointer("/params/sourceSubsequence")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok());
+                AdaptedEvent::ChunkWithMetadata(
+                    AgentChunk::Text {
+                        thread_id,
+                        text: text.to_string(),
+                    },
+                    AgentChunkMetadata {
+                        codex_turn_id: message
+                            .pointer("/params/turnId")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        message_id: message_id.clone(),
+                        source_message_id: message_id,
+                        message_phase: Some("updated"),
+                        content_mode: Some("delta"),
+                        source_sequence,
+                        source_subsequence,
+                        ..AgentChunkMetadata::default()
+                    },
+                )
+            }
             "turn/completed" => {
                 let status = message
                     .pointer("/params/turn/status")
@@ -402,6 +492,83 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
                 let Some(id) = id else {
                     return AdaptedEvent::Ignore;
                 };
+                // DSH's userMessage is the durable turn boundary, just like
+                // Codex's app-server userMessage item. Relay the completed
+                // item with its provider identity so the frontend can adopt
+                // the optimistic row and history can reconcile by id.
+                if method == "item/completed" && item_type == "userMessage" {
+                    let text = app_server_content_text(
+                        item.get("content").or_else(|| item.get("text")),
+                    );
+                    let message_type = item
+                        .get("messageType")
+                        .and_then(Value::as_str)
+                        .and_then(|value| match value {
+                            "goal-round" => Some("goal-round"),
+                            "goal-complete" => Some("goal-complete"),
+                            "goal-blocked" => Some("goal-blocked"),
+                            _ => None,
+                        });
+                    let trimmed = text.trim_start();
+                    // DSH may persist workspace instructions as synthetic
+                    // userMessage items. They are not user turns and must
+                    // not reach the conversation projection. The real user
+                    // item is still relayed and adopts the optimistic row.
+                    if trimmed.is_empty()
+                        || trimmed.starts_with("<system-reminder>")
+                        || trimmed.starts_with("Current runtime context.")
+                    {
+                        return AdaptedEvent::Ignore;
+                    }
+                    let turn_id = message
+                        .pointer("/params/turnId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    return AdaptedEvent::ChunkWithMetadata(
+                        AgentChunk::UserMessage {
+                            thread_id,
+                            id: id.to_string(),
+                            text,
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        },
+                        AgentChunkMetadata {
+                            codex_turn_id: turn_id,
+                            message_id: Some(id.to_string()),
+                            source_message_id: Some(id.to_string()),
+                            message_type,
+                            message_phase: Some("completed"),
+                            content_mode: Some("snapshot"),
+                            ..AgentChunkMetadata::default()
+                        },
+                    );
+                }
+                // A completed DSH assistant turn may be delivered as a
+                // durable `agentMessage` snapshot without any preceding
+                // streaming delta. This is the normal path for short
+                // responses (and for replay-compatible App Server hosts).
+                // Preserve the provider item id so the frontend can merge a
+                // snapshot with any deltas that did arrive.
+                if method == "item/completed" && item_type == "agentMessage" {
+                    let text = app_server_content_text(
+                        item.get("content").or_else(|| item.get("text")),
+                    );
+                    if text.trim().is_empty() {
+                        return AdaptedEvent::Ignore;
+                    }
+                    return AdaptedEvent::ChunkWithMetadata(
+                        AgentChunk::Text {
+                            thread_id,
+                            text,
+                        },
+                        AgentChunkMetadata {
+                            message_id: Some(id.to_string()),
+                            source_message_id: Some(id.to_string()),
+                            message_phase: Some("completed"),
+                            content_mode: Some("snapshot"),
+                            ..AgentChunkMetadata::default()
+                        },
+                    );
+                }
                 let name = item
                     .get("toolName")
                     .and_then(Value::as_str)
@@ -529,6 +696,23 @@ pub fn adapt_event(message: &Value, delivery_thread_id: &str) -> AdaptedEvent {
     }
 }
 
+fn app_server_content_text(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(value) => value
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        None => String::new(),
+    }
+}
+
 fn text_chunk_value(text: &str, thread_id: String, reasoning: bool) -> AdaptedEvent {
     if reasoning {
         AdaptedEvent::Chunk(AgentChunk::Reasoning {
@@ -624,6 +808,107 @@ mod tests {
             adapt_event(&event, "thread-1"),
             AdaptedEvent::Chunk(AgentChunk::Text { text, .. }) if text == "hello"
         ));
+    }
+
+    #[test]
+    fn relays_completed_app_server_user_item_with_turn_identity() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "dsh-session",
+                "turnId": "turn-2",
+                "item": {
+                    "id": "user-item-2",
+                    "type": "userMessage",
+                    "content": [{ "type": "text", "text": "second prompt" }]
+                }
+            }
+        });
+        let AdaptedEvent::ChunkWithMetadata(AgentChunk::UserMessage { id, text, .. }, metadata) =
+            adapt_event(&event, "thread-1")
+        else {
+            panic!("expected a provider user item");
+        };
+        assert_eq!(id, "user-item-2");
+        assert_eq!(text, "second prompt");
+        assert_eq!(metadata.message_id.as_deref(), Some("user-item-2"));
+        assert_eq!(metadata.codex_turn_id.as_deref(), Some("turn-2"));
+        assert_eq!(metadata.message_phase, Some("completed"));
+        assert_eq!(metadata.content_mode, Some("snapshot"));
+    }
+
+    #[test]
+    fn relays_dsh_goal_message_type_as_metadata() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "dsh-session",
+                "turnId": "turn-2",
+                "item": {
+                    "id": "goal-round-1",
+                    "type": "userMessage",
+                    "messageType": "goal-round",
+                    "text": "目标执行中：在吗（第 1/256 轮）"
+                }
+            }
+        });
+        let AdaptedEvent::ChunkWithMetadata(_, metadata) = adapt_event(&event, "thread-1")
+        else {
+            panic!("expected a provider goal item");
+        };
+        assert_eq!(metadata.message_type, Some("goal-round"));
+    }
+
+    #[test]
+    fn relays_completed_app_server_agent_item_as_snapshot() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "dsh-session",
+                "turnId": "turn-2",
+                "item": {
+                    "id": "assistant-item-2",
+                    "type": "agentMessage",
+                    "content": [{ "type": "text", "text": "你好！有什么可以帮你的吗？" }]
+                }
+            }
+        });
+        let AdaptedEvent::ChunkWithMetadata(AgentChunk::Text { text, .. }, metadata) =
+            adapt_event(&event, "thread-1")
+        else {
+            panic!("expected a provider assistant snapshot");
+        };
+        assert_eq!(text, "你好！有什么可以帮你的吗？");
+        assert_eq!(metadata.message_id.as_deref(), Some("assistant-item-2"));
+        assert_eq!(metadata.source_message_id.as_deref(), Some("assistant-item-2"));
+        assert_eq!(metadata.message_phase, Some("completed"));
+        assert_eq!(metadata.content_mode, Some("snapshot"));
+    }
+
+    #[test]
+    fn maps_app_server_text_delta_with_stable_item_metadata() {
+        let event = json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "dsh-session",
+                "turnId": "dsh-session-turn-2",
+                "itemId": "dsh-session-assistant-stream-attempt-1",
+                "sourceSubsequence": 7,
+                "delta": "hello"
+            }
+        });
+        let AdaptedEvent::ChunkWithMetadata(AgentChunk::Text { text, .. }, metadata) =
+            adapt_event(&event, "thread-1")
+        else {
+            panic!("expected an assistant text delta");
+        };
+        assert_eq!(text, "hello");
+        assert_eq!(metadata.message_id.as_deref(), Some("dsh-session-assistant-stream-attempt-1"));
+        assert_eq!(metadata.source_message_id.as_deref(), Some("dsh-session-assistant-stream-attempt-1"));
+        assert_eq!(metadata.codex_turn_id.as_deref(), Some("dsh-session-turn-2"));
+        assert_eq!(metadata.message_phase, Some("updated"));
+        assert_eq!(metadata.content_mode, Some("delta"));
+        assert_eq!(metadata.source_subsequence, Some(7));
     }
 
     #[test]
@@ -742,6 +1027,10 @@ mod tests {
             app_runtime_dispose_request(3, "thread-1")["method"],
             "thread/close"
         );
+        assert_eq!(
+            app_thread_archive_request(4, "session-1")["method"],
+            "thread/archive"
+        );
     }
 
     #[test]
@@ -797,6 +1086,13 @@ mod tests {
             "params": { "threadId": "thread-9", "delta": "hi" }
         });
         assert_eq!(app_server_event_route(&event).as_deref(), Some("thread-9"));
+
+        let goal_change = json!({
+            "jsonrpc": "2.0",
+            "method": "goal/changed",
+            "params": { "threadId": "thread-9", "sourceSeq": 12, "change": { "operation": "complete" } }
+        });
+        assert_eq!(app_server_event_route(&goal_change).as_deref(), Some("thread-9"));
 
         let unrelated = json!({ "jsonrpc": "2.0", "method": "server/ping", "params": {} });
         assert!(app_server_event_route(&unrelated).is_none());

@@ -639,10 +639,9 @@ pub async fn agent_thread_archive(
     Ok(AgentThreadLifecycleResult { provider })
 }
 
-/// Unified conversation delete entry: hard-delete the provider-side thread for
-/// runtimes that own one (Codex `thread/delete` removes the rollout), then
-/// remove the Flowix thread. Runtimes without a provider lifecycle keep the
-/// historical Flowix-local delete semantics.
+/// Unified conversation delete entry: apply the provider-side delete semantic
+/// for the runtime, then remove the Flowix thread. DSH has no hard-delete
+/// session API, so its provider-side delete is implemented as archive.
 #[tauri::command]
 pub async fn agent_thread_delete(
     agent_type: String,

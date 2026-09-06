@@ -74,6 +74,7 @@ interface BrowserColumnState {
   setVisible: (visible: boolean) => void;
   setSplitRatio: (ratio: number) => void;
   selectFileBrowserFile: (tabId: string, filePath: string | null) => void;
+  switchFileBrowserFolder: (tabId: string, folderPath: string) => void;
   setFileBrowserTreeVisible: (tabId: string, visible: boolean) => void;
   setFileBrowserTreeWidth: (tabId: string, width: number) => void;
   openTab: (tab: BrowserColumnTab, disposition?: BrowserColumnOpenDisposition) => string;
@@ -102,7 +103,7 @@ interface BrowserColumnState {
 /** The main and browser document panes share the same minimum width. */
 export const BROWSER_COLUMN_MIN_WIDTH = 360;
 export const BROWSER_COLUMN_DEFAULT_SPLIT_RATIO = 0.5;
-export const BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH = 280;
+export const BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH = 220;
 export const BROWSER_COLUMN_FILE_TREE_MIN_WIDTH = 200;
 export const BROWSER_COLUMN_FILE_TREE_MAX_WIDTH = 420;
 
@@ -185,6 +186,25 @@ function updateFileBrowserTabTarget(
 ): BrowserColumnTab[] {
   return tabs.map((tab) => tab.id === tabId && tab.target.kind === 'file-browser'
     ? { ...tab, target: { ...tab.target, activeFilePath: filePath } }
+    : tab);
+}
+
+function updateFileBrowserTabFolder(
+  tabs: BrowserColumnTab[],
+  tabId: string,
+  folderPath: string,
+): BrowserColumnTab[] {
+  const folderName = folderPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? folderPath;
+  return tabs.map((tab) => tab.id === tabId && tab.target.kind === 'file-browser'
+    ? {
+        ...tab,
+        title: folderName || tab.title,
+        target: {
+          ...tab.target,
+          folderPath,
+          activeFilePath: null,
+        },
+      }
     : tab);
 }
 
@@ -394,6 +414,12 @@ export const useBrowserColumnStore = create<BrowserColumnState>()(
         const tab = get().tabs.find((candidate) => candidate.id === tabId);
         if (!tab || tab.target.kind !== 'file-browser') return;
         set({ tabs: updateFileBrowserTabTarget(get().tabs, tabId, filePath) });
+      },
+      switchFileBrowserFolder: (tabId, folderPath) => {
+        if (!folderPath.trim()) return;
+        const tab = get().tabs.find((candidate) => candidate.id === tabId);
+        if (!tab || tab.target.kind !== 'file-browser') return;
+        set({ tabs: updateFileBrowserTabFolder(get().tabs, tabId, folderPath) });
       },
       setFileBrowserTreeVisible: (tabId, visible) => {
         set({ tabs: updateFileBrowserTabTree(get().tabs, tabId, { fileTreeVisible: visible }) });

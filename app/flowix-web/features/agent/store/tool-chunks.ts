@@ -202,6 +202,7 @@ function summarizeToolResult(result: unknown): string {
     "command",
     "exit_code",
     "status",
+    "durationMs",
     "output_chars",
     "output_truncated",
   ]) {

@@ -5,6 +5,8 @@ import type { SubscribeOptions } from "@platform/tauri/event-bus";
 export const agentClient = {
   chatStream: agent.chatStream,
   steerChat: agent.steerChat,
+  executeDeepSeekHarnessCommand: agent.executeDeepSeekHarnessCommand,
+  listDeepSeekHarnessSkills: agent.listDeepSeekHarnessSkills,
   stopChatStream: agent.stopChatStream,
   runningThreads: agent.runningThreads,
   backgroundTerminals: agent.backgroundTerminals,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { ArrowBendDownRightIcon } from '@phosphor-icons/react';
 import { useI18n } from '@/lib/i18n';
 import { agentClient } from '@features/agent/store/agent-client';
 import {
@@ -150,7 +151,9 @@ function QueuedMessages({ messages }: { messages: string[] }) {
     <div className="agent-background-terminals__queue" aria-label="Queued messages">
       {messages.map((message, index) => (
         <div className="agent-background-terminals__queue-row" key={`${index}-${message}`}>
-          <span className="agent-background-terminals__queue-mark">↳</span>
+          <span className="agent-background-terminals__queue-mark">
+            <ArrowBendDownRightIcon aria-hidden="true" />
+          </span>
           <span>{message}</span>
         </div>
       ))}

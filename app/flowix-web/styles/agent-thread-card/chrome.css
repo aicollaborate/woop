@@ -103,6 +103,15 @@
 .markdown-editor .agent-thread-card {
   margin: 1rem 0;
   background: var(--document-bg);
+  /* A Thread Card is a nested NodeView. Own the inherited editor typography
+   * at the component boundary so messages and chrome do not depend on the
+   * parent ProseMirror's font/caret settings. Keep the app tokens shared with
+   * the standalone conversation surface and user Preferences. */
+  font-family: var(--app-font-family, var(--font-sans));
+  font-size: var(--app-font-size, 15px);
+  line-height: var(--app-line-height, 1.6);
+  color: var(--foreground);
+  tab-size: 5;
   cursor: default;
   -webkit-user-select: none;
   user-select: none;

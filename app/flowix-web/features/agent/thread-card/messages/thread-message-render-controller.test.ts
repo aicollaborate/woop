@@ -529,14 +529,14 @@ describe("ThreadMessageRenderController tool batch previews", () => {
         ".agent-thread-card__tool-group-header",
       )?.click();
       expect(body.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
-        .toHaveLength(3);
+        .toHaveLength(2);
       controller.dispose();
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("keeps a completed preview mounted for its 300ms fade-out", () => {
+  it("keeps a completed preview visible through its 800ms exit timeline", () => {
     vi.useFakeTimers();
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
@@ -583,7 +583,11 @@ describe("ThreadMessageRenderController tool batch previews", () => {
         ".agent-thread-card__tool-group-preview--exiting",
       )).toHaveLength(1);
 
-      vi.advanceTimersByTime(299);
+      vi.advanceTimersByTime(499);
+      expect(body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview--exiting",
+      )).toHaveLength(1);
+      vi.advanceTimersByTime(300);
       expect(body.querySelectorAll(
         ".agent-thread-card__tool-group-preview--exiting",
       )).toHaveLength(1);
@@ -591,6 +595,45 @@ describe("ThreadMessageRenderController tool batch previews", () => {
       expect(body.querySelectorAll(
         ".agent-thread-card__tool-group-preview--exiting",
       )).toHaveLength(0);
+      expect(body.querySelectorAll(
+        ".agent-thread-card__tool-group-preview",
+      )).toHaveLength(0);
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the Agent running indicator visible for at least one second", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return undefined as unknown as number;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      const { body, controller } = createController("codex");
+      const input = {
+        messages: [],
+        shouldRenderMessages: true,
+        isThreadCachePresentationHidden: false,
+        isThreadCacheLoading: false,
+      };
+
+      controller.render({ ...input, isLoading: true });
+      const cells = body.querySelector<HTMLElement>(".agent-thread-card__loading-cells");
+      const text = body.querySelector<HTMLElement>(".agent-thread-card__loading-text");
+      expect(cells?.hidden).toBe(false);
+      expect(text?.hidden).toBe(false);
+
+      controller.render({ ...input, isLoading: false });
+      vi.advanceTimersByTime(999);
+      expect(cells?.hidden).toBe(false);
+      expect(text?.hidden).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(cells?.hidden).toBe(true);
+      expect(text?.hidden).toBe(true);
       controller.dispose();
     } finally {
       vi.useRealTimers();

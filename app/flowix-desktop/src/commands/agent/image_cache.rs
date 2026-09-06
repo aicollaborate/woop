@@ -4,8 +4,8 @@ use base64::Engine;
 use serde::Serialize;
 use uuid::Uuid;
 
-pub(super) const MAX_AGENT_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-pub(super) const MAX_AGENT_IMAGE_COUNT: usize = 5;
+pub(crate) const MAX_AGENT_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+pub(crate) const MAX_AGENT_IMAGE_COUNT: usize = 5;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,7 +15,7 @@ pub struct CachedAgentImage {
     name: String,
 }
 
-fn agent_image_extension(mime_type: &str) -> Option<&'static str> {
+pub(crate) fn agent_image_extension(mime_type: &str) -> Option<&'static str> {
     match mime_type.trim().to_ascii_lowercase().as_str() {
         "image/png" => Some("png"),
         "image/jpeg" => Some("jpg"),
@@ -45,7 +45,7 @@ fn ensure_path_within_image_cache(root: &Path, candidate: &Path) -> Result<(), S
     Ok(())
 }
 
-pub(super) async fn resolve_cached_agent_image(path: &str) -> Result<Option<PathBuf>, String> {
+pub(crate) async fn resolve_cached_agent_image(path: &str) -> Result<Option<PathBuf>, String> {
     let root = agent_image_cache_root()?;
     let root = match tokio::fs::canonicalize(&root).await {
         Ok(root) => root,
@@ -59,6 +59,66 @@ pub(super) async fn resolve_cached_agent_image(path: &str) -> Result<Option<Path
     };
     ensure_path_within_image_cache(&root, &candidate)?;
     Ok(Some(candidate))
+}
+
+/// Convert Flowix's short-lived cache paths into DSH's wire upload shape.
+/// The path is re-authorized here instead of trusting the frontend payload;
+/// DSH receives bytes and MIME metadata, never a host path.
+pub(crate) async fn encode_cached_agent_images(
+    paths: &[String],
+) -> Result<Vec<(String, String, String)>, String> {
+    if paths.len() > MAX_AGENT_IMAGE_COUNT {
+        return Err(format!(
+            "A message can attach at most {MAX_AGENT_IMAGE_COUNT} images"
+        ));
+    }
+    let mut encoded = Vec::with_capacity(paths.len());
+    for raw in paths {
+        let Some(path) = resolve_cached_agent_image(raw).await? else {
+            return Err("Attached image is no longer available".to_string());
+        };
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|error| format!("Failed to inspect cached image: {error}"))?;
+        if metadata.len() > MAX_AGENT_IMAGE_BYTES as u64 {
+            return Err(format!(
+                "Image exceeds {} MB limit",
+                MAX_AGENT_IMAGE_BYTES / 1024 / 1024
+            ));
+        }
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| "Attached image has no supported type".to_string())?;
+        let media_type = match extension.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
+            _ => return Err("Attached image has an unsupported type".to_string()),
+        };
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|error| format!("Failed to read cached image: {error}"))?;
+        if bytes.len() > MAX_AGENT_IMAGE_BYTES {
+            return Err(format!(
+                "Image exceeds {} MB limit",
+                MAX_AGENT_IMAGE_BYTES / 1024 / 1024
+            ));
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image")
+            .to_string();
+        encoded.push((
+            media_type.to_string(),
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+            name,
+        ));
+    }
+    Ok(encoded)
 }
 
 #[tauri::command]

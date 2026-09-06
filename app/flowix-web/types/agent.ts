@@ -228,7 +228,8 @@ export type RuntimeConfigPatch = {
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool" | "reasoning" | "end";
-  messageType?: "context-compaction";
+  /** Provider-owned timeline/control message, distinct from human content. */
+  messageType?: AgentMessageType;
   content: string;
   /** Display-only notice kind for provider-specific runtime failures. */
   notice?: "deepseek-harness-reconnect-failed";
@@ -249,12 +250,29 @@ export interface ChatMessage {
   toolInput?: Record<string, unknown>;
   toolDisplay?: AgentToolDisplay;
   toolCalls?: ToolCall[];
+  /** Raw provider tool events projected by DSH history, when available. */
+  toolCall?: Record<string, unknown>;
+  toolResult?: Record<string, unknown>;
   reasoning?: string;
   isCompleted?: boolean;
   isCollapsed?: boolean;
   /** Codex Turn owning this projected message, when available. */
   codexTurnId?: string;
+  /** Native provider turn duration in milliseconds, when available. */
+  turnDurationMs?: number;
 }
+
+/** Display categories for messages that are not ordinary human/agent text. */
+export type AgentMessageType =
+  | "context-compaction"
+  | "goal-round"
+  | "goal-complete"
+  | "goal-blocked"
+  /** DSH-owned slash command input/result rows projected from its event log. */
+  | "dsh-command"
+  | "dsh-command-result"
+  /** Legacy classification for older `/plan` history projections. */
+  | "dsh-command-prompt";
 
 // Tool call definition
 export interface ToolCall {
@@ -279,6 +297,7 @@ export type AgentChunk =
   | AgentChunkContextCompaction
   | AgentChunkToolCall
   | AgentChunkToolResult
+  | AgentChunkDshCommand
   | AgentChunkError
   | AgentChunkStreamStart
   | AgentChunkStreamEnd
@@ -291,6 +310,7 @@ export interface AgentChunkUserMessage {
   id: string;
   text: string;
   timestamp: number;
+  message_type?: AgentMessageType;
   agent_type?: AgentTypeKey;
   run_id?: string;
   message_id?: string;
@@ -376,6 +396,21 @@ export interface AgentChunkToolResult {
   source_subsequence?: number;
 }
 
+export interface AgentChunkDshCommand {
+  kind: "dsh_command";
+  thread_id: string;
+  id: string;
+  name: string;
+  args: string;
+  status: "pending" | "success" | "error" | "cancelled";
+  result?: string;
+  timestamp: number;
+  agent_type?: AgentTypeKey;
+  run_id?: string;
+  message_id?: string;
+  source_sequence?: number;
+}
+
 export interface AgentChunkError {
   kind: "error";
   thread_id: string;
@@ -424,6 +459,8 @@ export interface AgentChunkStreamEnd {
   thread_id: string;
   /** null = 正常完成; string = 异常退出 (e.g. "agent stuck: ...") */
   reason: string | null;
+  /** Native provider turn duration in milliseconds, when available. */
+  duration_ms?: number;
   agent_type?: AgentTypeKey;
   run_id?: string;
 }
@@ -564,6 +601,7 @@ export type AgentEvent =
       kind: "user_message";
       id: string;
       text: string;
+      messageType?: AgentMessageType;
     })
   | (AgentEventBase & { kind: "final_message"; text: string })
   | (AgentEventBase & { kind: "reasoning_delta"; text: string })
@@ -582,11 +620,23 @@ export type AgentEvent =
       result: unknown;
     })
   | (AgentEventBase & {
+      kind: "dsh_command";
+      id: string;
+      name: string;
+      args: string;
+      status: "pending" | "success" | "error" | "cancelled";
+      result?: string;
+    })
+  | (AgentEventBase & {
       kind: "error";
       message: string;
       errorDetails?: AgentErrorDetails;
     })
-  | (AgentEventBase & { kind: "stream_end"; reason: string | null })
+  | (AgentEventBase & {
+      kind: "stream_end";
+      reason: string | null;
+      durationMs?: number;
+    })
   | (AgentEventBase & { kind: "session_resolved"; sessionId: string })
   | (AgentEventBase & {
       kind: "usage";

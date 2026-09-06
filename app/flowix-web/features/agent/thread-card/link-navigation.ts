@@ -6,6 +6,11 @@ function decodeLocalFilePath(value: string): string {
   }
 }
 
+/** Agent locations may use the common `path:line` display form. */
+function stripLineReference(path: string): string {
+  return path.replace(/:\d+$/, "");
+}
+
 type ComparablePath = {
   value: string;
   flavor: "posix" | "windows" | "relative";
@@ -80,6 +85,18 @@ export function localFilePathFromAgentHref(
   const href = rawHref?.trim() ?? '';
   if (!href) return null;
 
+  if (/^tauri:/i.test(href)) {
+    try {
+      const url = new URL(href);
+      if (url.protocol !== "tauri:" || url.hostname.toLowerCase() !== "localhost") {
+        return null;
+      }
+      return stripLineReference(decodeLocalFilePath(url.pathname)) || null;
+    } catch {
+      return null;
+    }
+  }
+
   if (/^file:/i.test(href)) {
     try {
       const url = new URL(href);
@@ -89,14 +106,14 @@ export function localFilePathFromAgentHref(
       if (url.hostname && url.hostname !== 'localhost') {
         path = `//${url.hostname}${path}`;
       }
-      return path || null;
+      return stripLineReference(path) || null;
     } catch {
       return null;
     }
   }
 
   if (href.startsWith('/') || /^[a-z]:[\\/]/i.test(href)) {
-    return decodeLocalFilePath(href);
+    return stripLineReference(decodeLocalFilePath(href));
   }
   return null;
 }

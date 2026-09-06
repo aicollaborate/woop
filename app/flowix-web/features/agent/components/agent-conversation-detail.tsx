@@ -31,11 +31,18 @@ import { AgentConversationSurfaceController } from '@features/agent/thread-card/
 import { createExternalAgentRuntimeHandle } from '@features/agent/services/external-agent-runtime-service';
 import { ensureAgentConversationDetailThread } from '@features/agent/components/agent-conversation-detail-submit';
 import { markConversationWorkspaceStarted } from '@features/agent/runtime/workspace-snapshot';
+import { ensureConversationWorkspaceSnapshot } from '@features/agent/runtime/workspace-snapshot';
 import { AgentBackgroundTerminals } from '@features/agent/components/agent-background-terminals';
 import { buildInitialInstanceRuntimeConfig } from '@features/agent/store/initial-runtime-config';
 import { defaultThreadTitle } from '@features/agent/store/thread-titles';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { openPath, openUrl } from '@platform/tauri/opener';
+import { dialogs } from '@platform/tauri/client/desktop';
+import {
+  runDshCommand,
+  hasPendingDshCommand,
+  listDshSkills,
+} from '@features/agent/services/dsh-command-service';
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96;
 const TOP_HISTORY_LOAD_THRESHOLD_PX = 48;
@@ -102,9 +109,10 @@ export function AgentConversationDetail({
   ));
   const messages = projection?.messages ?? EMPTY_MESSAGES;
   const isLoading = !!projection?.runs.isLoading;
-  const pendingCodexMessages = useAgentSessionStore((state) =>
+  const isDshCommandRunning = projection?.runs.dshCommand?.status === 'pending';
+  const pendingSteeringMessages = useAgentSessionStore((state) =>
     threadId
-      ? state.pendingCodexMessages[threadId] ?? EMPTY_PENDING_CODEX_MESSAGES
+      ? state.pendingSteeringMessages[threadId] ?? EMPTY_PENDING_CODEX_MESSAGES
       : EMPTY_PENDING_CODEX_MESSAGES,
   );
   const initialHistoryStatus = projection?.pagination.initialStatus ?? 'idle';
@@ -131,6 +139,7 @@ export function AgentConversationDetail({
   const typeKeyRef = useRef<AgentTypeKey>(instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY);
   const messagesRef = useRef(messages);
   const isLoadingRef = useRef(isLoading);
+  const isDshCommandRunningRef = useRef(isDshCommandRunning);
   const instanceRef = useRef(instance);
   const threadIdRef = useRef(threadId);
   const runtimeHandleRef = useRef<string | null>(null);
@@ -173,20 +182,95 @@ export function AgentConversationDetail({
   typeKeyRef.current = instance?.agentType ?? DEFAULT_AGENT_TYPE_KEY;
   messagesRef.current = messages;
   isLoadingRef.current = isLoading;
+  isDshCommandRunningRef.current = isDshCommandRunning;
   instanceRef.current = instance;
   threadIdRef.current = threadId;
   languageRef.current = language;
   tRef.current = t;
 
+  const clearComposerAfterSlashCommand = useCallback(() => {
+    composerControllerRef.current?.clear();
+    composerControllerRef.current?.clearDraft();
+    composerImagesControllerRef.current?.clearAfterSubmit();
+    persistDetailDraft(instanceId, null);
+    composerControllerRef.current?.updateMultiLineState();
+  }, [instanceId]);
+
+  const ensureDshCommandConversation = useCallback(async (command: string) => {
+    if (typeKeyRef.current !== 'deepseek-harness') {
+      throw new Error('This slash command is only available for DSH');
+    }
+    const currentInstance = instanceRef.current;
+    if (!currentInstance) throw new Error('Agent session instance was not found');
+    const currentThreadId = threadIdRef.current;
+    if (!currentThreadId) {
+      if (!runtimeHandleRef.current) {
+        runtimeHandleRef.current = createExternalAgentRuntimeHandle();
+      }
+      const ensured = await ensureAgentConversationDetailThread({
+        instanceId: currentInstance.instanceId,
+        typeKey: 'deepseek-harness',
+        prompt: command,
+        runtimeHandleId: runtimeHandleRef.current,
+      });
+      threadIdRef.current = ensured.threadId;
+      return {
+        threadId: ensured.threadId,
+        runtimeConfig: ensured.runtimeConfig,
+      };
+    }
+    const runtimeConfig = ensureConversationWorkspaceSnapshot(currentInstance.instanceId);
+    markConversationWorkspaceStarted(currentInstance.instanceId);
+    return { threadId: currentThreadId, runtimeConfig };
+  }, []);
+
+  const runDshCommandFromDetail = useCallback(async (command: string, imagePaths: string[] = []) => {
+    if (destroyedRef.current || typeKeyRef.current !== 'deepseek-harness') return;
+    await runDshCommand({
+      command,
+      imagePaths,
+      ensureConversation: ensureDshCommandConversation,
+      onError: (message) => toast.error(message),
+      onLogError: (message, error) => logger.error(message, { error }),
+      onSaveExport: async (filename, content) => {
+        const target = await dialogs.saveFile(
+          filename,
+          [{ name: 'JSON', extensions: ['json'] }],
+        );
+        if (!target) return;
+        const written = await dialogs.writeExportFile(target, content);
+        toast[written ? 'success' : 'error'](
+          written ? 'DSH 会话已导出。' : 'DSH 会话导出失败。',
+        );
+      },
+      onFocus: () => {
+        if (!destroyedRef.current) composerControllerRef.current?.focus();
+      },
+      sendFailedText: tRef.current('agent.chat.sendFailed'),
+    });
+  }, [ensureDshCommandConversation]);
+
   const submit = useCallback(async () => {
     // 线程绑定是异步的; submittingRef 挡住"创建中"期间的重入。Codex
-    // 已有运行时允许本次提交转入队列，其它 agent 仍等待当前运行结束。
-    if (submittingRef.current || (isLoadingRef.current && typeKeyRef.current !== 'codex')) return;
+    // 和 DSH 已有运行时允许本次提交转入当前 turn 的 steering 队列，
+    // 其它 agent 仍等待当前运行结束。
+    const isSteerable = typeKeyRef.current === 'codex' || typeKeyRef.current === 'deepseek-harness';
+    if (submittingRef.current || (isLoadingRef.current && !isSteerable)) return;
     const composerController = composerControllerRef.current;
     const currentInstance = instanceRef.current;
+    if (typeKeyRef.current === 'deepseek-harness' && hasPendingDshCommand(currentInstance?.threadId)) return;
     const content = composerController?.getPrompt().trim() ?? '';
     const imagePaths = composerImagesControllerRef.current?.readyImages.map((image) => image.path) ?? [];
     if (!composerController || (!content && imagePaths.length === 0) || !currentInstance) return;
+
+    if (
+      typeKeyRef.current === 'deepseek-harness' &&
+      /^\/(?:goal|plan)(?:\s|$)/iu.test(content)
+    ) {
+      clearComposerAfterSlashCommand();
+      void runDshCommandFromDetail(content, imagePaths);
+      return;
+    }
 
     submittingRef.current = true;
     try {
@@ -241,7 +325,7 @@ export function AgentConversationDetail({
     } finally {
       submittingRef.current = false;
     }
-  }, []);
+  }, [clearComposerAfterSlashCommand, runDshCommandFromDetail]);
   submitRef.current = submit;
 
   useEffect(() => {
@@ -338,7 +422,7 @@ export function AgentConversationDetail({
       getLanguage: () => languageRef.current,
       t: (key) => tRef.current(key),
       isDestroyed: () => destroyedRef.current,
-      isRunning: () => isLoadingRef.current || submittingRef.current,
+      isRunning: () => isLoadingRef.current || isDshCommandRunningRef.current || submittingRef.current,
     });
     externalSettingsRef.current = externalSettings;
     const composerModelButton = externalSettings.createComposerModelButton();
@@ -400,7 +484,7 @@ export function AgentConversationDetail({
         renderThreadState: () => {
           messageController.render({
             messages: messagesRef.current,
-            isLoading: isLoadingRef.current,
+            isLoading: isLoadingRef.current || isDshCommandRunningRef.current,
             shouldRenderMessages: true,
             isInitialHistoryLoading: shouldShowInitialHistorySkeleton(
               renderThreadIdRef.current,
@@ -432,11 +516,37 @@ export function AgentConversationDetail({
         inputDraftMaxChars: INPUT_DRAFT_MAX_CHARS,
         getCurrentInputDraft: () => draftRef.current ?? '',
         getUserHistoryMessages: () => getAgentThreadCardUserHistoryMessagesFromMessages(messagesRef.current),
-        getSendLabel: (wantStop) => tRef.current(wantStop ? 'editor.threadCard.stop' : 'editor.threadCard.send'),
+        getSendLabel: (wantStop, isRunning) => isRunning
+          ? tRef.current('editor.threadCard.running')
+          : tRef.current(wantStop ? 'editor.threadCard.stop' : 'editor.threadCard.send'),
         getSendButtonWantsStop: () =>
-          isLoadingRef.current && !(typeKeyRef.current === 'codex' && !!composerControllerRef.current?.getPrompt().trim()),
+          isLoadingRef.current &&
+          !((typeKeyRef.current === 'codex' || typeKeyRef.current === 'deepseek-harness') &&
+            !!composerControllerRef.current?.getPrompt().trim()),
+        getSendButtonRunning: () => isDshCommandRunningRef.current,
         getHasAttachments: () => composerImagesController.hasImages,
         getHasPendingAttachments: () => composerImagesController.hasPending,
+        agentType: typeKeyRef.current,
+        listDshSkills: async () => {
+          if (typeKeyRef.current !== 'deepseek-harness') return [];
+          const ensured = await ensureDshCommandConversation('/skill');
+          return listDshSkills({
+            threadId: ensured.threadId,
+            runtimeConfig: ensured.runtimeConfig,
+          });
+        },
+        onDshModelSelect: () => {
+          clearComposerAfterSlashCommand();
+          externalSettings.openComposerModelPicker();
+        },
+        onPermissionSelect: () => {
+          clearComposerAfterSlashCommand();
+          externalSettings.openComposerPermissionPicker();
+        },
+        onDirectCommand: (command) => {
+          clearComposerAfterSlashCommand();
+          void runDshCommandFromDetail(`/${command.name}`);
+        },
         submit: () => submitRef.current(),
         stop: () => {
           const id = renderThreadIdRef.current;
@@ -527,17 +637,17 @@ export function AgentConversationDetail({
   useEffect(() => {
     messagesControllerRef.current?.render({
       messages,
-      isLoading,
+      isLoading: isLoading || isDshCommandRunning,
       shouldRenderMessages: true,
       isInitialHistoryLoading,
     });
     composerControllerRef.current?.setSendButtonState();
     rolePickerRef.current?.refreshIcon();
-  }, [isInitialHistoryLoading, isLoading, messages]);
+  }, [isInitialHistoryLoading, isLoading, isDshCommandRunning, messages]);
 
   useEffect(() => {
     externalSettingsRef.current?.refreshEmptySettings();
-  }, [instance?.threadId, isLoading]);
+  }, [instance?.threadId, isLoading, isDshCommandRunning]);
 
   if (!instance) {
     return (
@@ -592,7 +702,7 @@ export function AgentConversationDetail({
             threadId={threadId}
             agentType={instance.agentType === 'codex' ? 'codex' : 'deepseek-harness'}
             enabled={instance.agentType === 'codex' || instance.agentType === 'deepseek-harness'}
-            queuedMessages={pendingCodexMessages.map((message) => message.content)}
+            queuedMessages={pendingSteeringMessages.map((message) => message.content)}
           />
           <div ref={composerMountRef} />
         </div>

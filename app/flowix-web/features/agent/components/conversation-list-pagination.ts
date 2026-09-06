@@ -30,6 +30,21 @@ function compareConversationOrder(
   return right.instanceId < left.instanceId ? -1 : 1;
 }
 
+function compareFavoriteConversationOrder(
+  left: AgentConversationInstance,
+  right: AgentConversationInstance,
+): number {
+  if (left.createdAt !== right.createdAt) return right.createdAt - left.createdAt;
+  if (left.instanceId === right.instanceId) return 0;
+  return right.instanceId < left.instanceId ? -1 : 1;
+}
+
+export function sortFavoriteConversations(
+  conversations: readonly AgentConversationInstance[],
+): AgentConversationInstance[] {
+  return [...conversations].sort(compareFavoriteConversationOrder);
+}
+
 function isFallbackTitle(instance: AgentConversationInstance): boolean {
   const title = instance.title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
   if (!title) return true;

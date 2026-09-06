@@ -6,6 +6,17 @@ import {
   mergeMessagesForThreadRender,
 } from "@features/agent/store/thread-history";
 
+export interface DshCommandRuntimeState {
+  id: string;
+  name: string;
+  args: string;
+  runId?: string;
+  status: "pending" | "success" | "error" | "cancelled";
+  startedAt: number;
+  endedAt?: number;
+  result?: string;
+}
+
 /**
  * Single per-thread projection derived from the backend AgentEvent stream.
  *
@@ -47,6 +58,9 @@ export interface ThreadProjection {
     activeRunId: string | null;
     runs: Record<string, AgentRunState>;
     lastRun?: LastRunSnapshot;
+    /** DSH command lifecycle. Commands are not model runs, but are still
+     * thread-scoped work that must drive the same busy UI. */
+    dshCommand?: DshCommandRuntimeState | null;
   };
 }
 
@@ -71,6 +85,7 @@ export function emptyProjection(): ThreadProjection {
       isLoading: false,
       activeRunId: null,
       runs: {},
+      dshCommand: null,
     },
   };
 }
@@ -234,8 +249,21 @@ export function mergeThreadProjections(
         ...(from?.runs.runs ?? {}),
       },
       lastRun: to?.runs.lastRun ?? from?.runs.lastRun,
+      dshCommand: mergeDshCommandState(to?.runs.dshCommand, from?.runs.dshCommand),
     },
   };
+}
+
+function mergeDshCommandState(
+  to: DshCommandRuntimeState | null | undefined,
+  from: DshCommandRuntimeState | null | undefined,
+): DshCommandRuntimeState | null {
+  // A pending command is the live state and must win over a stale terminal
+  // snapshot during session-id resolution. Otherwise the composer can briefly
+  // become writable while the DSH operation is still mutating the session.
+  if (to?.status === "pending") return to;
+  if (from?.status === "pending") return from;
+  return to ?? from ?? null;
 }
 
 function mergeInitialHistoryStatus(

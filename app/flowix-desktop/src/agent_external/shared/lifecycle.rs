@@ -7,6 +7,10 @@ pub struct AgentChunkMetadata {
     /// Provider-native item/message id retained for diagnostics and future
     /// transcript imports. `message_id` is the Flowix canonical identity.
     pub source_message_id: Option<String>,
+    /// Provider-owned display category for synthetic timeline messages. This
+    /// is currently used by DSH goal round/wrap-up notices; it must not be
+    /// inferred from the rendered text on the frontend.
+    pub message_type: Option<&'static str>,
     pub client_user_message_id: Option<String>,
     pub message_phase: Option<&'static str>,
     pub content_mode: Option<&'static str>,
@@ -31,6 +35,12 @@ impl AgentChunkMetadata {
             object.insert(
                 "source_message_id".to_string(),
                 Value::String(source_message_id.clone()),
+            );
+        }
+        if let Some(message_type) = self.message_type {
+            object.insert(
+                "message_type".to_string(),
+                Value::String(message_type.to_string()),
             );
         }
         if let Some(client_id) = self.client_user_message_id.as_ref() {
@@ -355,6 +365,7 @@ fn canonical_chunk_metadata(
         AgentChunk::Text { .. } => ("assistant", "stream".to_string()),
         AgentChunk::Reasoning { .. } => ("reasoning", "stream".to_string()),
         AgentChunk::ToolCall { id, .. } | AgentChunk::ToolResult { id, .. } => ("tool", id.clone()),
+        AgentChunk::DshCommand { id, .. } => ("dsh-command", id.clone()),
         AgentChunk::Error { .. } => ("error", "error".to_string()),
         _ => return canonical,
     };
@@ -445,6 +456,7 @@ pub fn emit_stream_end_once(
             &AgentChunk::StreamEnd {
                 thread_id: thread_id.to_string(),
                 reason,
+                duration_ms: None,
             },
             agent_type,
             run_id,

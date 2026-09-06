@@ -64,13 +64,18 @@ const streamStart = (runId: string): AgentEvent =>
     model: "gpt-test",
   });
 
-const streamEnd = (runId: string, reason: string | null = null): AgentEvent =>
+const streamEnd = (
+  runId: string,
+  reason: string | null = null,
+  durationMs?: number,
+): AgentEvent =>
   event("stream_end", {
     agentType: "deepseek-harness",
     threadId: "t1",
     runId,
     timestamp: 9000,
     reason,
+    durationMs,
   });
 
 const errorEvent = (message: string): AgentEvent =>
@@ -274,6 +279,20 @@ describe("reduceProjection / text streaming lifecycle", () => {
     expect(p.pending.reasoningId).toBeNull();
   });
 
+  it("attaches a provider turn duration to the final assistant row", () => {
+    let p = emptyProjection();
+    p = reduceProjection(p, streamStart("r1"));
+    p = reduceProjection(p, textDelta("answer"));
+    p = reduceProjection(p, streamEnd("r1", null, 69078));
+
+    expect(p.messages).toHaveLength(1);
+    expect(p.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "answer",
+      turnDurationMs: 69078,
+    });
+  });
+
   it("error chunk closes pending and inserts error assistant row", () => {
     let p = emptyProjection();
     p = reduceProjection(p, streamStart("r1"));
@@ -475,6 +494,64 @@ describe("reduceProjection / tool call cycle", () => {
       p.messages.find((m) => m.role === "tool" && m.toolCallId === "c1")?.isLoading,
     ).toBe(false);
   });
+});
+
+describe("reduceProjection / DSH command operations", () => {
+  it("upserts pending and completed command state by command id", () => {
+    let p = emptyProjection();
+    p = reduceProjection(
+      p,
+      event("dsh_command", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "command-run-1",
+        timestamp: 1000,
+        id: "command-1",
+        name: "compact",
+        args: "",
+        status: "pending",
+      }),
+    );
+    expect(p.messages).toMatchObject([
+      expect.objectContaining({
+        id: "dsh-command:live:command-1",
+        content: "/compact",
+        isLoading: true,
+        isCompleted: false,
+      }),
+    ]);
+    expect(p.runs.dshCommand).toMatchObject({
+      id: "command-1",
+      status: "pending",
+    });
+
+    p = reduceProjection(
+      p,
+      event("dsh_command", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "command-run-1",
+        timestamp: 2000,
+        id: "command-1",
+        name: "compact",
+        args: "",
+        status: "success",
+        result: "Compacted",
+      }),
+    );
+    expect(p.messages).toHaveLength(1);
+    expect(p.messages[0]).toMatchObject({
+      content: "/compact",
+      isLoading: false,
+      isCompleted: true,
+    });
+    expect(p.runs.dshCommand).toMatchObject({
+      id: "command-1",
+      status: "success",
+      endedAt: 2000,
+    });
+  });
+
 });
 
 describe("reduceProjection / session_resolved is a no-op", () => {

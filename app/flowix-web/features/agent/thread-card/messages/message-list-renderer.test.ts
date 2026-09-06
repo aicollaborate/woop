@@ -11,6 +11,7 @@ function message(
   id: string,
   role: ChatMessage["role"],
   codexTurnId?: string,
+  turnDurationMs?: number,
 ): ChatMessage {
   return {
     id,
@@ -19,6 +20,7 @@ function message(
     timestamp: "2026-08-29T00:00:00.000Z",
     isCompleted: true,
     codexTurnId,
+    turnDurationMs,
   };
 }
 
@@ -91,6 +93,30 @@ describe("Codex turn-end message actions", () => {
 
     const { list } = createRenderedAgentMessageList(messages, context());
     expect(list.querySelectorAll(".agent-thread-card__message-actions")).toHaveLength(2);
+  });
+
+  it("shows the turn duration after the message date", () => {
+    const { list } = createRenderedAgentMessageList(
+      [message("assistant-1", "assistant", "turn-1", 69078)],
+      context(),
+    );
+    const actions = list.querySelector(".agent-thread-card__message-actions");
+    expect(actions?.textContent).toContain("1分9秒");
+    expect(
+      actions?.querySelector(".agent-thread-card__message-time")?.nextElementSibling
+        ?.classList.contains("agent-thread-card__message-duration"),
+    ).toBe(true);
+  });
+
+  it("omits zero minutes from a short Chinese duration", () => {
+    const { list } = createRenderedAgentMessageList(
+      [message("assistant-1", "assistant", "turn-1", 5000)],
+      context(),
+    );
+    expect(list.querySelector(".agent-thread-card__message-actions")?.textContent)
+      .toContain("5秒");
+    expect(list.querySelector(".agent-thread-card__message-actions")?.textContent)
+      .not.toContain("0分");
   });
 
   it("does not show actions while the turn is still streaming", () => {
@@ -292,7 +318,6 @@ describe("continuous tool group rendering", () => {
       .toBeNull();
     expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
       .toHaveLength(0);
-
     group.querySelector<HTMLButtonElement>(
       ".agent-thread-card__tool-group-header",
     )?.click();
@@ -324,6 +349,98 @@ describe("continuous tool group rendering", () => {
       .toHaveLength(1);
   });
 
+  it("counts only completed tools in the group title, including zero", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", { isLoading: true, content: "" }),
+      tool("tool-2", { isLoading: false, content: "done" }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 1 个步骤");
+
+    const { list: runningList } = createRenderedAgentMessageList([
+      tool("running-only", { isLoading: true, content: "" }),
+    ], context());
+    expect(runningList.textContent).toContain("已完成 0 个步骤");
+  });
+
+  it("shows duration from tool timestamps", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", {
+        timestamp: "2026-09-03T00:00:00.000Z",
+        sourceTimestamp: Date.parse("2026-09-03T00:00:00.000Z"),
+      }),
+      tool("tool-2", {
+        timestamp: "2026-09-03T00:01:02.000Z",
+        sourceTimestamp: Date.parse("2026-09-03T00:01:02.000Z"),
+      }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 2 个步骤 · 1m2s");
+  });
+
+  it("uses raw tool call/result timestamps for the completed group", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", {
+        timestamp: "2026-09-06T10:00:02.000Z",
+        toolCall: { type: "tool/call", time: "2026-09-06T10:00:00.000Z" },
+        toolResult: { type: "tool/result", time: "2026-09-06T10:00:02.000Z" },
+      }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 1 个步骤 · 2s");
+  });
+
+  it("does not display 0s for a sub-second raw tool timeline", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", {
+        timestamp: "2026-09-06T10:00:00.034Z",
+        toolCall: { type: "tool/call", time: "2026-09-06T10:00:00.000Z" },
+        toolResult: { type: "tool/result", time: "2026-09-06T10:00:00.034Z" },
+      }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 1 个步骤");
+    expect(list.textContent).not.toContain("0s");
+  });
+
+  it("does not show Codex duration from provider item durationMs alone", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", {
+        toolAgentType: "codex",
+        toolData: JSON.stringify({ durationMs: 1200 }),
+      }),
+      tool("tool-2", {
+        toolAgentType: "codex",
+        toolData: JSON.stringify({ durationMs: 2800 }),
+      }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 2 个步骤");
+    expect(list.textContent).not.toContain("·");
+  });
+
+  it("does not show duration for generated timestamps without a trusted signal", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", { timestamp: "2026-09-03T00:00:00.000Z" }),
+      tool("tool-2", { timestamp: "2026-09-03T00:01:02.000Z" }),
+    ], context());
+
+    expect(list.textContent).toContain("已完成 2 个步骤");
+    expect(list.textContent).not.toContain("·");
+  });
+
+  it("does not show duration when a tool in the group lacks raw event timing", () => {
+    const { list } = createRenderedAgentMessageList([
+      tool("tool-1", {
+        toolCall: { type: "tool/call", time: "2026-09-03T00:00:00.000Z" },
+        toolResult: { type: "tool/result", time: "2026-09-03T00:00:01.000Z" },
+      }),
+      tool("tool-2"),
+    ], context());
+
+    expect(list.textContent).not.toContain("·");
+  });
+
   it("keeps the newest tool batch outside the group while streaming", () => {
     const running = tool("tool-2", { isLoading: true, content: "" });
     const { list } = createRenderedAgentMessageList(
@@ -336,7 +453,7 @@ describe("continuous tool group rendering", () => {
     const group = list.firstElementChild as HTMLElement;
 
     expect(group.querySelector(".agent-thread-card__tool-group-header")?.textContent)
-      .toContain("正在进行 2 个步骤");
+      .toContain("已完成 1 个步骤");
     expect(group.querySelector(".agent-thread-card__tool-group-loading-icon"))
       .toBeNull();
     expect(
@@ -359,15 +476,32 @@ describe("continuous tool group rendering", () => {
     ]);
     expect(group.querySelector(".agent-thread-card__tool-group-preview"))
       .not.toBeNull();
+    expect(
+      group.querySelector(
+        ".agent-thread-card__tool-group-preview .agent-thread-card__message-tool-toggle",
+      ),
+    ).toBeNull();
+    expect(
+      group.querySelector(
+        ".agent-thread-card__tool-group-preview",
+      )?.getAttribute("aria-hidden"),
+    ).toBe("false");
     expect(group.querySelectorAll(".agent-thread-card__tool-group-tools > .agent-thread-card__message"))
       .toHaveLength(0);
 
     group.querySelector<HTMLButtonElement>(
       ".agent-thread-card__tool-group-header",
     )?.click();
-    expect(group.querySelector(".agent-thread-card__tool-group-preview"))
-      .not.toBeNull();
+    expect(
+      group.querySelector(".agent-thread-card__tool-group-preview")
+        ?.getAttribute("aria-hidden"),
+    ).toBe("false");
     expect(group.querySelector(".agent-thread-card__tool-group-tools")?.children)
-      .toHaveLength(2);
+      .toHaveLength(1);
+    expect(
+      group.querySelector(
+        ".agent-thread-card__tool-group-tools .agent-thread-card__message-tool-toggle",
+      ),
+    ).toBeNull();
   });
 });

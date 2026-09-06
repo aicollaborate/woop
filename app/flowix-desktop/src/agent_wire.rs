@@ -265,6 +265,19 @@ pub enum AgentChunk {
         name: String,
         result: serde_json::Value,
     },
+    /// DSH human command lifecycle. This is an operation projection, not a
+    /// model turn; the durable source remains DSH's command/run + command/done
+    /// event pair and the frontend reconciles it with history afterwards.
+    DshCommand {
+        thread_id: String,
+        id: String,
+        name: String,
+        args: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<String>,
+        timestamp: i64,
+    },
     /// 错误事件。`error_details` 是可选的，以兼容历史落盘消息。
     Error {
         thread_id: String,
@@ -292,6 +305,11 @@ pub enum AgentChunk {
     StreamEnd {
         thread_id: String,
         reason: Option<String>,
+        /// Provider-reported duration of the completed turn, in milliseconds.
+        /// Only runtimes that expose a native turn duration (currently Codex
+        /// app-server) populate this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
     },
     /// Token usage increment ── emitted multiple times per run (per turn /
     /// per stream tail). Token counts are accumulated by the frontend into
@@ -326,6 +344,7 @@ impl AgentChunk {
             Self::ContextCompaction { .. } => "context_compaction",
             Self::ToolCall { .. } => "tool_call",
             Self::ToolResult { .. } => "tool_result",
+            Self::DshCommand { .. } => "dsh_command",
             Self::Error { .. } => "error",
             Self::StreamStart { .. } => "stream_start",
             Self::StreamEnd { .. } => "stream_end",
@@ -342,6 +361,7 @@ impl AgentChunk {
             | Self::ContextCompaction { thread_id, .. }
             | Self::ToolCall { thread_id, .. }
             | Self::ToolResult { thread_id, .. }
+            | Self::DshCommand { thread_id, .. }
             | Self::Error { thread_id, .. }
             | Self::StreamStart { thread_id, .. }
             | Self::StreamEnd { thread_id, .. }

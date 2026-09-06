@@ -50,6 +50,17 @@ describe("agent thread card Markdown math", () => {
     expect(container.textContent).toContain("javascript&#x3A;alert(1)");
   });
 
+  it("keeps the desktop webview origin on local agent links", () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderAgentThreadCardMarkdownToHtml(
+      '<a href="tauri://localhost/Users/rop/project/src/app.ts:12">source</a>',
+    );
+
+    expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
+      "tauri://localhost/Users/rop/project/src/app.ts:12",
+    );
+  });
+
   it("recognizes Codex inline LaTeX delimiters", () => {
     const html = renderAgentThreadCardMarkdownToHtml(
       "Assume \\(q,k\\in\\mathbb R^d\\).",
@@ -96,6 +107,19 @@ describe("agent thread card Markdown math", () => {
     );
 
     expect(countMathNodes(html)).toBe(0);
+  });
+
+  it("marks fenced code blocks for isolation from the editor styles", () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderAgentThreadCardMarkdownToHtml(
+      "```ts\nconst answer = 42;\n```",
+    );
+
+    const pre = container.querySelector("pre");
+    expect(pre?.classList.contains("agent-thread-card__message-code-block")).toBe(
+      true,
+    );
+    expect(pre?.querySelector("code")?.textContent).toBe("const answer = 42;\n");
   });
 
   it("does not replace ordinary text or parse link destinations", () => {

@@ -169,6 +169,7 @@ impl_external_runtime!(OpenCodeAcpManager, ExternalRuntimeKind::OpenCode);
 pub struct ExternalRuntimeRegistry {
     runtimes: HashMap<ExternalRuntimeKind, Box<dyn ExternalCliRuntime>>,
     codex: Option<Arc<CodexAppServerManager>>,
+    deepseek_harness: Option<Arc<DeepSeekHarnessManager>>,
 }
 
 impl ExternalRuntimeRegistry {
@@ -180,6 +181,7 @@ impl ExternalRuntimeRegistry {
         deepseek_harness: Arc<DeepSeekHarnessManager>,
     ) -> Self {
         let codex_for_registry = codex.clone();
+        let deepseek_harness_for_registry = deepseek_harness.clone();
         Self::try_from_runtimes(vec![
             Box::new(codex),
             Box::new(claude),
@@ -189,10 +191,16 @@ impl ExternalRuntimeRegistry {
         ])
         .expect("built-in external runtimes must have unique kinds")
         .with_codex(codex_for_registry)
+        .with_deepseek_harness(deepseek_harness_for_registry)
     }
 
     fn with_codex(mut self, codex: Arc<CodexAppServerManager>) -> Self {
         self.codex = Some(codex);
+        self
+    }
+
+    fn with_deepseek_harness(mut self, manager: Arc<DeepSeekHarnessManager>) -> Self {
+        self.deepseek_harness = Some(manager);
         self
     }
 
@@ -212,6 +220,7 @@ impl ExternalRuntimeRegistry {
         Ok(Self {
             runtimes: registry,
             codex: None,
+            deepseek_harness: None,
         })
     }
 
@@ -233,6 +242,27 @@ impl ExternalRuntimeRegistry {
             .ok_or_else(|| "Codex runtime is unavailable".to_string())?;
         CodexAppServerManager::steer_chat(
             codex.as_ref(),
+            thread_id,
+            message,
+            client_user_message_id,
+            app_handle,
+        )
+        .await
+    }
+
+    pub async fn steer_deepseek_harness(
+        &self,
+        thread_id: &str,
+        message: AgentUserMessage,
+        client_user_message_id: String,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<(), String> {
+        let manager = self
+            .deepseek_harness
+            .as_ref()
+            .ok_or_else(|| "DeepSeek Harness runtime is unavailable".to_string())?;
+        DeepSeekHarnessManager::steer_chat(
+            manager.as_ref(),
             thread_id,
             message,
             client_user_message_id,

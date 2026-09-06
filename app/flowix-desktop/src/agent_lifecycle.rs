@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use crate::agent_external::codex::CodexAppServerManager;
 use crate::agent_external::hermes::HermesAcpManager;
 use crate::agent_external::opencode::OpenCodeAcpManager;
+use crate::agent_external::deepseek_harness::DeepSeekHarnessManager;
 pub use crate::agent_external::runtime_registry::ExternalRuntimeKind;
 use crate::agent_session::ThreadManager;
 
@@ -46,8 +47,10 @@ impl AgentLifecycleService {
         codex: Arc<CodexAppServerManager>,
         opencode: Arc<OpenCodeAcpManager>,
         hermes: Arc<HermesAcpManager>,
+        deepseek_harness: Arc<DeepSeekHarnessManager>,
     ) -> Self {
-        let adapters: [Arc<dyn ThreadLifecycleAdapter>; 3] = [
+        let dsh = deepseek_harness.clone();
+        let adapters: [Arc<dyn ThreadLifecycleAdapter>; 4] = [
             Arc::new(CodexLifecycleAdapter {
                 threads: threads.clone(),
                 client: codex,
@@ -66,6 +69,7 @@ impl AgentLifecycleService {
                     Box::pin(async move { client.delete_thread(&thread_id).await })
                 }),
             }),
+            Arc::new(DeepSeekHarnessLifecycleAdapter { manager: dsh }),
         ];
         Self::try_from_adapters(adapters)
             .expect("built-in lifecycle adapters must have unique runtime keys")
@@ -124,6 +128,28 @@ type DeleteProvider = Arc<
 struct AcpLifecycleAdapter {
     runtime: ExternalRuntimeKind,
     delete: DeleteProvider,
+}
+
+struct DeepSeekHarnessLifecycleAdapter {
+    manager: Arc<DeepSeekHarnessManager>,
+}
+
+#[async_trait]
+impl ThreadLifecycleAdapter for DeepSeekHarnessLifecycleAdapter {
+    fn runtime(&self) -> ExternalRuntimeKind {
+        ExternalRuntimeKind::DeepSeekHarness
+    }
+
+    async fn apply(&self, thread_id: &str, action: LifecycleAction) -> Result<bool, String> {
+        match action {
+            LifecycleAction::Archive => self.manager.archive_thread(thread_id).await,
+            // DSH deliberately has no hard-delete session API. Flowix's
+            // delete therefore uses the same provider archive operation so
+            // the session disappears from DSH navigation before its Flowix
+            // record is removed.
+            LifecycleAction::Delete => self.manager.archive_thread(thread_id).await,
+        }
+    }
 }
 
 #[async_trait]
@@ -211,6 +237,11 @@ mod tests {
             Arc::new(CodexAppServerManager::new(threads.clone())),
             Arc::new(OpenCodeAcpManager::new(threads.clone())),
             Arc::new(HermesAcpManager::new(threads)),
+            Arc::new(DeepSeekHarnessManager::new(
+                ThreadManager::for_tests(),
+                Arc::new(crate::config::UserConfigStore::new(tempfile::tempdir().unwrap().path().to_path_buf())),
+                tempfile::tempdir().unwrap().path().to_path_buf(),
+            )),
         );
 
         // A type without a lifecycle adapter must not fail the delete.

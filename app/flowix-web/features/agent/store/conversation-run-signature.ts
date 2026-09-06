@@ -18,7 +18,11 @@ export function getConversationRunSignature(
   const runId = activeRun?.runId ?? projection.runs.lastRun?.runId ?? EMPTY_CONVERSATION_RUN_SIGNATURE;
   const startedAt = activeRun?.startedAt ?? projection.runs.lastRun?.startedAt ?? 0;
   const currentTool = activeRun?.currentTool ?? EMPTY_CONVERSATION_RUN_SIGNATURE;
-  return `${status}${FIELD_SEPARATOR}${runId}${FIELD_SEPARATOR}${startedAt}${FIELD_SEPARATOR}${currentTool}`;
+  const command = projection.runs.dshCommand;
+  const commandStatus = command?.status ?? EMPTY_CONVERSATION_RUN_SIGNATURE;
+  const commandId = command?.id ?? EMPTY_CONVERSATION_RUN_SIGNATURE;
+  const commandStartedAt = command?.startedAt ?? 0;
+  return `${status}${FIELD_SEPARATOR}${runId}${FIELD_SEPARATOR}${startedAt}${FIELD_SEPARATOR}${currentTool}${FIELD_SEPARATOR}${commandStatus}${FIELD_SEPARATOR}${commandId}${FIELD_SEPARATOR}${commandStartedAt}`;
 }
 
 export function splitConversationRunSignature(signature: string): {
@@ -30,13 +34,14 @@ export function splitConversationRunSignature(signature: string): {
   if (!signature || signature === EMPTY_CONVERSATION_RUN_SIGNATURE) {
     return { status: null, runId: null, startedAt: 0, currentTool: null };
   }
-  const [status, runId, startedAt, currentTool] = signature.split(FIELD_SEPARATOR);
+  const [status, runId, startedAt, currentTool, commandStatus, _commandId, commandStartedAt] = signature.split(FIELD_SEPARATOR);
+  const parsedStatus = status === EMPTY_CONVERSATION_RUN_SIGNATURE
+    ? null
+    : status as "running" | "completed" | "failed" | "cancelled";
   return {
-    status: status === EMPTY_CONVERSATION_RUN_SIGNATURE
-      ? null
-      : status as "running" | "completed" | "failed" | "cancelled",
+    status: parsedStatus ?? (commandStatus === "pending" ? "running" : null),
     runId: runId === EMPTY_CONVERSATION_RUN_SIGNATURE ? null : runId,
-    startedAt: Number(startedAt) || 0,
+    startedAt: Number(startedAt) || Number(commandStartedAt) || 0,
     currentTool: currentTool === EMPTY_CONVERSATION_RUN_SIGNATURE ? null : currentTool,
   };
 }

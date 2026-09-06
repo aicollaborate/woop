@@ -4,6 +4,8 @@ import { sanitizeLinkHref } from "@/lib/safe-link";
 import type { AgentThreadCardInputImage } from "@features/agent/thread-card/composer/composer-image-controller";
 
 export const DEFAULT_AGENT_THREAD_CARD_TITLE = "";
+export const AGENT_THREAD_CARD_MESSAGE_CODE_BLOCK_CLASS =
+  "agent-thread-card__message-code-block";
 
 export function escapeAgentThreadCardAttr(
   value: string | null | undefined,
@@ -221,7 +223,14 @@ cardMarked.use({
 
 export function renderAgentThreadCardMarkdownToHtml(content: string): string {
   if (!content || !content.trim()) return "";
-  return cardMarked.parse(content) as string;
+  const html = cardMarked.parse(content) as string;
+  // A Thread Card is a ProseMirror NodeView and therefore lives below the
+  // editor's `.tiptap` element. Mark fenced blocks so editor-wide `pre`
+  // selectors can explicitly leave agent message content alone.
+  return html.replace(
+    /<pre><code(?=[ >])/g,
+    `<pre class="${AGENT_THREAD_CARD_MESSAGE_CODE_BLOCK_CLASS}"><code`,
+  );
 }
 
 function findAgentMathElement(

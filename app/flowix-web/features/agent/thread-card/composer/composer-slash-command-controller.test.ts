@@ -3,10 +3,13 @@ import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ComposerSlashCommandController } from './composer-slash-command-controller';
+import {
+  COMPOSER_SLASH_COMMANDS,
+  ComposerSlashCommandController,
+} from './composer-slash-command-controller';
 import { ComposerSlashToken } from './composer-slash-token';
 
-function setup() {
+function setup(options: { onPermissionSelect?: () => void } = {}) {
   const composer = document.createElement('div');
   const input = document.createElement('div');
   input.contentEditable = 'true';
@@ -32,7 +35,13 @@ function setup() {
     content: '',
     contentType: 'markdown',
   });
-  const controller = new ComposerSlashCommandController({ input, composer, editor });
+  const controller = new ComposerSlashCommandController({
+    input,
+    composer,
+    editor,
+    agentType: 'deepseek-harness',
+    onPermissionSelect: options.onPermissionSelect,
+  });
   return { composer, input, editor, controller };
 }
 
@@ -68,7 +77,12 @@ describe('ComposerSlashCommandController', () => {
   it('opens on slash and filters static commands', () => {
     const { editor, controller } = setup();
     type(editor, '/');
-    expect(document.querySelectorAll('.agent-composer-slash-menu__item')).toHaveLength(8);
+    expect([...document.querySelectorAll('.agent-composer-slash-menu__name')]
+      .map((node) => node.textContent)).toEqual([
+        '/compact', '/skill', '/goal', '/plan', '/model', '/permission', '/export',
+      ]);
+    expect([...document.querySelectorAll('.agent-composer-slash-menu__description')]
+      .every((node) => !node.textContent?.endsWith('。'))).toBe(true);
 
     type(editor, '/pla');
     expect(document.querySelectorAll('.agent-composer-slash-menu__item')).toHaveLength(1);
@@ -76,17 +90,110 @@ describe('ComposerSlashCommandController', () => {
     controller.dispose();
   });
 
+  it('keeps DSH ownership and interaction metadata on the slash catalog', () => {
+    expect(COMPOSER_SLASH_COMMANDS.find((command) => command.name === 'compact')).toMatchObject({
+      owner: 'dsh', interaction: 'direct', execution: 'dsh-command',
+    });
+    expect(COMPOSER_SLASH_COMMANDS.find((command) => command.name === 'skill')).toMatchObject({
+      owner: 'dsh', interaction: 'drilldown', execution: 'dsh-skill',
+    });
+    expect(COMPOSER_SLASH_COMMANDS.find((command) => command.name === 'goal')).toMatchObject({
+      owner: 'dsh', interaction: 'prompt', execution: 'dsh-command',
+    });
+    expect(COMPOSER_SLASH_COMMANDS.find((command) => command.name === 'model')).toMatchObject({
+      owner: 'flowix', interaction: 'drilldown', execution: 'host-action',
+    });
+  });
+
   it('selects with Enter and removes the command as one unit', () => {
     const { input, composer, editor, controller } = setup();
     type(editor, '/goal');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    expect(editor.getMarkdown()).toBe('[/goal](flowix://slash/goal)');
+    expect(editor.getMarkdown()).toBe('[/goal](flowix://slash/deepseek-harness/goal)');
     expect(composer.querySelector('.agent-thread-card__slash-token')?.textContent).toBe('/goal');
 
     editor.commands.focus('start');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
     expect(composer.querySelector('.agent-thread-card__slash-token')).toBeNull();
+    controller.dispose();
+    editor.destroy();
+  });
+
+  it('opens the permission settings callback and clears the input', () => {
+    const onPermissionSelect = vi.fn();
+    const { input, editor, controller } = setup({ onPermissionSelect });
+    type(editor, '/permission');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(editor.getMarkdown()).toBe('');
+    expect(document.querySelector('.agent-composer-slash-menu')).toBeNull();
+    expect(onPermissionSelect).toHaveBeenCalledOnce();
+    controller.dispose();
+    editor.destroy();
+  });
+
+  it('shares selection between mouse movement and keyboard navigation', () => {
+    const { input, editor, controller } = setup();
+    type(editor, '/');
+
+    const getItems = () => [...document.querySelectorAll<HTMLButtonElement>(
+      '.agent-composer-slash-menu__item',
+    )];
+    const activeName = () => document.querySelector(
+      '.agent-composer-slash-menu__item--active .agent-composer-slash-menu__name',
+    )?.textContent;
+
+    // A real mouse move selects the hovered command and exits keyboard mode.
+    getItems()[3].dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true,
+      movementX: 4,
+      movementY: 0,
+    }));
+    expect(activeName()).toBe('/plan');
+    expect(document.querySelector('.agent-composer-slash-menu')?.classList.contains(
+      'is-keyboard-navigation',
+    )).toBe(false);
+
+    // Keyboard navigation takes ownership of the shared active index.
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(activeName()).toBe('/model');
+    expect(document.querySelector('.agent-composer-slash-menu')?.classList.contains(
+      'is-keyboard-navigation',
+    )).toBe(true);
+
+    // The stationary pointer must not take the selection back.
+    getItems()[6].dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true,
+      movementX: 0,
+      movementY: 0,
+    }));
+    expect(activeName()).toBe('/model');
+
+    // Once the pointer really moves, hover selection is enabled again.
+    getItems()[6].dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true,
+      movementX: 1,
+      movementY: 0,
+    }));
+    expect(activeName()).toBe('/export');
+    expect(document.querySelector('.agent-composer-slash-menu')?.classList.contains(
+      'is-keyboard-navigation',
+    )).toBe(false);
+    controller.dispose();
+    editor.destroy();
+  });
+
+  it('selects a command by mouse click', () => {
+    const { editor, controller } = setup();
+    type(editor, '/');
+    const item = [...document.querySelectorAll<HTMLButtonElement>(
+      '.agent-composer-slash-menu__item',
+    )].find((candidate) => candidate.textContent?.includes('/goal'));
+    item?.click();
+
+    expect(editor.getMarkdown()).toBe('[/goal](flowix://slash/deepseek-harness/goal)');
+    expect(document.querySelector('.agent-composer-slash-menu')).toBeNull();
     controller.dispose();
     editor.destroy();
   });
@@ -100,6 +207,97 @@ describe('ComposerSlashCommandController', () => {
 
     controller.dispose();
     editor.destroy();
+  });
+
+  it('keeps DSH commands out of non-DSH composers', () => {
+    const composer = document.createElement('div');
+    const input = document.createElement('div');
+    composer.append(input);
+    document.body.append(composer);
+    const editor = new Editor({
+      element: { mount: input },
+      extensions: [StarterKit, Markdown, ComposerSlashToken],
+      content: '',
+      contentType: 'markdown',
+    });
+    const controller = new ComposerSlashCommandController({
+      input,
+      composer,
+      editor,
+      agentType: 'codex',
+    });
+    type(editor, '/');
+    expect([...document.querySelectorAll('.agent-composer-slash-menu__name')]
+      .map((node) => node.textContent)).not.toContain('/compact');
+    expect([...document.querySelectorAll('.agent-composer-slash-menu__name')]
+      .map((node) => node.textContent)).toEqual([]);
+    expect(document.querySelector('.agent-composer-slash-menu')).toBeNull();
+    controller.dispose();
+    editor.destroy();
+  });
+
+  it('does not open for a composer without an Agent type', () => {
+    const composer = document.createElement('div');
+    const input = document.createElement('div');
+    composer.append(input);
+    document.body.append(composer);
+    const editor = new Editor({
+      element: { mount: input },
+      extensions: [StarterKit, Markdown, ComposerSlashToken],
+      content: '',
+      contentType: 'markdown',
+    });
+    const controller = new ComposerSlashCommandController({
+      input,
+      composer,
+      editor,
+    });
+
+    type(editor, '/');
+    expect(document.querySelector('.agent-composer-slash-menu')).toBeNull();
+
+    controller.dispose();
+    editor.destroy();
+  });
+
+  it('opens the DSH skill submenu and inserts a scoped skill token', async () => {
+    const { editor, controller } = setup();
+    const listDshSkills = vi.fn(async () => [
+      { name: 'review', description: 'Review the current change.' },
+    ]);
+    controller.dispose();
+    editor.destroy();
+
+    // Recreate with the callback because setup intentionally keeps its helper
+    // focused on the static-menu path.
+    const nextComposer = document.createElement('div');
+    const nextInput = document.createElement('div');
+    nextComposer.append(nextInput);
+    document.body.append(nextComposer);
+    const nextEditor = new Editor({
+      element: { mount: nextInput },
+      extensions: [StarterKit, Markdown, ComposerSlashToken],
+      content: '',
+      contentType: 'markdown',
+    });
+    const nextController = new ComposerSlashCommandController({
+      input: nextInput,
+      composer: nextComposer,
+      editor: nextEditor,
+      agentType: 'deepseek-harness',
+      listDshSkills,
+    });
+    type(nextEditor, '/ski');
+    nextInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    expect(listDshSkills).toHaveBeenCalledOnce();
+    expect(document.querySelector('.agent-composer-slash-menu__name')?.textContent)
+      .toBe('/review');
+    document.querySelector<HTMLButtonElement>('.agent-composer-slash-menu__item:not(.agent-composer-slash-menu__item--back)')
+      ?.click();
+    expect(nextEditor.getMarkdown()).toBe('[/review](flowix://slash/deepseek-harness/review)');
+    nextController.dispose();
+    nextEditor.destroy();
   });
 
   it('closes for whitespace, no matches, Escape, and outside clicks', () => {

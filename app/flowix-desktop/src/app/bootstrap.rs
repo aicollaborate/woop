@@ -192,6 +192,7 @@ pub fn run() {
         codex_app_server.clone(),
         opencode_acp_manager.clone(),
         hermes_cli_manager.clone(),
+        deepseek_harness_manager.clone(),
     ));
 
     // 笔�?�?��录文件监�?�� —把�?部编辑器 / 其他 AI 对任意已注册 notebook
@@ -325,6 +326,9 @@ pub fn run() {
                     app.handle().clone(),
                 ),
             );
+            app.manage(commands::file_browser_watch::FileBrowserWatchState::new(
+                app.handle().clone(),
+            ));
             // Watch every configured notebook. MCP/external tools may write to
             // a background notebook, and those creates must still reach the
             // main Webview so it can route the note into the browser column.
@@ -686,6 +690,8 @@ pub fn run() {
             commands::thread::deepseek_harness_thread_session_id,
             commands::thread::deepseek_harness_thread_fork,
             commands::thread::deepseek_harness_session_usage,
+            commands::agent::chat::execute_deepseek_harness_command,
+            commands::agent::chat::deepseek_harness_skill_catalog,
             commands::thread::opencode_thread_session_id,
             commands::thread::opencode_thread_list,
             commands::thread::opencode_thread_get_page,
@@ -699,6 +705,8 @@ pub fn run() {
             commands::window::apply_window_theme,
             commands::external_document_watch::watch_external_document,
             commands::external_document_watch::unwatch_external_document,
+            commands::file_browser_watch::watch_file_browser_root,
+            commands::file_browser_watch::unwatch_file_browser_root,
             // 鍏ㄥ眬"閫氳繃閾炬帴鎵撳紑绗旇"鍏ュ彛 鈹€鈹€ 鎺ユ敹 URL / 鐗╃悊璺緞, 瑙ｆ瀽 + emit
             open_target::handler::open_memo_by_target,
             commands::cli::cli_link_status,

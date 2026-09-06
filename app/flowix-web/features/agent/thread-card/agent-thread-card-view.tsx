@@ -1,4 +1,5 @@
 import { openPath, openUrl } from "@platform/tauri/opener";
+import { dialogs } from "@platform/tauri/client/desktop";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { GapCursor } from "@tiptap/pm/gapcursor";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
@@ -30,8 +31,19 @@ import { buildInitialInstanceRuntimeConfig } from "@features/agent/store/initial
 import {
   stopExternalAgentThreadCardRun,
 } from "@features/agent/services/external-agent-runtime-service";
-import { submitAgentThreadCardConversation } from "@features/agent/thread-card/agent-thread-card-submit-controller";
-import { createFullscreenIcon } from "@features/agent/thread-card/agent-thread-card-icons";
+import {
+  ensureAgentThreadCardConversation,
+  submitAgentThreadCardConversation,
+} from "@features/agent/thread-card/agent-thread-card-submit-controller";
+import {
+  runDshCommand,
+  hasPendingDshCommand,
+  listDshSkills,
+} from "@features/agent/services/dsh-command-service";
+import {
+  createArrowBendDownRightIcon,
+  createFullscreenIcon,
+} from "@features/agent/thread-card/agent-thread-card-icons";
 import { createAgentThreadCardDom } from "@features/agent/thread-card/view/agent-thread-card-dom-factory";
 import { AgentThreadCardChromeController } from "@features/agent/thread-card/chrome";
 import { ExternalAgentSettingsController } from "@features/agent/thread-card/settings/external-agent-settings-controller";
@@ -486,15 +498,40 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         inputDraftMaxChars: AGENT_THREAD_CARD_INPUT_DRAFT_MAX_CHARS,
       getCurrentInputDraft: () => this.inputDraft,
       getUserHistoryMessages: () => this.getUserHistoryMessages(),
-      getSendLabel: (wantStop) =>
-        wantStop
-          ? this.t("editor.threadCard.stop")
-          : this.t("editor.threadCard.send"),
+      getSendLabel: (wantStop, isRunning) =>
+        isRunning
+          ? this.t("editor.threadCard.running")
+          : wantStop
+            ? this.t("editor.threadCard.stop")
+            : this.t("editor.threadCard.send"),
       getSendButtonWantsStop: () =>
         this.currentRuntimeView().sendButtonWantsStop &&
-        !(this.typeKey === "codex" && !!this.composerController?.getPrompt().trim()),
+        !((this.typeKey === "codex" || this.typeKey === "deepseek-harness") &&
+          !!this.composerController?.getPrompt().trim()),
+      getSendButtonRunning: () => this.currentRuntimeView().isDshCommandRunning,
       getHasAttachments: () => this.composerImages.hasImages,
       getHasPendingAttachments: () => this.composerImages.hasPending,
+      agentType: this.typeKey,
+      listDshSkills: async () => {
+        if (this.typeKey !== "deepseek-harness") return [];
+        const ensured = await this.ensureDshCommandConversation("/skill");
+        return listDshSkills({
+          threadId: ensured.threadId,
+          runtimeConfig: ensured.runtimeConfig,
+        });
+      },
+      onDshModelSelect: () => {
+        this.clearComposerAfterSlashCommand();
+        this.externalAgentSettings.openComposerModelPicker();
+      },
+      onPermissionSelect: () => {
+        this.clearComposerAfterSlashCommand();
+        this.externalAgentSettings.openComposerPermissionPicker();
+      },
+      onDirectCommand: (command) => {
+        this.clearComposerAfterSlashCommand();
+          void this.runDshCommandFromCard(`/${command.name}`);
+      },
       submit: () => {
         void this.submit();
       },
@@ -1278,6 +1315,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
       isLoading: projection.runs.isLoading,
       activeRunId: projection.runs.activeRunId,
       runs: projection.runs.runs,
+      dshCommand: projection.runs.dshCommand,
       pendingAssistantId: projection.pending.assistantId,
       pendingReasoningId: projection.pending.reasoningId,
       lastRun: projection.runs.lastRun,
@@ -1410,7 +1448,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // 其它 agent 仍在 submit() 中等待当前运行结束。空输入时 send 按钮
     // 继续显示 stop，已有输入时切换为 send。
     this.composerController.setSendButtonState();
-    const queued = useAgentSessionStore.getState().pendingCodexMessages[this.threadId ?? ""] ?? [];
+    const queued = useAgentSessionStore.getState().pendingSteeringMessages[this.threadId ?? ""] ?? [];
     this.queuedMessages.hidden = queued.length === 0;
     this.queuedMessages.replaceChildren(
       ...queued.map((message) => {
@@ -1418,7 +1456,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
         row.className = "agent-background-terminals__queue-row";
         const mark = document.createElement("span");
         mark.className = "agent-background-terminals__queue-mark";
-        mark.textContent = "↳";
+        mark.append(createArrowBendDownRightIcon());
         const text = document.createElement("span");
         text.textContent = message.content;
         row.append(mark, text);
@@ -1491,6 +1529,69 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     return undefined;
   }
 
+  private clearComposerAfterSlashCommand(): void {
+    this.composerController.clear();
+    this.composerController.clearDraft();
+    this.composerImages.clearAfterSubmit();
+    this.updateAttrs({ inputDraft: null });
+    this.composerController.updateMultiLineState();
+  }
+
+  private async ensureDshCommandConversation(command: string) {
+    if (this.typeKey !== "deepseek-harness") {
+      throw new Error("This slash command is only available for DSH");
+    }
+    return ensureAgentThreadCardConversation({
+      prompt: command,
+      fallbackTitle: this.t("editor.threadCard.title"),
+      typeKey: this.typeKey,
+      currentThreadId: this.threadId,
+      currentInstanceId: this.instanceId,
+      currentTitle: this.instance?.title ?? "",
+      runtimeHandleId: this.runtimeHandleId,
+      source: getCurrentThreadCardSource(),
+      role: {
+        memoId: this.agentRoleMemoId,
+        name: this.agentRoleName,
+      },
+      buildTitle,
+      onThreadBound: (binding) => {
+        if (this.isDestroyed) return;
+        this.updateAttrs({
+          instanceId: binding.instanceId,
+          threadId: binding.threadId,
+          typeKey: binding.typeKey,
+        });
+      },
+    });
+  }
+
+  private async runDshCommandFromCard(command: string, imagePaths: string[] = []): Promise<void> {
+    if (this.isDestroyed || this.typeKey !== "deepseek-harness") return;
+    await runDshCommand({
+      command,
+      imagePaths,
+      ensureConversation: (value) => this.ensureDshCommandConversation(value),
+      onError: (message) => toast.error(message),
+      onLogError: (message, error) => logger.error(message, { error }),
+      onSaveExport: async (filename, content) => {
+        const target = await dialogs.saveFile(
+          filename,
+          [{ name: "JSON", extensions: ["json"] }],
+        );
+        if (!target) return;
+        const written = await dialogs.writeExportFile(target, content);
+        toast[written ? "success" : "error"](
+          written ? "DSH 会话已导出。" : "DSH 会话导出失败。",
+        );
+      },
+      onFocus: () => {
+        if (!this.isDestroyed) focusWithoutScroll(this.input);
+      },
+      sendFailedText: this.t("editor.threadCard.sendFailed"),
+    });
+  }
+
   private async submit(): Promise<void> {
     // 落盘待写草稿 ── 提交时 input 即将被清空, 之前的 debounce 必须
     // 立刻写入 ProseMirror attr, 否则卡片重新挂载会丢稿。
@@ -1499,6 +1600,17 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const imagePaths = this.composerImages.readyImages.map((image) => image.path);
     if ((!rawPrompt && imagePaths.length === 0) || this.composerImages.hasPending) return;
 
+    // Human DSH commands are handled by the command registry. Keep them out
+    // of chat_stream so `/goal` and `/plan` retain their upstream semantics.
+    if (
+      this.typeKey === "deepseek-harness" &&
+      /^\/(?:goal|plan)(?:\s|$)/iu.test(rawPrompt)
+    ) {
+      this.clearComposerAfterSlashCommand();
+      void this.runDshCommandFromCard(rawPrompt, imagePaths);
+      return;
+    }
+
     // 运行期 (thread state isLoading / 正在创建 thread) 阻止发送 ──
     // 输入框保持可用 (允许用户继续输入 / 改稿), 但 Enter 与 send 按钮
     // (按钮在 isLoading 时是 stop 图标) 都无法真正投递消息。 当前草稿
@@ -1506,7 +1618,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     // 清空; 用户可在运行结束后再次按 Enter 投递同一段草稿。
     //
     // 输入框不 disabled; busy 时只阻止发送, 用户仍可继续编辑草稿。
-    if (this.currentRuntimeView().isBusy && this.typeKey !== "codex") return;
+    if (
+      this.currentRuntimeView().isBusy &&
+      this.typeKey !== "codex" &&
+      this.typeKey !== "deepseek-harness"
+    ) return;
+    if (this.typeKey === "deepseek-harness" && hasPendingDshCommand(this.threadId)) return;
 
     // 提取全文档作为隐藏 LLM 上下文 ── 跳过本卡 (agentThreadCard), 避免把
     // LLM 自己之前的回答 / 工具结果当成'笔记内容'再喂回去造成循环。

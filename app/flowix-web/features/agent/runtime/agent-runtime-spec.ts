@@ -110,9 +110,10 @@ const AGENT_RUNTIME_SPECS: Record<AgentTypeKey, AgentRuntimeSpec> = {
     typeKey: "codex",
     emptySettings: ["model", "reasoning", "permission"],
     accessOptions: CODEX_APP_SERVER_ACCESS_OPTIONS,
-    // App Server accepts `cwd` on each turn/start. A selected workspace is
-    // therefore queued for the next turn while preserving the Codex thread.
-    workspace: { selectBeforeFirstRun: true, switchWhileRunning: true, switchBetweenRuns: true, switchRequiresRuntimeRestart: false, preservesConversationSession: true },
+    // The Codex conversation owns the workspace captured when it starts.
+    // Keep the composer workspace selector available before the first run,
+    // then lock it so later turns cannot change the conversation's workspace.
+    workspace: { selectBeforeFirstRun: true, switchWhileRunning: false, switchBetweenRuns: false, switchRequiresRuntimeRestart: false, preservesConversationSession: true },
     buildRuntimeConfig: ({
       cwd,
       workspacePaths,

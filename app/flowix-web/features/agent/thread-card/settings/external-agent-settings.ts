@@ -1,7 +1,38 @@
+import type { AgentTypeKey } from "@/types/agent";
+import { getAgentType, isThemeAdaptiveAgentIcon } from "@/lib/agent-types";
 import type { AgentRuntimeSettingKind } from "@features/agent/runtime/agent-runtime-spec";
 import { createCheckIcon } from "@features/agent/thread-card/agent-thread-card-icons";
 
 export type ExternalAgentEmptyControlKind = AgentRuntimeSettingKind;
+
+/**
+ * 空状态控件组上方的 Agent 标识 (仅独立对话 / 全屏会显示, 由 CSS 控制)。
+ *
+ * 渲染约定与 React 版 <AgentIcon> 一致: 单色图标走 CSS mask 以跟随主题
+ * 前景色, 其余品牌图标保留原始配色直接用 <img>。
+ */
+export function createExternalAgentEmptyIcon(
+  typeKey: AgentTypeKey,
+): HTMLElement {
+  const type = getAgentType(typeKey);
+
+  if (!isThemeAdaptiveAgentIcon(typeKey)) {
+    const img = document.createElement("img");
+    img.className = "agent-thread-card__empty-agent-icon";
+    img.src = type.icon;
+    img.alt = "";
+    img.draggable = false;
+    img.setAttribute("aria-hidden", "true");
+    return img;
+  }
+
+  const mark = document.createElement("span");
+  mark.className =
+    "agent-icon agent-icon--masked agent-thread-card__empty-agent-icon";
+  mark.style.setProperty("--agent-icon-src", `url("${type.icon}")`);
+  mark.setAttribute("aria-hidden", "true");
+  return mark;
+}
 
 export function createExternalAgentWorkspaceDisplay(
   label: string,

@@ -34,6 +34,12 @@ pub struct ChatMessage {
     pub tool_name: Option<String>,
     pub tool_data: Option<String>,
     pub tool_input: Option<serde_json::Value>,
+    /// Raw provider tool events projected by DSH history. These are response
+    /// metadata only and are not persisted in the local message store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result: Option<serde_json::Value>,
     /// 助手消息关联�?tool_calls 数组 (OpenAI 格式 JSON, 单元素或多元�?�?    /// None 表示�?���?��手消�? Some(vec![...]) 表示该助手轮次同时发出了工具调用�?    /// 存储层用 serde_json::Value 避免�?rllm 类型耦合�?
     #[serde(default)]
     pub tool_calls: Option<serde_json::Value>,
@@ -46,6 +52,10 @@ pub struct ChatMessage {
     /// actions such as forking a conversation from a completed assistant turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_turn_id: Option<String>,
+    /// Native provider turn duration in milliseconds, displayed beside the
+    /// assistant message actions when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_duration_ms: Option<u64>,
 }
 
 /// `ChatMessage.role` 的合法取值。存储层仍是 `String` (SQLite TEXT), 这个

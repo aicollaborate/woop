@@ -81,4 +81,28 @@ describe('conversation run index', () => {
     expect(after).not.toEqual(before);
     expect(getConversationRunSummary(after, 'thread').status).toBe('completed');
   });
+
+  it('exposes a pending DSH command as running conversation work', () => {
+    const projection: ThreadProjection = {
+      ...emptyProjection(),
+      runs: {
+        isLoading: false,
+        activeRunId: null,
+        runs: {},
+        dshCommand: {
+          id: 'command-1',
+          name: 'compact',
+          args: '',
+          status: 'pending',
+          startedAt: 84,
+        },
+      },
+    };
+
+    const index = buildConversationRunIndex({ thread: projection }, ['thread']);
+    expect(getConversationRunSummary(index, 'thread')).toMatchObject({
+      status: 'running',
+      startedAt: 84,
+    });
+  });
 });

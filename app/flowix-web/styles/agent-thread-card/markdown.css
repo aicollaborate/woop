@@ -97,7 +97,9 @@
 .markdown-editor .agent-thread-card__message-content h1,
 .markdown-editor .agent-thread-card__message-content h2,
 .markdown-editor .agent-thread-card__message-content h3,
-.markdown-editor .agent-thread-card__message-content h4 {
+.markdown-editor .agent-thread-card__message-content h4,
+.markdown-editor .agent-thread-card__message-content h5,
+.markdown-editor .agent-thread-card__message-content h6 {
   margin: 8px 0 4px;
   color: var(--foreground);
   font-weight: 600;
@@ -113,6 +115,11 @@
   font-size: calc(var(--app-font-size, 15px) * 0.9);
 }
 .markdown-editor .agent-thread-card__message-content h4 {
+  font-size: calc(var(--app-font-size, 15px) * 0.9);
+  font-weight: 500;
+}
+.markdown-editor .agent-thread-card__message-content h5,
+.markdown-editor .agent-thread-card__message-content h6 {
   font-size: calc(var(--app-font-size, 15px) * 0.9);
   font-weight: 500;
 }
@@ -163,6 +170,16 @@
 }
 .markdown-editor .agent-thread-card__message-content a:hover {
   border-bottom-color: var(--brand);
+}
+
+/* Markdown images are regular <img> elements rather than editor attachment
+ * NodeViews. Keep them inside the message column after editor image rules
+ * are intentionally excluded. */
+.markdown-editor .agent-thread-card__message-content img {
+  box-sizing: border-box;
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 /* 独立对话中的工具命令收起态是 nowrap 单行摘要；完整参数只在展开态
@@ -463,6 +480,7 @@
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-word;
+  tab-size: 5;
 }
 .markdown-editor .agent-thread-card__message-content pre code {
   /* 还原: 1) 上方 :not(pre) > code 已经让 inline code 规则不命中
@@ -561,6 +579,77 @@
   gap: 6px;
   min-height: 46px;
   padding: 4px 10px;
+}
+
+/* 非全屏 thread card 保持原有单行表现: 控件组不产生额外盒子, Agent 图标
+ * 不参与布局。居中 + 图标只在独立对话 / 全屏两种大画布下开启。 */
+.markdown-editor .agent-thread-card__empty-controls {
+  display: contents;
+}
+
+.markdown-editor .agent-thread-card__empty-agent-icon {
+  display: none;
+}
+
+/* 独立对话 / 全屏: 空状态内容整体上下居中, 图标压在控件组上方。
+ * 独立对话的根节点同时带 .markdown-editor, 这里显式写全两个类名, 保证
+ * 与上面的基础规则相比稳定胜出, 而不是仅依赖书写顺序。 */
+.markdown-editor.agent-conversation-detail .agent-thread-card__body:has(
+    > .agent-thread-card__empty--codex-settings
+  ),
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__body:has(> .agent-thread-card__empty--codex-settings) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__empty--codex-settings,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__empty--codex-settings {
+  flex-direction: column;
+  gap: 14px;
+  /* 居中由 body 负责, 这里让空状态自身在纵向不被拉伸。 */
+  flex: 0 0 auto;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__empty-controls,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__empty-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.markdown-editor.agent-conversation-detail .agent-thread-card__empty-agent-icon,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__empty-agent-icon {
+  display: block;
+  /* h-20 w-20 */
+  height: 5rem;
+  width: 5rem;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+/* 空状态下 loading indicator 无内容, 但它是 body 里 38px 的固定兄弟节点,
+ * 会把居中的内容整体上推。这里仅在空状态把它折叠掉, 保持真正的视觉居中。 */
+.markdown-editor.agent-conversation-detail
+  .agent-thread-card__body:has(> .agent-thread-card__empty--codex-settings)
+  > .agent-thread-card__loading-indicator,
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__body:has(> .agent-thread-card__empty--codex-settings)
+  > .agent-thread-card__loading-indicator {
+  height: 0;
+  overflow: hidden;
 }
 
 .markdown-editor .agent-thread-card__empty-control {
@@ -690,23 +779,17 @@
 }
 
 .agent-thread-card__codex-settings-title {
-  padding: 0.15rem 0.375rem 0.35rem;
+  padding: 0.35rem 0.375rem 0.35rem;
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.2;
 }
 
 .agent-thread-card__codex-settings-section {
-  padding: 0.15rem 0.375rem 0.35rem;
+  padding: 0.35rem 0.375rem 0.35rem;
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.2;
-}
-
-/* 第二个及之后的模型供应商分组标题：上间距对齐下间距，首组保持原样。 */
-.agent-thread-card__codex-settings-section--provider
-  ~ .agent-thread-card__codex-settings-section--provider {
-  padding-top: 0.35rem;
 }
 
 .agent-thread-card__codex-settings-divider {
@@ -739,6 +822,26 @@
 .agent-thread-card__codex-settings-item:focus-visible {
   background: var(--brand);
   color: var(--primary-foreground);
+}
+
+.agent-thread-card__codex-settings-settings {
+  justify-content: flex-start;
+  gap: 4px;
+  color: var(--muted-foreground);
+  transition: none;
+}
+
+.agent-thread-card__codex-settings-settings:hover,
+.agent-thread-card__codex-settings-settings:focus-visible {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.agent-thread-card__codex-settings-settings-chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: currentColor;
 }
 
 .agent-thread-card__codex-settings-item:hover

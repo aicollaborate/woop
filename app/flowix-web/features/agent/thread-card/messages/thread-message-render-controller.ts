@@ -20,6 +20,7 @@ import {
 } from "@features/agent/thread-card/messages/tool-grouping";
 import { createAgentThreadCardMessageElement } from "@features/agent/thread-card/messages/message-item-renderer";
 import { recordMessageRenderPlan } from "@features/agent/thread-card/messages/message-render-plan";
+import { MIN_TRANSIENT_DISPLAY_DURATION_MS } from "@features/agent/thread-card/messages/transient-display";
 import {
   MessageViewportController,
   type MessageRenderScrollOptions,
@@ -75,6 +76,9 @@ export class ThreadMessageRenderController {
   private progressiveRenderRafId: number | null = null;
   private progressiveRenderMessages: ThreadState["messages"] | null = null;
   private previousIsLoading = false;
+  private loadingIndicatorShownAt: number | null = null;
+  private loadingIndicatorHideTimer: number | null = null;
+  private loadingIndicatorShouldShow = false;
 
   constructor(options: ThreadMessageRenderControllerOptions) {
     this.body = options.body;
@@ -127,6 +131,10 @@ export class ThreadMessageRenderController {
   dispose(): void {
     this.cancelPendingRender();
     this.cancelProgressiveRender();
+    if (this.loadingIndicatorHideTimer !== null) {
+      window.clearTimeout(this.loadingIndicatorHideTimer);
+      this.loadingIndicatorHideTimer = null;
+    }
     this.toolGroupPreviewBatches.clear();
     this.toolGroupPreviousTools.clear();
   }
@@ -405,20 +413,63 @@ export class ThreadMessageRenderController {
   }
 
   private renderLoadingIndicator(isLoading: boolean): void {
+    this.loadingIndicatorShouldShow = isLoading;
+    if (isLoading) {
+      if (this.loadingIndicatorHideTimer !== null) {
+        window.clearTimeout(this.loadingIndicatorHideTimer);
+        this.loadingIndicatorHideTimer = null;
+      }
+      this.loadingIndicatorShownAt ??= Date.now();
+    }
+
     const loadingText = this.loadingIndicator.querySelector<HTMLSpanElement>(
       ".agent-thread-card__loading-text",
     );
     const loadingCells = this.loadingIndicator.querySelector<HTMLSpanElement>(
       ".agent-thread-card__loading-cells",
     );
-    if (loadingText) {
-      loadingText.textContent = getAgentType(this.getTypeKey()).capabilities
-        .supportsTextStreaming
-        ? this.t("editor.threadCard.thinking")
-        : this.t("editor.threadCard.running");
-      loadingText.hidden = !isLoading;
+    const setVisibility = (visible: boolean) => {
+      if (loadingText) loadingText.hidden = !visible;
+      if (loadingCells) loadingCells.hidden = !visible;
+    };
+
+    if (isLoading) {
+      setVisibility(true);
+      if (loadingText) {
+        loadingText.textContent = getAgentType(this.getTypeKey()).capabilities
+          .supportsTextStreaming
+          ? this.t("editor.threadCard.thinking")
+          : this.t("editor.threadCard.running");
+      }
+      return;
     }
-    if (loadingCells) loadingCells.hidden = !isLoading;
+
+    if (this.loadingIndicatorShownAt === null) {
+      setVisibility(false);
+      return;
+    }
+
+    const remaining = Math.max(
+      0,
+      MIN_TRANSIENT_DISPLAY_DURATION_MS -
+        (Date.now() - this.loadingIndicatorShownAt),
+    );
+    if (remaining > 0) {
+      setVisibility(true);
+      if (this.loadingIndicatorHideTimer !== null) {
+        window.clearTimeout(this.loadingIndicatorHideTimer);
+      }
+      this.loadingIndicatorHideTimer = window.setTimeout(() => {
+        this.loadingIndicatorHideTimer = null;
+        if (this.loadingIndicatorShouldShow) return;
+        this.loadingIndicatorShownAt = null;
+        setVisibility(false);
+      }, remaining);
+      return;
+    }
+
+    this.loadingIndicatorShownAt = null;
+    setVisibility(false);
   }
 
   private removeRenderedEmptyState(): void {

@@ -3,6 +3,7 @@ import type {
   AgentChunkError,
   AgentErrorDetails,
   AgentEvent,
+  AgentMessageType,
   AgentTypeKey,
 } from "@/types/agent";
 import {
@@ -72,6 +73,7 @@ export function mapAgentChunkToEvent(
 ): AgentEvent {
   const messageMetadata = chunk as AgentChunk & {
     message_id?: string;
+    message_type?: AgentMessageType;
     message_phase?: "started" | "updated" | "completed";
     content_mode?: "delta" | "snapshot";
     source_timestamp?: number;
@@ -121,6 +123,7 @@ export function mapAgentChunkToEvent(
             chunk.id,
           ) ?? chunk.id,
         text: chunk.text,
+        messageType: messageMetadata.message_type,
         messageId:
           canonicalAgentMessageId(
             base.agentType,
@@ -211,6 +214,18 @@ export function mapAgentChunkToEvent(
         name: chunk.name,
         result: chunk.result,
       };
+    case "dsh_command":
+      return {
+        ...base,
+        kind: "dsh_command",
+        id: chunk.id,
+        name: chunk.name,
+        args: chunk.args,
+        status: chunk.status,
+        result: chunk.result,
+        messageId: chunk.id,
+        sourceSequence: chunk.source_sequence,
+      };
     case "error":
       return {
         ...base,
@@ -237,7 +252,12 @@ export function mapAgentChunkToEvent(
         reasoning_effort: chunk.reasoning_effort,
       };
     case "stream_end":
-      return { ...base, kind: "stream_end", reason: chunk.reason };
+      return {
+        ...base,
+        kind: "stream_end",
+        reason: chunk.reason,
+        durationMs: chunk.duration_ms,
+      };
     case "session_resolved":
       return { ...base, kind: "session_resolved", sessionId: chunk.session_id };
     case "usage":

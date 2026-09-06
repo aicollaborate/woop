@@ -9,9 +9,8 @@ import {
 } from "@features/agent/store/agent-history-adapters";
 import { completedRunUserMessageId } from "@features/agent/events/message-identity";
 
-/** Layer 4: 单页大小. Provider may interpret this as complete turns (Codex)
- * or materialized message/event groups; adapters must never split an atomic
- * conversation turn when their native history exposes turn boundaries. */
+/** Layer 4: 单页轮次数. External adapters return complete turns; the
+ * resulting message count is intentionally variable. */
 export const HISTORY_PAGE_SIZE = 10;
 
 export async function listHistoryThreads(
@@ -208,6 +207,19 @@ export function hydrateHistoricalMessages(
   agentType?: AgentTypeKey,
 ): ChatMessage[] {
   return messages.map((message) => hydrateToolDisplay(message, agentType));
+}
+
+/**
+ * Replace a projection with a complete provider snapshot. Unlike the normal
+ * stale-while-revalidate merge, this deliberately drops rows absent from the
+ * snapshot because provider surface replacements (for example DSH compact)
+ * are allowed to hide older durable messages.
+ */
+export function replaceHistoricalMessages(
+  messages: ChatMessage[],
+  agentType?: AgentTypeKey,
+): ChatMessage[] {
+  return hydrateHistoricalMessages(filterRenderableHistoryMessages(messages), agentType);
 }
 
 function mergeHistoricalToolMessage(
@@ -494,6 +506,7 @@ function areMessagesRenderEquivalent(
     reasoning: left.reasoning,
     isCompleted: left.isCompleted ?? false,
     isCollapsed: left.isCollapsed ?? false,
+    turnDurationMs: left.turnDurationMs,
     endTimestamp:
       left.role === "end" && !left.content ? left.timestamp : undefined,
   }) === JSON.stringify({
@@ -512,6 +525,7 @@ function areMessagesRenderEquivalent(
     reasoning: right.reasoning,
     isCompleted: right.isCompleted ?? false,
     isCollapsed: right.isCollapsed ?? false,
+    turnDurationMs: right.turnDurationMs,
     endTimestamp:
       right.role === "end" && !right.content ? right.timestamp : undefined,
   });
@@ -597,6 +611,7 @@ export function areMessagesEquivalent(
       reasoning: message.reasoning,
       isCompleted: message.isCompleted ?? false,
       isCollapsed: message.isCollapsed ?? false,
+      turnDurationMs: message.turnDurationMs,
     }) === JSON.stringify({
       id: other.id,
       role: other.role,
@@ -615,6 +630,7 @@ export function areMessagesEquivalent(
       reasoning: other.reasoning,
       isCompleted: other.isCompleted ?? false,
       isCollapsed: other.isCollapsed ?? false,
+      turnDurationMs: other.turnDurationMs,
     });
   });
 }

@@ -76,7 +76,7 @@ function NotebookIconPicker({
   const { t } = useI18n();
   return (
     <div>
-      <div className="flex items-center gap-1.5 px-1.5 pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+      <div className="flex items-center gap-1.5 px-1.5 pb-[0.35rem] pt-[0.35rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
         {t("notebook.iconLabel")}
       </div>
       <div className="max-h-[162px] overflow-y-auto pr-1 [scrollbar-gutter:stable]">

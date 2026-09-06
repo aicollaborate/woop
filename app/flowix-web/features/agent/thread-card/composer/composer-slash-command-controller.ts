@@ -4,44 +4,80 @@ import {
   insertComposerSlashToken,
   removeComposerSlashToken,
 } from "@features/agent/thread-card/composer/composer-slash-token";
+import type { AgentTypeKey } from "@/types/agent";
 
 export interface ComposerSlashCommand {
   name: string;
   description: string;
+  /** Agent-owned commands are only offered by that agent's composer. */
+  agentType?: AgentTypeKey;
+  /** Owner is explicit so another agent's same-named slash item is not reused. */
+  owner?: "dsh" | "flowix";
+  /** How selection continues: execute now, add a prompt token, or drill down. */
+  interaction?: "direct" | "prompt" | "drilldown";
+  /** Execution authority behind the selected item. */
+  execution?: "dsh-command" | "dsh-skill" | "host-action";
 }
 
 export const COMPOSER_SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
-  { name: "compact", description: "压缩较早的对话上下文。" },
-  { name: "export", description: "将当前会话导出为 ZIP 文件。" },
-  { name: "feedback", description: "记录关于本次会话的反馈。" },
-  { name: "goal", description: "设置或查看长时任务目标。" },
-  { name: "permission", description: "切换权限预设。" },
-  { name: "plan", description: "进入或退出计划模式。" },
-  { name: "model", description: "选择本次会话使用的模型。" },
-  { name: "dws", description: "使用钉钉工作空间能力。" },
+  { name: "compact", description: "压缩较早的对话上下文", agentType: "deepseek-harness", owner: "dsh", interaction: "direct", execution: "dsh-command" },
+  { name: "skill", description: "选择一个 DSH Skill", agentType: "deepseek-harness", owner: "dsh", interaction: "drilldown", execution: "dsh-skill" },
+  { name: "goal", description: "设置或查看长时任务目标", agentType: "deepseek-harness", owner: "dsh", interaction: "prompt", execution: "dsh-command" },
+  { name: "plan", description: "进入或退出计划模式", agentType: "deepseek-harness", owner: "dsh", interaction: "prompt", execution: "dsh-command" },
+  { name: "model", description: "选择本次会话使用的模型", agentType: "deepseek-harness", owner: "flowix", interaction: "drilldown", execution: "host-action" },
+  { name: "permission", description: "切换权限预设", agentType: "deepseek-harness", owner: "flowix", interaction: "drilldown", execution: "host-action" },
+  { name: "export", description: "导出当前 DSH 会话记录", agentType: "deepseek-harness", owner: "dsh", interaction: "direct", execution: "dsh-command" },
 ];
+
+export interface ComposerSlashSkill {
+  name: string;
+  description: string;
+  whenToUse?: string;
+  modelInvocable?: boolean;
+}
 
 export interface ComposerSlashCommandControllerOptions {
   editor: Editor;
   input: HTMLDivElement;
   composer: HTMLElement;
   commands?: readonly ComposerSlashCommand[];
+  agentType?: AgentTypeKey;
+  listDshSkills?: () => Promise<readonly ComposerSlashSkill[]>;
+  onDshModelSelect?: () => void;
+  onPermissionSelect?: () => void;
+  onDirectCommand?: (command: ComposerSlashCommand) => void;
   onCommandChange?: () => void;
   focusInput?: () => void;
 }
 
-/** UI-only slash command picker. Selected commands are intentionally not sent. */
+/**
+ * Slash picker for the small composer editor.
+ *
+ * The picker owns only presentation and selection. A selected token remains a
+ * real prompt value and is expanded back to `/command` by ComposerController;
+ * direct DSH commands are handed to the host through onDirectCommand.
+ */
 export class ComposerSlashCommandController {
   private readonly editor: Editor;
   private readonly input: HTMLDivElement;
   private readonly composer: HTMLElement;
   private readonly commands: readonly ComposerSlashCommand[];
+  private readonly agentType: AgentTypeKey | undefined;
+  private readonly listDshSkills: (() => Promise<readonly ComposerSlashSkill[]>) | undefined;
+  private readonly onDshModelSelect: (() => void) | undefined;
+  private readonly onPermissionSelect: (() => void) | undefined;
+  private readonly onDirectCommand: ((command: ComposerSlashCommand) => void) | undefined;
   private readonly onCommandChange: () => void;
   private readonly focusInput: () => void;
   private readonly inputRow: HTMLDivElement;
   private menu: HTMLDivElement | null = null;
   private filtered: readonly ComposerSlashCommand[] = [];
+  private skills: readonly ComposerSlashSkill[] = [];
+  private menuMode: "commands" | "skills" = "commands";
+  private skillsLoading = false;
+  private skillsRequestGeneration = 0;
   private activeIndex = 0;
+  private isKeyboardNavigation = true;
   private dismissedValue: string | null = null;
   private disposed = false;
 
@@ -50,6 +86,11 @@ export class ComposerSlashCommandController {
     this.input = options.input;
     this.composer = options.composer;
     this.commands = options.commands ?? COMPOSER_SLASH_COMMANDS;
+    this.agentType = options.agentType;
+    this.listDshSkills = options.listDshSkills;
+    this.onDshModelSelect = options.onDshModelSelect;
+    this.onPermissionSelect = options.onPermissionSelect;
+    this.onDirectCommand = options.onDirectCommand;
     this.onCommandChange = options.onCommandChange ?? (() => undefined);
     this.focusInput = options.focusInput ?? (() => {
       this.editor.commands.focus(null, { scrollIntoView: false });
@@ -99,10 +140,18 @@ export class ComposerSlashCommandController {
   }
 
   refresh(): void {
-    if (this.disposed || getComposerSlashToken(this.editor)) {
+    // Slash commands are currently a DSH-only surface. Keep this guard at the
+    // controller boundary so unscoped/custom descriptors cannot accidentally
+    // make slash available to another Agent.
+    if (this.disposed || this.agentType !== "deepseek-harness" || getComposerSlashToken(this.editor)) {
       this.closeMenu();
       return;
     }
+
+    // Skill selection is a second-level menu. Keep it open while the editor
+    // is temporarily empty; otherwise the editor update caused by clearing
+    // `/skill` would immediately tear down the submenu.
+    if (this.menuMode === "skills") return;
 
     const { selection, doc } = this.editor.state;
     const value = this.editor.getMarkdown().trim();
@@ -114,14 +163,15 @@ export class ComposerSlashCommandController {
     }
 
     const query = match[1].toLowerCase();
-    this.filtered = this.commands.filter((command) =>
-      command.name.toLowerCase().includes(query),
-    );
+    this.filtered = this.commands
+      .filter((command) => !command.agentType || command.agentType === this.agentType)
+      .filter((command) => command.name.toLowerCase().includes(query));
     if (this.filtered.length === 0) {
       this.closeMenu();
       return;
     }
     this.activeIndex = 0;
+    this.isKeyboardNavigation = true;
     this.openMenu();
   }
 
@@ -178,22 +228,30 @@ export class ComposerSlashCommandController {
         event.preventDefault();
         event.stopImmediatePropagation();
         const direction = event.key === "ArrowDown" ? 1 : -1;
-        this.activeIndex =
-          (this.activeIndex + direction + this.filtered.length) % this.filtered.length;
+        const count = this.menuMode === "commands" ? this.filtered.length : this.skills.length;
+        if (count === 0) return;
+        this.activeIndex = (this.activeIndex + direction + count) % count;
+        this.isKeyboardNavigation = true;
         this.renderMenuItems();
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const command = this.filtered[this.activeIndex];
-        if (command) this.select(command);
+        if (this.menuMode === "commands") {
+          const command = this.filtered[this.activeIndex];
+          if (command) this.select(command);
+        } else {
+          const skill = this.skills[this.activeIndex];
+          if (skill) this.selectSkill(skill);
+        }
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
         this.dismissedValue = this.editor.getMarkdown().trim();
+        this.menuMode = "commands";
         this.closeMenu();
         return;
       }
@@ -234,7 +292,14 @@ export class ComposerSlashCommandController {
   private renderMenuItems(): void {
     const menu = this.menu;
     if (!menu) return;
+    menu.classList.toggle("is-keyboard-navigation", this.isKeyboardNavigation);
     menu.replaceChildren();
+
+    if (this.menuMode === "skills") {
+      this.renderSkillsMenu(menu);
+      return;
+    }
+
     this.filtered.forEach((command, index) => {
       const item = document.createElement("button");
       item.type = "button";
@@ -249,10 +314,7 @@ export class ComposerSlashCommandController {
       description.className = "agent-composer-slash-menu__description";
       description.textContent = command.description;
       item.append(name, description);
-      item.addEventListener("pointerenter", () => {
-        this.activeIndex = index;
-        this.renderMenuItems();
-      });
+      item.addEventListener("mousemove", (event) => this.handleItemMouseMove(event, index));
       item.addEventListener("pointerdown", (event) => event.preventDefault());
       item.addEventListener("click", () => this.select(command));
       menu.append(item);
@@ -275,9 +337,137 @@ export class ComposerSlashCommandController {
     this.menu.style.bottom = `${Math.max(viewportPadding, window.innerHeight - rect.top + 8)}px`;
   };
 
+  private handleItemMouseMove(event: MouseEvent, index: number): void {
+    // Match the editor slash menu: after keyboard navigation, browsers may
+    // report a zero-distance mouse move while the pointer is still over the
+    // newly rendered item. That must not steal the selection.
+    if (event.movementX === 0 && event.movementY === 0) return;
+    if (this.activeIndex === index && !this.isKeyboardNavigation) return;
+    this.activeIndex = index;
+    this.isKeyboardNavigation = false;
+    this.renderMenuItems();
+  }
+
   private select(command: ComposerSlashCommand): void {
+    if (command.execution === "dsh-skill") {
+      void this.openSkills();
+      return;
+    }
+
     this.closeMenu();
-    insertComposerSlashToken(this.editor, command.name);
+    this.menuMode = "commands";
+    if (command.name === "model" && command.execution === "host-action") {
+      this.clearInput();
+      this.onDshModelSelect?.();
+      return;
+    }
+    if (command.name === "permission" && command.execution === "host-action") {
+      this.clearInput();
+      this.onPermissionSelect?.();
+      return;
+    }
+    if (command.interaction === "direct") {
+      this.clearInput();
+      this.onDirectCommand?.(command);
+      return;
+    }
+    insertComposerSlashToken(this.editor, command.name, command.agentType);
+    this.onCommandChange();
+  }
+
+  private clearInput(): void {
+    this.editor.commands.setContent("", {
+      contentType: "markdown",
+      emitUpdate: false,
+    });
+    this.editor.commands.focus(null, { scrollIntoView: false });
+    this.onCommandChange();
+  }
+
+  private async openSkills(): Promise<void> {
+    this.menuMode = "skills";
+    this.skills = [];
+    this.activeIndex = 0;
+    this.isKeyboardNavigation = true;
+    this.skillsLoading = true;
+    const generation = ++this.skillsRequestGeneration;
+    this.editor.commands.setContent("", { contentType: "markdown", emitUpdate: false });
+    this.openMenu();
+    this.focusInput();
+
+    try {
+      const skills = await this.listDshSkills?.() ?? [];
+      if (this.disposed || generation !== this.skillsRequestGeneration) return;
+      this.skills = skills;
+    } catch (error) {
+      if (this.disposed || generation !== this.skillsRequestGeneration) return;
+      this.skills = [];
+      console.warn("Failed to load DSH skills", error);
+    } finally {
+      if (this.disposed || generation !== this.skillsRequestGeneration) return;
+      this.skillsLoading = false;
+      this.activeIndex = 0;
+      this.renderMenuItems();
+      this.updateMenuPosition();
+    }
+  }
+
+  private renderSkillsMenu(menu: HTMLDivElement): void {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "agent-composer-slash-menu__item agent-composer-slash-menu__item--back";
+    back.textContent = "‹ 返回命令";
+    back.addEventListener("pointerdown", (event) => event.preventDefault());
+    back.addEventListener("click", () => {
+      this.menuMode = "commands";
+      this.editor.commands.setContent("/", { contentType: "markdown", emitUpdate: false });
+      this.editor.commands.focus("end");
+      this.refresh();
+    });
+    menu.append(back);
+
+    if (this.skillsLoading) {
+      const loading = document.createElement("div");
+      loading.className = "agent-composer-slash-menu__empty";
+      loading.textContent = "正在加载 Skill…";
+      menu.append(loading);
+      return;
+    }
+    if (this.skills.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "agent-composer-slash-menu__empty";
+      empty.textContent = "没有可用 Skill";
+      menu.append(empty);
+      return;
+    }
+
+    this.skills.forEach((skill, index) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "agent-composer-slash-menu__item";
+      item.classList.toggle("agent-composer-slash-menu__item--active", index === this.activeIndex);
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", String(index === this.activeIndex));
+      const name = document.createElement("span");
+      name.className = "agent-composer-slash-menu__name";
+      name.textContent = `/${skill.name}`;
+      const description = document.createElement("span");
+      description.className = "agent-composer-slash-menu__description";
+      description.textContent = skill.description || skill.whenToUse || "";
+      item.append(name, description);
+      item.addEventListener("mousemove", (event) => this.handleItemMouseMove(event, index));
+      item.addEventListener("pointerdown", (event) => event.preventDefault());
+      item.addEventListener("click", () => this.selectSkill(skill));
+      menu.append(item);
+    });
+    const activeItem = menu.children[this.activeIndex + 1] as HTMLElement | undefined;
+    activeItem?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  private selectSkill(skill: ComposerSlashSkill): void {
+    this.closeMenu();
+    this.menuMode = "commands";
+    insertComposerSlashToken(this.editor, skill.name, "deepseek-harness");
     this.onCommandChange();
   }
 
@@ -291,5 +481,8 @@ export class ComposerSlashCommandController {
   private closeMenu(): void {
     this.menu?.remove();
     this.menu = null;
+    this.skillsRequestGeneration += 1;
+    this.skillsLoading = false;
+    this.menuMode = "commands";
   }
 }

@@ -260,6 +260,13 @@ export const agent = {
     invoke<ChatResponse>('chat_with_agent_stream', { threadId, message }),
   steerChat: (threadId: string, message: AgentUserMessage, clientUserMessageId: string) =>
     invoke<void>('steer_agent_stream', { threadId, message, clientUserMessageId }),
+  executeDeepSeekHarnessCommand: (threadId: string, command: string, message: AgentUserMessage) =>
+    invoke<unknown>('execute_deepseek_harness_command', { threadId, command, message }),
+  listDeepSeekHarnessSkills: (threadId: string, message: AgentUserMessage) =>
+    invoke<{ skills: Array<{ name: string; description: string; whenToUse?: string; modelInvocable?: boolean }> }>(
+      'deepseek_harness_skill_catalog',
+      { threadId, message },
+    ),
   // 缁堟杩愯涓殑 chat_stream銆傚悗绔?AgentManager.stop_chat 缈昏浆 cancel flag,
   // 姝ｅ湪璺戠殑 ReAct 寰幆鍦ㄤ笅涓€涓?checkpoint 妫€娴嬪埌鍚庤皟 flush_cancel 閫€鍑恒€?
   // 杩斿洖 true = 鎴愬姛瑙﹀彂浜嗗彇娑? false = 褰撳墠娌℃湁 chat 鍦ㄨ窇 (no-op)銆?
@@ -285,7 +292,8 @@ export const agent = {
   getThread: (threadId: string) =>
     invoke<{ messages: ChatMessage[] }>('thread_get', { threadId }),
   /**
-   * Layer 4: 鍒嗛〉鍔犺浇 thread 鍘嗗彶. 杩斿洖 { messages (ASC), oldestSequence, hasMore }.
+   * Layer 4: 鍒嗛〉鍔犺浇 thread 鍘嗗彶 (limit = complete turns).
+   * 杩斿洖 { messages (ASC), oldestSequence, hasMore }.
    *  - beforeSequence = null/undefined 鈫?鍙栨渶杩?limit 鏉?   *  - beforeSequence = N 鈫?鍙?sequence < N 鐨勬渶杩?limit 鏉?(鍚戜笂缈婚〉)
    * 鏈嶅姟绔?clamp limit 鍒?[1, 1000].
    */

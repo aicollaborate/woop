@@ -36,7 +36,8 @@ export interface PrepareUserMessageOptions {
 /**
  * 把"用户键入文字 + 上下文元数据"装成一条 outgoing user message ── LLM
  * 实际看到的 `llmContent` 可能额外拼了首条消息上下文 (Role memo 内容 /
- * current note 摘要), 与 `userMessage.content` 同值。
+ * current note 摘要), 但 `userMessage.content` 始终只保存用户实际输入，避免
+ * 把内部 workspace/CLI 指令渲染到消息列表。
  *
  * 注意 `llmContent` 与 `userPayload.llmContent` 同值, 但 dispatched 的 IPC
  * 需要 `userPayload` 携带 system-reminder 路径字段 (cwd 等等), 因此
@@ -68,7 +69,7 @@ export function prepareUserMessage({
     userMessage: {
       id: `user-${Date.now()}`,
       role: "user",
-      content: llmContent,
+      content,
       llmContent,
       systemReminderDirectory: userPayload.systemReminderDirectory,
       systemReminderDocumentPath: userPayload.systemReminderDocumentPath,

@@ -267,15 +267,15 @@
   margin-right: -0.25rem;
   padding: 2px 0.25rem 0 0;
 }
-/* 容器内第一组 header 紧贴其上方分隔线, 不再加额外 padding-top。 */
+/* 容器内第一组 header 紧贴其上方分隔线, 但标签自身上下 padding 保持对称。 */
 .agent-thread-card__composer-note-search-list
   > .agent-thread-card__composer-role-popover-header {
-  padding-top: 8px;
+  padding-top: 0.35rem;
   margin-top: 4px;
 }
 .agent-thread-card__composer-note-search-list
   > .agent-thread-card__composer-role-popover-header:first-child {
-  padding-top: 0.15rem;
+  padding-top: 0.35rem;
   margin-top: 0;
 }
 
@@ -335,6 +335,26 @@
 .markdown-editor .agent-thread-card__send--stop {
   background: var(--warning);
   color: var(--floating-foreground);
+}
+
+.markdown-editor .agent-thread-card__send--running {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  cursor: wait;
+}
+
+.markdown-editor .agent-thread-card__send-spinner {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: agent-thread-card-send-spinner 0.8s linear infinite;
+}
+
+@keyframes agent-thread-card-send-spinner {
+  to { transform: rotate(360deg); }
 }
 
 .markdown-editor

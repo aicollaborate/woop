@@ -1306,6 +1306,9 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                     AgentChunk::StreamEnd {
                         thread_id: flowix_thread_id.clone(),
                         reason,
+                        duration_ms: params
+                            .pointer("/turn/durationMs")
+                            .and_then(Value::as_u64),
                     },
                 )
                 .await;
@@ -1583,6 +1586,8 @@ fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (turn_index, turn) in turns.iter().enumerate() {
         let turn_id = turn.get("id").and_then(Value::as_str).map(str::to_string);
+        let turn_duration_ms = app_server_turn_duration_ms(turn);
+        let turn_message_start = messages.len();
         let timestamp = app_server_timestamp_string(
             turn.get("startedAt")
                 .or_else(|| turn.get("createdAt"))
@@ -1608,8 +1613,21 @@ fn app_server_turn_messages(turns: &[Value]) -> Vec<ChatMessage> {
         if let Some(message) = app_server_turn_error_message(turn, &timestamp, turn_index) {
             messages.push(message);
         }
+        if let Some(duration_ms) = turn_duration_ms {
+            if let Some(message) = messages[turn_message_start..]
+                .iter_mut()
+                .rev()
+                .find(|message| message.role == "assistant")
+            {
+                message.turn_duration_ms = Some(duration_ms);
+            }
+        }
     }
     messages
+}
+
+fn app_server_turn_duration_ms(turn: &Value) -> Option<u64> {
+    turn.get("durationMs").and_then(Value::as_u64)
 }
 
 fn app_server_turn_error_message(
@@ -1743,12 +1761,15 @@ fn app_server_base_message(id: String, timestamp: &str) -> ChatMessage {
         tool_name: None,
         tool_data: None,
         tool_input: None,
+        tool_call: None,
+        tool_result: None,
         tool_calls: None,
         reasoning: None,
         is_completed: None,
         error_details: None,
         is_collapsed: None,
         codex_turn_id: None,
+        turn_duration_ms: None,
         source_sequence: None,
     }
 }
@@ -2082,7 +2103,9 @@ mod tests {
     fn projects_app_server_history_without_persisting_it() {
         let thread = json!({
             "turns": [{
+                "id": "turn-1",
                 "startedAt": 1_730_910_000,
+                "durationMs": 69078,
                 "items": [
                     { "id": "u1", "type": "userMessage", "content": [{ "type": "text", "text": "Hello" }] },
                     { "id": "a1", "type": "agentMessage", "text": "Hi" },
@@ -2103,6 +2126,7 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "Hello");
         assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].turn_duration_ms, Some(69078));
         assert_eq!(messages[2].reasoning.as_deref(), Some("Plan"));
         assert_eq!(messages[3].tool_name.as_deref(), Some("command_execution"));
         assert_eq!(

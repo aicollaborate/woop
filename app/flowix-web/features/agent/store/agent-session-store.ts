@@ -110,7 +110,6 @@ export interface AgentSessionStore
     ConversationSlice,
     ThreadHistorySlice,
     ThreadLifecycleSlice {
-
   sendMessageToThread: (
     threadId: string,
     content: string,
@@ -128,10 +127,10 @@ export interface AgentSessionStore
       runId?: string;
     },
   ) => Promise<void>;
-  pendingCodexMessages: Record<string, PendingCodexMessage[]>;
-  enqueueCodexMessage: (message: PendingCodexMessage) => void;
-  removeCodexMessage: (threadId: string, messageId: string) => void;
-  removeCodexMessageByClientId: (threadId: string, clientUserMessageId: string) => void;
+  pendingSteeringMessages: Record<string, PendingSteeringMessage[]>;
+  enqueueSteeringMessage: (message: PendingSteeringMessage) => void;
+  removeSteeringMessage: (threadId: string, messageId: string) => void;
+  removeSteeringMessageByClientId: (threadId: string, clientUserMessageId: string) => void;
   stopStream: () => Promise<void>;
   stopThreadRun: (threadId: string, runId?: string) => Promise<void>;
   dispatchAgentEvent: (event: AgentEvent) => void;
@@ -139,10 +138,9 @@ export interface AgentSessionStore
   dispatchAgentChunk: (chunk: AgentChunk) => void;
   reconcileRunningRunsFromSnapshot: (running: Record<string, RunInfo>) => void;
   reconcileRunningRuns: () => Promise<Record<string, RunInfo>>;
-
 }
 
-export interface PendingCodexMessage {
+export interface PendingSteeringMessage {
   id: string;
   threadId: string;
   content: string;
@@ -210,33 +208,33 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
         ...createProjectionSlice(set),
         ...createThreadHistorySlice(set, get),
         ...createThreadLifecycleSlice(set, get),
-        pendingCodexMessages: {},
-        enqueueCodexMessage: (message) => {
+        pendingSteeringMessages: {},
+        enqueueSteeringMessage: (message) => {
           set((state) => ({
-            pendingCodexMessages: {
-              ...state.pendingCodexMessages,
+            pendingSteeringMessages: {
+              ...state.pendingSteeringMessages,
               [message.threadId]: [
-                ...(state.pendingCodexMessages[message.threadId] ?? []),
+                ...(state.pendingSteeringMessages[message.threadId] ?? []),
                 message,
               ],
             },
           }));
         },
-        removeCodexMessage: (threadId, messageId) => {
+        removeSteeringMessage: (threadId, messageId) => {
           set((state) => {
-            const current = state.pendingCodexMessages[threadId] ?? [];
+            const current = state.pendingSteeringMessages[threadId] ?? [];
             const next = current.filter((message) => message.id !== messageId);
             if (next.length === current.length) return state;
-            const pendingCodexMessages = { ...state.pendingCodexMessages };
-            if (next.length) pendingCodexMessages[threadId] = next;
-            else delete pendingCodexMessages[threadId];
-            return { pendingCodexMessages };
+            const pendingSteeringMessages = { ...state.pendingSteeringMessages };
+            if (next.length) pendingSteeringMessages[threadId] = next;
+            else delete pendingSteeringMessages[threadId];
+            return { pendingSteeringMessages };
           });
         },
-        removeCodexMessageByClientId: (threadId, clientUserMessageId) => {
-          const current = get().pendingCodexMessages[threadId] ?? [];
+        removeSteeringMessageByClientId: (threadId, clientUserMessageId) => {
+          const current = get().pendingSteeringMessages[threadId] ?? [];
           const match = current.find((message) => message.clientUserMessageId === clientUserMessageId);
-          if (match) get().removeCodexMessage(threadId, match.id);
+          if (match) get().removeSteeringMessage(threadId, match.id);
         },
 
         sendMessageToThread: async (threadId, content, typeKey, options) => {
@@ -296,12 +294,12 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
               options?.runtimeConfig?.workspaceSnapshot?.notebookPath,
           });
           if (
-            type.key === "codex" &&
+            (type.key === "codex" || type.key === "deepseek-harness") &&
             get().threadProjections[threadId]?.runs.isLoading
           ) {
             const clientUserMessageId = `flowix-${createRunId(threadId)}`;
             const pendingId = `pending-${clientUserMessageId}`;
-            get().enqueueCodexMessage({
+            get().enqueueSteeringMessage({
               id: pendingId,
               threadId,
               content: trimmed,
@@ -315,11 +313,11 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
                 content: trimmed,
                 llmContent,
                 imagePaths: options?.imagePaths,
-                agentType: "codex",
+                agentType: type.key,
                 runtimeConfig: options?.runtimeConfig ?? undefined,
               }, clientUserMessageId);
             } catch (err) {
-              get().removeCodexMessage(threadId, pendingId);
+              get().removeSteeringMessage(threadId, pendingId);
               logger.error("Failed to steer Codex turn", { error: String(err) });
               get().dispatch({
                 kind: "error",
@@ -550,7 +548,6 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
           get().reconcileRunningRunsFromSnapshot(running);
           return running;
         },
-
       });
     },
     {
@@ -573,7 +570,6 @@ export const useAgentSessionStore = create<AgentSessionStore>()(
     ),
   ),
 );
-
 // Selectors
 
 export const selectThreadProjection = (
@@ -593,8 +589,12 @@ export const acquireAgentChunkBridge = createAgentChunkBridge((chunk) => {
   const stateBeforeDispatch = useAgentSessionStore.getState();
   useAgentSessionStore.getState().dispatchAgentChunk(chunk);
   if (chunk.kind === "user_message") {
-    const clientId = (chunk as AgentChunk & { client_user_message_id?: string }).client_user_message_id;
-    if (clientId) stateBeforeDispatch.removeCodexMessageByClientId(chunk.thread_id, clientId);
+    const enrichedChunk = chunk as AgentChunk & {
+      client_user_message_id?: string;
+      message_id?: string;
+    };
+    const clientId = enrichedChunk.client_user_message_id ?? enrichedChunk.message_id;
+    if (clientId) stateBeforeDispatch.removeSteeringMessageByClientId(chunk.thread_id, clientId);
   }
   if (chunk.kind !== "stream_end") return;
 

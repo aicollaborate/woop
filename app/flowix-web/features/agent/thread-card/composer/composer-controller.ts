@@ -11,7 +11,15 @@ import { getPersistableInputDraft } from "@features/agent/thread-card/composer/c
 import type { ComposerDraftController } from "@features/agent/thread-card/composer/composer-draft-controller";
 import { renderAgentThreadCardSendButton } from "@features/agent/thread-card/composer/send-button-renderer";
 import { ComposerSlashCommandController } from "@features/agent/thread-card/composer/composer-slash-command-controller";
-import { ComposerSlashToken } from "@features/agent/thread-card/composer/composer-slash-token";
+import {
+  ComposerSlashToken,
+  composerSlashMarkdownToPrompt,
+} from "@features/agent/thread-card/composer/composer-slash-token";
+import type {
+  ComposerSlashCommand,
+  ComposerSlashSkill,
+} from "@features/agent/thread-card/composer/composer-slash-command-controller";
+import type { AgentTypeKey } from "@/types/agent";
 import { NoteReference } from "@features/editor/extensions/note-link";
 import type { MemoRef } from "@features/agent/thread-card/role/agent-role-picker-controller";
 import type { Root } from "react-dom/client";
@@ -25,10 +33,16 @@ export interface ComposerControllerOptions {
   inputDraftMaxChars: number;
   getCurrentInputDraft: () => string;
   getUserHistoryMessages: () => string[];
-  getSendLabel: (wantStop: boolean) => string;
+  getSendLabel: (wantStop: boolean, isRunning?: boolean) => string;
   getSendButtonWantsStop: () => boolean;
+  getSendButtonRunning?: () => boolean;
   getHasAttachments: () => boolean;
   getHasPendingAttachments: () => boolean;
+  agentType?: AgentTypeKey;
+  listDshSkills?: () => Promise<readonly ComposerSlashSkill[]>;
+  onDshModelSelect?: () => void;
+  onPermissionSelect?: () => void;
+  onDirectCommand?: (command: ComposerSlashCommand) => void;
   submit: () => void;
   stop: () => void;
 }
@@ -43,8 +57,9 @@ export class ComposerController {
   private readonly inputDraftMaxChars: number;
   private readonly getCurrentInputDraft: () => string;
   private readonly getUserHistoryMessages: () => string[];
-  private readonly getSendLabel: (wantStop: boolean) => string;
+  private readonly getSendLabel: (wantStop: boolean, isRunning?: boolean) => string;
   private readonly getSendButtonWantsStop: () => boolean;
+  private readonly getSendButtonRunning: () => boolean;
   private readonly getHasAttachments: () => boolean;
   private readonly getHasPendingAttachments: () => boolean;
   private readonly submit: () => void;
@@ -68,6 +83,7 @@ export class ComposerController {
     this.getUserHistoryMessages = options.getUserHistoryMessages;
     this.getSendLabel = options.getSendLabel;
     this.getSendButtonWantsStop = options.getSendButtonWantsStop;
+    this.getSendButtonRunning = options.getSendButtonRunning ?? (() => false);
     this.getHasAttachments = options.getHasAttachments;
     this.getHasPendingAttachments = options.getHasPendingAttachments;
     this.submit = options.submit;
@@ -121,6 +137,11 @@ export class ComposerController {
       editor: this.editor,
       input: this.input,
       composer: this.composer,
+      agentType: options.agentType,
+      listDshSkills: options.listDshSkills,
+      onDshModelSelect: options.onDshModelSelect,
+      onPermissionSelect: options.onPermissionSelect,
+      onDirectCommand: options.onDirectCommand,
       onCommandChange: () => this.handleEditorUpdate(),
       focusInput: () => this.focus(),
     });
@@ -148,8 +169,7 @@ export class ComposerController {
     // hardBreak. Markdown serializes that node as `  \n`; the agent protocol
     // should receive the same newline the user entered, without Markdown's
     // visual line-break marker becoming part of the prompt.
-    return this.getDraftMarkdown()
-      .replace(/\[\/[a-z0-9_-]+\]\(flowix:\/\/slash\/[a-z0-9_-]+\)/gi, "")
+    return composerSlashMarkdownToPrompt(this.getDraftMarkdown())
       .replace(/ {2}\n/g, "\n");
   }
 
@@ -267,16 +287,19 @@ export class ComposerController {
 
   setSendButtonState(inputValue: string = this.getPrompt().trim()): void {
     if (this.disposed) return;
+    const isRunning = this.getSendButtonRunning();
     const { wantStop, disabled } = selectAgentThreadCardSendButtonState({
       wantStop: this.getSendButtonWantsStop(),
       inputValue,
+      isRunning,
       hasAttachments: this.getHasAttachments(),
       hasPendingAttachments: this.getHasPendingAttachments(),
     });
     renderAgentThreadCardSendButton({
       root: this.sendButtonRoot,
-      label: this.getSendLabel(wantStop),
+      label: this.getSendLabel(wantStop, isRunning),
       wantStop,
+      isRunning,
       disabled,
       onStop: this.stop,
       onSubmit: this.submit,

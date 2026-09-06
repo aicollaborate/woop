@@ -7,6 +7,7 @@ export interface AgentThreadCardSendButtonRenderOptions {
   root: Root;
   label: string;
   wantStop: boolean;
+  isRunning?: boolean;
   disabled: boolean;
   onStop: () => void;
   onSubmit: () => void;
@@ -21,7 +22,9 @@ export function renderAgentThreadCardSendButton(
   // 只负责调度更新, DOM 提交可能发生在随后的事件循环。
   const className = options.wantStop
     ? "agent-thread-card__send agent-thread-card__send--stop"
-    : "agent-thread-card__send";
+    : options.isRunning
+      ? "agent-thread-card__send agent-thread-card__send--running"
+      : "agent-thread-card__send";
 
   options.root.render(
     <Tooltip content={options.label}>
@@ -38,7 +41,13 @@ export function renderAgentThreadCardSendButton(
           options.onSubmit();
         }}
       >
-        {options.wantStop ? <StopIcon /> : <SendIcon />}
+        {options.wantStop ? (
+          <StopIcon />
+        ) : options.isRunning ? (
+          <span className="agent-thread-card__send-spinner" aria-hidden="true" />
+        ) : (
+          <SendIcon />
+        )}
       </button>
     </Tooltip>,
   );

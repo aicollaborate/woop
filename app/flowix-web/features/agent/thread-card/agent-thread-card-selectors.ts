@@ -14,6 +14,7 @@ export interface AgentThreadCardRunStatusView {
 
 export interface AgentThreadCardRuntimeView extends AgentThreadCardRunStatusView {
   isRunning: boolean;
+  isDshCommandRunning: boolean;
   isBusy: boolean;
   showLoadingIndicator: boolean;
   sendButtonWantsStop: boolean;
@@ -31,13 +32,21 @@ export function selectAgentThreadCardRunStatus(input: {
   const latestThreadRun = activeRun ?? Object.values(input.state?.runs ?? {})
     .sort((a, b) => b.startedAt - a.startedAt)[0];
   const latestRun = latestThreadRun;
+  const isDshCommandRunning = input.state?.dshCommand?.status === 'pending';
   const supportsStreaming = getAgentType(activeRun?.agentType ?? input.typeKey)
     .capabilities.supportsTextStreaming;
-  const isIdle = !input.isCreating && !activeRun && !input.isLoading && !latestRun;
+  const isIdle =
+    !input.isCreating &&
+    !activeRun &&
+    !input.isLoading &&
+    !latestRun &&
+    !isDshCommandRunning;
   const status = input.isCreating
     ? 'running'
     : activeRun?.status ??
-      (input.isLoading ? 'running' : latestThreadRun?.status ?? 'completed');
+      (input.isLoading || isDshCommandRunning
+        ? 'running'
+        : latestThreadRun?.status ?? 'completed');
 
   return {
     activeRun,
@@ -58,12 +67,18 @@ export function selectAgentThreadCardRuntimeView(input: {
 }): AgentThreadCardRuntimeView {
   const statusView = selectAgentThreadCardRunStatus(input);
   const activeRun = statusView.activeRun;
+  const isDshCommandRunning = input.state?.dshCommand?.status === 'pending';
   // `state.isLoading` is the canonical lifecycle signal. During the short
   // window between stream_start and the run registry update, activeRunId can
   // already be set while `activeRun` is still unavailable. Dropping this
   // fallback makes the renderer leave its rAF streaming path and can rebuild
   // the whole message list through an intermediate empty projection.
-  const isRunning = input.isLoading || activeRun?.status === 'running';
+  const isModelRunning = input.isLoading || activeRun?.status === 'running';
+  // `isRunning` describes thread-owned work for the rest of the card (for
+  // example settings must remain locked during a DSH command). It does not
+  // mean that a synthetic model run was created; stop-button semantics stay
+  // tied to `isModelRunning` below.
+  const isRunning = isModelRunning || isDshCommandRunning;
   const isBusy = input.isCreating || isRunning;
   /*
    * 工具调用阶段的 loader:
@@ -82,24 +97,28 @@ export function selectAgentThreadCardRuntimeView(input: {
   return {
     ...statusView,
     isRunning,
+    isDshCommandRunning,
     isBusy,
     showLoadingIndicator,
     // Codex accepts the next prompt into Flowix's serial queue while its
     // current turn is running. The composer decides whether there is input;
     // this base value remains the stop state for an empty composer.
-    sendButtonWantsStop: isRunning,
+    sendButtonWantsStop: isModelRunning,
   };
 }
 
 export function selectAgentThreadCardSendButtonState(input: {
   wantStop: boolean;
   inputValue: string;
+  isRunning?: boolean;
   hasAttachments?: boolean;
   hasPendingAttachments?: boolean;
 }): { wantStop: boolean; disabled: boolean } {
   const hasInput = !!input.inputValue.trim() || !!input.hasAttachments;
   return {
     wantStop: input.wantStop,
-    disabled: !input.wantStop && (!hasInput || !!input.hasPendingAttachments),
+    disabled:
+      !!input.isRunning ||
+      (!input.wantStop && (!hasInput || !!input.hasPendingAttachments)),
   };
 }

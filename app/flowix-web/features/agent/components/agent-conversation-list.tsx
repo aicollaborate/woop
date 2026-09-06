@@ -41,6 +41,7 @@ import {
   EMPTY_CONVERSATION_PAGE_STATE,
   mergeConversationPage,
   mergeLiveConversation,
+  sortFavoriteConversations,
   updateConversationTitle,
   type ConversationPageState,
 } from './conversation-list-pagination';
@@ -408,7 +409,9 @@ export function AgentConversationList() {
     : scopedConversations;
 
   const favoriteConversations = useMemo(
-    () => visibleConversations.filter((instance) => favoriteIds.has(instance.instanceId)),
+    () => sortFavoriteConversations(
+      visibleConversations.filter((instance) => favoriteIds.has(instance.instanceId)),
+    ),
     [visibleConversations, favoriteIds],
   );
   const nonFavoriteConversations = useMemo(
@@ -594,7 +597,7 @@ export function AgentConversationList() {
                   disabled={!currentNotebookId}
                   aria-label={t('agent.chat.newThread')}
                   title={currentNotebookId ? t('agent.chat.newThread') : t('memo.list.selectNotebook')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--primary)] p-0 text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-transparent bg-[var(--primary)] p-0 text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <PlusIcon
                     className="h-4 w-4 transition-[filter] duration-150 group-hover:brightness-105"
@@ -604,7 +607,7 @@ export function AgentConversationList() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[200px] space-y-0.5 rounded-xl border-[var(--border-popup)] p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]">
-                <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.15rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+                <DropdownMenuLabel className="flex items-center gap-1.5 px-[0.375rem] pb-[0.35rem] pt-[0.35rem] text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
                   {t('agent.chat.newThread')}
                 </DropdownMenuLabel>
                 {AGENT_TYPES.filter((type) => isAgentTypeSelectable(type.key)).map((type) => (
@@ -713,12 +716,6 @@ export function AgentConversationList() {
                         )}>
                           <AgentIcon typeKey={agent.key} alt="" className="h-3.5 w-3.5 object-contain" />
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-sm font-normal">
-                          {instance.title?.trim() || t('common.untitled')}
-                        </span>
-                        <time className="shrink-0 text-xs text-[var(--muted-foreground)] group-hover:hidden" dateTime={new Date(instance.updatedAt).toISOString()}>
-                          {formatTimeAgo(instance.updatedAt, t, { compact: true })}
-                        </time>
                         {running ? (
                           // 绿色: agent 正在运行
                           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]" />
@@ -727,6 +724,12 @@ export function AgentConversationList() {
                           // 灰色: 刚跑完、本次会话内用户还没点进去过
                           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--muted-foreground)]" />
                         ) : null}
+                        <span className="min-w-0 flex-1 select-none truncate text-sm font-normal">
+                          {instance.title?.trim() || t('common.untitled')}
+                        </span>
+                        <time className="shrink-0 text-xs text-[var(--muted-foreground)] group-hover:hidden" dateTime={new Date(instance.updatedAt).toISOString()}>
+                          {formatTimeAgo(instance.updatedAt, t, { compact: true })}
+                        </time>
                         </button>
                         <>
                           <DropdownMenu

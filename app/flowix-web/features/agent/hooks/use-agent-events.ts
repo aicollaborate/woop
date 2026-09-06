@@ -20,8 +20,18 @@ export async function reconcileAgentRunsAndRefreshEndedHistory(): Promise<void> 
         before.sessionMeta.activeAgentTypeKey,
     }));
 
-  await useAgentSessionStore.getState().reconcileRunningRuns();
-  const after = useAgentSessionStore.getState();
+  // Runtime liveness is best-effort. A WebView can temporarily be unable to
+  // use the Tauri IPC transport (for example while it is recovering focus),
+  // but that must not prevent the durable history request below. Keep the
+  // pre-reconcile state when the snapshot is unavailable so a failed snapshot
+  // cannot be mistaken for an empty one and mark a live run as ended.
+  let after = before;
+  try {
+    await useAgentSessionStore.getState().reconcileRunningRuns();
+    after = useAgentSessionStore.getState();
+  } catch (error) {
+    console.warn('[useAgentEvents] agent_running_threads unavailable; continuing with history refresh:', error);
+  }
   const endedWhileDisconnected = locallyRunning.filter(({ threadId }) => {
     const projection = after.threadProjections[threadId];
     return !projection || !isProjectionRunActive(projection);

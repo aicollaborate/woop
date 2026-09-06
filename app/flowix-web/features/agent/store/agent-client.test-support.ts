@@ -14,6 +14,8 @@ export function createAgentClientMock(
   const defaults = {
     chatStream: vi.fn<AgentClient["chatStream"]>().mockResolvedValue({ response: "" }),
     steerChat: vi.fn<AgentClient["steerChat"]>().mockResolvedValue(undefined),
+    executeDeepSeekHarnessCommand: vi.fn<AgentClient["executeDeepSeekHarnessCommand"]>().mockResolvedValue({}),
+    listDeepSeekHarnessSkills: vi.fn<AgentClient["listDeepSeekHarnessSkills"]>().mockResolvedValue({ skills: [] }),
     stopChatStream: vi.fn<AgentClient["stopChatStream"]>().mockResolvedValue(true),
     runningThreads: vi.fn<AgentClient["runningThreads"]>().mockResolvedValue({}),
     backgroundTerminals: vi.fn<AgentClient["backgroundTerminals"]>().mockResolvedValue([]),

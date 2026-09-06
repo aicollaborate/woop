@@ -91,6 +91,7 @@ pub trait ExternalLifecycleEmitter: Send + Sync {
         let chunk = AgentChunk::StreamEnd {
             thread_id: thread_id.to_string(),
             reason: reason.clone(),
+            duration_ms: None,
         };
         if !emit_stream_end_once(
             app_handle,
@@ -164,6 +165,7 @@ fn watchdog_chunks(run: &ExternalWatchdogFinalizedRun) -> Vec<AgentChunk> {
     chunks.push(AgentChunk::StreamEnd {
         thread_id: run.thread_id.clone(),
         reason: run.reason.clone(),
+        duration_ms: None,
     });
     chunks
 }

@@ -660,7 +660,7 @@ export function MemoList({
                     {activeFilter === 'thisMonth' && <Check className="w-4 h-4 text-[var(--brand)]" />}
                   </button>
                   <hr className={cn('mx-2 my-1 border-0', DROPDOWN_DIVIDER_SKIN)} />
-                  <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
+                  <div className="px-2 pb-1 pt-1 text-xs font-normal leading-[1.2] text-[var(--muted-foreground)]">
                     {t('memo.list.filterColorGroup')}
                   </div>
                   <ColorFilterSubmenuContent
@@ -734,7 +734,7 @@ export function MemoList({
           <Tooltip content={t("memo.list.newMemoTooltip")} shortcut="memo.create">
             <Button
               size="icon"
-              className="h-8 w-8 justify-center bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 rounded-xl p-0 border border-[var(--border)]"
+              className="h-8 w-8 justify-center bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 rounded-xl p-0 border border-transparent"
               onClick={handleCreateMemo}
             >
               <SquarePen className="w-4 h-4 text-[var(--primary-foreground)]" />

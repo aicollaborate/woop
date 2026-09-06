@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use tokio::sync::oneshot;
 
 use super::config::{
     normalize_agent_preset, normalize_permission, resolve_runtime_config, select_harness_config,
@@ -58,10 +59,47 @@ pub struct DeepSeekHarnessManager {
     pub(crate) hosts: HostRegistry,
     pub(crate) runs: RunCoordinator,
     pub(crate) lifecycle_gate: tokio::sync::Mutex<()>,
+    /// Serializes the check/start/commit sequence for cold command sessions.
+    /// The lock is per Flowix thread, so unrelated conversations still start
+    /// concurrently while `/goal` and `/skill` cannot create two DSH logs.
+    command_session_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 pub(crate) const HARNESS_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const SHARED_HOST_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+fn command_display_parts(command: &str) -> (String, String) {
+    let mut parts = command.trim_start().splitn(2, char::is_whitespace);
+    let name = parts
+        .next()
+        .unwrap_or_default()
+        .trim_start_matches('/')
+        .to_string();
+    let args = parts
+        .next()
+        .map(|value| format!(" {}", value.trim_start()))
+        .unwrap_or_default();
+    (name, args)
+}
+
+/// DSH reports this effect from the App Server after executing a command.
+/// Desktop transport must not maintain a second command grammar: the App
+/// Server is the owner of DSH command semantics, while this enum only decides
+/// whether a live turn subscriber is needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandTurnEffect {
+    None,
+    Steer,
+    GoalRound,
+}
+
+fn command_turn_effect(value: &Value) -> CommandTurnEffect {
+    match value.pointer("/effects/turn").and_then(Value::as_str) {
+        Some("steer") => CommandTurnEffect::Steer,
+        Some("goal-round") => CommandTurnEffect::GoalRound,
+        _ => CommandTurnEffect::None,
+    }
+}
 
 #[async_trait::async_trait]
 impl ExternalLifecycleEmitter for DeepSeekHarnessManager {
@@ -97,6 +135,7 @@ impl DeepSeekHarnessManager {
             hosts: HostRegistry::new(Arc::new(ProcessDshClientFactory)),
             runs: RunCoordinator::default(),
             lifecycle_gate: tokio::sync::Mutex::new(()),
+            command_session_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -171,6 +210,489 @@ impl DeepSeekHarnessManager {
         Ok(String::new())
     }
 
+    /// Inject user input into the active DSH turn's next-step inbox. This is
+    /// deliberately separate from `chat_stream`: steering must not register a
+    /// second Flowix run or create a second event consumer for the session.
+    pub async fn steer_chat(
+        &self,
+        thread_id: &str,
+        message: AgentUserMessage,
+        client_user_message_id: String,
+        _app_handle: &tauri::AppHandle,
+    ) -> Result<(), String> {
+        let target = self
+            .runs
+            .target(thread_id, None)
+            .await
+            .ok_or_else(|| "DeepSeek Harness has no active turn to steer".to_string())?;
+        if target.session_id.trim().is_empty() {
+            return Err("DeepSeek Harness active turn has no session id".to_string());
+        }
+        let input = self.turn_input(&message).await?;
+        let host = self.model_host().await?;
+        let result = host
+            .request(protocol::app_turn_steer_request(
+                host.next_request_id(),
+                &target.session_id,
+                input,
+                &client_user_message_id,
+            ))
+            .await?;
+        if result
+            .get("accepted")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            return Err("DeepSeek Harness did not accept the steering message".to_string());
+        }
+        Ok(())
+    }
+
+    /// Archive the provider-owned DSH session through workspace-controller.
+    /// DSH has no hard-delete session API; archive is the provider lifecycle
+    /// operation that keeps the durable log recoverable while hiding it from
+    /// DSH navigation.
+    pub async fn archive_thread(&self, thread_id: &str) -> Result<bool, String> {
+        let Some(session_id) = self.sessions.session_id(thread_id).await? else {
+            return Ok(false);
+        };
+        let host = self.model_host().await?;
+        let result = host
+            .request(protocol::app_thread_archive_request(
+                host.next_request_id(),
+                &session_id,
+            ))
+            .await?;
+        Ok(result
+            .get("archived")
+            .and_then(Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    /// Execute a DSH human command through the command registry. Commands are
+    /// are not ordinary model prompts. DSH owns their command/run +
+    /// command/done lifecycle in the provider session log. The App Server
+    /// reports any DSH-owned follow-up effect explicitly; this layer only
+    /// observes the resulting turn and never recreates it.
+    pub async fn execute_command(
+        self: &Arc<Self>,
+        thread_id: &str,
+        command: &str,
+        message: &AgentUserMessage,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<Value, String> {
+        let session_id = self.ensure_command_session(thread_id, message).await?;
+        let host = self.model_host().await?;
+        let command_id = format!("flowix-command-{}", uuid::Uuid::new_v4());
+        let run_id = format!("dsh-command-{}", uuid::Uuid::new_v4());
+        let (name, args) = command_display_parts(command);
+        let attachments = self.command_attachments(message).await?;
+        let emit_command = |status: &str, result: Option<String>| {
+            emit_chunk_with_run_id(
+                app_handle,
+                &AgentChunk::DshCommand {
+                    thread_id: thread_id.to_string(),
+                    id: command_id.clone(),
+                    name: name.clone(),
+                    args: args.clone(),
+                    status: status.to_string(),
+                    result,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                AGENT_TYPE,
+                &run_id,
+            );
+        };
+        emit_command("pending", None);
+        // Keep a lightweight session watcher for every command. It does not
+        // claim a Flowix run until DSH emits a turn that is not already owned
+        // by another run. This is important for `/goal` issued during an
+        // ordinary turn: the native goal driver waits for that turn to become
+        // idle before it starts its first round.
+        let (command_done, command_done_rx) = oneshot::channel();
+        // `thread/command` may acknowledge a command before DSH has finished
+        // the turn(s) it scheduled. Keep the Flowix command row pending until
+        // the watcher observes the actual terminal boundary. This is
+        // especially important for `/goal`, which can own several rounds.
+        let (command_finished, command_finished_rx) = oneshot::channel();
+        let host_client = host.client();
+        let request_id = host.next_request_id();
+        let subscription_id = format!("dsh-command-watch-{}", uuid::Uuid::new_v4());
+        let events = host.subscribe(&session_id, &subscription_id).await;
+        let manager = self.clone();
+        let thread_id = thread_id.to_string();
+        let session_id_for_turn = session_id.clone();
+        let command_turn_run_id = run_id.clone();
+        let command_turn_message = AgentUserMessage {
+            content: command.to_string(),
+            llm_content: Some(command.to_string()),
+            ..message.clone()
+        };
+        let app_handle = app_handle.clone();
+        // Keep the lease alive for the asynchronous session watcher. The
+        // watcher may span several DSH Goal Rounds and prevents HostRegistry
+        // from reaping the shared App Server between idle rounds.
+        tokio::spawn(async move {
+            manager
+                .project_command_turn(
+                    thread_id,
+                    session_id_for_turn,
+                    command_turn_run_id,
+                    command_turn_message,
+                    app_handle,
+                    host,
+                    subscription_id,
+                    events,
+                    command_done_rx,
+                    command_finished,
+                )
+                .await;
+        });
+        let response = host_client.request(protocol::app_thread_command_request_with_attachments(
+            request_id,
+            &session_id,
+            command,
+            &attachments,
+        )).await;
+        match response {
+            Ok(value) => {
+                let effect = command_turn_effect(&value);
+                let _ = command_done.send(if effect == CommandTurnEffect::None { None } else { Some(effect) });
+                // For command-only operations the watcher exits immediately;
+                // for steer/goal-round it waits for the DSH-owned turn(s).
+                // Do not emit the completed command chunk before that point.
+                let _ = command_finished_rx.await;
+                let execution = value.pointer("/execution/result").or_else(|| value.pointer("/execution"));
+                let status = execution
+                    .and_then(|item| item.get("kind"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("success");
+                let text = execution
+                    .and_then(|item| item.get("text"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                emit_command(status, text);
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = command_done.send(None);
+                let _ = command_finished_rx.await;
+                emit_command("error", Some(error.clone()));
+                Err(error)
+            }
+        }
+    }
+
+    /// Observe turns that DSH schedules as command side effects while the
+    /// command RPC itself is already complete. A Goal command owns a
+    /// session-level watcher: each admitted Goal Round gets its own Flowix
+    /// run lifecycle, and the watcher remains between rounds without holding
+    /// the run lock. This lets a human submit ordinary input while DSH is
+    /// idle between rounds and lets the native driver resume afterwards.
+    async fn project_command_turn(
+        self: Arc<Self>,
+        thread_id: String,
+        session_id: String,
+        run_id: String,
+        command_message: AgentUserMessage,
+        app_handle: tauri::AppHandle,
+        host: HostLease,
+        subscription_id: String,
+        mut events: tokio::sync::mpsc::UnboundedReceiver<Value>,
+        mut command_done: oneshot::Receiver<Option<CommandTurnEffect>>,
+        command_finished: oneshot::Sender<()>,
+    ) {
+        let mut active_run_id: Option<String> = None;
+        let mut active_stream_end: Option<Arc<AtomicBool>> = None;
+        let mut projector: Option<RunEventProjector> = None;
+        let mut command_effect: Option<CommandTurnEffect> = None;
+        let mut effect_received = false;
+        let mut goal_terminal = false;
+        let mut turn_completed_pending = false;
+        let mut completed_reason: Option<Option<String>> = None;
+
+        let terminal_reason = loop {
+            tokio::select! {
+                maybe = events.recv() => {
+                    let Some(value) = maybe else {
+                        break if active_run_id.is_some() { Some("runtime_crashed".to_string()) } else { None };
+                    };
+
+                    let method = value.get("method").and_then(Value::as_str);
+                    if method == Some("goal/changed") {
+                        let operation = value
+                            .pointer("/params/change/operation")
+                            .and_then(Value::as_str);
+                        if matches!(operation, Some("complete" | "block" | "pause" | "clear")) {
+                            goal_terminal = true;
+                            if effect_received && active_run_id.is_none() {
+                                break None;
+                            }
+                        }
+                    }
+
+                    if active_run_id.is_none() && method == Some("turn/started") {
+                        // An ordinary Flowix run has already claimed this
+                        // DSH turn. The command watcher observes it only to
+                        // wait for the next idle Goal Round.
+                        if self.runs.target(&thread_id, None).await.is_some() {
+                            continue;
+                        }
+                        let turn_run_id = if command_effect == Some(CommandTurnEffect::GoalRound)
+                            && effect_received
+                        {
+                            format!("dsh-goal-round-{}", uuid::Uuid::new_v4())
+                        } else {
+                            run_id.clone()
+                        };
+                        let stream_end_emitted = Arc::new(AtomicBool::new(false));
+                        if self
+                            .runs
+                            .register(
+                                &thread_id,
+                                &turn_run_id,
+                                Some(&session_id),
+                                stream_end_emitted.clone(),
+                            )
+                            .await
+                            .is_err()
+                        {
+                            // Another Flowix run won the race after the
+                            // command was admitted. Its subscriber owns this
+                            // turn; a Goal watcher must stay alive for the
+                            // next idle round, while a one-shot steer watcher
+                            // can retire once its effect is known.
+                            if command_effect == Some(CommandTurnEffect::GoalRound)
+                                || !effect_received
+                            {
+                                continue;
+                            }
+                            break None;
+                        }
+                        active_run_id = Some(turn_run_id.clone());
+                        active_stream_end = Some(stream_end_emitted);
+                        projector = Some(RunEventProjector::new(thread_id.clone()));
+                        self.hosts.run_started().await;
+                        self.emit_stream_start(
+                            &app_handle,
+                            &thread_id,
+                            &command_message,
+                            &turn_run_id,
+                        )
+                        .await;
+                    }
+
+                    let Some(current_run_id) = active_run_id.as_deref() else {
+                        continue;
+                    };
+                    self.runs.touch(&thread_id, current_run_id).await;
+                    let Some(current_projector) = projector.as_mut() else {
+                        continue;
+                    };
+                    match current_projector.accept(protocol::adapt_event(&value, &thread_id)) {
+                        Projection::Buffered => {}
+                        Projection::Boundary { buffered, chunk, metadata } => {
+                            self.emit_buffered(buffered, &app_handle, current_run_id).await;
+                            self.emit_and_persist_boundary_chunk(
+                                &app_handle,
+                                &chunk,
+                                &metadata,
+                                current_run_id,
+                            ).await;
+                        }
+                        Projection::Completed { buffered, reason } => {
+                            self.emit_buffered(buffered, &app_handle, current_run_id).await;
+                            let finished_run_id = active_run_id.take().expect("active run id");
+                            let finished_stream_end = active_stream_end.take().expect("stream end flag");
+                            projector = None;
+                            if self.runs.remove_if_matches(&thread_id, &finished_run_id).await {
+                                self.hosts.run_finished().await;
+                            }
+                            self.emit_stream_end(
+                                &app_handle,
+                                &thread_id,
+                                &finished_run_id,
+                                reason.clone().filter(|value| value != "completed"),
+                                &finished_stream_end,
+                            ).await;
+
+                            if !effect_received {
+                                // DSH can complete a very fast turn before
+                                // the command RPC response reaches us. Keep
+                                // the completion until the explicit App
+                                // Server effect arrives; never fall back to a
+                                // discovery timeout or lose a Goal watcher.
+                                turn_completed_pending = true;
+                                completed_reason = Some(reason);
+                                continue;
+                            }
+                            let continue_goal = effect_received
+                                && command_effect == Some(CommandTurnEffect::GoalRound)
+                                && !goal_terminal
+                                && reason.as_deref().is_some_and(|value| value == "completed");
+                            if !continue_goal {
+                                break reason.filter(|value| value != "completed");
+                            }
+                        }
+                    }
+                }
+                result = &mut command_done, if !effect_received => {
+                    effect_received = true;
+                    command_effect = result.unwrap_or(None);
+                    if turn_completed_pending {
+                        let reason = completed_reason.take().unwrap_or(None);
+                        let continue_goal = command_effect == Some(CommandTurnEffect::GoalRound)
+                            && !goal_terminal
+                            && reason.as_deref().is_some_and(|value| value == "completed");
+                        if !continue_goal {
+                            break reason.filter(|value| value != "completed");
+                        }
+                        turn_completed_pending = false;
+                    }
+                    if command_effect.is_none() && active_run_id.is_none() {
+                        // Commands such as `/compact`, `/goal clear`, and
+                        // `/plan off` are complete command-only operations.
+                        // The App Server explicitly reports that no turn is
+                        // expected, so no timeout-based discovery is needed.
+                        break None;
+                    }
+                    if command_effect == Some(CommandTurnEffect::Steer)
+                        && active_run_id.is_none()
+                        && self.runs.target(&thread_id, None).await.is_some()
+                    {
+                        // `/plan` steered an already running ordinary turn;
+                        // its existing subscriber owns the projection.
+                        break None;
+                    }
+                }
+            }
+        };
+
+        if let (Some(finished_run_id), Some(finished_stream_end), Some(mut finished_projector)) =
+            (active_run_id.take(), active_stream_end.take(), projector.take())
+        {
+            self.emit_buffered(finished_projector.finish(), &app_handle, &finished_run_id)
+                .await;
+            if self.runs.remove_if_matches(&thread_id, &finished_run_id).await {
+                self.hosts.run_finished().await;
+            }
+            self.emit_stream_end(
+                &app_handle,
+                &thread_id,
+                &finished_run_id,
+                terminal_reason.filter(|reason| reason != "completed"),
+                &finished_stream_end,
+            )
+            .await;
+        }
+        // `run_id` is now only the first turn's Flowix id. The subscription
+        // route is deliberately independent because later Goal Rounds have
+        // their own run ids.
+        host.unsubscribe(&session_id, &subscription_id).await;
+        let _ = command_finished.send(());
+    }
+
+    /// Read DSH's preset/workspace-aware user Skill catalog for the slash
+    /// picker. The app-server resumes a cold session as needed, while DSH's
+    /// skill registry remains the source of truth for names and descriptions.
+    pub async fn skill_catalog(
+        &self,
+        thread_id: &str,
+        message: &AgentUserMessage,
+    ) -> Result<Value, String> {
+        let session_id = self.ensure_command_session(thread_id, message).await?;
+        let host = self.model_host().await?;
+        host.request(protocol::app_thread_skills_request(
+            host.next_request_id(),
+            &session_id,
+        ))
+        .await
+    }
+
+    async fn ensure_command_session(
+        &self,
+        thread_id: &str,
+        message: &AgentUserMessage,
+    ) -> Result<String, String> {
+        if let Some(session_id) = self.sessions.session_id(thread_id).await? {
+            return Ok(session_id);
+        }
+
+        let lock = self.command_session_lock(thread_id).await;
+        let _guard = lock.lock().await;
+        if let Some(session_id) = self.sessions.session_id(thread_id).await? {
+            return Ok(session_id);
+        }
+
+        let requested_cwd = message.cwd_for_runtime(AGENT_TYPE).map(PathBuf::from);
+        let cwd = self.sessions.resolve_cwd(thread_id, requested_cwd).await?;
+        let configured = select_harness_config(
+            self.dsh_model_configs().await?,
+            message.provider_id_for_runtime(AGENT_TYPE),
+        )?;
+        let runtime_config =
+            resolve_runtime_config(&configured, message.model_for_runtime(AGENT_TYPE))?;
+        let agent_preset = normalize_agent_preset(message.mode_for_runtime(AGENT_TYPE));
+        let permission = normalize_permission(message.permission_mode_for_runtime(AGENT_TYPE));
+        let host = self.model_host().await?;
+        let result = host
+            .request(protocol::app_thread_start_request(
+                host.next_request_id(),
+                thread_id,
+                &cwd.to_string_lossy(),
+                &message.workspace_paths_for_runtime(AGENT_TYPE),
+                &runtime_config.provider,
+                &runtime_config.model,
+                agent_preset,
+                permission,
+            ))
+            .await?;
+        let session_id = result
+            .pointer("/thread/id")
+            .or_else(|| result.get("id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "DSH App Server thread/start did not return thread.id".to_string())?
+            .to_string();
+        self.sessions.commit(thread_id, &session_id, &cwd).await?;
+        Ok(session_id)
+    }
+
+    async fn command_session_lock(&self, thread_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.command_session_locks.lock().await;
+        locks
+            .entry(thread_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    async fn command_attachments(&self, message: &AgentUserMessage) -> Result<Vec<Value>, String> {
+        let encoded = crate::commands::agent::image_cache::encode_cached_agent_images(
+            &message.image_paths,
+        )
+        .await?;
+        Ok(encoded
+            .into_iter()
+            .map(|(media_type, data, name)| {
+                json!({ "type": "image", "mediaType": media_type, "data": data, "name": name })
+            })
+            .collect())
+    }
+
+    async fn turn_input(&self, message: &AgentUserMessage) -> Result<Value, String> {
+        let prompt = message
+            .llm_content
+            .as_deref()
+            .unwrap_or(&message.content)
+            .to_string();
+        let attachments = self.command_attachments(message).await?;
+        if attachments.is_empty() {
+            return Ok(Value::String(prompt));
+        }
+        Ok(json!({ "text": prompt, "attachments": attachments }))
+    }
+
     async fn run(
         &self,
         thread_id: &str,
@@ -199,12 +721,22 @@ impl DeepSeekHarnessManager {
         // while a turn may still be using this thread's runtime.
         let host = self.model_host().await?;
         let session_id = {
+            let session_lock = self.command_session_lock(thread_id).await;
+            let _session_guard = session_lock.lock().await;
+            // A command or another cold run may have committed the provider
+            // session after chat_stream took its initial snapshot. Re-read
+            // under the same per-thread lock before choosing start vs resume.
+            let persisted_session_id = if session_id.is_some() {
+                session_id.map(str::to_string)
+            } else {
+                self.sessions.session_id(thread_id).await?
+            };
             // App Server owns Thread/Turn lifecycle. A persisted session id is
             // the durable Thread id; resume it when present, otherwise create
             // a new provider-owned Thread. Older builds incorrectly used the
             // Flowix local id as the DSH session id; fork that durable log once
             // into a canonical DSH session before continuing it.
-            let request = if let Some(existing_session_id) = session_id {
+            let request = if let Some(existing_session_id) = persisted_session_id.as_deref() {
                 protocol::app_thread_resume_request(
                     host.next_request_id(),
                     existing_session_id,
@@ -225,7 +757,7 @@ impl DeepSeekHarnessManager {
                     permission,
                 )
             };
-            let operation = if session_id.is_some() {
+            let operation = if persisted_session_id.is_some() {
                 "thread/resume"
             } else {
                 "thread/start"
@@ -239,27 +771,30 @@ impl DeepSeekHarnessManager {
                 .filter(|id| !id.is_empty())
                 .ok_or_else(|| format!("DSH App Server {operation} did not return thread.id"))?;
             tracing::info!(target: "dsh_appserver", thread_id, run_id, operation, returned_thread_id, "App Server thread request completed");
-            if let Some(existing_session_id) = session_id {
+            if let Some(existing_session_id) = persisted_session_id.as_deref() {
                 if existing_session_id != returned_thread_id {
                     return Err(format!(
                         "DSH App Server {operation} returned a different thread id: expected {existing_session_id}, got {returned_thread_id}"
                     ));
                 }
             }
+            self.sessions.commit(thread_id, returned_thread_id, &cwd).await?;
             returned_thread_id.to_string()
         };
         self.runs.bind_session(thread_id, run_id, &session_id).await;
-        self.sessions.commit(thread_id, &session_id, &cwd).await?;
         // App Server notifications are keyed by the DSH-owned session id.
         // Keep the Flowix local id only as the projection destination below.
+        let turn_input = self.turn_input(message).await?;
         let mut events = host.subscribe(&session_id, run_id).await;
-        let prompt_text = message.llm_content.as_deref().unwrap_or(&message.content);
         // Workspace roots are already passed through runtime.ensure and
         // DSH_WORKSPACE_ROOTS. Do not append a human-readable workspace block
         // to the user prompt: it becomes part of the persisted user message
         // and leaks internal Flowix context into the transcript.
-        let prompt = prompt_text.to_string();
-        let start = protocol::app_turn_start_request(host.next_request_id(), &session_id, &prompt);
+        let start = protocol::app_turn_start_request(
+            host.next_request_id(),
+            &session_id,
+            turn_input,
+        );
         if let Err(error) = host.request(start).await {
             tracing::error!(target: "dsh_appserver", thread_id, run_id, error, "App Server turn/start failed");
             host.unsubscribe(&session_id, run_id).await;
@@ -673,6 +1208,14 @@ impl DeepSeekHarnessManager {
             .sessions
             .session_id(thread_id)
             .await?
+            // The product normally passes its Flowix thread id and resolves
+            // the provider id from `threads_dsh`. Keep the provider-facing
+            // API usable as well: DSH's canonical ids are `session-*`, and
+            // callers may legitimately reopen a session using that id (for
+            // example a deep link or a diagnostic/history request). This also
+            // makes a refresh resilient when the local Flowix mapping has not
+            // been hydrated yet.
+            .or_else(|| thread_id.strip_prefix("session-").map(|_| thread_id.to_string()))
             .ok_or_else(|| format!("no DeepSeek Harness session for thread {thread_id}"))?;
         let host = self.hosts.shared(&self.host_launch_spec()).await?;
         let result = host
@@ -836,6 +1379,76 @@ mod tests {
     use super::super::protocol::ThinkingSegment;
     use super::*;
     use crate::config::{AiConfigFile, AiModelEntry};
+
+    #[tokio::test]
+    async fn cold_command_session_lock_is_single_flight_per_thread() {
+        let home = tempfile::tempdir().unwrap();
+        let manager = Arc::new(DeepSeekHarnessManager::new(
+            ThreadManager::for_tests(),
+            Arc::new(UserConfigStore::new(home.path().to_path_buf())),
+            home.path().to_path_buf(),
+        ));
+        let first = manager.command_session_lock("thread-a").await;
+        let second = manager.command_session_lock("thread-a").await;
+        let other = manager.command_session_lock("thread-b").await;
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
+
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let mut tasks = Vec::new();
+        for _ in 0..2 {
+            let lock = first.clone();
+            let active = active.clone();
+            let maximum = maximum.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let _guard = lock.lock().await;
+                let current = active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                maximum.fetch_max(current, std::sync::atomic::Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(maximum.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn command_turn_effect_is_read_from_app_server_metadata() {
+        assert_eq!(
+            command_turn_effect(&serde_json::json!({"effects": {"turn": "goal-round"}})),
+            CommandTurnEffect::GoalRound
+        );
+        assert_eq!(
+            command_turn_effect(&serde_json::json!({"effects": {"turn": "steer"}})),
+            CommandTurnEffect::Steer
+        );
+        assert_eq!(
+            command_turn_effect(&serde_json::json!({"effects": {"turn": "none"}})),
+            CommandTurnEffect::None
+        );
+        assert_eq!(
+            command_turn_effect(&serde_json::json!({"execution": {"result": {"kind": "success"}}})),
+            CommandTurnEffect::None
+        );
+    }
+
+    #[test]
+    fn command_display_parts_preserves_the_leading_argument_separator() {
+        assert_eq!(
+            command_display_parts("  /goal  inspect"),
+            ("goal".to_string(), " inspect".to_string())
+        );
+        assert_eq!(
+            command_display_parts("/compact"),
+            ("compact".to_string(), String::new())
+        );
+    }
 
     #[test]
     fn permissions_fail_closed() {

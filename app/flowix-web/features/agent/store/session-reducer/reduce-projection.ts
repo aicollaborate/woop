@@ -59,6 +59,8 @@ export function reduceProjection(
       return applyToolCallToProjection(projection, event);
     case "tool_result":
       return applyToolResultToProjection(projection, event);
+    case "dsh_command":
+      return applyDshCommandToProjection(projection, event);
     case "stream_start":
       return applyStreamStartToProjection(projection, event);
     case "stream_end":
@@ -87,6 +89,7 @@ function applyUserMessageToProjection(
   const live = projectionToLive(p);
   const next = applyUserMessageChunk(live, event.text, {
     id: event.id,
+    messageType: event.messageType,
     phase: "completed",
     contentMode: "snapshot",
     sourceTimestamp: event.sourceTimestamp,
@@ -277,6 +280,58 @@ function applyToolResultToProjection(
   };
 }
 
+function applyDshCommandToProjection(
+  p: ThreadProjection,
+  event: AgentEvent & { kind: "dsh_command" },
+): ThreadProjection {
+  const messageId = `dsh-command:live:${event.id}`;
+  const command = `/${event.name}${event.args}`;
+  const existingIndex = p.messages.findIndex((message) => message.id === messageId);
+  const message = {
+    id: messageId,
+    role: "user" as const,
+    messageType: "dsh-command" as const,
+    // Keep the live row identical to the authoritative history projection.
+    // command/done text is rendered separately by the history reload (and a
+    // compact checkpoint owns its completion text), never inside the user
+    // command bubble.
+    content: command,
+    timestamp: new Date(event.timestamp).toISOString(),
+    sourceTimestamp: event.sourceTimestamp,
+    sourceSequence: event.sourceSequence,
+    isLoading: event.status === "pending",
+    isCompleted: event.status !== "pending",
+    errorDetails: event.status === "error"
+      ? { category: "unknown", retryable: false, upstreamMessage: event.result || command }
+      : undefined,
+  };
+  const messages = [...p.messages];
+  if (existingIndex >= 0) messages[existingIndex] = message;
+  else messages.push(message);
+  return {
+    ...p,
+    messages,
+    runs: {
+      ...p.runs,
+      dshCommand: {
+        id: event.id,
+        name: event.name,
+        args: event.args,
+        runId: event.runId,
+        status: event.status,
+        startedAt:
+          p.runs.dshCommand?.id === event.id
+            ? p.runs.dshCommand.startedAt
+            : event.timestamp,
+        ...(event.status === "pending"
+          ? {}
+          : { endedAt: event.timestamp }),
+        ...(event.result !== undefined ? { result: event.result } : {}),
+      },
+    },
+  };
+}
+
 function applyStreamStartToProjection(
   p: ThreadProjection,
   event: AgentEvent & { kind: "stream_start" },
@@ -312,9 +367,34 @@ function applyStreamEndToProjection(
           : p.messages,
       )
     : p.messages;
+  const messagesWithDuration =
+    !runsNext.isLoading &&
+    event.durationMs !== undefined &&
+    Number.isFinite(event.durationMs) &&
+    event.durationMs >= 0
+      ? (() => {
+          let latestUserIndex = -1;
+          for (let index = terminalMessages.length - 1; index >= 0; index -= 1) {
+            if (terminalMessages[index].role === "user") {
+              latestUserIndex = index;
+              break;
+            }
+          }
+          for (let index = terminalMessages.length - 1; index >= 0; index -= 1) {
+            if (index <= latestUserIndex) break;
+            if (terminalMessages[index].role !== "assistant") continue;
+            return terminalMessages.map((message, messageIndex) =>
+              messageIndex === index
+                ? { ...message, turnDurationMs: event.durationMs }
+                : message,
+            );
+          }
+          return terminalMessages;
+        })()
+      : terminalMessages;
   return {
     ...p,
-    messages: terminalMessages,
+    messages: messagesWithDuration,
     pending: {
       assistantId: runsNext.isLoading ? p.pending.assistantId : null,
       reasoningId: runsNext.isLoading ? p.pending.reasoningId : null,

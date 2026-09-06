@@ -1,8 +1,8 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { ChevronRight, MoreHorizontal } from 'lucide-react';
-import { ArrowClockwiseIcon, CaretRightIcon, FolderSimpleIcon, MinusSquareIcon } from '@phosphor-icons/react';
+import { ChevronRight, FoldVertical, MoreHorizontal } from 'lucide-react';
+import { CaretRightIcon, FolderOpenIcon, FolderSimpleIcon } from '@phosphor-icons/react';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { files, type DocTreeItem } from '@platform/tauri/client';
@@ -19,7 +19,7 @@ import {
 import { canonicalPath } from '@/lib/path';
 import {
   flattenVisibleTree,
-  useFolderTree,
+  type FolderTreeController,
   type VisibleTreeNode,
 } from '@features/memo/components/use-folder-tree';
 import { FileTypeIcon } from '@features/memo/components/file-type-icon';
@@ -34,18 +34,6 @@ const FOLDER_MENU_CLASS =
 const FOLDER_MENU_ITEM_CLASS =
   'h-7 items-center justify-start gap-2 rounded-lg px-2 py-0 text-left hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]';
 const FOLDER_MENU_DIVIDER_CLASS = 'mx-1 my-1 h-px bg-[var(--border-popup)] opacity-60';
-
-/** 字节数 → 人类可读大小 (e.g. 36.6 KB)；末尾 0 去掉，folder 传 null 不显示。 */
-function formatFileSize(bytes: number | null): string {
-  if (bytes === null) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  const fmt = (v: number) => String(parseFloat(v.toFixed(2)));
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${fmt(kb)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${fmt(mb)} MB`;
-  return `${fmt(mb / 1024)} GB`;
-}
 
 /** Unix epoch 毫秒 → "YYYY-MM-DD HH:mm" (本地时区)；null → "—"。 */
 function formatTimestamp(ms: number | null): string {
@@ -75,17 +63,28 @@ export function FolderFileTree({
   embedded = false,
   onRequestClose,
   activeFilePath = null,
+  expandToActiveFile = true,
+  className,
+  layout = 'fill',
+  treeViewportClassName,
   onFileSelect,
+  tree,
 }: {
   folderPath: string;
   folderName: string;
   embedded?: boolean;
   onRequestClose?: () => void;
   activeFilePath?: string | null;
+  /** Popover trees start collapsed even when the open document is nested. */
+  expandToActiveFile?: boolean;
+  className?: string;
+  /** `content` lets a popover size to its contents while constraining its viewport. */
+  layout?: 'fill' | 'content';
+  treeViewportClassName?: string;
   onFileSelect?: (filePath: string, scopePath: string) => void;
+  tree: FolderTreeController;
 }) {
   const { t } = useI18n();
-  const tree = useFolderTree(folderPath);
   const [showScrollTopHint, setShowScrollTopHint] = useState(false);
   // 新建/重命名行的受控输入态: null = 无进行中的行内编辑。
   const [draftRow, setDraftRow] = useState<{ parentPath: string; kind: 'file' | 'folder'; value: string } | null>(null);
@@ -98,9 +97,9 @@ export function FolderFileTree({
   // root has loaded, expand its parent chain so the restored selection is
   // actually visible in the tree.
   useEffect(() => {
-    if (tree.loading || !activeFilePath) return;
+    if (!expandToActiveFile || tree.loading || !activeFilePath) return;
     void tree.expandTo(activeFilePath);
-  }, [activeFilePath, tree.expandTo, tree.loading]);
+  }, [activeFilePath, expandToActiveFile, tree.expandTo, tree.loading]);
 
   // 滚动 / 缩放时收起「…」下拉 (对齐右键菜单的消失逻辑, DropdownMenu 自身不含此逻辑)。
   useEffect(() => {
@@ -188,6 +187,7 @@ export function FolderFileTree({
   }, []);
 
   const closeLabel = tree.error ? t('memo.fileTree.unreadable') : folderName;
+  const contentSized = layout === 'content';
 
   // 保留每个 folder 的子树容器, 让收起也能从当前高度过渡到 0。
   // 子项仍由 nodes 缓存提供, 因此收起再展开不会重复请求已加载的目录。
@@ -197,8 +197,9 @@ export function FolderFileTree({
     const isExpanded = tree.expanded.has(itemKey);
     const children = isFolder ? (tree.nodes.get(itemKey)?.children ?? []) : [];
     const openable = !isFolder;
-    const isActive = !!activeFilePath
+    const isActive = !isFolder && !!activeFilePath
       && canonicalPath(activeFilePath) === canonicalPath(item.fullPath);
+    const FolderIcon = isExpanded ? FolderOpenIcon : FolderSimpleIcon;
     const isRenamingRow = renaming?.item.id === item.id;
     const creationParentPath = isFolder
       ? item.fullPath
@@ -222,7 +223,7 @@ export function FolderFileTree({
                 }
               }}
               className={cn(
-                'folder-file-tree__item group relative flex h-7 items-center rounded-lg px-1.5 text-left text-sm font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
+                'folder-file-tree__item group relative flex h-7 items-center rounded-lg px-1.5 text-left text-[13px] font-normal leading-[1.6] text-[color-mix(in_oklch,var(--foreground)_95%,transparent)] transition-colors duration-150',
                 isFolder || openable ? 'cursor-pointer' : 'cursor-default',
                 isActive
                   ? 'bg-[var(--muted)]'
@@ -236,7 +237,7 @@ export function FolderFileTree({
               {isRenamingRow ? (
                 <>
                   {isFolder ? (
-                    <FolderSimpleIcon className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+                    <FolderIcon className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
                   ) : (
                     <FileTypeIcon
                       path={item.name}
@@ -253,7 +254,7 @@ export function FolderFileTree({
                       if (event.key === 'Escape') setRenaming(null);
                     }}
                     onClick={(event) => event.stopPropagation()}
-                    className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-sm font-normal text-[var(--foreground)] outline-none"
+                    className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-[13px] font-normal text-[var(--foreground)] outline-none"
                   />
                 </>
               ) : (
@@ -267,7 +268,7 @@ export function FolderFileTree({
                           isExpanded && 'rotate-90',
                         )}
                       />
-                      <FolderSimpleIcon className="absolute inset-0 h-4 w-4 text-[var(--muted-foreground)] transition-opacity duration-150 group-hover:opacity-0 group-focus-visible:opacity-0" />
+                      <FolderIcon className="absolute inset-0 h-4 w-4 text-[var(--muted-foreground)] transition-opacity duration-150 group-hover:opacity-0 group-focus-visible:opacity-0" />
                     </span>
                   ) : (
                     <FileTypeIcon
@@ -278,11 +279,6 @@ export function FolderFileTree({
                   <span className="ml-1.5 min-w-0 flex-1 truncate">
                     {item.name}
                   </span>
-                  {!isFolder && item.sizeBytes !== null && (
-                    <span className="ml-2 mr-1 shrink-0 text-[11px] tabular-nums text-[color-mix(in_oklch,var(--muted-foreground)_50%,white)] [[data-theme='dark']_&]:opacity-50">
-                      {formatFileSize(item.sizeBytes)}
-                    </span>
-                  )}
                   <DropdownMenu
                     open={openMenuId === item.id}
                     onOpenChange={(open) => setOpenMenuId(open ? item.id : null)}
@@ -298,7 +294,10 @@ export function FolderFileTree({
                         onMouseDown={(event) => event.stopPropagation()}
                         onPointerDown={(event) => event.stopPropagation()}
                         onKeyDown={(event) => event.stopPropagation()}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--muted)] text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--foreground)] group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100"
+                        className={cn(
+                          'absolute right-1 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--muted)] text-[var(--muted-foreground)] transition-opacity hover:text-[var(--foreground)] group-hover:opacity-100 data-[state=open]:opacity-100',
+                          isActive ? 'opacity-100' : 'opacity-0',
+                        )}
                       >
                         <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
                       </button>
@@ -431,19 +430,21 @@ export function FolderFileTree({
 
   return (
     <div className={cn(
-      'relative flex h-full min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]',
+      'relative flex min-h-0 flex-col select-none bg-[var(--card)] text-[var(--foreground)]',
+      contentSized ? 'h-fit' : 'h-full',
+      className,
       embedded && 'border-l-0',
     )}>
       {/* 标题行 ── 标题右侧下拉菜单用于在访达中显示当前资料文件夹。 */}
-      <div className="flex items-center justify-between px-3 py-1.5 gap-2">
-        <div className="-ml-2 flex min-w-0 flex-1 items-center gap-1">
+      <div className="flex items-center justify-between pl-3 pr-2 py-1.5 gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-0">
           {embedded && onRequestClose && (
             <button
               type="button"
               aria-label="收起文件树"
               title="收起文件树"
               onClick={onRequestClose}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
             >
               <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
@@ -461,19 +462,9 @@ export function FolderFileTree({
             aria-label={t('memo.fileTree.collapseAll')}
             title={t('memo.fileTree.collapseAll')}
             onClick={() => tree.collapseAll()}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
           >
-            <MinusSquareIcon aria-hidden="true" size={14} weight="bold" />
-          </button>
-          <button
-            type="button"
-            aria-label={t('memo.fileTree.refresh')}
-            title={t('memo.fileTree.refresh')}
-            disabled={tree.loading}
-            onClick={() => void tree.reload()}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] disabled:cursor-default disabled:opacity-50"
-          >
-            <ArrowClockwiseIcon aria-hidden="true" size={14} weight="bold" className={cn(tree.loading && 'animate-spin')} />
+            <FoldVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
           {tree.loading && (
             <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border border-[var(--muted-foreground)]/40 border-t-transparent" />
@@ -482,10 +473,20 @@ export function FolderFileTree({
       </div>
       {/* 与 AgentConversationList 同款分割线, 落在 root 文件夹标题与子级列表之间 */}
       <hr className={cn('mx-2', DROPDOWN_DIVIDER_SKIN)} />
-      <div className="relative min-h-0 flex-1">
+      <div className={cn(
+        'relative min-h-0',
+        contentSized ? 'flex-none' : 'flex-1',
+      )}>
         <OverlayScrollbar
-          className="h-full"
-          scrollerClassName="h-full overflow-y-auto"
+          className={cn(
+            contentSized ? 'h-auto' : 'h-full',
+            treeViewportClassName,
+          )}
+          scrollerClassName={cn(
+            contentSized ? 'h-auto overflow-y-auto' : 'h-full overflow-y-auto',
+            treeViewportClassName,
+            'py-1',
+          )}
           onScroll={(event) => setShowScrollTopHint(event.currentTarget.scrollTop > 0)}
         >
           {visibleNodes.length === 0 && !tree.loading && (
@@ -522,7 +523,7 @@ export function FolderFileTree({
                     if (event.key === 'Enter') void handleCreate(draftRow.parentPath, draftRow.kind, draftRow.value);
                     if (event.key === 'Escape') setDraftRow(null);
                   }}
-                  className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-sm font-normal text-[var(--foreground)] outline-none"
+                  className="ml-1.5 h-5 w-full min-w-0 border-0 bg-transparent px-0 text-[13px] font-normal text-[var(--foreground)] outline-none"
                 />
               </div>
             )}

@@ -1,4 +1,4 @@
-import type { HarnessAdapter, Json, RpcNotification, Thread, ThreadLaunchConfig, Turn, TurnPage } from './types.js'
+import type { DshCommandAttachment, DshSkill, HarnessAdapter, Json, RpcNotification, Thread, ThreadLaunchConfig, Turn, TurnPage } from './types.js'
 
 /** Small in-memory adapter for protocol smoke tests. Replace with DSH adapter in production. */
 export class InMemoryHarnessAdapter implements HarnessAdapter {
@@ -56,9 +56,31 @@ export class InMemoryHarnessAdapter implements HarnessAdapter {
     this.emit({ jsonrpc: '2.0', method: 'session.status', params: { threadId, status: 'idle' } })
     return structuredClone(turn)
   }
+  async steerTurn(threadId: string, input: Json, clientMessageId?: string): Promise<boolean> {
+    const thread = this.threads.get(threadId)
+    if (!thread) throw new Error(`thread not found: ${threadId}`)
+    thread.turns.at(-1)?.items.push({
+      id: clientMessageId ?? `item-${Date.now()}`,
+      type: 'userMessage',
+      text: JSON.stringify(input),
+    })
+    return true
+  }
 
   async interruptTurn(_threadId: string): Promise<{ interrupted: boolean }> { return { interrupted: false } }
   async closeThread(threadId: string): Promise<{ closed: boolean }> { return { closed: this.threads.delete(threadId) } }
+  async archiveThread(threadId: string): Promise<{ archived: boolean }> { return { archived: this.threads.has(threadId) } }
+  async executeCommand(threadId: string, command: string, _attachments: DshCommandAttachment[] = []): Promise<Json> {
+    if (!this.threads.has(threadId)) throw new Error(`thread not found: ${threadId}`)
+    return {
+      execution: { commandId: `command-${Date.now()}`, result: { kind: 'success', text: `Executed ${command}` } },
+      effects: { turn: 'none' },
+    }
+  }
+  async listSkills(threadId: string): Promise<{ skills: DshSkill[] }> {
+    if (!this.threads.has(threadId)) throw new Error(`thread not found: ${threadId}`)
+    return { skills: [] }
+  }
   subscribe(listener: (event: RpcNotification) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(event: RpcNotification): void { for (const listener of this.listeners) listener(event) }
 }

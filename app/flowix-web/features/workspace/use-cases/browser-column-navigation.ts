@@ -8,11 +8,13 @@ import {
   type PluginArtifactRendererId,
 } from '@features/plugin/plugin-note';
 import {
+  BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH,
   useBrowserColumnStore,
   type BrowserColumnOpenDisposition,
   type BrowserColumnTab,
   type BrowserColumnTarget,
 } from '@features/workspace/store/browser-column-store';
+import type { WorkColumnTarget } from '@features/workspace/store/work-column-target';
 import {
   activateExistingWorkspaceContent,
   activateExistingWorkspaceContentAsync,
@@ -29,6 +31,8 @@ import {
   openExternalTarget,
   openMemoTarget,
   openWebTarget,
+  clearWorkspaceDocument,
+  closeAgentTarget,
 } from './workspace-navigation';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
 
@@ -197,7 +201,7 @@ export function openBrowserColumnFileBrowser(folderPath: string): Promise<Browse
     folderPath,
     activeFilePath: null,
     fileTreeVisible: true,
-    fileTreeWidth: 280,
+    fileTreeWidth: BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH,
   });
 }
 
@@ -209,6 +213,69 @@ export function openBrowserColumnWebpage(url: string): Promise<BrowserColumnOpen
 
 export function openBrowserColumnAgentConversation(instanceId: string): Promise<BrowserColumnOpenResult | null> {
   return openBrowserColumnTarget({ kind: 'agent_conversation', instanceId });
+}
+
+/** Open the currently displayed work-column target in the right browser column.
+ *
+ * This intentionally bypasses the normal cross-host duplicate check: the
+ * action is explicitly a split view, so the same target may stay open in the
+ * work column while also being opened as a browser-column tab.
+ */
+export function openWorkColumnTargetInBrowserColumn(
+  target: WorkColumnTarget,
+): Promise<BrowserColumnOpenResult | null> {
+  const browserTarget: BrowserColumnTarget | null = (() => {
+    switch (target.kind) {
+      case 'memo':
+        return {
+          kind: 'memo',
+          memoId: target.memoId,
+          notebookId: target.notebookId ?? '',
+          notebookPath: target.notebookPath ?? '',
+          filePath: target.path,
+        };
+      case 'external':
+        return { kind: 'file', filePath: target.path, scopePath: target.scopePath };
+      case 'artifact':
+        return {
+          kind: 'artifact',
+          pointerMemoId: target.pointerMemoId,
+          renderer: target.renderer,
+        };
+      case 'agent-conversation':
+        return { kind: 'agent_conversation', instanceId: target.instanceId };
+      case 'web':
+        return { kind: 'web', url: target.url };
+      default:
+        return null;
+    }
+  })();
+
+  if (!browserTarget) return Promise.resolve(null);
+
+  return enqueueBrowserColumnNavigation(async () => {
+    const id = browserTarget.kind === 'memo'
+      ? `memo:${browserTarget.memoId}`
+      : browserTarget.kind === 'agent_conversation'
+        ? `agent:${browserTarget.instanceId}`
+        : browserTarget.kind === 'web'
+          ? `web:${canonicalUrl(browserTarget.url) ?? browserTarget.url}`
+          : browserTarget.kind === 'artifact'
+            ? `artifact:${browserTarget.pointerMemoId}`
+            : `file:${browserTarget.filePath}`;
+    const tabId = useBrowserColumnStore.getState().openTab({
+      id,
+      title: targetTabTitle(browserTarget),
+      icon: targetTabIcon(browserTarget),
+      target: browserTarget,
+    });
+    if (target.kind === 'agent-conversation') {
+      closeAgentTarget();
+    } else {
+      await clearWorkspaceDocument();
+    }
+    return { host: 'browser-column', tabId, alreadyOpen: false };
+  });
 }
 
 function restoreBrowserColumnTab(

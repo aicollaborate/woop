@@ -112,7 +112,7 @@ export function BrowserColumnHeader({
         role="tablist"
         aria-label={t('tabWindow.openContent')}
         data-tauri-drag-region
-        className="flex h-9 min-h-9 min-w-0 flex-1 items-center gap-0 overflow-x-auto overflow-y-hidden p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex h-10 min-h-10 min-w-0 flex-1 items-center gap-0 overflow-x-auto overflow-y-hidden p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((tab, index) => {
           const selected = tab.id === activeTabId;

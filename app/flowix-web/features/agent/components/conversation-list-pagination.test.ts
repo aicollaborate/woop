@@ -4,6 +4,7 @@ import type { AgentConversationInstance } from '@features/agent/store/agent-conv
 import {
   EMPTY_CONVERSATION_PAGE_STATE,
   mergeConversationPage,
+  sortFavoriteConversations,
   updateConversationTitle,
 } from './conversation-list-pagination';
 
@@ -51,5 +52,23 @@ describe('conversation list pagination state', () => {
 
     expect(renamed.orderedIdentities).toEqual(['thread:old', 'thread:new']);
     expect(renamed.itemsByIdentity['thread:old']?.title).toBe('Renamed');
+  });
+
+  it('sorts favorite conversations by creation time, then instance id', () => {
+    const sorted = sortFavoriteConversations([
+      { ...conversation('newer-update', 300), createdAt: 50 },
+      { ...conversation('older-created', 500), createdAt: 100 },
+      { ...conversation('newer-created', 100), createdAt: 200 },
+      { ...conversation('same-created-z', 50), createdAt: 200 },
+      { ...conversation('same-created-a', 400), createdAt: 200 },
+    ]);
+
+    expect(sorted.map((item) => item.instanceId)).toEqual([
+      'same-created-z',
+      'same-created-a',
+      'newer-created',
+      'older-created',
+      'newer-update',
+    ]);
   });
 });

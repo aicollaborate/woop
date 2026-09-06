@@ -255,7 +255,7 @@ body.is-image-resizing {
   user-select: none;
 }
 
-.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) a {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) a:where(:not(.agent-thread-card__message, .agent-thread-card__message *)) {
   /* 链接文字: 改用 --document-link token 化, 颜色随主题切换:
    * - light: 紫 (273) → 与品牌同色相
    * - dark:  亮紫 → 高对比可读
@@ -267,7 +267,7 @@ body.is-image-resizing {
   transition: color 0.12s ease;
 }
 
-.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) a:hover {
+.markdown-editor .tiptap:not(.agent-thread-card__composer-editor) a:where(:not(.agent-thread-card__message, .agent-thread-card__message *)):hover {
   /* hover 状态不单独维护 token, 直接基于 --document-link 与白色 20% 混色提亮:
    * - 单一来源: --document-link 决定基色, hover 由派生公式统一管理
    * - 跨主题一致: 三套主题共享同一公式, 不会有"某主题的 hover 没设计"的问题 */

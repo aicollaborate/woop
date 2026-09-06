@@ -2,6 +2,7 @@ const SAFE_LINK_PROTOCOLS = new Set([
   "http",
   "https",
   "file",
+  "tauri",
   "flowix",
   "mailto",
   "tel",
@@ -26,6 +27,20 @@ export function sanitizeLinkHref(
   const compact = href.replace(/[\u0000-\u0020\u007f]/g, "");
   const protocol = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1].toLowerCase();
   if (protocol && !SAFE_LINK_PROTOCOLS.has(protocol)) return null;
+
+  // `tauri://localhost` is the desktop webview's own origin. It is used by
+  // agent output for local file locations, but arbitrary Tauri hosts should
+  // not be forwarded to a renderer or the OS opener.
+  if (protocol === "tauri") {
+    try {
+      const parsed = new URL(href);
+      if (parsed.protocol !== "tauri:" || parsed.hostname.toLowerCase() !== "localhost") {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
 
   return href;
 }

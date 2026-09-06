@@ -1,4 +1,4 @@
-use super::event_adapter::append_thinking_segments;
+use super::event_adapter::{append_thinking_segments, append_thinking_segments_with_metadata};
 use super::protocol::{AdaptedEvent, ThinkingSegment, ThinkingTagParser};
 use crate::agent_external::{AgentChunkMetadata, StreamingEmitBuffer};
 use crate::agent_wire::AgentChunk;
@@ -47,6 +47,35 @@ impl RunEventProjector {
                     self.assistant_segment,
                 );
                 Projection::Buffered
+            }
+            // App Server deltas carry the stable transient item id in
+            // metadata. Keep that metadata on the buffered chunk; otherwise
+            // the final item snapshot cannot reconcile the streamed row.
+            AdaptedEvent::ChunkWithMetadata(AgentChunk::Text { text, .. }, metadata) => {
+                append_thinking_segments_with_metadata(
+                    &mut self.buffer,
+                    self.thinking.push(&text),
+                    self.assistant_segment,
+                    Some(&metadata),
+                );
+                Projection::Buffered
+            }
+            // Provider-owned item snapshots (currently DSH userMessage) are
+            // already complete and carry identity metadata. They must bypass
+            // the assistant thinking buffer, but still form a normal turn
+            // boundary for the downstream reducer.
+            AdaptedEvent::ChunkWithMetadata(chunk, metadata) => {
+                append_thinking_segments(
+                    &mut self.buffer,
+                    self.thinking.flush_pending(),
+                    self.assistant_segment,
+                );
+                let buffered = self.buffer.flush_with_metadata();
+                Projection::Boundary {
+                    buffered,
+                    chunk,
+                    metadata,
+                }
             }
             AdaptedEvent::Chunk(chunk) => {
                 append_thinking_segments(
@@ -145,5 +174,31 @@ mod tests {
         };
         assert!(!buffered.is_empty());
         assert_eq!(reason.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn preserves_app_server_delta_identity_through_flush() {
+        let mut projector = RunEventProjector::new("t".into());
+        projector.accept(AdaptedEvent::ChunkWithMetadata(
+            AgentChunk::Text {
+                thread_id: "t".into(),
+                text: "hello".into(),
+            },
+            AgentChunkMetadata {
+                message_id: Some("stable-assistant-item".into()),
+                content_mode: Some("delta"),
+                message_phase: Some("updated"),
+                ..AgentChunkMetadata::default()
+            },
+        ));
+
+        let flushed = projector.flush();
+        assert_eq!(flushed.len(), 1);
+        let (AgentChunk::Text { text, .. }, metadata) = &flushed[0] else {
+            panic!("expected buffered assistant text");
+        };
+        assert_eq!(text, "hello");
+        assert_eq!(metadata.message_id.as_deref(), Some("stable-assistant-item"));
+        assert_eq!(metadata.content_mode, Some("delta"));
     }
 }
