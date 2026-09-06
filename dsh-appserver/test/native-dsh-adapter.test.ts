@@ -114,6 +114,50 @@ describe('NativeDshAdapter thread launch', () => {
     expect(completed.params.item.id).not.toBe('session-1-item-durable-a1')
   })
 
+  it('coalesces legacy assistant chunks and keeps tool calls out of assistant text', () => {
+    let sessionEvent: ((session: any, event: any) => void) | undefined
+    const adapter = new NativeDshAdapter({
+      on: (name: string, listener: any) => {
+        if (name === 'session/event') sessionEvent = listener
+        return () => {}
+      },
+    })
+    const notifications: any[] = []
+    adapter.subscribe(event => notifications.push(event))
+    const session = { id: 'session-legacy', events: [] }
+
+    sessionEvent?.(session, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+    sessionEvent?.(session, { type: 'assistant/chunk', seq: 2, data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: '这' } } })
+    sessionEvent?.(session, { type: 'assistant/chunk', seq: 3, data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: ' 4 个就是' } } })
+    sessionEvent?.(session, {
+      type: 'assistant/message',
+      seq: 4,
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'assistant-1',
+          content: [
+            { type: 'text', text: '这 4 个就是版本 bump 到 1.3.4。' },
+            { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+          ],
+        },
+      },
+    })
+
+    const deltas = notifications.filter(event => event.method === 'item/agentMessage/delta')
+    expect(deltas).toHaveLength(2)
+    expect(deltas[0].params.itemId).toBe(deltas[1].params.itemId)
+    const completed = notifications.find(event => event.method === 'item/completed')
+    expect(completed.params.item).toMatchObject({
+      type: 'agentMessage',
+      text: '这 4 个就是版本 bump 到 1.3.4。',
+    })
+    expect(completed.params.item.text).not.toContain('tool-call')
+    expect(completed.params.item.text).not.toContain('call-1')
+    expect(completed.params.item.id).toBe(deltas[0].params.itemId)
+  })
+
   it('admits turn image uploads before steering them into the DSH message', async () => {
     let submitted: any
     const agent = {

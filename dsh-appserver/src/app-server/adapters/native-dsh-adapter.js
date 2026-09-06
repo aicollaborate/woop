@@ -219,6 +219,20 @@ export class NativeDshAdapter {
     const step = event.data?.step
     return turn == null || step == null ? undefined : state.byStep.get(`${turn}:${step}`)
   }
+  legacyAssistantStreamItemId(threadId, event) {
+    if (event.type !== 'assistant/chunk') return undefined
+    const turn = event.data?.turn
+    const step = event.data?.step
+    const stepKey = turn == null || step == null ? undefined : `${turn}:${step}`
+    const state = this.assistantStreamState(threadId)
+    if (stepKey && state.byStep.has(stepKey)) return state.byStep.get(stepKey)
+    // Older DSH hosts expose assistant/chunk only. Chunks in one turn/step
+    // are one logical assistant item; the event sequence is not an item id.
+    const key = stepKey || this.activeTurns.get(threadId) || 'current'
+    const itemId = stableAssistantStreamItemId(threadId, `legacy-${key}`)
+    if (stepKey) state.byStep.set(stepKey, itemId)
+    return itemId
+  }
   projectEvent(threadId, event) {
     // Goal state is a durable DSH domain event, not a model item. Publish a
     // small provider notification so transports that keep a session-level
@@ -248,7 +262,7 @@ export class NativeDshAdapter {
     if (event.type === 'assistant/chunk') {
       const delta = assistantChunkText(event.data)
       if (delta !== undefined) {
-        this.emit({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId: this.activeTurns.get(threadId), itemId: stableItemId(threadId, event), sourceSeq: event.seq, delta } })
+        this.emit({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId: this.activeTurns.get(threadId), itemId: this.legacyAssistantStreamItemId(threadId, event), sourceSeq: event.seq, delta } })
       }
       return
     }

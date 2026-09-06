@@ -861,6 +861,7 @@ export function projectTurns(threadId, events, fallbackMessages = [], options = 
 
 export function projectNotifications(threadId, events) {
   const notifications = []
+  const legacyAssistantItemIds = new Map()
   let activeTurnId
   for (const event of events || []) {
     if (event.type === 'goal/change') {
@@ -884,7 +885,12 @@ export function projectNotifications(threadId, events) {
       // the ordinary assistant-text channel. The desktop has a separate
       // reasoning stream, while control chunks have no user-visible content.
       if (delta !== undefined) {
-        notifications.push({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId: activeTurnId, itemId: stableItemId(threadId, event), sourceSeq: event.seq, delta } })
+        const turn = event.data?.turn
+        const step = event.data?.step
+        const key = turn == null || step == null ? String(activeTurnId || 'current') : `${turn}:${step}`
+        const itemId = legacyAssistantItemIds.get(key) || stableAssistantStreamItemId(threadId, `legacy-${key}`)
+        legacyAssistantItemIds.set(key, itemId)
+        notifications.push({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId: activeTurnId, itemId, sourceSeq: event.seq, delta } })
       }
       continue
     }
