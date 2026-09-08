@@ -19,12 +19,12 @@ describe('resolveBrowserColumnLayout', () => {
     });
   });
 
-  it('keeps both panes side by side at their minimum widths when space is tight', () => {
+  it('uses the available width for stacked panes when space is tight', () => {
     expect(resolveBrowserColumnLayout({ ...base, viewportWidth: 1200 })).toMatchObject({
       canSplit: false,
       availableDocumentWidth: 657,
-      mainColumnWidth: 360,
-      browserColumnWidth: 360,
+      mainColumnWidth: 657,
+      browserColumnWidth: 657,
     });
   });
 

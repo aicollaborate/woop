@@ -38,3 +38,32 @@ it('does not force the right document read-only when the same memo is open on th
     environment.IS_REACT_ACT_ENVIRONMENT = false;
   }
 });
+
+it('keeps the content host mounted and adjusts resize controls when the layout changes', async () => {
+  const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  environment.IS_REACT_ACT_ENVIRONMENT = true;
+  const element = document.createElement('div');
+  const root = createRoot(element);
+  const resize = vi.fn();
+  const props = { width: 500, layoutKey: 'wide', onResize: resize, toolbarCollapsed: false, onToolbarCollapsedChange: () => {} };
+  try {
+    await act(async () => root.render(<BrowserColumn {...props} />));
+    const host = element.querySelector('section');
+    const content = host?.lastElementChild;
+    const divider = element.querySelector('[role="separator"]');
+    expect(divider).not.toBeNull();
+    await act(async () => { divider?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
+    expect(resize).toHaveBeenCalledWith(520);
+    await act(async () => root.render(<BrowserColumn {...props} stacked width={657} layoutKey="narrow" />));
+    expect(element.querySelector('section')).toBe(host);
+    expect(host?.lastElementChild).toBe(content);
+    expect(element.querySelector('[role="separator"]')).toBeNull();
+    expect(host?.style.width).toBe('100%');
+    await act(async () => root.render(<BrowserColumn {...props} />));
+    expect(host?.lastElementChild).toBe(content);
+    expect(element.querySelector('[role="separator"]')).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    environment.IS_REACT_ACT_ENVIRONMENT = false;
+  }
+});

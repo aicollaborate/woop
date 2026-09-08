@@ -44,6 +44,8 @@ export interface OpenMemoTargetParams {
 }
 
 export interface OpenExternalTargetOptions {
+  /** Explicit cross-column moves must not reactivate a BrowserColumn tab. */
+  destination?: 'main-third';
   history?: 'push' | 'skip';
   scopePath?: string | null;
 }
@@ -543,7 +545,7 @@ export async function openExternalTarget(
   path: string | null,
   options?: OpenExternalTargetOptions,
 ): Promise<WorkspaceContentLocation | null> {
-  const existing = path
+  const existing = path && options?.destination !== 'main-third'
     ? activateExistingContentForNavigation({ kind: 'external', path })
     : null;
   if (existing instanceof Promise) {

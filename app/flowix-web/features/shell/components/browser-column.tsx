@@ -18,6 +18,7 @@ import { openBrowserColumnTabInWorkColumn } from '@features/workspace/use-cases/
 
 export interface BrowserColumnProps {
   width: number;
+  stacked?: boolean;
   layoutKey: string;
   onResize: (width: number) => void;
   toolbarCollapsed: boolean;
@@ -26,6 +27,7 @@ export interface BrowserColumnProps {
 
 export function BrowserColumn({
   width,
+  stacked = false,
   layoutKey,
   onResize,
   toolbarCollapsed,
@@ -59,7 +61,7 @@ export function BrowserColumn({
     registerBrowserColumnDocumentFlush(activeTabId, flush);
   }, [activeTabId]);
   const handleSelectTab = useCallback((tabId: string) => {
-    void activateBrowserColumnTab(tabId);
+    return activateBrowserColumnTab(tabId);
   }, []);
   const handleCloseTab = useCallback((tabId: string) => {
     void enqueueBrowserColumnNavigation(() => {
@@ -140,21 +142,29 @@ export function BrowserColumn({
       data-workspace-focused={focusedHostId === 'browser-column' ? '' : undefined}
       aria-label="浏览器列辅助工作区"
       onPointerDown={() => focusHost('browser-column')}
+      onFocusCapture={() => focusHost('browser-column')}
       className={'relative flex h-full min-w-0 shrink-0 flex-col border-l border-[var(--divider)] bg-[var(--document-bg)]'}
-      style={{ width }}
+      style={stacked ? { width: '100%', minHeight: 0, height: 0, flex: '1 1 0', borderLeftWidth: 0, borderTopWidth: 1 } : { width }}
     >
-      <div
+      {!stacked && <div
         role="separator"
         aria-label="调整浏览器列宽度"
         aria-orientation="vertical"
+        tabIndex={0}
+        aria-valuenow={Math.round(width)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          onResize(width + (event.key === 'ArrowLeft' ? 20 : -20));
+        }}
         onPointerDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
           resizeStartRef.current = { x: event.clientX, width };
           setIsResizing(true);
         }}
-        className="absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize"
-      />
+        className="absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize focus-visible:outline-none focus-visible:bg-[var(--brand)]"
+      />}
       <BrowserColumnHeader
         tabs={tabs}
         activeTabId={activeTabId}

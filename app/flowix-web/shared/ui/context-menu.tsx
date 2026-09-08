@@ -184,6 +184,7 @@ function ContextMenuContent({ children, className, style }: ContextMenuContentPr
 }
 
 interface ContextMenuItemProps {
+	"aria-describedby"?: string;
 	children: React.ReactNode;
 	className?: string;
 	onClick?: () => void;
@@ -193,6 +194,7 @@ interface ContextMenuItemProps {
 }
 
 function ContextMenuItem({
+	"aria-describedby": ariaDescribedBy,
 	children,
 	className,
 	onClick,
@@ -214,6 +216,7 @@ function ContextMenuItem({
 		<button
 			type="button"
 			role="menuitem"
+			aria-describedby={ariaDescribedBy}
 			disabled={disabled}
 			onClick={handleClick}
 			onMouseDown={(e) => {

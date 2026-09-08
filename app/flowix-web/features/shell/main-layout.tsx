@@ -1035,10 +1035,16 @@ export function MainLayout() {
               <div className={`w-[1px] h-full transition-colors ${isDraggingListDivider ? 'bg-transparent' : 'group-hover:bg-transparent bg-transparent'}`} />
             </div>
           )}
+          <div
+            data-document-columns-layout={browserColumnVisible && !browserColumnLayout.canSplit ? 'stacked' : 'split'}
+            className={`flex min-h-0 min-w-0 flex-1 ${browserColumnVisible && !browserColumnLayout.canSplit ? 'flex-col' : 'flex-row'}`}
+          >
           {/* Memo detail */}
             <div
               className="h-full min-w-0 relative -left-px flex flex-col"
-              style={browserColumnVisible
+              style={browserColumnVisible && !browserColumnLayout.canSplit
+                ? { minWidth: 0, minHeight: 0, height: 0, flex: '1 1 0' }
+                : browserColumnVisible
                 ? {
                     minWidth: DOCUMENT_PANEL_MIN_WIDTH,
                     flex: `0 0 ${browserColumnLayout.mainColumnWidth}px`,
@@ -1047,6 +1053,7 @@ export function MainLayout() {
               data-workspace-host="main-third"
               data-workspace-focused={focusedHostId === 'main-third' ? '' : undefined}
               onPointerDown={() => focusWorkspaceHost('main-third')}
+              onFocusCapture={() => focusWorkspaceHost('main-third')}
             >
             {isMemoListHidden && (
               <button
@@ -1106,6 +1113,7 @@ export function MainLayout() {
           {browserColumnVisible && (
             <Suspense fallback={null}>
               <BrowserColumn
+                stacked={!browserColumnLayout.canSplit}
                 width={browserColumnLayout.browserColumnWidth}
                 layoutKey={browserColumnLayoutKey}
                 onResize={handleBrowserColumnResize}
@@ -1114,6 +1122,7 @@ export function MainLayout() {
               />
             </Suspense>
           )}
+          </div>
           </div>
           {/* Status bar */}
           <StatusBar

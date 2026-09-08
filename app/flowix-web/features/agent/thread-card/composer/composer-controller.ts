@@ -5,6 +5,7 @@ import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { Markdown } from "@tiptap/markdown";
+import { pushHandler } from "@/lib/shortcuts/handler-registry";
 
 import { selectAgentThreadCardSendButtonState } from "@features/agent/thread-card/agent-thread-card-selectors";
 import { getPersistableInputDraft } from "@features/agent/thread-card/composer/composer-draft";
@@ -65,6 +66,7 @@ export class ComposerController {
   private readonly submit: () => void;
   private readonly stop: () => void;
   private readonly slashCommands: ComposerSlashCommandController;
+  private readonly removeSelectAllHandler: () => void;
 
   private isComposing = false;
   private historyCursor: number | null = null;
@@ -146,6 +148,14 @@ export class ComposerController {
       focusInput: () => this.focus(),
     });
     removeSlashToken = () => this.slashCommands.removeSelectedToken();
+
+    // macOS routes Cmd+A through the native menu, bypassing the DOM keymap.
+    // Share its action while keeping selection scoped to the focused composer.
+    this.removeSelectAllHandler = pushHandler(
+      "editor.selectAll",
+      () => this.editor.commands.selectAll(),
+      { isActive: () => !this.disposed && !this.editor.isDestroyed && this.editor.view.hasFocus() },
+    );
 
     // Capture before ProseMirror's own keymap so plain Enter submits without
     // first inserting an empty paragraph into the composer document.
@@ -309,6 +319,7 @@ export class ComposerController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.removeSelectAllHandler();
     this.input.removeEventListener("keydown", this.handleKeydown, true);
     this.input.removeEventListener("compositionstart", this.handleCompositionStart);
     this.input.removeEventListener("compositionend", this.handleCompositionEnd);

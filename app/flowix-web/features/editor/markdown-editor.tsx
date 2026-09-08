@@ -9,7 +9,7 @@ import { Markdown } from '@tiptap/markdown';
 import Placeholder from '@tiptap/extension-placeholder';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { useShortcutScope, pushHandler } from '@features/shortcuts';
 import { AttachmentLink } from '@features/editor/extensions/attachment-link';
 import { TableBubbleMenu } from '@features/editor/extensions/table/table-bubble-menu';
@@ -711,7 +711,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     applyExternalContent(normalizedContent);
   }, [content, applyExternalContent, serializePendingChanges]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (editorRef.current) {
       editorRef.current.setEditable(editable);
       const editorDom = editorRef.current.view.dom;

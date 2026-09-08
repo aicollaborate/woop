@@ -126,7 +126,20 @@ export function DocumentContainer({
       const buffer = getBuffer(documentIdentity);
       if (!buffer) return;
       const content = buffer.content;
-      setState((prev) => prev.fullContent === content ? prev : { ...prev, fullContent: content });
+      const textUnits = countTextUnits(extractBodyContent(content));
+      const tokenCount = Math.ceil(textUnits / 4);
+      setState((prev) => (
+        prev.fullContent === content
+        && prev.charCount === textUnits
+        && prev.tokenCount === tokenCount
+          ? prev
+          : {
+              ...prev,
+              fullContent: content,
+              charCount: textUnits,
+              tokenCount,
+            }
+      ));
     };
     const unsubscribeBuffer = subscribeDocumentBufferChanges((identity) => {
       if (documentIdentityKey(identity) === key) sync();
@@ -283,14 +296,16 @@ export function DocumentContainer({
     }
     prevFilePathRef.current = filePath;
 
-    // Switching to a different document must not carry the previous document's
-    // unsaved editor snapshot into the new load. The buffer for the new path
-    // was just (re)allocated inside reloadDocument -> setActiveDocumentPath, so its
-    // pendingContent is already null. clearSaveTimer is a defensive sweep
-    // for any stray timer from the previous document.
+    // Stop this surface's old timer before loading. The target identity may
+    // already have a live draft owned by the other column; preserve it below.
     clearSaveTimer();
 
-    reloadDocument(filePath, { preservePending: false, showLoading: true });
+    reloadDocument(filePath, {
+      // A second surface for the same identity shares this buffer. Preserve
+      // its live draft instead of replacing it with the disk snapshot.
+      preservePending: hasDocumentUnsavedChanges(documentIdentity),
+      showLoading: true,
+    });
   }, [filePath, documentIdentity, documentInstanceKey, documentSessionMode, isExternalDocument, memoId, reloadDocument, clearSaveTimer]);
 
   useExternalDocumentChangeWatch({

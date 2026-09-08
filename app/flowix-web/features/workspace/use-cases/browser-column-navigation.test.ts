@@ -130,23 +130,26 @@ describe('browser column navigation', () => {
     });
   });
 
-  it('moves a browser tab to the left work column', async () => {
+  it('preserves webpage tabs instead of moving them to an unsupported surface', async () => {
     await openBrowserColumnWebpage('https://example.com/docs');
     await openBrowserColumnWebpage('https://flowix.dev/');
+    const before = useBrowserColumnStore.getState();
+    const focus = useWorkspaceFocusStore.getState().focusedHostId;
 
-    const moved = await openBrowserColumnTabInWorkColumn('web:https://example.com/docs');
+    expect(await openBrowserColumnTabInWorkColumn('web:https://example.com/docs')).toBe(false);
+    expect(useBrowserColumnStore.getState().tabs).toEqual(before.tabs);
+    expect(useBrowserColumnStore.getState().activeTabId).toBe(before.activeTabId);
+    expect(useWorkColumnStore.getState().navigation.target).toEqual({ kind: 'empty' });
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe(focus);
+  });
 
-    expect(moved).toBe(true);
-    expect(useBrowserColumnStore.getState()).toMatchObject({
-      tabs: [{ id: 'web:https://flowix.dev/' }],
-      activeTabId: 'web:https://flowix.dev/',
-      visible: true,
-    });
-    expect(useWorkColumnStore.getState().navigation.target).toEqual({
-      kind: 'web',
-      url: 'https://example.com/docs',
-    });
-    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
+  it('preserves a folder tab without a selected file when asked to move it', async () => {
+    await openBrowserColumnFileBrowser('/workspace');
+    const before = useBrowserColumnStore.getState();
+    expect(await openBrowserColumnTabInWorkColumn(before.tabs[0].id)).toBe(false);
+    expect(useBrowserColumnStore.getState().tabs).toEqual(before.tabs);
+    expect(useBrowserColumnStore.getState().visible).toBe(true);
+    expect(useWorkColumnStore.getState().navigation.target).toEqual({ kind: 'empty' });
   });
 
   it('keeps the tab when its document cannot be flushed before moving', async () => {
@@ -303,4 +306,32 @@ describe('browser column navigation', () => {
       renderer: 'markmap',
     });
   });
+});
+
+it('moves a folder selection to the main column even when a separate file tab already exists', async () => {
+  resetWorkspace();
+  resetBrowserColumnCoordinator();
+  useBrowserColumnStore.getState().reset();
+  const { useDocumentStore } = await import('@features/document/store/document-store');
+  const previousDocument = useDocumentStore.getState();
+  useDocumentStore.setState({ activeMemoSession: null, activeExternalSession: null, currentDocumentPath: null, currentDocumentSource: null });
+  try {
+    await openBrowserColumnMarkdown('/workspace/readme.md');
+    await openBrowserColumnFileBrowser('/workspace', '/workspace/readme.md');
+    const moving = openBrowserColumnTabInWorkColumn('file-browser:/workspace');
+    const result = await Promise.race([
+      moving,
+      new Promise<string>((resolve) => setTimeout(() => resolve('navigation queue deadlocked'), 100)),
+    ]);
+    expect(result).toBe(true);
+    expect(useWorkColumnStore.getState().navigation.target).toMatchObject({ kind: 'external', path: '/workspace/readme.md' });
+    expect(useBrowserColumnStore.getState().tabs.map((tab) => tab.id)).toEqual(['file:/workspace/readme.md']);
+    await openBrowserColumnWebpage('https://example.com/after-move');
+    expect(useBrowserColumnStore.getState().tabs).toHaveLength(2);
+  } finally {
+    resetBrowserColumnCoordinator();
+    resetWorkspace();
+    useDocumentStore.setState(previousDocument);
+    useBrowserColumnStore.getState().reset();
+  }
 });

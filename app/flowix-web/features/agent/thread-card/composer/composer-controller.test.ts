@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { invokeHandler } from "@/lib/shortcuts/handler-registry";
 
 import {
   ComposerController,
@@ -56,6 +57,32 @@ afterEach(() => {
 });
 
 describe("ComposerController note references", () => {
+  it("routes native select-all to the focused composer including rich text references", () => {
+    const { controller } = setup();
+    const editor = controller.editorInstance;
+    editor.commands.setContent("first\nsecond", { contentType: "markdown" });
+    controller.insertMemoReference({ id: "abc123", filename: "reference.md", title: "Reference" });
+    const other = setup().controller;
+    other.editorInstance.commands.setContent("other", { contentType: "markdown" });
+    controller.focus();
+
+    expect(invokeHandler("editor.selectAll")).toBe(true);
+    expect(editor.state.selection.from).toBe(0);
+    expect(editor.state.selection.to).toBe(editor.state.doc.content.size);
+    expect(other.editorInstance.state.selection.empty).toBe(true);
+    editor.commands.deleteSelection();
+    expect(controller.getPrompt()).toBe("");
+    expect(other.getPrompt()).toBe("other");
+  });
+
+  it("releases the select-all handler when the composer is disposed", () => {
+    const { controller } = setup();
+    controller.focus();
+    expect(invokeHandler("editor.selectAll")).toBe(true);
+    controller.dispose();
+    expect(invokeHandler("editor.selectAll")).toBe(false);
+  });
+
   it("focuses the Tiptap editor when clicking the input row", () => {
     const { controller } = setup();
     const row = controller

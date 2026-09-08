@@ -44,6 +44,12 @@ export type BrowserColumnTarget =
       instanceId: string;
     };
 
+/** Only targets with a usable work-column surface can be moved there. */
+export function canMoveBrowserColumnTargetToWorkColumn(target: BrowserColumnTarget): boolean {
+  return target.kind !== 'web'
+    && (target.kind !== 'file-browser' || Boolean(target.activeFilePath));
+}
+
 export interface BrowserColumnTab {
   id: string;
   title: string;

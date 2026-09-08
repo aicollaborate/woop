@@ -4,6 +4,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from 'react';
@@ -255,7 +256,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     }, { isActive: editorIsFocused });
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({

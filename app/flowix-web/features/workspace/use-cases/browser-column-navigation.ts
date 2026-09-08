@@ -9,6 +9,7 @@ import {
 } from '@features/plugin/plugin-note';
 import {
   BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH,
+  canMoveBrowserColumnTargetToWorkColumn,
   useBrowserColumnStore,
   type BrowserColumnOpenDisposition,
   type BrowserColumnTab,
@@ -330,6 +331,7 @@ export function openBrowserColumnTabInWorkColumn(tabId: string): Promise<boolean
     const originalIndex = before.tabs.findIndex((tab) => tab.id === tabId);
     if (originalIndex < 0) return false;
     const tab = before.tabs[originalIndex];
+    if (!canMoveBrowserColumnTargetToWorkColumn(tab.target)) return false;
     const originalActiveTabId = before.activeTabId;
 
     // Remove the tab before invoking the normal work-column navigation
@@ -349,12 +351,14 @@ export function openBrowserColumnTabInWorkColumn(tabId: string): Promise<boolean
           break;
         case 'file':
           await openExternalTarget(tab.target.filePath, {
+            destination: 'main-third',
             scopePath: tab.target.scopePath,
           });
           break;
         case 'file-browser':
           if (tab.target.activeFilePath) {
             await openExternalTarget(tab.target.activeFilePath, {
+              destination: 'main-third',
               scopePath: tab.target.folderPath,
             });
           }
