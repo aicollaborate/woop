@@ -443,14 +443,6 @@ function publishExternalTargetIfCurrent(
 export async function openMemoTarget(
   params: OpenMemoTargetParams,
 ): Promise<WorkspaceContentLocation | null> {
-  const existing = activateExistingContentForNavigation({ kind: 'memo', memoId: params.memoId });
-  if (existing instanceof Promise) {
-    const activated = await existing;
-    if (activated) return activated;
-  } else if (existing) {
-    return existing;
-  }
-
   const previousMemo = useMemoStore.getState().selectedMemo;
   const previousNotebook = useMemoStore.getState().selectedNotebook;
   const previousDocument = captureDocumentSnapshot();
@@ -522,6 +514,7 @@ export async function openMemoTarget(
       if (!publishMemoTargetIfCurrent(requestId, params.memoId, params.path)) {
         throw new Error(`Memo session was not committed: ${params.memoId}`);
       }
+      useWorkspaceFocusStore.getState().focusHost('main-third');
       if (previousArtifactHistory && params.history !== 'skip') {
         useDocumentHistoryStore.getState().pushBack(previousArtifactHistory);
       }
@@ -643,21 +636,6 @@ export async function openArtifactTarget(
     useWorkColumnStore.getState().navigation.target,
   );
 
-  const existing = activateExistingContentForNavigation({
-    kind: 'artifact',
-    pointerMemoId,
-  });
-  if (existing instanceof Promise) {
-    const activated = await existing;
-    if (activated) {
-      selectArtifactMemo(params);
-      return activated;
-    }
-  } else if (existing) {
-    selectArtifactMemo(params);
-    return existing;
-  }
-
   const target = pendingArtifactTarget({ ...params, pointerMemoId });
   await runNavigation(
     target,
@@ -669,6 +647,7 @@ export async function openArtifactTarget(
       if (!isCurrentNavigation(requestId)) return;
       if (!commitNavigation(requestId, target)) return;
       selectArtifactMemo(params);
+      useWorkspaceFocusStore.getState().focusHost('main-third');
       if (params.history !== 'skip' && previousHistoryEntry) {
         useDocumentHistoryStore.getState().pushBack(previousHistoryEntry);
       }

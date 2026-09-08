@@ -38,6 +38,17 @@ import { defaultThreadTitle } from '@features/agent/store/thread-titles';
 import { selectAndOpenAgentConversation } from '@features/workspace/use-cases/agent-conversation-navigation';
 import { openPath, openUrl } from '@platform/tauri/opener';
 import { dialogs } from '@platform/tauri/client/desktop';
+import { isEditableTextFilePath } from '@features/editor/code-file';
+import { openNoteByDeepLink } from '@features/memo/use-cases/open-by-target';
+import {
+  agentFileScopePathForRuntime,
+  localFilePathFromAgentHref,
+} from '@features/agent/thread-card/link-navigation';
+import {
+  openBrowserColumnFileBrowser,
+  openBrowserColumnText,
+  openBrowserColumnWebpage,
+} from '@features/workspace/use-cases/browser-column-navigation';
 import {
   runDshCommand,
   hasPendingDshCommand,
@@ -383,28 +394,32 @@ export function AgentConversationDetail({
         );
         const href = normalizePlainLinkHref(rawHref);
         if (!href) return;
+        if (href.startsWith('flowix://')) {
+          await openNoteByDeepLink(href);
+          return;
+        }
         if (/^https?:\/\//i.test(href)) {
-          const { openBrowserColumnWebpage } = await import(
-            '@features/workspace/use-cases/browser-column-navigation'
-          );
           await openBrowserColumnWebpage(href);
           return;
         }
-        const { localFilePathFromAgentHref } = await import(
-          '@features/agent/thread-card/link-navigation'
-        );
         const localPath = localFilePathFromAgentHref(rawHref);
         if (!localPath) {
           await openUrl(href);
           return;
         }
-        const { isEditableTextFilePath } = await import('@features/editor/code-file');
+
+        const scopePath = agentFileScopePathForRuntime(
+          localPath,
+          instanceRef.current?.runtimeConfig,
+        );
+        if (scopePath) {
+          await openBrowserColumnFileBrowser(scopePath, localPath);
+          return;
+        }
+
         if (isEditableTextFilePath(localPath)) {
-          const scopePath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
-          const { openBrowserColumnText } = await import(
-            '@features/workspace/use-cases/browser-column-navigation'
-          );
-          await openBrowserColumnText(localPath, scopePath);
+          const parentPath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
+          await openBrowserColumnText(localPath, parentPath);
           return;
         }
         await openPath(localPath);

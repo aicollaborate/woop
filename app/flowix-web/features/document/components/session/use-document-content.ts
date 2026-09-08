@@ -83,7 +83,7 @@ export function useDocumentContent({
     (path: string, fullContent: string, options?: Pick<LoadContentOptions, 'preservePending'>) => {
       const startedAt = performance.now();
       const buf = applyLoadedDocumentContent(identity, path, fullContent, {
-        preservePending: options?.preservePending,
+        preservePending: options?.preservePending ?? true,
         setAsCurrent: !isolatedSession,
       });
       const memo = isExternalDocument ? null : getMemoSnapshot(memoId);
@@ -147,7 +147,7 @@ export function useDocumentContent({
       }
       const stagedContent = consumeStagedDocumentSnapshot(identity, path);
       if (stagedContent !== null) {
-        applyLoadedContent(path, stagedContent, { preservePending: false });
+        applyLoadedContent(path, stagedContent, { preservePending: true });
         logOpenDocPerf('reloadDocument:staged', startedAt, {
           memoId,
           transitionId,

@@ -12,7 +12,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { ArrowLeft, ArrowRight, ChevronRight, Globe, RotateCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, Globe, RotateCw, Trash2 } from 'lucide-react';
 import { CaretDownIcon, DotsThreeIcon, FolderSimpleIcon, PlusIcon } from '@phosphor-icons/react';
 import { LazyAgentConversationDetail } from '@features/agent/components/lazy-agent-conversation-detail';
 import { DocumentContainer } from '@features/document/components/document-container';
@@ -562,6 +562,31 @@ function BrowserFileBrowserSurfaceView({ surface }: { surface: BrowserFileBrowse
     };
   });
 
+  const handleRemoveFolder = useCallback(async (path: string) => {
+    if (!notebookId) return;
+    const latestConfig = useAgentAccessStore.getState().config;
+    const latestFiles = normalizeFilesDefaults(latestConfig.defaults?.files)[notebookId];
+    const latestFolders = latestFiles?.folders ?? [];
+    const comparable = (value: string) => value.trim().replace(/[\\/]+$/, '').toLowerCase();
+    const nextFolders = latestFolders.filter((candidate) => comparable(candidate) !== comparable(path));
+    const latestWorkspace = latestFiles?.workspace;
+    const wasWorkspace =
+      (typeof latestWorkspace === 'string' && comparable(latestWorkspace) === comparable(path))
+      || (latestWorkspace === undefined && latestFolders[0] !== undefined
+        && comparable(latestFolders[0]) === comparable(path));
+    const saved = await setDefaultFiles(notebookId, {
+      workspace: wasWorkspace ? null : latestWorkspace ?? null,
+      folders: nextFolders,
+      notebooks: latestFiles?.notebooks ?? [],
+    });
+    if (!saved) {
+      toast.error(t('agent.access.saveFailed'));
+      return;
+    }
+    const item = folderItems.find((candidate) => comparable(candidate.path) === comparable(path));
+    toast.success(t('agent.access.folderDeleted', { name: item?.name ?? path }));
+  }, [folderItems, notebookId, setDefaultFiles, t]);
+
   const handleAddFolder = useCallback(async () => {
     const result = await addFolderFromPicker();
     if (!result.ok) {
@@ -660,10 +685,14 @@ function BrowserFileBrowserSurfaceView({ surface }: { surface: BrowserFileBrowse
             {folderItems.map((item) => (
               <DropdownMenuItem
                 key={item.path}
-                disabled={item.missing}
                 title={item.missing ? t('agent.access.pathMissing') : item.path}
-                onClick={() => switchFolder(surface.tabId, item.path)}
-                className="h-7 gap-2 rounded-lg px-2 py-0 text-left text-sm hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
+                onClick={() => {
+                  if (!item.missing) switchFolder(surface.tabId, item.path);
+                }}
+                onTrailingAction={() => void handleRemoveFolder(item.path)}
+                trailingAction={<Trash2 className="h-3 w-3" aria-hidden="true" />}
+                trailingActionLabel={t('agent.access.deleteFolder')}
+                className={`group h-7 gap-2 rounded-lg px-2 py-0 text-left text-sm hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)] ${item.missing ? 'text-[var(--muted-foreground)]' : ''}`}
               >
                 <FolderSimpleIcon size={15} weight={item.missing ? 'regular' : 'fill'} aria-hidden="true" />
                 <span className="min-w-0 truncate">{item.name}</span>

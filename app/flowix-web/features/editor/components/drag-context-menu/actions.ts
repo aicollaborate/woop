@@ -44,6 +44,12 @@ export function applyMenuItem(editor: Editor, item: BlockMenuItem): void {
     } else {
       editor.chain().focus().toggleTaskList().run()
     }
+  } else if (item.kind === 'block') {
+    if (item.blockType === 'blockquote') {
+      editor.chain().focus().toggleBlockquote().run()
+    } else {
+      editor.chain().focus().toggleCodeBlock().run()
+    }
   }
 }
 

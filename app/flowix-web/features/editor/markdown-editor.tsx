@@ -277,7 +277,7 @@ const PreservedTaskItem = TaskItem.extend({
 
 function normalizeTaskItemPlaceholders(editor: Editor): void {
   const { state, view } = editor;
-  let tr = state.tr;
+  const deletions: Array<{ from: number; to: number }> = [];
 
   state.doc.descendants((node, pos) => {
     if (node.type.name !== 'taskItem') return true;
@@ -290,13 +290,19 @@ function normalizeTaskItemPlaceholders(editor: Editor): void {
     const from = paragraphPos + 1;
     const to = paragraphPos + firstChild.nodeSize - 1;
     if (from < to) {
-      tr = tr.delete(from, to);
+      deletions.push({ from, to });
     }
 
     return false;
   });
 
-  if (tr.docChanged) {
+  if (deletions.length > 0) {
+    // All positions refer to the original document. Applying the ranges from
+    // right to left keeps an earlier deletion from shifting a later range.
+    const tr = state.tr;
+    deletions
+      .sort((a, b) => b.from - a.from)
+      .forEach(({ from, to }) => tr.delete(from, to));
     view.dispatch(tr);
   }
 }
@@ -393,13 +399,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
   }, [clearSerializeTimer]);
 
   const schedulePendingSerialization = useCallback(() => {
-    clearSerializeTimer();
+    // Publish during continuous typing as well as after the last keystroke.
+    if (serializeTimerRef.current) return;
     const editor = editorRef.current;
     const viewState = editor?.view as (Editor['view'] & { composing?: boolean }) | undefined;
     if (isComposingRef.current || viewState?.composing) {
       return;
     }
     serializeTimerRef.current = setTimeout(() => {
+      serializeTimerRef.current = null;
       serializePendingChanges();
     }, SERIALIZE_DEBOUNCE_MS);
   }, [clearSerializeTimer, serializePendingChanges]);
@@ -459,6 +467,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       editor
         .chain()
         .setMeta(SKIP_AGENT_THREAD_CARD_CLEANUP_META, true)
+        .setMeta('addToHistory', false)
         .setContent(normalizedNextContent, { contentType: 'markdown', emitUpdate: false })
         .run();
       normalizeTaskItemPlaceholders(editor);
@@ -683,6 +692,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     const normalizedContent = normalizeMarkdownTableEmptyCells(content);
     if (editor && pendingSerializeDirtyRef.current) {
       serializePendingChanges({ force: true });
+      return;
     }
     if (!editor || editor.isDestroyed || normalizedContent === contentRef.current) {
       return;

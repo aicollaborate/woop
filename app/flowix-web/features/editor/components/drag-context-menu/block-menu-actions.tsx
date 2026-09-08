@@ -3,11 +3,12 @@ import { TrashSimpleIcon } from '@phosphor-icons/react'
 import {
   headingMenuItems,
   listMenuItems,
+  blockMenuItems,
   type BlockMenuItem,
 } from '@features/editor/components/drag-context-menu/items'
 import { useI18n } from '@/lib/i18n'
 
-export type BlockMenuActionGroup = 'heading' | 'list' | 'danger'
+export type BlockMenuActionGroup = 'heading' | 'list' | 'block' | 'danger'
 
 export interface BlockMenuAction {
   id: string
@@ -44,6 +45,13 @@ export function useBlockMenuActions(
             : 'editor.block.taskList',
       ),
       shortcut: item.shortcut,
+      onSelect: () => onMenuItem(item),
+    })),
+    ...blockMenuItems.map((item): BlockMenuAction => ({
+      id: item.blockType,
+      group: 'block',
+      icon: item.icon,
+      label: t(item.displayKey),
       onSelect: () => onMenuItem(item),
     })),
     {

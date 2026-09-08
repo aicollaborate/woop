@@ -130,7 +130,13 @@ describe('workspace navigation transaction', () => {
     mocks.memoState.loadMemos.mockResolvedValue(undefined);
   });
 
-  it('activates a matching browser-column memo without opening it in the third column', async () => {
+  it('opens a memo in work while retaining its existing browser tab', async () => {
+    mocks.openMemoDocument.mockImplementation(async (params) => {
+      mocks.documentState.activeMemoSession = {
+        memoId: params.memoId, path: params.path, notebookId: null,
+        notebookPath: null, transitionId: 1,
+      };
+    });
     useBrowserColumnStore.getState().openTab({
       id: 'memo:existing',
       title: 'Existing',
@@ -150,12 +156,13 @@ describe('workspace navigation transaction', () => {
       memo: memo('existing'),
     });
 
-    expect(mocks.openMemoDocument).not.toHaveBeenCalled();
+    expect(mocks.openMemoDocument).toHaveBeenCalledOnce();
+    expect(useWorkColumnStore.getState().navigation.target).toMatchObject({ kind: 'memo', memoId: 'existing' });
     expect(useBrowserColumnStore.getState()).toMatchObject({
       visible: true,
       activeTabId: 'memo:existing',
     });
-    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('main-third');
   });
 
   it('rolls back memo selection and retains the previous target on failure', async () => {
@@ -173,7 +180,7 @@ describe('workspace navigation transaction', () => {
       phase: 'failed',
       pendingTarget: { kind: 'memo', memoId: 'new' },
       previousTarget: { kind: 'empty' },
-      failure: { message: 'save refused', retryToken: 'navigation-retry-1' },
+      failure: { message: 'save refused', retryToken: expect.stringMatching(/^navigation-retry-\d+$/) },
     });
   });
 

@@ -373,17 +373,11 @@ export function MemoList({
     return cb;
   };
   const handleSelectMemo = useCallback((memo: MemoItem) => {
-    void openMemoSession(memo, useMemoStore.getState().selectedNotebook)
-      .then((location) => {
-        if (location) toast.info(t('workspace.alreadyOpen'));
-      });
-  }, [t]);
+    void openMemoSession(memo, useMemoStore.getState().selectedNotebook);
+  }, []);
 
   const handleOpenMemoWindow = useCallback((memo: MemoItem) => {
-    void openBrowserColumnMemo(memo, useMemoStore.getState().selectedNotebook)
-      .then((result) => {
-        if (result?.alreadyOpen) toast.info(t('workspace.alreadyOpen'));
-      })
+    void openBrowserColumnMemo(memo, useMemoStore.getState().selectedNotebook, 'open-in-column')
       .catch((error) => {
         logger.warn('open memo in browser column failed', { error, memoId: memo.id });
         toast.error(error instanceof Error ? error.message : String(error));

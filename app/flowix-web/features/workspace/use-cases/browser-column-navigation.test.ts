@@ -55,20 +55,20 @@ describe('browser column navigation', () => {
 
   it('opens one file-browser tab per folder and switches its active file', async () => {
     await openBrowserColumnFileBrowser('/workspace');
-    await openBrowserColumnFileBrowser('/workspace');
+    await openBrowserColumnFileBrowser('/workspace', '/workspace/src/main.ts');
 
     const store = useBrowserColumnStore.getState();
     expect(store.tabs).toHaveLength(1);
     expect(store.tabs[0].target).toMatchObject({
       kind: 'file-browser',
       folderPath: '/workspace',
-      activeFilePath: null,
+      activeFilePath: '/workspace/src/main.ts',
     });
 
-    store.selectFileBrowserFile(store.tabs[0].id, '/workspace/src/main.ts');
+    await openBrowserColumnFileBrowser('/workspace', '/workspace/src/other.ts');
     expect(useBrowserColumnStore.getState().tabs[0].target).toMatchObject({
       kind: 'file-browser',
-      activeFilePath: '/workspace/src/main.ts',
+      activeFilePath: '/workspace/src/other.ts',
     });
   });
 
@@ -165,6 +165,23 @@ describe('browser column navigation', () => {
     });
   });
 
+  it('explicitly opens a memo in the right column, retaining the left and reusing its tab', async () => {
+    const target = { kind: 'memo' as const, memoId: 'shared', path: '/notes/shared.md', notebookId: 'notes', notebookPath: '/notes', transitionId: 1 };
+    const work = useWorkColumnStore.getState();
+    const requestId = work.beginNavigation(target, null);
+    work.commitNavigation(requestId, target);
+    const browserTarget = { kind: 'memo' as const, memoId: 'shared', filePath: target.path, notebookId: 'notes', notebookPath: '/notes' };
+    const first = await openBrowserColumnTarget(browserTarget, 'open-in-column');
+    await openBrowserColumnWebpage('https://example.com');
+    const second = await openBrowserColumnTarget(browserTarget, 'open-in-column');
+    expect(first?.alreadyOpen).toBe(false);
+    expect(second?.alreadyOpen).toBe(true);
+    expect(useBrowserColumnStore.getState().activeTabId).toBe('memo:shared');
+    expect(useBrowserColumnStore.getState().tabs).toHaveLength(2);
+    expect(useWorkColumnStore.getState().navigation.target).toEqual(target);
+    expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
+  });
+
   it('supports replacing the active tab', async () => {
     await openBrowserColumnMarkdown('/notes/old.md');
     await openBrowserColumnTarget({ kind: 'agent_conversation', instanceId: 'agent-2' }, 'replace-active');
@@ -219,7 +236,7 @@ describe('browser column navigation', () => {
     expect(useBrowserColumnStore.getState().tabs[0]).toMatchObject({
       target: { kind: 'file', filePath: '/notes/plan.md', scopePath: '/notes' },
     });
-    expect(useWorkColumnStore.getState().navigation.target).toEqual({ kind: 'empty' });
+    expect(useWorkColumnStore.getState().navigation.target).toEqual(target);
     expect(useWorkspaceFocusStore.getState().focusedHostId).toBe('browser-column');
   });
 

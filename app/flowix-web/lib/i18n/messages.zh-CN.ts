@@ -590,8 +590,8 @@ const zhCN = {
     "tabWindow.context.closeOther": "关闭其他",
     "tabWindow.context.closeRight": "关闭右侧",
     "tabWindow.context.closeAll": "关闭全部",
-    "tabWindow.context.openInWorkColumn": "在左侧打开",
-    "workColumn.context.openInBrowserColumn": "右侧分列打开",
+    "tabWindow.context.openInWorkColumn": "在左栏打开",
+    "workColumn.context.openInBrowserColumn": "在右栏打开",
     "workspace.alreadyOpen": "文档已打开",
     "error.title": "出错了",
     "error.unexpected": "发生了意外错误",
@@ -619,7 +619,7 @@ const zhCN = {
     "document.agent.archiveConversation": "归档会话",
     "document.agent.deleteConversation": "删除会话",
     "document.agent.deleteConfirm": "删除后该会话在 Agent 侧的历史记录将被彻底删除，且无法恢复。确定删除吗？",
-    "document.agent.noSourceNote": "无关联笔记",
+    "document.agent.noSourceNote": "无关联的笔记",
     "status.agent.history.title": "Agent 会话记录",
     "status.agent.history.all": "全部",
     "status.agent.toggleView": "AI & 工作空间",
@@ -849,7 +849,7 @@ const zhCN = {
     "agent.welcome.prompts.bookNotes": "读书摘录与感想",
 
     // memo
-    "memo.action.openInSplit": "分列打开",
+    "memo.action.openInSplit": "在右栏打开",
     "memo.action.unpin": "取消置顶",
     "memo.action.pin": "置顶",
     "memo.action.delete": "删除",

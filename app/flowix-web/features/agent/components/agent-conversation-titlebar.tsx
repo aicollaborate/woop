@@ -2,7 +2,12 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { ArchiveIcon, FileTextIcon, TrashSimpleIcon } from '@phosphor-icons/react';
+import {
+  ArchiveIcon,
+  FileTextIcon,
+  LinkBreakIcon,
+  TrashSimpleIcon,
+} from '@phosphor-icons/react';
 
 import { useI18n } from '@/lib/i18n';
 import { isWindowsPlatform } from '@features/shortcuts';
@@ -186,8 +191,13 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
               <FileTextIcon className="h-4 w-4" />
             </button>
           </> : (
-            <span className="agent-thread-card__no-source text-[0.8125rem] leading-none text-[var(--muted-foreground)]" aria-label={t('document.agent.noSourceNote')}>
-              {t('document.agent.noSourceNote')}
+            <span
+              className="agent-thread-card__no-source"
+              role="img"
+              aria-label={t('document.agent.noSourceNote')}
+              title={t('document.agent.noSourceNote')}
+            >
+              <LinkBreakIcon className="agent-thread-card__fullscreen-icon" aria-hidden="true" />
             </span>
           )}
         <DropdownMenu>

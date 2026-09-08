@@ -155,31 +155,26 @@
 }
 
 /* 无来源文档占位 ── dedicated 对话 (kind === 'dedicated') 没有关联笔记,
- * 在 view-note 按钮原本的位置展示一行 muted 文案。视觉重量弱于 28×28
- * 图标按钮, 跟 header 右侧主标题区形成层级 ── 让用户一眼看到"这条对话
- * 是独立的", 而不会误以为按钮坏了。
+ * 在 view-note 按钮原本的位置展示断链图标。视觉重量弱于 28×28 图标按钮,
+ * 跟 header 右侧主标题区形成层级 ── 让用户一眼看到"这条对话是独立的",
+ * 而不会误以为按钮坏了。
  *
  * ── 几何 ──
  *   - height: 28px ── 与 28×28 图标按钮同高, 在 flex 容器 (gap: 4px)
  *     里两者上下边缘对齐, 不出现 header 高度跳变。
- *   - padding-inline: 4px ── 文字与左邻 header 边缘留 4px, 跟相邻
- *     divider/button 4px gap 保持一致, 视觉节奏连续。
- *   - font-size: 0.8125rem ── 跟 view-note 文字口径一致, 13px 在
- *     header 区是次要文字的常规尺寸。
+ *   - width: 28px ── 与相邻图标按钮保持相同点击区域口径, 但不赋予它
+ *     可交互语义。
  *
  * ── 颜色 ──
  *   - var(--muted-foreground) ── 跟其它 header 弱交互元素同 token,
- *     暗示"这是辅助信息, 不是可点击的操作"。hover 不变色 ── 让用户
- *     明确知道这不是按钮。 */
+ *     暗示"这是辅助信息, 不是可点击的操作"。 */
 .markdown-editor .agent-thread-card__no-source {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 28px;
   height: 28px;
-  padding-inline: 0.25rem;
-  font-size: 0.8125rem;
-  line-height: 1;
   color: var(--muted-foreground);
-  white-space: nowrap;
   user-select: none;
   cursor: default;
 }
@@ -353,8 +348,9 @@
   );
 }
 
-/* Keep the relocated control visually identical to the Thread Card's former
- * fullscreen button: transparent, borderless, and 28px square. */
+/* Keep the relocated control's shape identical to the Thread Card's former
+ * fullscreen button: transparent, borderless, and 28px square. Its error
+ * color makes the exit action easier to spot in the titlebar. */
 .agent-thread-card-fullscreen-exit-btn {
   display: inline-flex;
   align-items: center;
@@ -365,7 +361,7 @@
   padding: 0;
   border: 0;
   border-radius: 0.38rem;
-  color: var(--muted-foreground);
+  color: var(--destructive);
   background: transparent;
   cursor: pointer;
   transition:

@@ -283,6 +283,9 @@ function DropdownMenuItem({
 	disabled,
 	onClick,
 	onMouseDown,
+	onTrailingAction,
+	trailingAction,
+	trailingActionLabel,
 	inset,
 	title,
 }: {
@@ -291,6 +294,9 @@ function DropdownMenuItem({
 	disabled?: boolean;
 	onClick?: () => void;
 	onMouseDown?: (e: React.MouseEvent) => void;
+	onTrailingAction?: () => void;
+	trailingAction?: React.ReactNode;
+	trailingActionLabel?: string;
 	inset?: boolean;
 	title?: string;
 }) {
@@ -309,6 +315,50 @@ function DropdownMenuItem({
 		if (disabled) return;
 		onMouseDown?.(e);
 	};
+
+	if (trailingAction) {
+		return (
+			<div
+				className={cn(
+					"flex items-center w-full text-sm text-[var(--foreground)] outline-none",
+					"cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
+					inset && "pl-8",
+					className,
+				)}
+			>
+				<button
+					type="button"
+					disabled={disabled}
+					onClick={handleClick}
+					onMouseDown={handleMouseDown}
+					title={title}
+					className="flex min-w-0 flex-1 items-center gap-2 text-left"
+				>
+					{children}
+				</button>
+				<button
+					type="button"
+					disabled={disabled}
+					aria-label={trailingActionLabel}
+					title={trailingActionLabel}
+					onMouseDown={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+					}}
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						if (disabled) return;
+						onTrailingAction?.();
+						setOpen(false);
+					}}
+					className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-transparent hover:text-white focus-visible:text-white"
+				>
+					{trailingAction}
+				</button>
+			</div>
+		);
+	}
 
 	return (
 		<button

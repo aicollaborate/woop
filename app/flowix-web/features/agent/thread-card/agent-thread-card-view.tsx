@@ -67,6 +67,7 @@ import { AgentConversationSurfaceController } from "@features/agent/thread-card/
 import { getAgentConversationRuntimeCwd } from "@features/agent/conversation-presentation";
 import { selectAndOpenAgentConversation } from "@features/workspace/use-cases/agent-conversation-navigation";
 import {
+  openBrowserColumnFileBrowser,
   openBrowserColumnText,
   openBrowserColumnWebpage,
 } from "@features/workspace/use-cases/browser-column-navigation";
@@ -91,7 +92,7 @@ import {
   selectAgentThreadCardRuntimeView,
 } from "@features/agent/thread-card/agent-thread-card-selectors";
 import {
-  agentFileScopePath,
+  agentFileScopePathForRuntime,
   localFilePathFromAgentHref,
 } from "@features/agent/thread-card/link-navigation";
 
@@ -681,17 +682,7 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   }
 
   private scopePathForLocalFile(filePath: string): string | null {
-    const runtimeConfig = this.instance?.runtimeConfig;
-    const snapshotPaths = runtimeConfig?.workspaceState?.desired.workspacePaths
-      ?? runtimeConfig?.workspaceSnapshot?.workspacePaths
-      ?? [];
-    const legacyPaths = [
-      runtimeConfig?.cwd,
-      runtimeConfig?.files?.workspace,
-      ...(runtimeConfig?.files?.folders ?? []),
-      ...(runtimeConfig?.files?.notebooks ?? []),
-    ].filter((path): path is string => typeof path === "string");
-    return agentFileScopePath(filePath, [...snapshotPaths, ...legacyPaths]);
+    return agentFileScopePathForRuntime(filePath, this.instance?.runtimeConfig);
   }
 
   private ensureInstanceBinding(): void {
@@ -1394,18 +1385,19 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
     const rawHref = a.getAttribute("href");
     const localPath = localFilePathFromAgentHref(rawHref);
     if (localPath) {
-      if (isEditableTextFilePath(localPath)) {
-        const scopePath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
-        void Promise.resolve(openBrowserColumnText(localPath, scopePath)).catch((error) => {
-          logger.error("Failed to open Markdown link", { error });
+      const scopePath = this.scopePathForLocalFile(localPath);
+      if (scopePath) {
+        void Promise.resolve(openBrowserColumnFileBrowser(scopePath, localPath)).catch((error) => {
+          logger.error("Failed to open workspace file link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
         return;
       }
-      const scopePath = this.scopePathForLocalFile(localPath);
-      if (scopePath) {
-        void Promise.resolve(openBrowserColumnText(localPath, scopePath)).catch((error) => {
-          logger.error("Failed to open text file link", { error });
+
+      if (isEditableTextFilePath(localPath)) {
+        const parentPath = localPath.replace(/[\\/][^\\/]*$/, '') || localPath;
+        void Promise.resolve(openBrowserColumnText(localPath, parentPath)).catch((error) => {
+          logger.error("Failed to open standalone text file link", { error });
           toast.error(this.t("agent.link.openLocalFileFailed"));
         });
         return;

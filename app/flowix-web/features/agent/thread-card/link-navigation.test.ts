@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { agentFileScopePath, localFilePathFromAgentHref } from "./link-navigation";
+import {
+  agentFileScopePath,
+  agentFileScopePathForRuntime,
+  localFilePathFromAgentHref,
+} from "./link-navigation";
 
 describe("localFilePathFromAgentHref", () => {
   it("resolves tauri localhost links and removes the display line suffix", () => {
@@ -41,5 +45,19 @@ describe("agentFileScopePath", () => {
 
   it("does not compare paths from different filesystem flavors", () => {
     expect(agentFileScopePath("/C:/Work/a.ts", ["C:\\Work"])).toBeNull();
+  });
+
+  it("derives scopes from the conversation workspace snapshot", () => {
+    expect(agentFileScopePathForRuntime(
+      "/workspace/packages/app/src/a.ts",
+      {
+        workspaceSnapshot: {
+          version: 1,
+          cwd: "/workspace",
+          workspacePaths: ["/workspace", "/workspace/packages/app"],
+          capturedAt: 1,
+        },
+      },
+    )).toBe("/workspace/packages/app");
   });
 });

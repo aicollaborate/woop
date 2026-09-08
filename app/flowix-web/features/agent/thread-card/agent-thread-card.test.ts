@@ -39,6 +39,11 @@ const toastMock = vi.hoisted(() => ({
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 vi.mock("@features/workspace/use-cases/browser-column-navigation", () => ({
+  openBrowserColumnFileBrowser: vi.fn(() => ({
+    host: 'browser-column',
+    tabId: 'file-browser:/Users/rop/Desktop/vibe/flowix-main',
+    alreadyOpen: false,
+  })),
   openBrowserColumnText: vi.fn(() => "file:/Users/rop/Documents/Outside Text.txt"),
   openBrowserColumnWebpage: vi.fn(() => ({
     host: 'browser-column',
@@ -577,6 +582,80 @@ describe("AgentThreadCard NodeView streaming", () => {
       "/Users/rop/Documents",
     );
     expect(openPath).not.toHaveBeenCalled();
+  });
+
+  it("opens a file inside the conversation workspace in the file browser", async () => {
+    const { AgentThreadCard } =
+      await import("@features/agent/thread-card");
+    const { useChatStore, useAgentConversationStore } = await import(
+      "@features/agent/store/agent-session-test-facade",
+    );
+    const { openBrowserColumnFileBrowser, openBrowserColumnText } = await import(
+      "@features/workspace/use-cases/browser-column-navigation",
+    );
+    const threadId = "thread-card-workspace-file-link";
+    const instance = useAgentConversationStore.getState().createInstance({
+      agentType: "codex",
+      title: "Workspace file link",
+      threadId,
+      runtimeConfig: {
+        workspaceSnapshot: {
+          version: 1,
+          cwd: "/Users/rop/Desktop/vibe/flowix-main",
+          workspacePaths: ["/Users/rop/Desktop/vibe/flowix-main"],
+          capturedAt: 1,
+        },
+      },
+      source: { kind: "thread-card" },
+    });
+    vi.mocked(openBrowserColumnFileBrowser).mockClear();
+    vi.mocked(openBrowserColumnText).mockClear();
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [{
+          type: "agentThreadCard",
+          attrs: {
+            threadId,
+            instanceId: instance.instanceId,
+            title: "Workspace file link",
+            typeKey: "codex",
+            collapsed: false,
+          },
+        }],
+      },
+    });
+
+    const store = useChatStore.getState();
+    store.bindThreadType(threadId, "codex");
+    store.dispatchAgentChunk({
+      kind: "stream_start",
+      thread_id: threadId,
+      agent_type: "codex",
+    });
+    store.dispatchAgentChunk({
+      kind: "text",
+      thread_id: threadId,
+      agent_type: "codex",
+      text: '<a href="/Users/rop/Desktop/vibe/flowix-main/src/main.ts:42">源文件</a>',
+    });
+    await flushStreamingRender();
+
+    host.querySelector<HTMLAnchorElement>(
+      '.agent-thread-card__message--assistant a[href]',
+    )?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(openBrowserColumnFileBrowser).toHaveBeenCalledWith(
+      "/Users/rop/Desktop/vibe/flowix-main",
+      "/Users/rop/Desktop/vibe/flowix-main/src/main.ts",
+    );
+    expect(openBrowserColumnText).not.toHaveBeenCalled();
   });
 
   it("uses thread runtime as the Thread Card footer running source", async () => {

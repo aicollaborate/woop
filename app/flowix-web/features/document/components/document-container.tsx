@@ -36,6 +36,9 @@ import backgroundImage from '@/assets/bg.document.png';
 import { useI18n } from '@/lib/i18n';
 import { clearWorkspaceDocument } from '@features/workspace/use-cases/workspace-navigation';
 import { removeBrowserColumnTabsByMemoId } from '@features/workspace/use-cases/browser-column-navigation';
+import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
+import { getBuffer, subscribeDocumentBufferChanges } from '@features/document/store/buffer-registry';
+import { documentIdentityKey } from '@features/document/store/document-identity';
 
 export function DocumentContainer({
   filePath,
@@ -50,10 +53,14 @@ export function DocumentContainer({
   toolbarCollapsed = false,
   onToolbarCollapsedChange,
   documentSessionMode = 'main',
-  readOnly = false,
+  readOnly: forcedReadOnly = false,
   onFlushReady,
 }: DocumentContainerProps) {
   const { t } = useI18n();
+  const hostId = documentSessionMode === 'isolated' ? 'browser-column' : 'main-third';
+  const focusedHostId = useWorkspaceFocusStore((store) => store.focusedHostId);
+  const readOnly = forcedReadOnly || focusedHostId !== hostId;
+  const containerRef = useRef<HTMLDivElement>(null);
   const documentInstanceKey = useMemo(
     () => memoId ? `memo:${memoId}` : getDocumentInstanceKey(filePath),
     [filePath, memoId]
@@ -112,6 +119,32 @@ export function DocumentContainer({
     flushPendingContent: flushPendingEditorChanges,
     isolatedSession: documentSessionMode === 'isolated',
   });
+
+  useEffect(() => {
+    const key = documentIdentityKey(documentIdentity);
+    const sync = () => {
+      const buffer = getBuffer(documentIdentity);
+      if (!buffer) return;
+      const content = buffer.content;
+      setState((prev) => prev.fullContent === content ? prev : { ...prev, fullContent: content });
+    };
+    const unsubscribeBuffer = subscribeDocumentBufferChanges((identity) => {
+      if (documentIdentityKey(identity) === key) sync();
+    });
+    const unsubscribeFocus = useWorkspaceFocusStore.subscribe((next, previous) => {
+      if (previous.focusedHostId === hostId && next.focusedHostId !== hostId) {
+        // Finish composition and publish the outgoing editor before React
+        // enables the incoming surface. Disk persistence remains debounced.
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && containerRef.current?.contains(active)) active.blur();
+        flushPendingEditorChanges();
+      }
+    });
+    return () => {
+      unsubscribeBuffer();
+      unsubscribeFocus();
+    };
+  }, [documentIdentity, flushPendingEditorChanges, hostId, setState]);
 
   useEffect(() => {
     onFlushReady?.(flushDocument);
@@ -357,7 +390,7 @@ export function DocumentContainer({
   }
 
   return (
-    <div className="document-container h-full w-full min-w-0 flex flex-col bg-transparent relative overflow-hidden">
+    <div ref={containerRef} onFocusCapture={() => useWorkspaceFocusStore.getState().focusHost(hostId)} onPointerDownCapture={() => useWorkspaceFocusStore.getState().focusHost(hostId)} className="document-container h-full w-full min-w-0 flex flex-col bg-transparent relative overflow-hidden">
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
         {!state.isLoading && isImagePreview && (
           <ImageFilePreview filePath={filePath} scopePath={externalScopePath} />

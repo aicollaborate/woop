@@ -106,6 +106,8 @@ export function useDocumentAutosave({
   const saveDoc = useCallback(async (content: string, path: string, options?: { force?: boolean }): Promise<boolean> => {
     if (!path) return false;
     const buf = getDocumentBuffer(identity);
+    // Another surface may have edited since this save was scheduled.
+    content = buf.content;
 
     return saveDocumentContent({
       path,
@@ -134,10 +136,8 @@ export function useDocumentAutosave({
             applyLoadedDocumentContent(identity, writtenPath, writtenContent, { preservePending: true });
             if (!isExternalDocument && memoId) {
               replaceBrowserColumnMemoPath(memoId, writtenPath);
-              if (!isolatedSession) {
-                markSelfDocumentPathUpdate(memoId, writtenPath);
-                replaceActiveMemoPath(memoId, writtenPath);
-              }
+              markSelfDocumentPathUpdate(memoId, writtenPath);
+              replaceActiveMemoPath(memoId, writtenPath);
             }
             // 旧 path buf 已在 buffer-registry 的 Map 里残留 ── 不删, 等
             // GC。后续 use-external-document-change-watch 看到旧 path

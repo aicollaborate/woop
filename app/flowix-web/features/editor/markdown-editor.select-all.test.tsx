@@ -76,6 +76,27 @@ describe('MarkdownEditor select all', () => {
 
   });
 
+  it('normalizes multiple empty task placeholders without invalid positions', async () => {
+    let editor: Editor | null = null;
+    await act(async () => {
+      root.render(
+        <ShortcutsProvider overrides={{}}>
+          <MarkdownEditor
+            content={'- [ ] &nbsp;\n- [ ] &nbsp;'}
+            onBeforeCreate={(instance) => { editor = instance; }}
+          />
+        </ShortcutsProvider>,
+      );
+    });
+
+    const taskParagraphs: string[] = [];
+    editor!.state.doc.descendants((node) => {
+      if (node.type.name === 'taskItem') taskParagraphs.push(node.firstChild?.textContent ?? '');
+    });
+
+    expect(taskParagraphs).toEqual(['', '']);
+  });
+
   it('keeps focus and selects a read-only document', async () => {
     let editor: Editor | null = null;
     await act(async () => {

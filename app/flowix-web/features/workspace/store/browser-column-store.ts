@@ -63,7 +63,7 @@ export interface BrowserColumnWebRuntime {
 
 export type BrowserColumnWebNavigationPhase = 'navigating' | 'started' | 'finished';
 
-export type BrowserColumnOpenDisposition = 'focus-existing' | 'replace-active';
+export type BrowserColumnOpenDisposition = 'focus-existing' | 'replace-active' | 'open-in-column';
 
 interface BrowserColumnState {
   visible: boolean;

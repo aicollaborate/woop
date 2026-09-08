@@ -15,12 +15,6 @@ import {
   registerBrowserColumnDocumentFlush,
 } from '@features/workspace/use-cases/browser-column-coordinator';
 import { openBrowserColumnTabInWorkColumn } from '@features/workspace/use-cases/browser-column-navigation';
-import { useWorkColumnStore } from '@features/workspace/store/work-column-store';
-import {
-  browserColumnTargetIdentity,
-  workColumnTargetIdentity,
-} from '@features/workspace/use-cases/workspace-content-activation';
-import { contentIdentityKey } from '@features/workspace/store/workspace-content-identity';
 
 export interface BrowserColumnProps {
   width: number;
@@ -52,7 +46,6 @@ export function BrowserColumn({
   const reorderTab = useBrowserColumnStore((state) => state.reorderTab);
   const focusHost = useWorkspaceFocusStore((state) => state.focusHost);
   const focusedHostId = useWorkspaceFocusStore((state) => state.focusedHostId);
-  const workColumnNavigation = useWorkColumnStore((state) => state.navigation);
   const activeMemoId = activeTab?.target.kind === 'memo' ? activeTab.target.memoId : null;
   const activeWebRuntime = useBrowserColumnStore((state) => (
     activeTabId && activeTab?.target.kind === 'web'
@@ -61,24 +54,6 @@ export function BrowserColumn({
   ));
   const activeMemoHasDuplicateTab = activeMemoId !== null
     && tabs.filter((tab) => tab.target.kind === 'memo' && tab.target.memoId === activeMemoId).length > 1;
-  const mainContentKeys = useMemo(() => {
-    const targets = [
-      workColumnNavigation.target,
-      workColumnNavigation.phase === 'loading'
-        ? workColumnNavigation.pendingTarget
-        : null,
-    ];
-    return new Set(
-      targets
-        .map((target) => target ? workColumnTargetIdentity(target) : null)
-        .map((identity) => identity ? contentIdentityKey(identity) : null)
-        .filter((key): key is string => key !== null),
-    );
-  }, [workColumnNavigation.pendingTarget, workColumnNavigation.target]);
-  const activeContentKey = activeTab
-    ? contentIdentityKey(browserColumnTargetIdentity(activeTab.target))
-    : null;
-  const activeContentIsOpenInMain = activeContentKey !== null && mainContentKeys.has(activeContentKey);
   const registerActiveFlush = useCallback<BrowserColumnFlushRegistration>((flush) => {
     if (activeTabId === null) return;
     registerBrowserColumnDocumentFlush(activeTabId, flush);
@@ -128,7 +103,8 @@ export function BrowserColumn({
   const activeSurface = activeTab
     ? resolveBrowserColumnSurface(
         activeTab,
-        Boolean(activeMemoHasDuplicateTab || activeContentIsOpenInMain),
+        // Cross-column editing ownership is controlled by DocumentContainer.
+        activeMemoHasDuplicateTab,
         registerActiveFlush,
         activeWebRuntime,
         toolbarCollapsed,

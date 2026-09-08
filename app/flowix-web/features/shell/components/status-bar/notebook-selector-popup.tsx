@@ -345,12 +345,10 @@ export function NotebookSelectorPopup({
         {trigger ?? (
           <button
             type="button"
-            className="flex h-[26px] items-center gap-1 bg-[var(--primary)] px-1 hover:opacity-90"
+            className="flex h-[26px] items-center gap-1 bg-[var(--primary)] pl-2.5 pr-1 hover:opacity-90"
             aria-label={t('status.switchNotebook')}
+            title={t('status.switchNotebook')}
           >
-            <span className="flex h-full items-center overflow-hidden whitespace-nowrap pl-2 text-[var(--primary-foreground)]">
-              {t('status.notebook')}
-            </span>
             <NotebookIcon
               icon={selectedNotebook?.icon}
               name={selectedNotebook?.name}

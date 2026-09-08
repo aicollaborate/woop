@@ -1,3 +1,5 @@
+import type { RuntimeConfig } from "@/types/agent";
+
 function decodeLocalFilePath(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -77,6 +79,36 @@ export function agentFileScopePath(
     .filter(({ comparable }) => pathContains(comparable, target))
     .sort((left, right) => right.comparable.value.length - left.comparable.value.length)[0]
     ?.original ?? null;
+}
+
+/**
+ * Return the workspace/资料 paths captured by an agent conversation.
+ *
+ * New conversations persist the complete authorized path set in a workspace
+ * snapshot. Older instances only have the legacy runtime fields, so keep
+ * those as a compatibility fallback for link navigation.
+ */
+export function agentFileScopePaths(
+  runtimeConfig: RuntimeConfig | null | undefined,
+): string[] {
+  const snapshotPaths = runtimeConfig?.workspaceState?.desired.workspacePaths
+    ?? runtimeConfig?.workspaceSnapshot?.workspacePaths
+    ?? [];
+  const legacyPaths = [
+    runtimeConfig?.cwd,
+    runtimeConfig?.files?.workspace,
+    ...(runtimeConfig?.files?.folders ?? []),
+    ...(runtimeConfig?.files?.notebooks ?? []),
+  ].filter((path): path is string => typeof path === "string");
+  return [...snapshotPaths, ...legacyPaths];
+}
+
+/** Resolve the narrowest captured workspace/资料 root for a local file. */
+export function agentFileScopePathForRuntime(
+  filePath: string,
+  runtimeConfig: RuntimeConfig | null | undefined,
+): string | null {
+  return agentFileScopePath(filePath, agentFileScopePaths(runtimeConfig));
 }
 
 export function localFilePathFromAgentHref(

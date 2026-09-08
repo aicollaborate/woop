@@ -1,6 +1,6 @@
 import { displayTitleFromFilename } from '@/lib/utils';
 import { joinNotebookMemoPath } from '@/lib/path';
-import { canonicalUrl } from '@features/workspace/store/workspace-content-identity';
+import { canonicalUrl, contentIdentityKey } from '@features/workspace/store/workspace-content-identity';
 import type { MemoItem, Notebook } from '@features/memo';
 import { memos as memosClient } from '@platform/tauri/client';
 import {
@@ -31,7 +31,6 @@ import {
   openExternalTarget,
   openMemoTarget,
   openWebTarget,
-  clearWorkspaceDocument,
   closeAgentTarget,
 } from './workspace-navigation';
 import { useWorkspaceFocusStore } from '@features/workspace/store/workspace-focus-store';
@@ -105,11 +104,32 @@ export function openBrowserColumnTarget(
         return openResult(existing);
       }
       if (existing?.host === 'browser-column') {
-        useBrowserColumnStore.getState().commitTab(existing.tabId);
+        const store = useBrowserColumnStore.getState();
+        if (target.kind === 'file-browser') {
+          // `file-browser:<folder>` is the stable tab identity, while the
+          // linked file is view state. The existing-tab fast path below does
+          // not call openTab(), so update that view state explicitly.
+          if (target.activeFilePath) {
+            store.selectFileBrowserFile(existing.tabId, target.activeFilePath);
+          }
+          if (target.fileTreeVisible) {
+            store.setFileBrowserTreeVisible(existing.tabId, true);
+          }
+        }
+        store.commitTab(existing.tabId);
         return { host: 'browser-column', tabId: existing.tabId, alreadyOpen: true };
       }
     }
 
+    if (disposition === 'open-in-column') {
+      const store = useBrowserColumnStore.getState();
+      const key = contentIdentityKey(browserColumnTargetIdentity(target));
+      const existing = store.tabs.find((tab) => contentIdentityKey(browserColumnTargetIdentity(tab.target)) === key);
+      if (existing) {
+        store.commitTab(existing.id);
+        return { host: 'browser-column', tabId: existing.id, alreadyOpen: true };
+      }
+    }
     const tabId = useBrowserColumnStore.getState().openTab({
       id,
       title: targetTabTitle(target),
@@ -123,7 +143,7 @@ export function openBrowserColumnTarget(
 export function openBrowserColumnMemo(
   memo: MemoItem,
   notebook: Notebook | null,
-  disposition: BrowserColumnOpenDisposition = 'focus-existing',
+  disposition: BrowserColumnOpenDisposition = 'open-in-column',
 ): Promise<BrowserColumnOpenResult | null> {
   const pluginNote = getPluginNoteInfo(memo);
   if (pluginNote) {
@@ -195,11 +215,14 @@ export function openBrowserColumnText(filePath: string, scopePath: string): Prom
   return openBrowserColumnTarget({ kind: 'file', filePath, scopePath });
 }
 
-export function openBrowserColumnFileBrowser(folderPath: string): Promise<BrowserColumnOpenResult | null> {
+export function openBrowserColumnFileBrowser(
+  folderPath: string,
+  activeFilePath: string | null = null,
+): Promise<BrowserColumnOpenResult | null> {
   return openBrowserColumnTarget({
     kind: 'file-browser',
     folderPath,
-    activeFilePath: null,
+    activeFilePath,
     fileTreeVisible: true,
     fileTreeWidth: BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH,
   });
@@ -271,8 +294,6 @@ export function openWorkColumnTargetInBrowserColumn(
     });
     if (target.kind === 'agent-conversation') {
       closeAgentTarget();
-    } else {
-      await clearWorkspaceDocument();
     }
     return { host: 'browser-column', tabId, alreadyOpen: false };
   });
