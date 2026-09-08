@@ -38,10 +38,10 @@ export function browserColumnTargetIdentity(
   switch (target.kind) {
     case 'memo':
       return { kind: 'memo', memoId: target.memoId };
-    case 'file':
-      return { kind: 'external', path: target.filePath };
     case 'file-browser':
-      return { kind: 'file-browser', folderPath: target.folderPath };
+      return target.activeFilePath
+        ? { kind: 'external', path: target.activeFilePath }
+        : { kind: 'file-browser', folderPath: target.folderPath ?? '' };
     case 'web':
       return { kind: 'web', url: target.url };
     case 'agent_conversation':

@@ -44,6 +44,7 @@ export interface OpenMemoTargetParams {
 }
 
 export interface OpenExternalTargetOptions {
+  fileBrowser?: import('../store/file-browser-target').FileBrowserContext;
   /** Explicit cross-column moves must not reactivate a BrowserColumn tab. */
   destination?: 'main-third';
   history?: 'push' | 'skip';

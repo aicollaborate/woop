@@ -1,3 +1,4 @@
+import type { FileBrowserContext } from './file-browser-target';
 import type { PluginDescriptor } from '@platform/tauri/client';
 import type { PluginArtifactRendererId } from '@features/plugin/plugin-note';
 
@@ -19,6 +20,7 @@ export type WorkColumnTarget =
     }
   | {
       kind: 'external';
+      fileBrowser?: FileBrowserContext;
       path: string;
       scopePath: string | null;
       transitionId: number | null;

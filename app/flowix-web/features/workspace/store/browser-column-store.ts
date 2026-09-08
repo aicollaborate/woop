@@ -1,3 +1,4 @@
+import type { FileBrowserTarget } from './file-browser-target';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { STORAGE_KEYS } from '@/lib/constants';
@@ -18,18 +19,7 @@ export type BrowserColumnTarget =
       notebookPath: string;
       filePath: string;
     }
-  | {
-      kind: 'file';
-      filePath: string;
-      scopePath: string | null;
-    }
-  | {
-      kind: 'file-browser';
-      folderPath: string;
-      activeFilePath: string | null;
-      fileTreeVisible: boolean;
-      fileTreeWidth: number;
-    }
+  | FileBrowserTarget
   | {
       kind: 'web';
       url: string;
@@ -116,8 +106,9 @@ export const BROWSER_COLUMN_FILE_TREE_MAX_WIDTH = 420;
 export function browserColumnTargetKey(target: BrowserColumnTarget): string | null {
   switch (target.kind) {
     case 'memo': return contentIdentityKey({ kind: 'memo', memoId: target.memoId });
-    case 'file': return contentIdentityKey({ kind: 'external', path: target.filePath });
-    case 'file-browser': return `file-browser:${canonicalPath(target.folderPath)}`;
+    case 'file-browser': return target.activeFilePath
+      ? contentIdentityKey({ kind: 'external', path: target.activeFilePath })
+      : target.folderPath ? `file-browser:${canonicalPath(target.folderPath)}` : null;
     case 'web': return contentIdentityKey({ kind: 'web', url: target.url });
     case 'artifact': return contentIdentityKey({ kind: 'artifact', pointerMemoId: target.pointerMemoId });
     case 'agent_conversation': return contentIdentityKey({
@@ -191,7 +182,7 @@ function updateFileBrowserTabTarget(
   filePath: string | null,
 ): BrowserColumnTab[] {
   return tabs.map((tab) => tab.id === tabId && tab.target.kind === 'file-browser'
-    ? { ...tab, target: { ...tab.target, activeFilePath: filePath } }
+    ? { ...tab, title: filePath ? displayTitleFromFilename(filePath.split(/[\\/]/).pop() ?? filePath) : tab.title, target: { ...tab.target, activeFilePath: filePath } }
     : tab);
 }
 
@@ -254,18 +245,24 @@ function parseBrowserColumnTarget(value: unknown): BrowserColumnTarget | null {
     case 'external_text': {
       if (!nonEmptyString(value.filePath)) return null;
       return {
-        kind: 'file',
-        filePath: value.filePath,
+        kind: 'file-browser',
+        activeFilePath: value.filePath,
+        folderPath: null,
+        notebookId: null,
+        fileTreeVisible: true,
+        fileTreeWidth: BROWSER_COLUMN_FILE_TREE_DEFAULT_WIDTH,
         scopePath: typeof value.scopePath === 'string' && value.scopePath.trim()
           ? value.scopePath
           : null,
       };
     }
     case 'file-browser':
-      return nonEmptyString(value.folderPath)
+      return nonEmptyString(value.folderPath) || nonEmptyString(value.activeFilePath)
         ? {
             kind: 'file-browser',
-            folderPath: value.folderPath,
+            folderPath: nonEmptyString(value.folderPath) ? value.folderPath : null,
+            notebookId: nonEmptyString(value.notebookId) ? value.notebookId : null,
+            scopePath: nonEmptyString(value.scopePath) ? value.scopePath : nonEmptyString(value.folderPath) ? value.folderPath : null,
             activeFilePath: typeof value.activeFilePath === 'string' ? value.activeFilePath : null,
             fileTreeVisible: value.fileTreeVisible !== false,
             fileTreeWidth: clampFileTreeWidth(
