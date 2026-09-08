@@ -92,7 +92,15 @@ try {
     if (process.platform === 'win32') {
       spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
     } else {
-      process.kill(-child.pid, 'SIGKILL')
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch (error) {
+        // macOS may launch the child without a separate process group.
+        // Fall back to its pid so cleanup does not turn a passed smoke test
+        // into a packaging failure.
+        if (error?.code !== 'EPERM') throw error
+        process.kill(child.pid, 'SIGKILL')
+      }
     }
     await new Promise(resolveWait => {
       if (child.exitCode !== null) resolveWait()
