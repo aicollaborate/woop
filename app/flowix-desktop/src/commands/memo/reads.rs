@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 
 use crate::lock_utils::read_lock;
-use crate::memo_events::{MemoChangeSource, MemoDerivedChanged};
 use crate::watcher::path::normalize_for_compare;
 use flowix_core::memo_file::{Memo, MemoFile, MemoTodoEntry};
 use flowix_core::{FlowixError, MemoPage, MemoService};
@@ -298,8 +297,16 @@ pub fn open_memo_session(id: String, state: State<AppState>) -> Option<OpenMemoS
 }
 
 #[tauri::command]
-pub fn read_document(file_path: String, state: State<AppState>) -> Option<String> {
-    if !crate::commands::helpers::can_access_document_path(Path::new(&file_path), &state) {
+pub fn read_document(
+    window: tauri::WebviewWindow,
+    file_path: String,
+    state: State<AppState>,
+) -> Option<String> {
+    if !crate::commands::helpers::can_access_document_path(
+        Path::new(&file_path),
+        window.label(),
+        &state,
+    ) {
         eprintln!("[read_document] refused out-of-scope path: {}", file_path);
         return None;
     }
@@ -406,33 +413,6 @@ fn write_document_internal(
         return None;
     }
 
-    // CAS: reject the write if the on-disk content has diverged from the caller.
-    if let Some(expected) = expected_content {
-        let current_path =
-            match MemoService::new(&read_lock(&state.memo_file, "memo_file")).resolve_memo(key) {
-                Ok(resolved) => resolved.path,
-                Err(_) => {
-                    eprintln!("[write_document_internal] no file path for key={key}");
-                    return None;
-                }
-            };
-        start_security_bookmark_access(state.inner(), &current_path);
-        match fs::read_to_string(&current_path) {
-            Ok(current) if cas_content_matches(&current, expected, content) => {}
-            Ok(_) => {
-                eprintln!(
-                    "[write_document_internal] CAS refused: key={} disk != expected",
-                    key
-                );
-                return None;
-            }
-            Err(e) => {
-                eprintln!("[write_document_internal] CAS read failed for {key}: {e}");
-                return None;
-            }
-        }
-    }
-
     // Mark the target before writing so the watcher can suppress our own change.
     if let Ok(resolved) =
         MemoService::new(&read_lock(&state.memo_file, "memo_file")).resolve_memo(key)
@@ -441,51 +421,20 @@ fn write_document_internal(
         start_security_bookmark_access(state.inner(), &path);
         mark_self_write_for(app, &path);
     }
-    let result =
-        MemoService::new(&read_lock(&state.memo_file, "memo_file")).save_memo(key, content);
-    match result {
-        Ok(edited) => {
-            let updated = edited.memo?;
-            // Internal editor saves suppress their own watcher events, so this
-            // path is responsible for notifying the UI with the final memo
-            // metadata after preview/thumbnail/tags/todos derivation.
-            // The write may rename the file, so resolve the final path after it succeeds.
-            let final_path = edited.path;
-            start_security_bookmark_access(state.inner(), &final_path);
-            mark_self_write_for(app, &final_path);
-            let final_content = match fs::read_to_string(&final_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "[write_document_internal] final read_to_string failed for {key}: {e}"
-                    );
-                    return None;
-                }
-            };
-            if let Err(e) = MemoService::new(&read_lock(&state.memo_file, "memo_file"))
-                .maybe_create_auto_memo_version(key, &final_content)
+    let result = MemoService::new(&read_lock(&state.memo_file, "memo_file"))
+        .save_memo_with_receipt(key, content, true, |resolved, current| {
+            if expected_content
+                .is_some_and(|expected| !cas_content_matches(current, expected, content))
             {
-                eprintln!("[write_document_internal] auto version failed for {key}: {e}");
+                return Err(FlowixError::Conflict(format!("memo {key} changed on disk")));
             }
-            let event_path = final_path.to_string_lossy().to_string();
-            let notebook_id = notebook_id_for_memo(state.inner(), key);
-            let derived_changed = MemoDerivedChanged::from_memos(before.as_ref(), &updated);
-            let commit = emit_updated_memo_event(
-                state.inner(),
-                app,
-                key,
-                event_path.clone(),
-                updated,
-                notebook_id,
-                derived_changed,
-                MemoChangeSource::UserEdit,
-                Some(origin_window_label),
-            );
-            Some(WriteDocumentResult {
-                path: event_path,
-                content: final_content,
-                commit,
-            })
+            mark_self_write_for(app, &resolved.path);
+            Ok(())
+        });
+    match result {
+        Ok(receipt) => {
+            start_security_bookmark_access(state.inner(), &receipt.edited.path);
+            emit_saved_memo_receipt(state.inner(), app, receipt, before, origin_window_label)
         }
         Err(e) => {
             eprintln!("[write_document_internal] write_memo failed for {key}: {e}");
@@ -495,8 +444,16 @@ fn write_document_internal(
 }
 
 #[tauri::command]
-pub fn get_launch_open_files() -> Vec<String> {
+pub fn get_launch_open_files(window: tauri::WebviewWindow, state: State<AppState>) -> Vec<String> {
+    if window.label() != "main" {
+        return Vec::new();
+    }
     crate::commands::helpers::markdown_paths_from_args(std::env::args())
+        .into_iter()
+        .filter_map(|path| dunce::canonicalize(path).ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .filter(|path| state.document_access.grant(window.label(), Path::new(path)))
+        .collect()
 }
 
 #[tauri::command]

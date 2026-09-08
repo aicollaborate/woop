@@ -77,6 +77,31 @@ fn entry_name_format_is_provider_account() {
 }
 
 #[test]
+fn database_connections_enable_secure_delete() {
+    let directory = tempfile::tempdir().unwrap();
+    let backend = DbBackend::new(directory.path().join("secrets.db"));
+    let connection = backend.open().unwrap();
+    let secure_delete: i64 = connection
+        .query_row("PRAGMA secure_delete", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(secure_delete, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn database_permissions_are_restricted_before_storing_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("secrets.db");
+    let store = SecretStore::new(&path);
+    store.save("account", "secret").unwrap();
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+#[test]
 fn save_rejects_empty_inputs() {
     let store = SecretStore::with_backend(Box::new(MockBackend::new(KeyBackend::Database)));
     assert!(store.save("", "sk-x").is_err());

@@ -42,6 +42,7 @@ import { TablePlugin } from '@features/editor/extensions/table/table-plugin';
 import { useI18n } from '@/lib/i18n';
 
 interface MarkdownEditorProps {
+  memoId?: string;
   content: string;
   editable?: boolean;
   placeholder?: string;
@@ -301,6 +302,7 @@ function normalizeTaskItemPlaceholders(editor: Editor): void {
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor({
+  memoId,
   content,
   editable = true,
   placeholder,
@@ -509,7 +511,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         PreservedParagraph,
         PreservedListItem,
         MarkdownEscape,
-        AttachmentLink,
+        AttachmentLink.configure({ memoId }),
         MarkdownLink,
         LinkSelectionHighlight,
         CodeBlockShiki,

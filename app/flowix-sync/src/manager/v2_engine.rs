@@ -79,14 +79,16 @@ impl SyncManager {
     pub async fn v2_remote_notebooks(
         &self,
     ) -> Result<Vec<crate::models::CloudNotebook>, SyncError> {
-        let token = self.access_token().await?;
+        let generation = self.auth_generation();
+        let token = self.access_token(generation).await?;
         let first = self.client.v2_bootstrap(&token).await;
         let bootstrap = if first.as_ref().is_err_and(SyncError::is_unauthorized) {
-            let refreshed = self.force_refresh_access_token().await?;
+            let refreshed = self.force_refresh_access_token(generation).await?;
             self.client.v2_bootstrap(&refreshed).await?
         } else {
             first?
         };
+        let _generation = self.require_auth_generation(generation)?;
         let mut used_bytes_by_notebook = HashMap::new();
         for note in bootstrap.notes.iter().filter(|note| !note.deleted) {
             let attachment_bytes = note.attachments.iter().fold(0_i64, |total, attachment| {
@@ -246,7 +248,8 @@ impl SyncManager {
         notebooks: Vec<V2LocalNotebook>,
         notes: Vec<V2LocalNote>,
     ) -> Result<V2AccountSyncReport, SyncError> {
-        self.sync_v2_scope(None, notebooks, notes).await
+        self.sync_v2_snapshot_at_generation(None, notebooks, notes, self.auth_generation())
+            .await
     }
 
     /// Synchronize only one enabled notebook.
@@ -260,15 +263,21 @@ impl SyncManager {
         notebooks: Vec<V2LocalNotebook>,
         notes: Vec<V2LocalNote>,
     ) -> Result<V2AccountSyncReport, SyncError> {
-        self.sync_v2_scope(Some(notebook_id), notebooks, notes)
-            .await
+        self.sync_v2_snapshot_at_generation(
+            Some(notebook_id),
+            notebooks,
+            notes,
+            self.auth_generation(),
+        )
+        .await
     }
 
-    async fn sync_v2_scope(
+    pub async fn sync_v2_snapshot_at_generation(
         &self,
         notebook_scope: Option<&str>,
         notebooks: Vec<V2LocalNotebook>,
         notes: Vec<V2LocalNote>,
+        generation: u64,
     ) -> Result<V2AccountSyncReport, SyncError> {
         let _guard = self.account_sync_lock.lock().await;
         if !self.store.enabled()? {
@@ -277,26 +286,23 @@ impl SyncManager {
         self.store
             .v2_account()?
             .ok_or(SyncError::NotAuthenticated)?;
-        let first_token = self.access_token().await?;
+        let first_token = self.access_token(generation).await?;
         let first = self
-            .sync_v2_account_once(&first_token, &notebooks, &notes, notebook_scope)
+            .sync_v2_account_once(&first_token, &notebooks, &notes, notebook_scope, generation)
             .await;
-        if first.as_ref().is_err_and(SyncError::is_unauthorized) {
-            let refreshed = self.force_refresh_access_token().await?;
-            return self
-                .sync_v2_account_once(&refreshed, &notebooks, &notes, notebook_scope)
-                .await;
-        }
-        first
+        let result = if first.as_ref().is_err_and(SyncError::is_unauthorized) {
+            let refreshed = self.force_refresh_access_token(generation).await?;
+            self.sync_v2_account_once(&refreshed, &notebooks, &notes, notebook_scope, generation)
+                .await
+        } else {
+            first
+        };
+        let _generation = self.require_auth_generation(generation)?;
+        result
     }
 
     pub fn complete_v2_account_sync(&self, report: &V2AccountSyncReport) -> Result<(), SyncError> {
-        self.store.commit_v2_sync_report(
-            &report.remote,
-            report.cursor,
-            &report.bootstrapped_notebooks,
-            Utc::now().timestamp_millis(),
-        )
+        self.complete_v2_sync_with_apply(report, None, || Ok(()))
     }
 
     pub fn complete_v2_notebook_sync(
@@ -304,13 +310,33 @@ impl SyncManager {
         notebook_id: &str,
         report: &V2AccountSyncReport,
     ) -> Result<(), SyncError> {
-        self.store.commit_v2_notebook_sync_report(
-            notebook_id,
-            &report.remote,
-            report.cursor,
-            &report.bootstrapped_notebooks,
-            Utc::now().timestamp_millis(),
-        )
+        self.complete_v2_sync_with_apply(report, Some(notebook_id), || Ok(()))
+    }
+
+    pub fn complete_v2_sync_with_apply(
+        &self,
+        report: &V2AccountSyncReport,
+        notebook_id: Option<&str>,
+        apply: impl FnOnce() -> Result<(), SyncError>,
+    ) -> Result<(), SyncError> {
+        let _generation = self
+            .require_auth_generation(report.auth_generation.ok_or(SyncError::NotAuthenticated)?)?;
+        apply()?;
+        match notebook_id {
+            Some(notebook_id) => self.store.commit_v2_notebook_sync_report(
+                notebook_id,
+                &report.remote,
+                report.cursor,
+                &report.bootstrapped_notebooks,
+                Utc::now().timestamp_millis(),
+            ),
+            None => self.store.commit_v2_sync_report(
+                &report.remote,
+                report.cursor,
+                &report.bootstrapped_notebooks,
+                Utc::now().timestamp_millis(),
+            ),
+        }
     }
 
     async fn sync_v2_account_once(
@@ -319,6 +345,7 @@ impl SyncManager {
         notebooks: &[V2LocalNotebook],
         notes: &[V2LocalNote],
         notebook_scope: Option<&str>,
+        generation: u64,
     ) -> Result<V2AccountSyncReport, SyncError> {
         let started_at = Utc::now().timestamp_millis();
         let enabled_notebooks: Vec<_> = self
@@ -338,8 +365,11 @@ impl SyncManager {
             .iter()
             .map(|notebook| notebook.notebook_id.as_str())
             .collect();
-        self.reconcile_v2_snapshot(&enabled_ids, notebooks, notes)?;
-        self.freeze_new_v2_operations(access_token, notebooks, notes, notebook_scope)
+        {
+            let _generation = self.require_auth_generation(generation)?;
+            self.reconcile_v2_snapshot(&enabled_ids, notebooks, notes)?;
+        }
+        self.freeze_new_v2_operations(access_token, notebooks, notes, notebook_scope, generation)
             .await?;
 
         let due = match notebook_scope {
@@ -348,7 +378,9 @@ impl SyncManager {
                 .v2_inflight_due_for_notebook(Utc::now().timestamp_millis(), scope)?,
             None => self.store.v2_inflight_due(Utc::now().timestamp_millis())?,
         };
-        let (uploaded, deleted, self_sync_seqs) = self.push_v2_inflight(access_token, &due).await?;
+        let (uploaded, deleted, self_sync_seqs) = self
+            .push_v2_inflight(access_token, &due, generation)
+            .await?;
 
         let bootstrap_required = enabled_notebooks
             .iter()
@@ -404,7 +436,9 @@ impl SyncManager {
             }
         };
 
+        let _generation = self.require_auth_generation(generation)?;
         Ok(V2AccountSyncReport {
+            auth_generation: Some(generation),
             started_at,
             cursor: next_cursor,
             head_cursor,
@@ -484,6 +518,7 @@ impl SyncManager {
         notebooks: &[V2LocalNotebook],
         notes: &[V2LocalNote],
         notebook_scope: Option<&str>,
+        generation: u64,
     ) -> Result<(), SyncError> {
         let notebooks_by_id: HashMap<&str, &V2LocalNotebook> = notebooks
             .iter()
@@ -492,6 +527,7 @@ impl SyncManager {
         let notes_by_id: HashMap<&str, &V2LocalNote> =
             notes.iter().map(|item| (item.id.as_str(), item)).collect();
         for dirty in self.store.v2_dirty_entities()? {
+            drop(self.require_auth_generation(generation)?);
             if let Some(scope) = notebook_scope {
                 let belongs_to_scope = match dirty.entity_type {
                     V2EntityType::Notebook => dirty.entity_id == scope,
@@ -559,6 +595,7 @@ impl SyncManager {
                             "text/markdown; charset=utf-8",
                         )
                         .await?;
+                    drop(self.require_auth_generation(generation)?);
                     self.client
                         .v2_upload_blob(
                             access_token,
@@ -568,6 +605,7 @@ impl SyncManager {
                         )
                         .await?;
                     for attachment in &note.attachments {
+                        drop(self.require_auth_generation(generation)?);
                         let reservation = self
                             .client
                             .v2_reserve_blob(
@@ -578,6 +616,7 @@ impl SyncManager {
                                 &attachment.metadata.mime_type,
                             )
                             .await?;
+                        drop(self.require_auth_generation(generation)?);
                         self.client
                             .v2_upload_blob(
                                 access_token,
@@ -615,6 +654,7 @@ impl SyncManager {
             let payload = serde_json::to_string(&operation).map_err(|error| {
                 SyncError::InvalidState(format!("serialize v2 operation: {error}"))
             })?;
+            let _generation = self.require_auth_generation(generation)?;
             match self.store.freeze_v2_operation(V2FreezeOperation {
                 operation_id: &operation_id,
                 entity_type: dirty.entity_type,
@@ -637,6 +677,7 @@ impl SyncManager {
         &self,
         access_token: &str,
         due: &[crate::v2::V2InflightOperation],
+        generation: u64,
     ) -> Result<(usize, usize, HashSet<i64>), SyncError> {
         let mut uploaded = 0;
         let mut deleted = 0;
@@ -644,6 +685,7 @@ impl SyncManager {
         // 本端自己的回声（单端 push 后 pull 用旧 cursor 又拉回自己刚推上去的内容）。
         let mut self_sync_seqs: HashSet<i64> = HashSet::new();
         for batch in due.chunks(100) {
+            drop(self.require_auth_generation(generation)?);
             let operations = batch
                 .iter()
                 .map(|item| {
@@ -655,6 +697,7 @@ impl SyncManager {
             let result = match self.client.v2_push(access_token, &operations).await {
                 Ok(result) => result,
                 Err(error) => {
+                    let _generation = self.require_auth_generation(generation)?;
                     for item in batch {
                         self.store.defer_v2_operation(
                             &item.operation_id,
@@ -665,6 +708,7 @@ impl SyncManager {
                     return Err(error);
                 }
             };
+            let _generation = self.require_auth_generation(generation)?;
             let by_id: HashMap<&str, &crate::v2::V2OperationResult> = result
                 .results
                 .iter()

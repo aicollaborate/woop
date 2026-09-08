@@ -8,6 +8,29 @@ use crate::config::Theme;
 
 static MAIN_WINDOW_FOCUS_CONSUMED: AtomicBool = AtomicBool::new(false);
 
+fn preferences_navigation_script(hash: &str) -> Result<String, String> {
+    serde_json::to_string(hash)
+        .map(|hash| format!("window.location.hash = {hash};"))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    #[test]
+    fn untrusted_hash_is_encoded_as_a_single_string_literal() {
+        let hash = "preferences/';alert(1);//\n\"\\";
+        let script = preferences_navigation_script(hash).unwrap();
+        let literal = script
+            .strip_prefix("window.location.hash = ")
+            .unwrap()
+            .strip_suffix(';')
+            .unwrap();
+        assert_eq!(serde_json::from_str::<String>(literal).unwrap(), hash);
+    }
+}
+
 #[tauri::command]
 pub fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
@@ -49,10 +72,9 @@ pub async fn open_preferences_window(
     if let Some(window) = app.get_webview_window("preferences") {
         window.set_focus().ok();
         window
-            .eval(format!(
-                "window.location.hash = '{}';",
-                url.split('#').next_back().unwrap_or("")
-            ))
+            .eval(preferences_navigation_script(
+                url.split_once('#').map(|(_, hash)| hash).unwrap_or(""),
+            )?)
             .ok();
         return Ok(());
     }

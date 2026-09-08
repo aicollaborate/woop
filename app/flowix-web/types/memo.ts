@@ -19,6 +19,7 @@ export type MemoChangeSource =
   | 'cloud_sync';
 
 export type MemoContentCommit = {
+  derivedOnly?: boolean;
   /** SHA-256 of the exact committed markdown bytes. */
   contentHash?: string;
   /** Backend-authoritative, monotonically increasing local memo revision. */
@@ -33,6 +34,11 @@ export type MemoDerivedChanged = {
   tags: boolean;
   todos: boolean;
   agents: boolean;
+};
+
+export type MemoDerivedRefresh = {
+  notebookId: string;
+  derivedChanged: MemoDerivedChanged;
 };
 
 export type MemoEvent =

@@ -27,3 +27,9 @@ sha2 = { workspace = true }
 rusqlite = { workspace = true }
 tempfile = { workspace = true }
 fs2 = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }

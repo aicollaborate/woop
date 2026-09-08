@@ -9,6 +9,7 @@ impl SyncManager {
             membership: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            auth_generation: Arc::new(std::sync::Mutex::new(0)),
             account_sync_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -52,5 +53,24 @@ impl SyncManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
             .map(|session| session.refresh_token.clone())
+    }
+
+    pub fn with_current_refresh_token<Output>(
+        &self,
+        operation: impl FnOnce(Option<&str>) -> Output,
+    ) -> Output {
+        let _generation = self
+            .auth_generation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let session = self
+            .session
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        operation(
+            session
+                .as_ref()
+                .map(|session| session.refresh_token.as_str()),
+        )
     }
 }

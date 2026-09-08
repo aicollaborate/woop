@@ -195,6 +195,34 @@ pub fn emit_with_commit_from_window(
     event: MemoEvent,
     origin_window_label: Option<&str>,
 ) -> Option<DocumentCommit> {
+    let commit = match commit_for_event(app, &event) {
+        Ok(commit) => commit,
+        Err(()) => {
+            let payload = MemoEventPayload {
+                event: &event,
+                commit: None,
+                origin_window_label,
+                derived_only: true,
+            };
+            if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
+                if let Ok(payload) = serde_json::to_value(payload) {
+                    dispatcher.publish(MEMO_EVENT, payload);
+                }
+            } else {
+                let _ = app.emit(MEMO_EVENT, payload);
+            }
+            return None;
+        }
+    };
+    emit_with_recorded_commit_from_window(app, event, commit, origin_window_label)
+}
+
+pub(crate) fn emit_with_recorded_commit_from_window(
+    app: &AppHandle,
+    event: MemoEvent,
+    commit: Option<DocumentCommit>,
+    origin_window_label: Option<&str>,
+) -> Option<DocumentCommit> {
     let sync_change = match &event {
         MemoEvent::Created {
             memo,
@@ -228,7 +256,6 @@ pub fn emit_with_commit_from_window(
         )),
         _ => None,
     };
-    let commit = commit_for_event(app, &event);
     // 优先�?dispatcher (SharedDispatcher) 抽象, 拿不到退到直�?app.emit�?    // dispatcher �?lib.rs::run �?manage, 为未来�? channel (attachment /
     // tag / notebook) 提供统一入口。本函数�?��务唯一调用�? �?    // 需要动 agent.rs / commands/* 一行代码�?
     if let Some(dispatcher) = app.try_state::<crate::events::SharedDispatcher>() {
@@ -237,6 +264,7 @@ pub fn emit_with_commit_from_window(
         let _ = app.emit(
             MEMO_EVENT,
             MemoEventPayload {
+                derived_only: false,
                 event: &event,
                 commit: commit.as_ref(),
                 origin_window_label,
@@ -276,6 +304,8 @@ pub fn emit_with_commit_from_window(
 
 #[derive(Serialize, Clone)]
 struct MemoEventPayload<'a> {
+    #[serde(rename = "derivedOnly", skip_serializing_if = "is_false")]
+    derived_only: bool,
     #[serde(flatten)]
     event: &'a MemoEvent,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -284,15 +314,19 @@ struct MemoEventPayload<'a> {
     origin_window_label: Option<&'a str>,
 }
 
-fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Option<DocumentCommit> {
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Result<Option<DocumentCommit>, ()> {
     let (memo_id, notebook_id, path) = match event {
         MemoEvent::Created {
             memo, notebook_id, ..
         } => {
-            let state = app.try_state::<crate::app::state::AppState>()?;
+            let state = app.try_state::<crate::app::state::AppState>().ok_or(())?;
             let resolved = flowix_core::MemoService::new(&read_lock(&state.memo_file, "memo_file"))
                 .resolve_memo(&memo.id)
-                .ok()?;
+                .map_err(|_| ())?;
             (memo.id.as_str(), notebook_id.as_str(), resolved.path)
         }
         MemoEvent::Updated {
@@ -310,7 +344,7 @@ fn commit_for_event(app: &AppHandle, event: &MemoEvent) -> Option<DocumentCommit
         } => {
             return DocumentMutationCoordinator::commit_deletion(app, id, notebook_id);
         }
-        _ => return None,
+        _ => return Ok(None),
     };
     DocumentMutationCoordinator::commit(app, memo_id, notebook_id, &path)
 }
@@ -333,6 +367,7 @@ fn emit_committed_via_dispatcher(
 ) {
     let _ = event.memo_id();
     let payload = serde_json::to_value(MemoEventPayload {
+        derived_only: false,
         event,
         commit,
         origin_window_label,
@@ -423,6 +458,7 @@ mod tests {
             change_id: "change-7".to_string(),
         };
         let value = serde_json::to_value(MemoEventPayload {
+            derived_only: false,
             event: &event,
             commit: Some(&commit),
             origin_window_label: Some("tab-host-abc"),
@@ -430,6 +466,16 @@ mod tests {
         .unwrap();
 
         assert_eq!(value["contentHash"], "abc123");
+        assert!(value.get("derivedOnly").is_none());
+        let superseded = serde_json::to_value(MemoEventPayload {
+            event: &event,
+            commit: None,
+            origin_window_label: None,
+            derived_only: true,
+        })
+        .unwrap();
+        assert_eq!(superseded["derivedOnly"], true);
+        assert!(superseded.get("revision").is_none());
         assert_eq!(value["revision"], 7);
         assert_eq!(value["changeId"], "change-7");
         assert_eq!(value["originWindowLabel"], "tab-host-abc");

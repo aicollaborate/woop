@@ -2,15 +2,17 @@ use super::*;
 
 impl SyncManager {
     pub async fn refresh_membership(&self) -> Result<CloudMembership, SyncError> {
-        let token = self.access_token().await?;
+        let generation = self.auth_generation();
+        let token = self.access_token(generation).await?;
         let first = self.client.entitlements(&token).await;
         let entitlement = if first.as_ref().is_err_and(SyncError::is_unauthorized) {
-            let refreshed = self.force_refresh_access_token().await?;
+            let refreshed = self.force_refresh_access_token(generation).await?;
             self.client.entitlements(&refreshed).await?
         } else {
             first?
         };
         let membership: CloudMembership = entitlement.into();
+        let _generation = self.require_auth_generation(generation)?;
         *self
             .membership
             .write()
@@ -27,18 +29,21 @@ impl SyncManager {
         product_id: &str,
         idempotency_key: &str,
     ) -> Result<CloudCheckout, SyncError> {
-        let token = self.access_token().await?;
+        let generation = self.auth_generation();
+        let token = self.access_token(generation).await?;
         let first = self
             .client
             .checkout(&token, product_id, idempotency_key)
             .await;
-        if first.as_ref().is_err_and(SyncError::is_unauthorized) {
-            let refreshed = self.force_refresh_access_token().await?;
-            return self
-                .client
+        let result = if first.as_ref().is_err_and(SyncError::is_unauthorized) {
+            let refreshed = self.force_refresh_access_token(generation).await?;
+            self.client
                 .checkout(&refreshed, product_id, idempotency_key)
-                .await;
-        }
-        first
+                .await
+        } else {
+            first
+        };
+        let _generation = self.require_auth_generation(generation)?;
+        result
     }
 }

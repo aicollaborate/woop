@@ -36,7 +36,7 @@
  */
 
 import type { DispatcherMiddleware } from '@/lib/event-dispatcher';
-import type { MemoEvent } from '@/types/memo';
+import type { MemoEvent, MemoDerivedRefresh } from '@/types/memo';
 
 /**
  * 取 MemoEvent 的 dedup key。 三种 kind 都能拿到 memo id:
@@ -50,9 +50,8 @@ import type { MemoEvent } from '@/types/memo';
  * 返回 `undefined` 表示此事件不参与 dedup (立即 next)。
  */
 function memoEventKey(event: MemoEvent): string | undefined {
-  if (event.kind === 'created') return event.memo.id;
-  if (event.kind === 'updated') return event.id;
-  if (event.kind === 'deleted') return event.id;
+  if (event.kind === 'created') return JSON.stringify([event.notebookId, event.memo.id]);
+  if (event.kind === 'updated' || event.kind === 'deleted') return JSON.stringify([event.notebookId, event.id]);
   // tags_renamed 没有 memo id 维度, 返回 undefined 让 caller 走 "立即 next" 分支
   return undefined;
 }
@@ -68,6 +67,7 @@ function memoEventKey(event: MemoEvent): string | undefined {
  *   installMemoMiddleware(createMemoDedupMiddleware({ delay: 50 }));
  */
 export interface CreateMemoDedupMiddlewareOptions {
+  onDiscardedDerivedChange?: (event: MemoDerivedRefresh) => void;
   /** 合并窗口, 默认 50ms。 */
   delay?: number;
   /** 自定义 key 提取, 默认按 MemoEvent 的 memo id。 */
@@ -81,13 +81,46 @@ export function createMemoDedupMiddleware(
   const getKey = options.getKey ?? memoEventKey;
   // key → [最后事件, timer 句柄]
   const pending = new Map<string, [MemoEvent, ReturnType<typeof setTimeout>]>();
+  const revisions = new Map<string, number>();
 
   return (next) => (event) => {
+    if ('derivedOnly' in event && event.derivedOnly === true) {
+      if ('derivedChanged' in event && Object.values(event.derivedChanged).some(Boolean)) {
+        options.onDiscardedDerivedChange?.({ notebookId: event.notebookId, derivedChanged: { ...event.derivedChanged } });
+      }
+      return;
+    }
     const key = getKey(event);
     if (!key) {
+      if (event.kind === 'tags_renamed' || event.kind === 'tags_deleted') {
+        const affected = new Set(event.affectedMemoIds);
+        for (const [pendingKey, [queued, timer]] of pending) {
+          if (queued.kind === 'updated' && queued.notebookId === event.notebookId && affected.has(queued.id)) {
+            clearTimeout(timer);
+            pending.delete(pendingKey);
+            next(queued);
+          }
+        }
+      }
       // 无 key (理论上不会发生, 但兜底) — 立即派发。
       next(event);
       return;
+    }
+
+    if ('revision' in event && Number.isSafeInteger(event.revision) && event.revision! > 0) {
+      const previous = revisions.get(key);
+      if (previous !== undefined && event.revision! < previous) {
+        if ('derivedChanged' in event && Object.values(event.derivedChanged).some(Boolean)) {
+          options.onDiscardedDerivedChange?.({
+            notebookId: event.notebookId,
+            derivedChanged: { ...event.derivedChanged },
+          });
+        }
+        return;
+      }
+      revisions.delete(key);
+      revisions.set(key, event.revision!);
+      if (revisions.size > 10_000) revisions.delete(revisions.keys().next().value!);
     }
 
     if (event.kind !== 'updated') {
@@ -101,9 +134,21 @@ export function createMemoDedupMiddleware(
     }
 
     const existing = pending.get(key);
+    let merged = event;
     if (existing) {
       // 同 key 已 pending → 清旧 timer, 用新事件覆盖。
       clearTimeout(existing[1]);
+      const previous = existing[0];
+      if (previous.kind === 'updated') {
+        merged = {
+          ...event,
+          derivedChanged: {
+            tags: previous.derivedChanged.tags || event.derivedChanged.tags,
+            todos: previous.derivedChanged.todos || event.derivedChanged.todos,
+            agents: previous.derivedChanged.agents || event.derivedChanged.agents,
+          },
+        };
+      }
     }
 
     const timer = setTimeout(() => {
@@ -112,6 +157,6 @@ export function createMemoDedupMiddleware(
       pending.delete(key);
       next(slot[0]);
     }, delay);
-    pending.set(key, [event, timer]);
+    pending.set(key, [merged, timer]);
   };
 }

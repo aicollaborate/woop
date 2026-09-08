@@ -1306,9 +1306,7 @@ async fn dispatch_notification(inner: &Arc<Inner>, message: &Value) {
                     AgentChunk::StreamEnd {
                         thread_id: flowix_thread_id.clone(),
                         reason,
-                        duration_ms: params
-                            .pointer("/turn/durationMs")
-                            .and_then(Value::as_u64),
+                        duration_ms: params.pointer("/turn/durationMs").and_then(Value::as_u64),
                     },
                 )
                 .await;
@@ -1538,18 +1536,19 @@ fn app_server_sandbox(permission: Option<&str>) -> Value {
     match permission.map(str::trim) {
         Some("read-only") => json!({ "type": "readOnly" }),
         Some("danger-full-access" | "yolo") => json!({ "type": "dangerFullAccess" }),
-        _ => json!({
+        None | Some("workspace-write") => json!({
             "type": "workspaceWrite",
             "writableRoots": [],
             "networkAccess": false
         }),
+        _ => json!({ "type": "readOnly" }),
     }
 }
 
 fn app_server_approval_policy(permission: Option<&str>) -> &'static str {
     match permission.map(str::trim) {
-        Some("read-only" | "danger-full-access" | "yolo") => "never",
-        _ => "on-request",
+        None | Some("workspace-write") => "on-request",
+        _ => "never",
     }
 }
 
@@ -1913,6 +1912,11 @@ mod tests {
 
     #[test]
     fn serializes_app_server_sandbox_objects() {
+        assert_eq!(
+            app_server_sandbox(Some("unknown-mode")),
+            json!({ "type": "readOnly" })
+        );
+        assert_eq!(app_server_approval_policy(Some("unknown-mode")), "never");
         assert_eq!(
             app_server_sandbox(Some("read-only")),
             json!({ "type": "readOnly" })

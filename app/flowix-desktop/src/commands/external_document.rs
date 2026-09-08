@@ -6,7 +6,11 @@ use tauri::State;
 
 use crate::app::state::AppState;
 use crate::commands::external_document_watch::ExternalDocumentWatchState;
-use crate::commands::helpers::{can_access_scoped_file, start_security_bookmark_access};
+use crate::commands::helpers::{
+    can_access_document_path, can_access_scoped_file, start_security_bookmark_access,
+};
+use crate::lock_utils::read_lock;
+use flowix_core::memo_file::FileWriteOutcome;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -17,7 +21,8 @@ pub enum ExternalDocumentWriteOutcome {
     Error { message: String },
 }
 
-pub(crate) fn is_markdown_document_path(path: &Path) -> bool {
+#[cfg(test)]
+fn is_markdown_document_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -145,6 +150,7 @@ pub(crate) fn supported_text_document_path(path: &Path) -> bool {
 pub(crate) fn exact_existing_external_path(
     file_path: &str,
     scope_path: Option<&str>,
+    window: &str,
     state: &State<'_, AppState>,
 ) -> Result<PathBuf, String> {
     let requested = PathBuf::from(file_path);
@@ -157,10 +163,10 @@ pub(crate) fn exact_existing_external_path(
             requested.display()
         ));
     }
-    if !is_markdown_document_path(&requested)
+    if !can_access_document_path(&requested, window, state)
         && !can_access_scoped_file(&requested, scope_path, state)
     {
-        return Err("external code document is outside its authorized file-tree scope".to_string());
+        return Err("external document is outside its authorized scope".to_string());
     }
     start_security_bookmark_access(state.inner(), &requested);
     if !supported_text_document_path(&requested) {
@@ -172,19 +178,14 @@ pub(crate) fn exact_existing_external_path(
 
 #[tauri::command]
 pub fn read_external_document(
+    window: tauri::WebviewWindow,
     file_path: String,
     #[allow(non_snake_case)] scopePath: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let path = exact_existing_external_path(&file_path, scopePath.as_deref(), &state)?;
+    let path =
+        exact_existing_external_path(&file_path, scopePath.as_deref(), window.label(), &state)?;
     fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))
-}
-
-/// Pure CAS predicate: returns true when the caller provided an `expected`
-/// snapshot and the on-disk content does not match it. `None` means the
-/// caller opted out of the CAS check, which is always allowed.
-fn cas_conflict(expected: Option<&str>, disk_content: &str) -> bool {
-    expected.is_some_and(|expected| expected != disk_content)
 }
 
 #[tauri::command]
@@ -198,39 +199,33 @@ pub fn write_external_document(
     state: State<'_, AppState>,
     watches: State<'_, ExternalDocumentWatchState>,
 ) -> ExternalDocumentWriteOutcome {
-    let path = match exact_existing_external_path(&file_path, scopePath.as_deref(), &state) {
+    let path = match exact_existing_external_path(
+        &file_path,
+        scopePath.as_deref(),
+        window.label(),
+        &state,
+    ) {
         Ok(path) => path,
         Err(_) if !Path::new(&file_path).is_file() => return ExternalDocumentWriteOutcome::Missing,
         Err(message) => return ExternalDocumentWriteOutcome::Error { message },
     };
 
-    let disk_content = match fs::read_to_string(&path) {
-        Ok(content) => content,
+    let outcome = read_lock(&state.memo_file, "memo_file").write_file_if_matches(
+        &path,
+        &content,
+        expectedContent.as_deref(),
+    );
+    match outcome {
+        Ok(FileWriteOutcome::Saved) => {}
+        Ok(FileWriteOutcome::Conflict { disk_content }) => {
+            return ExternalDocumentWriteOutcome::Conflict { disk_content };
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ExternalDocumentWriteOutcome::Missing;
+        }
         Err(error) => {
             return ExternalDocumentWriteOutcome::Error {
-                message: format!("failed to verify {}: {error}", path.display()),
-            };
-        }
-    };
-    if cas_conflict(expectedContent.as_deref(), &disk_content) {
-        return ExternalDocumentWriteOutcome::Conflict { disk_content };
-    }
-
-    let permissions = fs::metadata(&path)
-        .ok()
-        .map(|metadata| metadata.permissions());
-    if let Err(error) = flowix_core::memo_file::atomic_write_bytes(&path, content.as_bytes()) {
-        return ExternalDocumentWriteOutcome::Error {
-            message: format!("failed to write {}: {error}", path.display()),
-        };
-    }
-    if let Some(permissions) = permissions {
-        if let Err(error) = fs::set_permissions(&path, permissions) {
-            return ExternalDocumentWriteOutcome::Error {
-                message: format!(
-                    "saved {}, but failed to restore permissions: {error}",
-                    path.display()
-                ),
+                message: format!("failed to save {}: {error}", path.display()),
             };
         }
     }
@@ -255,17 +250,6 @@ mod tests {
         assert!(!missing.exists());
         assert_ne!(missing, root);
         assert!(is_markdown_document_path(&missing));
-    }
-
-    #[test]
-    fn cas_conflict_only_when_expected_differs_from_disk() {
-        // No expected snapshot means the caller trusts the disk and skips CAS.
-        assert!(!cas_conflict(None, "disk"));
-        assert!(!cas_conflict(Some("disk"), "disk"));
-
-        // A mismatched expected snapshot is a real CAS conflict.
-        assert!(cas_conflict(Some("stale"), "disk"));
-        assert!(cas_conflict(Some(""), "disk"));
     }
 
     #[test]

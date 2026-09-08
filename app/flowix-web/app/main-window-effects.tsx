@@ -15,7 +15,7 @@ import {
 import { rebaseSelectedTagId } from "@features/memo/services/memo-list-metadata-service";
 import { toast } from "@/lib/toast";
 import { handleMainWindowMemoEvent } from "./main-window-memo-event-handler";
-import type { MemoEvent } from "@/types/memo";
+import type { MemoEvent, MemoDerivedRefresh } from "@/types/memo";
 import {
   mountOpenTargetListener,
   unmountOpenTargetListener,
@@ -81,10 +81,20 @@ export function MainWindowEffects() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let unsubscribeDerived: (() => void) | undefined;
     let disposed = false;
 
-    void import("@/lib/memo-dispatcher").then(({ registerMemoEventHandler }) => {
+    void import("@/lib/memo-dispatcher").then(({ registerMemoEventHandler, registerMemoDerivedRefreshHandler }) => {
       if (disposed) return;
+      unsubscribeDerived = registerMemoDerivedRefreshHandler((event) => {
+        invalidateMentionNotes();
+        invalidateMentionTags();
+        if (useMemoStore.getState().selectedNotebook?.id === event.notebookId) {
+          refreshDerivedNotebookMetadata(event);
+        } else if (event.derivedChanged.todos) {
+          void useTodoCountStore.getState().loadTodoCount(event.notebookId);
+        }
+      });
       unsubscribe = registerMemoEventHandler((event) => {
         handleMainWindowMemoEvent(event, {
           getSelectedNotebookId: () => useMemoStore.getState().selectedNotebook?.id ?? null,
@@ -125,6 +135,7 @@ export function MainWindowEffects() {
     return () => {
       disposed = true;
       unsubscribe?.();
+      unsubscribeDerived?.();
     };
   }, []);
 
@@ -143,6 +154,10 @@ function refreshSelectedNotebookMetadata(event: MemoEvent): void {
   // 数类型是 MemoEvent 联合, 需要在这里收窄 ── 这两个 kind 没有
   // derivedChanged 字段。
   if (event.kind === 'tags_renamed' || event.kind === 'tags_deleted') return;
+  refreshDerivedNotebookMetadata(event);
+}
+
+function refreshDerivedNotebookMetadata(event: MemoDerivedRefresh): void {
   const { notebookId, derivedChanged } = event;
   if (derivedChanged.tags || derivedChanged.agents || derivedChanged.todos) {
     void useTagStore.getState().loadTags(notebookId);

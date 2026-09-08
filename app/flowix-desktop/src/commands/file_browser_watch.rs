@@ -22,6 +22,7 @@ use crate::commands::helpers::{
     is_agent_access_folder_with_state, is_registered_notebook_path_with_state,
     start_security_bookmark_access,
 };
+use crate::config::path_is_inside;
 
 const FILE_BROWSER_DIRECTORIES_CHANGED_EVENT: &str = "file-browser-directories-changed";
 const DEBOUNCE_DELAY: Duration = Duration::from_millis(180);
@@ -225,19 +226,6 @@ fn affected_directory(path: &Path, root_path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn path_is_inside(path: &Path, root_path: &Path) -> bool {
-    if path == root_path || path.starts_with(root_path) {
-        return true;
-    }
-
-    // notify can report a canonical path when the watched root was supplied
-    // through a symlink.  Canonicalize only for comparison; keep the original
-    // event path for the IPC payload so it matches the tree's displayed paths.
-    let canonical_path = dunce::canonicalize(path).ok();
-    let canonical_root = dunce::canonicalize(root_path).ok();
-    matches!((canonical_path, canonical_root), (Some(path), Some(root)) if path == root || path.starts_with(&root))
-}
-
 fn spawn_change_dispatcher(
     app: tauri::AppHandle,
     registry: Arc<Mutex<WatchRegistry>>,
@@ -361,6 +349,26 @@ pub fn unwatch_file_browser_root(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn affected_directory_rejects_parent_escape() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        assert_eq!(affected_directory(&root.join("../outside.md"), &root), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn affected_directory_rejects_outside_symlink_targets() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("allowed");
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert_eq!(affected_directory(&root.join("link/note.md"), &root), None);
+    }
 
     #[test]
     fn decrement_root_ref_count_releases_only_the_last_lease() {

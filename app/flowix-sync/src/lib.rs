@@ -21,12 +21,12 @@ pub use models::{
 };
 pub use store::SyncStore;
 pub use v2::{
-    collect_v2_attachments, new_v2_operation_id, v2_content_hash, v2_local_content_diverged,
-    v2_notebook_metadata_hash, V2AccountSyncReport, V2Attachment, V2BlobDownload,
-    V2BlobDownloadCapability, V2BlobDownloadEnvelope, V2BlobReservation, V2BlobReservationEnvelope,
-    V2BlobUpload, V2Bootstrap, V2Change, V2ChangesPage, V2CloudAccount, V2DirtyEntity,
-    V2EntityType, V2FreezeOperation, V2InflightOperation, V2LocalAttachment, V2LocalNote,
-    V2LocalNotebook, V2NoteState, V2NotebookState, V2OperationError, V2OperationKind,
+    collect_v2_attachments, new_v2_operation_id, referenced_attachment_paths, v2_content_hash,
+    v2_local_content_diverged, v2_notebook_metadata_hash, V2AccountSyncReport, V2Attachment,
+    V2BlobDownload, V2BlobDownloadCapability, V2BlobDownloadEnvelope, V2BlobReservation,
+    V2BlobReservationEnvelope, V2BlobUpload, V2Bootstrap, V2Change, V2ChangesPage, V2CloudAccount,
+    V2DirtyEntity, V2EntityType, V2FreezeOperation, V2InflightOperation, V2LocalAttachment,
+    V2LocalNote, V2LocalNotebook, V2NoteState, V2NotebookState, V2OperationError, V2OperationKind,
     V2PushOperation, V2PushResult, V2RemoteApply, V2RemoteAttachment, V2SyncStatus,
     V2SyncedNotebook, PROTOCOL_EPOCH,
 };

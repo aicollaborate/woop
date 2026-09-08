@@ -94,6 +94,9 @@ pub async fn plugin_run(
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<plugin::PluginRunStarted, String> {
+    let notebook_path = plugin::registered_notebook(&notebook_path, &state.memo_file)?
+        .to_string_lossy()
+        .into_owned();
     let agent_type = plugin::resolve_agent_type(&plugin_id, &agent_type)?;
     let prepared = plugin::prepare_prompt(&plugin_id, &user_prompt, &context)?;
     let run_id = plugin::new_run_id();

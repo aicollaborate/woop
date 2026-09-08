@@ -404,23 +404,22 @@ pub fn resolve_agent_type(id: &str, requested: &str) -> Result<String, String> {
         .to_string())
 }
 
-fn registered_notebook(
+pub(crate) fn registered_notebook(
     notebook_path: &str,
     memo_file: &Arc<std::sync::RwLock<flowix_core::memo_file::MemoFile>>,
 ) -> Result<PathBuf, String> {
     let candidate = PathBuf::from(notebook_path);
-    if !candidate.is_dir() {
+    if !candidate.is_absolute() || !candidate.is_dir() {
         return Err(format!("notebook path is unavailable: {notebook_path}"));
     }
+    let candidate = dunce::canonicalize(candidate).map_err(|error| error.to_string())?;
     let memo_file = read_lock(memo_file, "memo_file");
     let root = memo_file
         .registered_notebook_paths()
         .into_iter()
-        .find(|root| path_is_inside(&candidate, root))
+        .filter_map(|root| dunce::canonicalize(root).ok())
+        .find(|root| *root == candidate)
         .ok_or_else(|| "notebook path is not registered in Flowix".to_string())?;
-    if root != candidate {
-        return Err("plugin output requires the notebook root path".to_string());
-    }
     Ok(root)
 }
 
@@ -774,6 +773,35 @@ mod tests {
         clean_markdown, is_relative_plugin_path, parse_html, parse_json, parse_mindmap_markdown,
         valid_plugin_id, validate_manifest, PluginManifest, PluginRuntime, MINDMAP_MANIFEST,
     };
+
+    #[test]
+    fn plugin_workspace_requires_a_registered_root_before_execution() {
+        use flowix_core::memo_file::{MemoFile, NotebookConfig};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("notebook");
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        let store = MemoFile::new(directory.path().join("config"));
+        store
+            .write_notebook_configs(&[NotebookConfig {
+                id: "notebook".into(),
+                name: "Notebook".into(),
+                icon: None,
+                path: root.to_string_lossy().into_owned(),
+                is_default: true,
+                sort: 0,
+                created_at: 1,
+                updated_at: 1,
+            }])
+            .unwrap();
+        let store = std::sync::Arc::new(std::sync::RwLock::new(store));
+        assert_eq!(
+            super::registered_notebook(&root.to_string_lossy(), &store).unwrap(),
+            dunce::canonicalize(&root).unwrap()
+        );
+        assert!(super::registered_notebook(&root.join("child").to_string_lossy(), &store).is_err());
+        assert!(super::registered_notebook(&directory.path().to_string_lossy(), &store).is_err());
+        assert!(super::registered_notebook(".", &store).is_err());
+    }
 
     #[test]
     fn extracts_markdown_from_code_fence() {

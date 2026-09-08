@@ -7,26 +7,9 @@ use std::path::{Component, Path, PathBuf};
 
 /// `fs::canonicalize` 需要路径已存在; 在写�?�� (�?��尚不存在) 上�?回退�?/// parent �?���?canonicalize + 拼回 file_name�?
 fn canonical_existing_or_parent(path: &Path) -> Option<PathBuf> {
-    // Normalize `.` / `..` before searching for an existing ancestor. Without
-    // this, a path such as `<root>/missing/../file` can be compared using its
-    // unresolved lexical prefix and produce an incorrect scope result.
-    let path = normalize_lexically(path);
-    let mut unresolved = Vec::new();
-    let mut existing = path.clone();
-
-    while !existing.exists() {
-        unresolved.push(existing.file_name()?.to_os_string());
-        existing = existing.parent()?.to_path_buf();
+    if !path.is_absolute() {
+        return None;
     }
-
-    let mut canonical = std::fs::canonicalize(existing).ok()?;
-    for component in unresolved.iter().rev() {
-        canonical.push(component);
-    }
-    Some(canonical)
-}
-
-fn normalize_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -34,14 +17,24 @@ fn normalize_lexically(path: &Path) -> PathBuf {
             Component::RootDir => normalized.push(component.as_os_str()),
             Component::CurDir => {}
             Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
+                normalized.pop();
+            }
+            Component::Normal(value) => {
+                match std::fs::metadata(&normalized) {
+                    Ok(metadata) if !metadata.is_dir() => return None,
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return None,
+                    _ => {}
+                }
+                normalized.push(value);
+                match std::fs::symlink_metadata(&normalized) {
+                    Ok(_) => normalized = dunce::canonicalize(&normalized).ok()?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return None,
                 }
             }
-            Component::Normal(value) => normalized.push(value),
         }
     }
-    normalized
+    Some(normalized)
 }
 
 /// �?��包含判定: �?canonicalize 之后�?`starts_with`。兼�?/// `path` / `root` 尚不存在 (写路�? 的情况�?
@@ -54,6 +47,10 @@ pub fn path_is_inside(path: &Path, root: &Path) -> bool {
     };
     path.starts_with(root)
 }
+
+#[cfg(test)]
+#[path = "path_scope_tests.rs"]
+mod boundary_tests;
 
 #[cfg(test)]
 mod tests {

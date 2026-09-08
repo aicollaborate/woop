@@ -1,6 +1,12 @@
 import type zhCN from './messages.zh-CN';
 
 const enUS: Record<keyof typeof zhCN, string> = {
+    "editor.attachment.uploadFileTooLarge": "Attachment exceeds the 1 GiB per-file limit. Split the file and retry.",
+    "editor.attachment.uploadTooLarge": "Attachment content exceeds 64 MiB. Import it using the native file picker.",
+    "editor.attachment.uploadBusy": "Other attachments are being processed. Please retry shortly.",
+    "editor.attachment.uploadOwnerRequired": "The attachment has no note owner. Reopen the note and retry.",
+    "editor.attachment.uploadFailed": "Attachment could not be saved. Check file permissions and available space.",
+    "editor.attachment.uploadUninserted": "The attachment was saved but its insertion location or editor is no longer available. The file remains in the notebook attachments folder.",
     "language.zhCN": "Simplified Chinese",
     "language.enUS": "English",
 
@@ -999,6 +1005,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "memo.fileTree.deleted": "Deleted {name}",
     "memo.fileTree.deleteFailed": "Delete failed",
     "memo.fileTree.createFailed": "Create failed",
+    "memo.fileTree.nameConflict": "A file with this name already exists. Choose another name.",
     "memo.fileTree.copyPath": "Copy path",
     "memo.fileTree.pathCopied": "Path copied",
     "memo.fileTree.copyFailed": "Copy failed",

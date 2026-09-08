@@ -404,9 +404,14 @@ impl MemoEventProcessor {
                 }
                 // Frontmatter-key-first 分流 ── 详情�?[`dispatch_modify_event`]�?
                 let outcome = match memo_file.read() {
-                    Ok(mf) => dispatch_modify_event_with_mark(&mf, ctx, path, event.kind, |p| {
-                        crate::watcher::runtime::mark_self_write_for(app, p)
-                    }),
+                    Ok(mf) => match mf.acquire_cross_process_write_lock() {
+                        Ok(_guard) => {
+                            dispatch_modify_event_with_mark(&mf, ctx, path, event.kind, |path| {
+                                crate::watcher::runtime::mark_self_write_for(app, path)
+                            })
+                        }
+                        Err(error) => Err(error.to_string()),
+                    },
                     Err(_) => return,
                 };
                 match outcome {
@@ -464,6 +469,13 @@ impl MemoEventProcessor {
         // 这里�?defense-in-depth 一欰�?
         let Ok(mf) = memo_file.read() else {
             return;
+        };
+        let _write_guard = match mf.acquire_cross_process_write_lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::warn!(%error, "failed to lock memo deletion observation");
+                return;
+            }
         };
         // 鐗╃悊鏂囦欢鍚嶆槸 `<title>.md` (id 璺熸枃浠跺悕瑙ｈ€?, 鏃у疄鐜颁細鎶婄┖ id 鍙戝埌鍓嶇,
         // �?`handleMemoDeleted` �?`memos.filter(m => m.id !== "")` 一条都

@@ -196,6 +196,56 @@ fn opening_legacy_index_creates_content_revision_table() {
 }
 
 #[test]
+fn late_revision_observation_cannot_overwrite_a_newer_commit() {
+    let (store, root) = fresh_memo_file();
+    let other = MemoFile::new(root.join("config"));
+    let first = store
+        .commit_memo_content_revision("memo", "nb_test", "old", "first")
+        .unwrap();
+    let newer = other
+        .commit_memo_content_revision("memo", "nb_test", "new", "second")
+        .unwrap();
+    assert!(store
+        .commit_memo_content_revision_if_current(
+            "memo",
+            "nb_test",
+            "old",
+            "late",
+            Some(&first.state)
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.read_memo_content_revision("memo").unwrap(),
+        Some(newer.state)
+    );
+}
+
+#[test]
+fn missing_revision_observation_cannot_replace_a_first_commit() {
+    let (store, _) = fresh_memo_file();
+    let first = store
+        .commit_memo_content_revision_if_current("memo", "nb_test", "first", "first", None)
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .commit_memo_content_revision_if_current("memo", "nb_test", "stale", "late", None)
+        .unwrap()
+        .is_none());
+    let next = store
+        .commit_memo_content_revision_if_current(
+            "memo",
+            "nb_test",
+            "next",
+            "next",
+            Some(&first.state),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.state.revision, first.state.revision + 1);
+}
+
+#[test]
 fn writing_notebook_configs_preserves_existing_memo_rows() {
     let (mf, tmp) = fresh_memo_file();
     let memo = mf.create_memo("Keep", "# Keep", None).unwrap();

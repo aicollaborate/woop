@@ -18,6 +18,9 @@ use flowix_core::search::MemoIndex;
 ///
 /// `search` / `system_data` 没有跨模块需求, 保持原样 (不 Arc 包裹)。
 pub struct AppState {
+    pub upload_sessions: Arc<crate::commands::dialog::upload_sessions::UploadSessions>,
+    pub document_access: crate::app::document_access::DocumentAccess,
+    pub export_access: crate::app::export_access::ExportAccess,
     pub user_config: Arc<UserConfigStore>,
     pub cloud_sync: Arc<flowix_sync::SyncManager>,
     /// System metadata (notebook tag order/layout/hidden state).

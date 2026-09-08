@@ -56,6 +56,7 @@ export function normalizeUploadContentForInsert(content: JSONContent[]): JSONCon
 }
 
 function canReplaceRangeWithUploadContent(view: EditorView, range: { from: number; to: number }): boolean {
+    if (range.from < 0 || range.to > view.state.doc.content.size || range.from >= range.to) return false;
     const node = view.state.doc.nodeAt(range.from);
     return !!node && node.isTextblock && node.textContent.length === 0 && range.to === range.from + node.nodeSize;
 }
@@ -77,7 +78,7 @@ export function insertUploadContent(
     }
 
     content.forEach((node) => {
-        const safeInsertPos = Math.min(insertPos, tr.doc.content.size);
+        const safeInsertPos = Math.max(0, Math.min(insertPos, tr.doc.content.size));
         const $insertPos = tr.doc.resolve(safeInsertPos);
         const pmNode = view.state.schema.nodeFromJSON(
             node.type === 'fileAttachment' && !$insertPos.parent.inlineContent

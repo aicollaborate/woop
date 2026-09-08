@@ -134,27 +134,20 @@ export function FolderFileTree({
     const trimmed = nextName.trim();
     setRenaming(null);
     if (!trimmed || trimmed === item.name) return;
-    // 后端没有 rename_file IPC; 走 read → write 新名 → delete 旧名。
-    // 文件树场景文件普遍不大, 全量读写可接受。
-    const targetPath = item.fullPath.slice(0, item.fullPath.lastIndexOf('/')) + '/' + trimmed;
     if (item.type === 'document') {
-      const content = await files.read(item.fullPath, folderPath);
-      if (content === null) {
-        toast.error(t('memo.fileTree.renameFailed'));
+      try {
+        await files.rename(item.fullPath, trimmed, folderPath);
+      } catch (error) {
+        toast.error(t(String(error).includes('FILE_EXISTS') ? 'memo.fileTree.nameConflict' : 'memo.fileTree.renameFailed'));
         return;
       }
-      const written = await files.write(targetPath, content, undefined, folderPath);
-      if (!written) {
-        toast.error(t('memo.fileTree.renameFailed'));
-        return;
-      }
-      await files.delete(item.fullPath, folderPath);
     } else {
       // folder 重命名需要递归拷贝, 首版不支持 ── 提示走 Finder。
       toast.info(t('memo.fileTree.renameFolderUnsupported'));
       return;
     }
-    const parent = item.fullPath.slice(0, item.fullPath.lastIndexOf('/'));
+    const normalizedPath = canonicalPath(item.fullPath);
+    const parent = normalizedPath.slice(0, normalizedPath.lastIndexOf('/'));
     await tree.refresh(parent || folderPath);
     toast.success(t('memo.fileTree.renamed', { name: trimmed }));
   }, [folderPath, t, tree]);
@@ -163,11 +156,16 @@ export function FolderFileTree({
     const trimmed = name.trim();
     setDraftRow(null);
     if (!trimmed) return;
-    const ok = kind === 'file'
-      ? await files.createDocument(parentPath, trimmed) !== null
-      : await files.createFolder(parentPath, trimmed) !== null;
-    if (!ok) {
-      toast.error(t('memo.fileTree.createFailed'));
+    try {
+      const created = kind === 'file'
+        ? await files.createDocument(parentPath, trimmed)
+        : await files.createFolder(parentPath, trimmed);
+      if (!created) {
+        toast.error(t('memo.fileTree.createFailed'));
+        return;
+      }
+    } catch (error) {
+      toast.error(t(String(error).includes('FILE_EXISTS') ? 'memo.fileTree.nameConflict' : 'memo.fileTree.createFailed'));
       return;
     }
     await tree.refresh(parentPath);

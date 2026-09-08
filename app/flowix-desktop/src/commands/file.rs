@@ -1,10 +1,3 @@
-//! File IPC — 任意 in-notebook 文件 tree / read / write / create。
-//!
-//! 与 `memo.rs::read_document` / `write_document` 的区别: 那两个是单文件路径
-//! (`can_access_document_path` 守卫, 包括 `.md` 后缀绕过), 这八个是
-//! `space_path` 作用域 (`can_access_scoped_file` 守卫, 必须落在声明的
-//! notebook 根下)。侧栏"资料"文件夹 (agent access folder entry) 与注册
-//! 笔记本同权放行, 让文件树视图能浏览用户添加的资料目录。
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,6 +7,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::config::path_is_inside;
+use crate::lock_utils::read_lock;
 
 use super::helpers::{
     can_access_scoped_file, is_agent_access_folder, is_registered_notebook_path,
@@ -96,6 +90,9 @@ fn read_dir_single_level(dir_path: &Path) -> Vec<DocTreeItem> {
     if let Ok(entries) = fs::read_dir(dir_path) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
+            if !path_is_inside(&path, dir_path) {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip hidden files
@@ -244,10 +241,9 @@ pub fn write_file(
         return false;
     }
     start_security_bookmark_access(&state, Path::new(&file_path));
-    if let Some(parent) = Path::new(&file_path).parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    fs::write(&file_path, content).is_ok()
+    read_lock(&state.memo_file, "memo_file")
+        .write_file(Path::new(&file_path), content.as_bytes())
+        .is_ok()
 }
 
 #[tauri::command]
@@ -257,7 +253,66 @@ pub fn delete_file(file_path: String, space_path: Option<String>, state: State<A
         return false;
     }
     start_security_bookmark_access(&state, Path::new(&file_path));
-    fs::remove_file(&file_path).is_ok()
+    read_lock(&state.memo_file, "memo_file")
+        .delete_file(Path::new(&file_path))
+        .is_ok()
+}
+
+fn file_mutation_error(error: std::io::Error) -> String {
+    let code = match error.kind() {
+        std::io::ErrorKind::AlreadyExists => "FILE_EXISTS",
+        std::io::ErrorKind::NotFound => "FILE_NOT_FOUND",
+        std::io::ErrorKind::PermissionDenied => "FILE_PERMISSION_DENIED",
+        _ => "FILE_OPERATION_FAILED",
+    };
+    format!("{code}: {error}")
+}
+
+fn validate_file_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.ends_with(['.', ' '])
+        || name.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*'
+                )
+        })
+    {
+        return Err("INVALID_FILE_NAME".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_file(
+    file_path: String,
+    name: String,
+    space_path: String,
+    state: State<AppState>,
+) -> Result<String, String> {
+    validate_file_name(&name)?;
+    let source = Path::new(&file_path);
+    let parent = source.parent().ok_or("INVALID_FILE_PATH")?;
+    let target = parent.join(name);
+    if !can_access_scoped_file(source, Some(&space_path), &state)
+        || !can_access_scoped_file(&target, Some(&space_path), &state)
+    {
+        return Err("FILE_PERMISSION_DENIED".to_string());
+    }
+    start_security_bookmark_access(&state, source);
+    if !fs::symlink_metadata(source)
+        .map_err(file_mutation_error)?
+        .is_file()
+    {
+        return Err("SOURCE_NOT_REGULAR_FILE".to_string());
+    }
+    read_lock(&state.memo_file, "memo_file")
+        .rename_file(source, &target)
+        .map_err(file_mutation_error)?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -267,6 +322,7 @@ pub fn create_folder(
     _parent_id: Option<String>,
     state: State<AppState>,
 ) -> Option<DocTreeItem> {
+    validate_file_name(&name).ok()?;
     let target_path = Path::new(&space_path).join(&name);
     if !is_browsable_scope(Path::new(&space_path), &state)
         || !path_is_inside(&target_path, Path::new(&space_path))
@@ -299,7 +355,8 @@ pub fn create_document(
     name: String,
     _parent_id: Option<String>,
     state: State<AppState>,
-) -> Option<DocTreeItem> {
+) -> Result<DocTreeItem, String> {
+    validate_file_name(&name)?;
     let file_name = if name.ends_with(".md") {
         name.clone()
     } else {
@@ -313,12 +370,14 @@ pub fn create_document(
             "[create_document] refused out-of-scope path: {}",
             target_path.display()
         );
-        return None;
+        return Err("FILE_PERMISSION_DENIED".to_string());
     }
     start_security_bookmark_access(&state, &target_path);
-    fs::write(&target_path, "").ok()?;
+    read_lock(&state.memo_file, "memo_file")
+        .create_file(&target_path, b"")
+        .map_err(file_mutation_error)?;
 
-    Some(DocTreeItem {
+    Ok(DocTreeItem {
         id: generate_stable_id(&target_path.to_string_lossy()),
         full_path: target_path.to_string_lossy().to_string(),
         name: file_name,
@@ -329,4 +388,76 @@ pub fn create_document(
         modified_ms: None,
         created_ms: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_listing_preserves_regular_files_and_folders() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("note.md"), "body").unwrap();
+        fs::create_dir(directory.path().join("folder")).unwrap();
+        let items = read_dir_single_level(directory.path());
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "folder");
+        assert_eq!(items[1].name, "note.md");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_listing_hides_outside_and_dangling_links() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("allowed");
+        fs::create_dir(&root).unwrap();
+        let outside = directory.path().join("secret.md");
+        fs::write(&outside, "secret").unwrap();
+        fs::write(root.join("note.md"), "body").unwrap();
+        symlink(&outside, root.join("outside.md")).unwrap();
+        symlink(root.join("missing"), root.join("dangling.md")).unwrap();
+        symlink(root.join("note.md"), root.join("inside.md")).unwrap();
+        let names: Vec<_> = read_dir_single_level(&root)
+            .into_iter()
+            .map(|item| item.name)
+            .collect();
+        assert_eq!(names, vec!["inside.md", "note.md"]);
+    }
+
+    #[test]
+    fn file_names_cannot_escape_the_selected_parent() {
+        for name in [
+            "",
+            " ",
+            ".",
+            "..",
+            "../note",
+            "folder/note",
+            "folder\\note",
+            "C:\\note",
+            "note:stream",
+            "note\0",
+            "note.",
+        ] {
+            assert!(validate_file_name(name).is_err(), "accepted {name:?}");
+        }
+        for name in ["笔记.md", "image.png", "notes 2026.md", ".gitignore"] {
+            assert!(validate_file_name(name).is_ok(), "rejected {name:?}");
+        }
+    }
+
+    #[test]
+    fn file_errors_distinguish_conflicts_from_missing_and_denied_paths() {
+        for (kind, code) in [
+            (std::io::ErrorKind::AlreadyExists, "FILE_EXISTS:"),
+            (std::io::ErrorKind::NotFound, "FILE_NOT_FOUND:"),
+            (
+                std::io::ErrorKind::PermissionDenied,
+                "FILE_PERMISSION_DENIED:",
+            ),
+        ] {
+            assert!(file_mutation_error(std::io::Error::new(kind, "failure")).starts_with(code));
+        }
+    }
 }

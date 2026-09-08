@@ -1226,6 +1226,7 @@ dependencies = [
  "dirs 5.0.1",
  "dunce",
  "fs2",
+ "libc",
  "nanoid",
  "once_cell",
  "regex",
@@ -1239,6 +1240,7 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

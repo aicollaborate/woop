@@ -231,6 +231,9 @@ pub fn run() {
             agent_external_config.run_startup_detect();
 
             let app_state = AppState {
+                upload_sessions: Default::default(),
+                document_access: Default::default(),
+                export_access: Default::default(),
                 user_config: user_config_for_state.clone(),
                 cloud_sync: cloud_sync_for_state.clone(),
                 system_data,
@@ -249,6 +252,7 @@ pub fn run() {
                 security_bookmarks: security_bookmarks_for_state.clone(),
                 plugin_runs: crate::plugin::PluginRunCoordinator::default(),
             };
+            app_state.upload_sessions.start_cleanup();
             app.manage(app_state);
             crate::maintenance::spawn_startup_maintenance(
                 app.package_info().version.to_string(),
@@ -260,22 +264,33 @@ pub fn run() {
                 let cloud_sync = cloud_sync_for_state.clone();
                 let user_config = user_config_for_state.clone();
                 let app_handle = app.handle().clone();
+                let restore_generation = cloud_sync.session_restore_generation();
                 tauri::async_runtime::spawn(async move {
-                    match cloud_sync.restore(&refresh_token).await {
-                        Ok(outcome) => {
-                            if let Err(error) =
-                                user_config.save_cloud_refresh_token(&outcome.refresh_token)
+                    match cloud_sync.restore_at_generation(&refresh_token, restore_generation).await {
+                        Ok(_) => {
+                            if let Err(error) = cloud_sync.with_current_refresh_token(|token| {
+                                match token {
+                                    Some(token) => user_config.save_cloud_refresh_token(token),
+                                    None => Ok(()),
+                                }
+                            })
                             {
                                 tracing::warn!(
                                     "failed to persist rotated cloud refresh token: {error}"
                                 );
                             }
-                            let _ = app_handle.emit("cloud-state-changed", &outcome.state);
+                            if let Ok(state) = cloud_sync.state() {
+                                let _ = app_handle.emit("cloud-state-changed", state);
+                            }
                         }
                         Err(error) => {
                             tracing::warn!("failed to restore Flowix Cloud session: {error}");
                             if error.is_invalid_refresh_token() {
-                                let _ = user_config.delete_cloud_refresh_token();
+                                cloud_sync.with_current_refresh_token(|current| {
+                                    if current.is_none() && user_config.load_cloud_refresh_token().ok().flatten().as_deref() == Some(refresh_token.as_str()) {
+                                        let _ = user_config.delete_cloud_refresh_token();
+                                    }
+                                });
                             } else {
                                 tracing::warn!(
                                     "keeping the persisted cloud refresh token after a transient restore failure"
@@ -614,6 +629,7 @@ pub fn run() {
             commands::file::read_file,
             commands::file::read_image_file,
             commands::file::write_file,
+            commands::file::rename_file,
             commands::file::delete_file,
             commands::file::create_folder,
             commands::file::create_document,
@@ -629,7 +645,12 @@ pub fn run() {
             commands::dialog::save_file_dialog,
             commands::dialog::write_export_file,
             commands::dialog::save_attachment,
-            commands::dialog::save_attachment_content,
+            commands::dialog::upload_journal::list_attachment_import_records,
+            commands::dialog::attachment_audit::scan_attachment_references,
+            commands::dialog::upload_sessions::begin_attachment_upload,
+            commands::dialog::upload_sessions::append_attachment_upload,
+            commands::dialog::upload_sessions::finish_attachment_upload,
+            commands::dialog::upload_sessions::cancel_attachment_upload,
             commands::dialog::copy_attachment_file,
             commands::dialog::open_attachment_file,
             commands::agent_access::add_agent_access_folder_from_picker,
@@ -770,6 +791,11 @@ fn handle_cold_start_open_targets(app: &tauri::AppHandle) {
 
 fn emit_open_target_if_resolved(app: &tauri::AppHandle, raw: &str) {
     let state = app.state::<AppState>();
+    for path in commands::markdown_paths_from_args([raw.to_string()]) {
+        if let Ok(path) = dunce::canonicalize(path) {
+            state.document_access.grant("main", &path);
+        }
+    }
     if let Ok(target) = open_target::parse_open_target(raw) {
         if let Ok(resolved) = open_target::resolve_open_target(target, state.memo_file.as_ref()) {
             if let Some(window) = app.get_webview_window("main") {
@@ -783,6 +809,25 @@ fn emit_open_target_if_resolved(app: &tauri::AppHandle, raw: &str) {
 
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     match event {
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }),
+            label,
+            ..
+        } => {
+            let state = app.state::<AppState>();
+            for path in paths {
+                state.document_access.grant(&label, &path);
+            }
+        }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } => {
+            app.state::<AppState>().export_access.revoke(&label);
+            app.state::<AppState>().document_access.revoke(&label);
+            app.state::<AppState>().upload_sessions.revoke(&label);
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Opened { urls } => {
             for url in urls {

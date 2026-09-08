@@ -4,6 +4,7 @@ import svgPanZoom from 'svg-pan-zoom'
 import { translate, type I18nKey } from '@/lib/i18n'
 import { useUserSettingsStore } from '@features/preferences/store/user-settings-store'
 import { CodeBlockClipboardController } from './clipboard-controller'
+import { setLanguageButtonContent } from './language-button'
 import { SHIKI_LANGUAGE_LABEL_BY_ID, SHIKI_LANGUAGE_OPTIONS } from './shiki/shiki-languages'
 
 // svg-pan-zoom 实例类型 ── 库本身没有导出类型, 用 ReturnType 推断。
@@ -182,14 +183,11 @@ class CodeBlockShikiView implements NodeView {
     this.languageBtn.classList.add('code-block-language-selector')
     this.languageBtn.type = 'button'
     this.languageBtn.tabIndex = -1
-    this.languageBtn.innerHTML = `<span class="code-block-language-label">${
+    setLanguageButtonContent(this.languageBtn,
       !this.node.attrs.language || this.node.attrs.language === PLAIN_TEXT_ID
         ? PLAIN_TEXT_LABEL
         : this.node.attrs.language
-    }</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="6 9 12 15 18 9"></polyline>
-      </svg>`
+    )
 
     // Copy button
     this.copyBtn = document.createElement('button')

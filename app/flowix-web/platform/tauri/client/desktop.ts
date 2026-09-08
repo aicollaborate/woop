@@ -23,10 +23,12 @@ export const files = {
   write: (filePath: string, content: string, skipValidation?: boolean, spacePath?: string) =>
     invoke<boolean>('write_file', { filePath, content, skipValidation, spacePath }),
   delete: (filePath: string, spacePath?: string) => invoke<boolean>('delete_file', { filePath, spacePath }),
+  rename: (filePath: string, name: string, spacePath: string) =>
+    invoke<string>('rename_file', { filePath, name, spacePath }),
   createFolder: (spacePath: string, name: string, parentId?: string) =>
     invoke<DocTreeItem | null>('create_folder', { spacePath, name, parentId }),
   createDocument: (spacePath: string, name: string, parentId?: string) =>
-    invoke<DocTreeItem | null>('create_document', { spacePath, name, parentId }),
+    invoke<DocTreeItem>('create_document', { spacePath, name, parentId }),
 };
 
 // Dialogs

@@ -1,98 +1,64 @@
 import { invoke } from '@platform/tauri/core';
 import type { Editor, RawCommands } from '@tiptap/core';
-import { buildUploadContent, insertUploadContent, normalizeUploadContentForInsert } from '@features/editor/extensions/attachment-link/upload/build-content';
-import { handleFileUpload } from '@features/editor/extensions/attachment-link/upload/plugin';
-import { createAttachmentUploadFromPaths } from '@features/editor/extensions/attachment-link/upload/storage';
-import type { OpenFileDialogParams } from '@features/editor/extensions/attachment-link/upload/file-source';
-import { isTauriApp } from '@features/editor/extensions/attachment-link/upload/file-source';
+import { handleFileUpload } from './plugin';
+import { createAttachmentUpload, createAttachmentUploadFromPaths } from './storage';
+import { runTrackedUpload } from './pending';
+import type { OpenFileDialogParams } from './file-source';
+import { isTauriApp } from './file-source';
 
-export function createAttachmentCommands(): Partial<RawCommands> {
+function pickBrowserFiles(params: OpenFileDialogParams | undefined, signal: AbortSignal): Promise<File[]> {
+    return new Promise((resolve) => {
+        if (signal.aborted) return resolve([]);
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = params?.accept ?? '';
+        input.multiple = params?.multiple ?? true;
+        input.style.display = 'none';
+        let settled = false;
+        const finish = (files: File[]) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            signal.removeEventListener('abort', cancel);
+            input.onchange = null;
+            input.oncancel = null;
+            input.remove();
+            resolve(files);
+        };
+        const cancel = () => finish([]);
+        const timeout = window.setTimeout(cancel, 300_000);
+        signal.addEventListener('abort', cancel, { once: true });
+        input.onchange = () => finish(Array.from(input.files ?? []));
+        input.oncancel = cancel;
+        document.body.appendChild(input);
+        input.click();
+    });
+}
+
+export function createAttachmentCommands(memoId?: string): Partial<RawCommands> {
     return {
         openFileDialog:
             (params?: OpenFileDialogParams) =>
             ({ editor }: { editor: Editor }) => {
-                if (!editor.isEditable) return false;
-
-                if (isTauriApp()) {
-                    void (async () => {
-                        try {
-                            const paths = await invoke<string[] | null>('select_files');
-                            if (!paths?.length) return;
-                            const result = await createAttachmentUploadFromPaths(paths);
-                            const content = normalizeUploadContentForInsert(buildUploadContent(result.assets));
-                            if (content.length > 0) {
-                                editor.commands.focus();
-                                insertUploadContent(
-                                    editor.view,
-                                    content,
-                                    undefined,
-                                    params?.replaceRange
-                                );
-                            }
-                        } catch (err) {
-                            console.error('[FileUpload] Upload failed:', err);
-                        }
-                    })();
-                    return true;
-                }
-
-                const input = document.createElement('input');
-                let settled = false;
-                input.type = 'file';
-                input.accept = params?.accept ?? '';
-                input.multiple = params?.multiple ?? true;
-                input.style.position = 'fixed';
-                input.style.left = '-9999px';
-
-                const cleanup = () => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(safetyTimer);
-                    input.onchange = null;
-                    input.oncancel = null;
-                    window.removeEventListener('focus', handleWindowFocus, true);
-                    input.remove();
-                };
-
-                const safetyTimer = window.setTimeout(cleanup, 300_000);
-
-                const handleWindowFocus = () => {
-                    window.setTimeout(() => {
-                        if (!settled && (input.files?.length ?? 0) === 0) {
-                            cleanup();
-                        }
-                    }, 0);
-                };
-
-                input.oncancel = cleanup;
-
-                input.onchange = async () => {
-                    try {
-                        const files = Array.from(input.files || []);
-                        if (files.length > 0) {
-                            void handleFileUpload(
-                                editor.view,
-                                files,
-                                undefined,
-                                params?.replaceRange
-                            );
-                        }
-                    } finally {
-                        cleanup();
+                if (editor.isDestroyed || !editor.isEditable) return false;
+                void runTrackedUpload(editor.view, async (signal) => {
+                    if (isTauriApp()) {
+                        const paths = await invoke<string[] | null>('select_files');
+                        if (!paths?.length || signal.aborted) return [];
+                        return (await createAttachmentUploadFromPaths(paths, memoId, signal)).assets;
                     }
-                };
-
-                document.body.appendChild(input);
-                window.addEventListener('focus', handleWindowFocus, true);
-                input.click();
+                    const files = await pickBrowserFiles(params, signal);
+                    if (signal.aborted) return [];
+                    return (await createAttachmentUpload(files, undefined, undefined, memoId, signal)).assets;
+                }, undefined, params?.replaceRange, memoId);
                 return true;
             },
 
         insertFiles:
             (params: { files: File[]; position?: number }) =>
             ({ editor }: { editor: Editor }) => {
-                if (!editor.isEditable) return false;
-                void handleFileUpload(editor.view, params.files, params.position);
+                if (editor.isDestroyed || !editor.isEditable) return false;
+                void handleFileUpload(editor.view, params.files, params.position, undefined, memoId);
                 return true;
             },
     };

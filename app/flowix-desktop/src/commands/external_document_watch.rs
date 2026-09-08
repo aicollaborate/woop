@@ -435,7 +435,8 @@ pub fn watch_external_document(
     file_path: String,
     #[allow(non_snake_case)] scopePath: Option<String>,
 ) -> Result<String, String> {
-    let path = exact_existing_external_path(&file_path, scopePath.as_deref(), &app_state)?;
+    let path =
+        exact_existing_external_path(&file_path, scopePath.as_deref(), window.label(), &app_state)?;
     watches.watch(window.label(), path)
 }
 

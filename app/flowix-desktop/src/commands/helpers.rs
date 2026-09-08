@@ -1,6 +1,5 @@
 //! Cross-command helpers for notebook switching, path scope, and markdown parsing.
 
-use std::ffi::OsStr;
 use std::path::Path;
 
 use tauri::{AppHandle, State};
@@ -201,15 +200,10 @@ pub(crate) fn is_registered_notebook_path_with_state(path: &Path, state: &AppSta
         .any(|root| path_is_inside(path, root))
 }
 
-fn is_markdown_like(path: &Path) -> bool {
-    path.extension()
-        .and_then(OsStr::to_str)
-        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown"))
-        .unwrap_or(false)
-}
-
-pub(crate) fn can_access_document_path(path: &Path, state: &State<AppState>) -> bool {
-    is_registered_notebook_path(path, state) || is_markdown_like(path)
+pub(crate) fn can_access_document_path(path: &Path, window: &str, state: &State<AppState>) -> bool {
+    is_registered_notebook_path(path, state)
+        || is_agent_access_folder(path, state)
+        || state.document_access.contains(window, path)
 }
 
 pub(crate) fn can_access_scoped_file(

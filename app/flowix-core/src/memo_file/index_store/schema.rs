@@ -276,6 +276,41 @@ impl MemoFile {
         content_hash: &str,
         next_change_id: &str,
     ) -> std::io::Result<MemoContentCommit> {
+        self.commit_memo_content_revision_internal(
+            memo_id,
+            notebook_id,
+            content_hash,
+            next_change_id,
+            None,
+        )?
+        .ok_or_else(|| std::io::Error::other("unconditional revision commit was rejected"))
+    }
+
+    pub fn commit_memo_content_revision_if_current(
+        &self,
+        memo_id: &str,
+        notebook_id: &str,
+        content_hash: &str,
+        next_change_id: &str,
+        expected: Option<&MemoContentRevision>,
+    ) -> std::io::Result<Option<MemoContentCommit>> {
+        self.commit_memo_content_revision_internal(
+            memo_id,
+            notebook_id,
+            content_hash,
+            next_change_id,
+            Some(expected),
+        )
+    }
+
+    fn commit_memo_content_revision_internal(
+        &self,
+        memo_id: &str,
+        notebook_id: &str,
+        content_hash: &str,
+        next_change_id: &str,
+        expected: Option<Option<&MemoContentRevision>>,
+    ) -> std::io::Result<Option<MemoContentCommit>> {
         let mut conn = self.open_memo_index_db()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -297,10 +332,26 @@ impl MemoFile {
             .optional()
             .map_err(sqlite_to_io)?;
 
+        if let Some(expected) = expected {
+            let matches = match (expected, current.as_ref()) {
+                (None, None) => true,
+                (Some(expected), Some((hash, revision, change_id, _))) => {
+                    expected.memo_id == memo_id
+                        && expected.content_hash == *hash
+                        && expected.revision == *revision
+                        && expected.change_id == *change_id
+                }
+                _ => false,
+            };
+            if !matches {
+                return Ok(None);
+            }
+        }
+
         if let Some((existing_hash, revision, change_id, updated_at)) = current.as_ref() {
             if existing_hash == content_hash {
                 tx.commit().map_err(sqlite_to_io)?;
-                return Ok(MemoContentCommit {
+                return Ok(Some(MemoContentCommit {
                     state: MemoContentRevision {
                         memo_id: memo_id.to_string(),
                         notebook_id: notebook_id.to_string(),
@@ -310,7 +361,7 @@ impl MemoFile {
                         updated_at: *updated_at,
                     },
                     changed: false,
-                });
+                }));
             }
         }
 
@@ -343,7 +394,7 @@ impl MemoFile {
         .map_err(sqlite_to_io)?;
         tx.commit().map_err(sqlite_to_io)?;
 
-        Ok(MemoContentCommit {
+        Ok(Some(MemoContentCommit {
             state: MemoContentRevision {
                 memo_id: memo_id.to_string(),
                 notebook_id: notebook_id.to_string(),
@@ -353,7 +404,7 @@ impl MemoFile {
                 updated_at,
             },
             changed: true,
-        })
+        }))
     }
 
     pub fn read_memo_content_revision(

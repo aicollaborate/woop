@@ -151,10 +151,27 @@ impl DbBackend {
             std::fs::create_dir_all(parent)
                 .map_err(|e| SecretStoreError::BackendUnavailable(format!("create dir: {e}")))?;
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&self.db_path)
+                .map_err(|error| {
+                    SecretStoreError::BackendUnavailable(format!("create private db: {error}"))
+                })?;
+        }
+        if self.db_path.exists() {
+            set_file_owner_only_perms(&self.db_path)?;
+        }
         let conn = Connection::open(&self.db_path)
             .map_err(|e| SecretStoreError::Platform(format!("open db: {e}")))?;
         conn.execute_batch(
             r#"
+            PRAGMA secure_delete = ON;
             CREATE TABLE IF NOT EXISTS secret_kv (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -162,9 +179,7 @@ impl DbBackend {
             "#,
         )
         .map_err(|e| SecretStoreError::Platform(format!("init table: {e}")))?;
-        // db 文件收紧到 0o600 (wal/shm 由 sqlite 按 umask 创建, 同机其他用户
-        // 已被 0o700 目录挡住, 这里再锁主文件一层)。
-        set_file_owner_only_perms(&self.db_path);
+        set_file_owner_only_perms(&self.db_path)?;
         Ok(conn)
     }
 }
@@ -269,13 +284,17 @@ pub fn entry_name(provider: &str, account: &str) -> String {
 }
 
 #[cfg(unix)]
-fn set_file_owner_only_perms(path: &Path) {
+fn set_file_owner_only_perms(path: &Path) -> Result<(), SecretStoreError> {
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+        SecretStoreError::BackendUnavailable(format!("set private db permissions: {error}"))
+    })
 }
 
 #[cfg(not(unix))]
-fn set_file_owner_only_perms(_path: &Path) {}
+fn set_file_owner_only_perms(_path: &Path) -> Result<(), SecretStoreError> {
+    Ok(())
+}
 
 // ============================================
 // 测试 ── MockBackend + SecretStore 单测

@@ -72,45 +72,30 @@ pub fn restore_memo_version(
         .ok()?
         .path;
     start_security_bookmark_access(&state, &current_path);
-    let current_content = fs::read_to_string(&current_path).ok()?;
-
-    if let Some(expected) = expectedContent.as_deref() {
-        if !cas_content_matches(&current_content, expected, &target_content) {
-            eprintln!(
-                "[restore_memo_version] CAS refused: key={} disk != expected",
-                id
-            );
-            return None;
-        }
-    }
-
-    if let Err(e) = MemoService::new(&read_lock(&state.memo_file, "memo_file")).create_memo_version(
-        &id,
-        &current_content,
-        MemoVersionSource::RestoreBackup,
-    ) {
-        eprintln!("[restore_memo_version] backup version failed for {id}: {e}");
-        return None;
-    }
-
-    mark_self_write_for(&app, &current_path);
-    match MemoService::new(&read_lock(&state.memo_file, "memo_file"))
-        .save_memo(&id, &target_content)
-    {
-        Ok(_) => {
-            let commit =
-                emit_updated_after_write(state.inner(), &app, &id, before, Some(window.label()));
-            let final_path = MemoService::new(&read_lock(&state.memo_file, "memo_file"))
-                .resolve_memo(&id)
-                .ok()?
-                .path;
-            start_security_bookmark_access(&state, &final_path);
-            let final_content = fs::read_to_string(&final_path).ok()?;
-            Some(WriteDocumentResult {
-                path: final_path.to_string_lossy().to_string(),
-                content: final_content,
-                commit,
-            })
+    let result = {
+        let memo_file = read_lock(&state.memo_file, "memo_file");
+        MemoService::new(&memo_file).save_memo_with_receipt(
+            &id,
+            &target_content,
+            false,
+            |resolved, current| {
+                if expectedContent.as_deref().is_some_and(|expected| {
+                    !cas_content_matches(current, expected, &target_content)
+                }) {
+                    return Err(flowix_core::FlowixError::Conflict(format!(
+                        "memo {id} changed on disk"
+                    )));
+                }
+                memo_file.create_memo_version(&id, current, MemoVersionSource::RestoreBackup)?;
+                mark_self_write_for(&app, &resolved.path);
+                Ok(())
+            },
+        )
+    };
+    match result {
+        Ok(receipt) => {
+            start_security_bookmark_access(&state, &receipt.edited.path);
+            emit_saved_memo_receipt(state.inner(), &app, receipt, before, window.label())
         }
         Err(e) => {
             eprintln!("[restore_memo_version] restore failed for {id}: {e}");

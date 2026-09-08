@@ -203,7 +203,7 @@ impl MemoFile {
             let old_path = self.get_memo_base().join(&old_filename);
             let new_path = self.get_memo_base().join(&new_filename);
             if old_path.exists() {
-                fs::rename(&old_path, &new_path)?;
+                rename_file_noclobber(&old_path, &new_path)?;
             }
         }
 
@@ -336,7 +336,7 @@ impl MemoFile {
             let old_path = self.get_memo_base().join(&old_filename);
             let new_path = self.get_memo_base().join(&new_filename);
             if old_path.exists() {
-                fs::rename(&old_path, &new_path)?;
+                rename_file_noclobber(&old_path, &new_path)?;
             }
         }
 
@@ -417,7 +417,7 @@ impl MemoFile {
             let old_path = base.join(&old_filename);
             let new_path = base.join(&new_filename);
             if old_path.exists() {
-                fs::rename(&old_path, &new_path)?;
+                rename_file_noclobber(&old_path, &new_path)?;
             }
         }
 

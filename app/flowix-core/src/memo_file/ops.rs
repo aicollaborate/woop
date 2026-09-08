@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::OptionalExtension;
 
 use super::derivation::{apply_derived_memo_fields, extract_title_and_preview};
+pub(super) use super::file_io::{atomic_create_bytes, atomic_write_bytes, rename_file_noclobber};
 use super::frontmatter::{
     build_md_content, extract_document_metadata,
     extract_document_metadata_preserving_invalid_tag_paths, merge_frontmatter,
@@ -117,54 +118,6 @@ impl IsMd for Path {
             })
             .unwrap_or(false)
     }
-}
-
-/// 原子写: temp file + fsync + rename ── 中途崩溃看到的永远是完整旧文件或
-/// 完整新文件。跟 `index_store::atomic_write_json` 同源, 推广到任意路径 + bytes
-/// 供 `.md` 写路径复用。
-///
-/// Windows 上 `MoveFileExW + MOVEFILE_REPLACE_EXISTING` 跨同一目录是原子;
-/// `dunce::canonicalize` 去除 `\\?\` UNC 前缀, 确保 tmp 与 final 落在同一
-/// canonical 根下, 否则跨盘符 rename 会失败。`canonicalize` 失败时 (文件
-/// 还没创建 ── e.g. 全新 register_existing_file 场景) 退回原路径, 这时
-/// rename 在同一目录下仍然原子。
-pub fn atomic_write_bytes(final_path: &Path, content: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let final_path = dunce::canonicalize(final_path).unwrap_or_else(|_| final_path.to_path_buf());
-    if let Some(parent) = final_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = final_path.with_extension(format!(
-        "tmp.{}.{}",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-    ));
-    {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(content)?;
-        f.sync_all()?;
-    }
-    if let Err(e) = fs::rename(&tmp, &final_path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
-}
-
-/// Atomically create a new file without replacing an entry created by another process.
-fn atomic_create_bytes(final_path: &Path, content: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let parent = final_path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file path has no parent")
-    })?;
-    fs::create_dir_all(parent)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(content)?;
-    temp.as_file().sync_all()?;
-    temp.persist_noclobber(final_path)
-        .map(|_| ())
-        .map_err(|error| error.error)
 }
 
 /// 跟 `flowix-desktop::fs_watcher::normalize_for_compare` 同口径的路径归一。

@@ -23,6 +23,7 @@ pub struct SyncManager {
     membership: Arc<RwLock<Option<CloudMembership>>>,
     last_error: Arc<RwLock<Option<String>>>,
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    auth_generation: Arc<std::sync::Mutex<u64>>,
     account_sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 

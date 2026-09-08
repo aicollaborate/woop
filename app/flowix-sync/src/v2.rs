@@ -182,7 +182,7 @@ pub fn collect_v2_attachments(
     Ok(attachments)
 }
 
-fn referenced_attachment_paths(directory: &Path, markdown: &[u8]) -> BTreeSet<PathBuf> {
+pub fn referenced_attachment_paths(directory: &Path, markdown: &[u8]) -> BTreeSet<PathBuf> {
     const PREFIXES: [&str; 3] = [
         "asset://localhost/",
         "http://asset.localhost/",
@@ -291,6 +291,7 @@ pub enum V2RemoteApply {
 
 #[derive(Debug, Clone, Default)]
 pub struct V2AccountSyncReport {
+    pub(crate) auth_generation: Option<u64>,
     pub started_at: i64,
     pub cursor: i64,
     pub head_cursor: i64,

@@ -17,6 +17,26 @@ describe('memo dispatcher window isolation', () => {
     subscribeMock.mockReset();
   });
 
+  it('keeps derived-only notifications away from document subscribers and releases handlers', async () => {
+    const { memoDispatcher, registerMemoDerivedRefreshHandler } = await import('./memo-dispatcher');
+    const documentHandler = vi.fn();
+    const refresh = vi.fn();
+    const releaseDocument = memoDispatcher.subscribe(documentHandler);
+    const releaseRefresh = registerMemoDerivedRefreshHandler(refresh);
+    const event: MemoEvent = {
+      kind: 'deleted', id: 'memo', path: '/memo.md', notebookId: 'notebook',
+      source: 'external_tool', derivedOnly: true,
+      derivedChanged: { tags: true, todos: true, agents: false },
+    };
+    memoDispatcher.dispatch(event);
+    expect(documentHandler).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith({ notebookId: 'notebook', derivedChanged: event.derivedChanged });
+    releaseRefresh();
+    memoDispatcher.dispatch(event);
+    expect(refresh).toHaveBeenCalledOnce();
+    releaseDocument();
+  });
+
   it('does not connect to Tauri while importing the dispatcher', async () => {
     const { memoDispatcher } = await import('./memo-dispatcher');
 

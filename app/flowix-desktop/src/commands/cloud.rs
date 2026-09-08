@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+mod deletion;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -88,13 +89,15 @@ fn emit_cloud_state(app: &AppHandle, state: &CloudState) {
 }
 
 fn persist_rotated_token(state: &AppState) -> Result<(), String> {
-    if let Some(token) = state.cloud_sync.current_refresh_token() {
-        state
-            .user_config
-            .save_cloud_refresh_token(&token)
-            .map_err(sync_error)?;
-    }
-    Ok(())
+    state.cloud_sync.with_current_refresh_token(|token| {
+        if let Some(token) = token {
+            state
+                .user_config
+                .save_cloud_refresh_token(token)
+                .map_err(sync_error)?;
+        }
+        Ok(())
+    })
 }
 
 const FULL_LOCAL_SNAPSHOT_INTERVAL_MS: i64 = 5 * 60 * 1_000;
@@ -222,6 +225,9 @@ fn apply_v2_note_changes(
     changes: &[&V2RemoteApply],
 ) -> Result<(), String> {
     let memo_file = read_lock(&state.memo_file, "memo_file");
+    let _write_guard = memo_file
+        .acquire_cross_process_write_lock()
+        .map_err(sync_error)?;
     let notebook = memo_file
         .get_notebook_config_by_id(notebook_id)
         .ok_or_else(|| "NOTEBOOK_NOT_FOUND".to_string())?;
@@ -246,25 +252,25 @@ fn apply_v2_note_changes(
             continue;
         };
         if *deleted {
-            if let Some(memo) = memo_file.read_memo_for_notebook_id(notebook_id, note_id) {
+            if let Some(memo) = deletion::delete_cloud_note_locked(
+                &memo_file,
+                &state.cloud_sync,
+                notebook_id,
+                note_id,
+                |path| crate::watcher::runtime::mark_self_write_for(app, path),
+            )? {
                 let path = base.join(&memo.filename);
-                crate::watcher::runtime::mark_self_write_for(app, &path);
                 let derived_changed = MemoDerivedChanged::from_deleted(&memo);
-                if memo_file
-                    .delete_memo_result_for_notebook_id(notebook_id, note_id)
-                    .map_err(sync_error)?
-                {
-                    memo_events::emit(
-                        app,
-                        MemoEvent::Deleted {
-                            id: note_id.clone(),
-                            path: path.to_string_lossy().into_owned(),
-                            notebook_id: notebook_id.to_string(),
-                            derived_changed,
-                            source: MemoChangeSource::CloudSync,
-                        },
-                    );
-                }
+                memo_events::emit(
+                    app,
+                    MemoEvent::Deleted {
+                        id: note_id.clone(),
+                        path: path.to_string_lossy().into_owned(),
+                        notebook_id: notebook_id.to_string(),
+                        derived_changed,
+                        source: MemoChangeSource::CloudSync,
+                    },
+                );
             }
         } else {
             let bytes = content
@@ -503,6 +509,9 @@ fn canonicalize_local_keys(
     notebook_id: &str,
 ) -> Result<(), String> {
     let memo_file = read_lock(&state.memo_file, "memo_file");
+    let _write_guard = memo_file
+        .acquire_cross_process_write_lock()
+        .map_err(sync_error)?;
     let notebook = memo_file
         .get_notebook_config_by_id(notebook_id)
         .ok_or_else(|| "NOTEBOOK_NOT_FOUND".to_string())?;
@@ -747,6 +756,7 @@ async fn sync_v2_account_pass(
     enabled: &[V2SyncedNotebook],
     activity: &SyncActivity,
 ) -> Result<V2AccountSyncReport, String> {
+    let generation = state.cloud_sync.session_restore_generation();
     let notebook_scope = target.notebook_scope();
     let full_local_snapshot = should_run_full_local_snapshot(state, notebook_scope)?;
     let sync_lock = account_sync_lock();
@@ -776,15 +786,10 @@ async fn sync_v2_account_pass(
         "transfer",
         None,
     );
-    let report_result = match notebook_scope {
-        Some(notebook_id) => {
-            state
-                .cloud_sync
-                .sync_v2_notebook(notebook_id, notebooks, notes)
-                .await
-        }
-        None => state.cloud_sync.sync_v2_account(notebooks, notes).await,
-    };
+    let report_result = state
+        .cloud_sync
+        .sync_v2_snapshot_at_generation(notebook_scope, notebooks, notes, generation)
+        .await;
     persist_rotated_token(state)?;
     let report = report_result.map_err(cloud_error)?;
     emit_activity_status(
@@ -795,17 +800,12 @@ async fn sync_v2_account_pass(
         "apply",
         None,
     );
-    apply_v2_report(state, app, &report)?;
-    match notebook_scope {
-        Some(notebook_id) => state
-            .cloud_sync
-            .complete_v2_notebook_sync(notebook_id, &report)
-            .map_err(sync_error)?,
-        None => state
-            .cloud_sync
-            .complete_v2_account_sync(&report)
-            .map_err(sync_error)?,
-    }
+    state
+        .cloud_sync
+        .complete_v2_sync_with_apply(&report, notebook_scope, || {
+            apply_v2_report(state, app, &report).map_err(SyncError::InvalidState)
+        })
+        .map_err(sync_error)?;
     if full_local_snapshot && notebook_scope.is_none() {
         LAST_FULL_LOCAL_SNAPSHOT_AT.store(Utc::now().timestamp_millis(), Ordering::SeqCst);
     }
@@ -1237,17 +1237,15 @@ pub async fn cloud_register(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<CloudState, String> {
-    let outcome = state
+    state
         .cloud_sync
         .register(email.trim(), &password, display_name.trim())
         .await
         .map_err(sync_error)?;
-    state
-        .user_config
-        .save_cloud_refresh_token(&outcome.refresh_token)
-        .map_err(sync_error)?;
-    emit_cloud_state(&app, &outcome.state);
-    Ok(outcome.state)
+    persist_rotated_token(state.inner())?;
+    let next_state = state.cloud_sync.state().map_err(sync_error)?;
+    emit_cloud_state(&app, &next_state);
+    Ok(next_state)
 }
 
 #[tauri::command]
@@ -1257,17 +1255,15 @@ pub async fn cloud_login(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<CloudState, String> {
-    let outcome = state
+    state
         .cloud_sync
         .login(email.trim(), &password)
         .await
         .map_err(sync_error)?;
-    state
-        .user_config
-        .save_cloud_refresh_token(&outcome.refresh_token)
-        .map_err(sync_error)?;
-    emit_cloud_state(&app, &outcome.state);
-    Ok(outcome.state)
+    persist_rotated_token(state.inner())?;
+    let next_state = state.cloud_sync.state().map_err(sync_error)?;
+    emit_cloud_state(&app, &next_state);
+    Ok(next_state)
 }
 
 #[tauri::command]
@@ -1282,17 +1278,15 @@ pub async fn cloud_sign_in_with_apple(
         .await
         .map_err(sync_error)?;
     let authorization = crate::apple_sign_in::authorize(window, challenge).await?;
-    let outcome = state
+    state
         .cloud_sync
         .sign_in_with_apple(&authorization)
         .await
         .map_err(sync_error)?;
-    state
-        .user_config
-        .save_cloud_refresh_token(&outcome.refresh_token)
-        .map_err(sync_error)?;
-    emit_cloud_state(&app, &outcome.state);
-    Ok(outcome.state)
+    persist_rotated_token(state.inner())?;
+    let next_state = state.cloud_sync.state().map_err(sync_error)?;
+    emit_cloud_state(&app, &next_state);
+    Ok(next_state)
 }
 
 #[tauri::command]
@@ -1320,13 +1314,19 @@ pub async fn cloud_logout(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<CloudState, String> {
-    state.cloud_sync.logout().await.map_err(sync_error)?;
-    state
-        .user_config
-        .delete_cloud_refresh_token()
-        .map_err(sync_error)?;
+    let logout_result = state
+        .cloud_sync
+        .logout_with_cleanup(|| {
+            state
+                .user_config
+                .delete_cloud_refresh_token()
+                .map_err(|error| SyncError::InvalidState(error.to_string()))
+        })
+        .await
+        .map_err(sync_error);
     let next_state = state.cloud_sync.state().map_err(sync_error)?;
     emit_cloud_state(&app, &next_state);
+    logout_result?;
     Ok(next_state)
 }
 

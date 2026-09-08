@@ -44,6 +44,7 @@ pub const MEMO_ID_LENGTH: usize = 8;
 
 mod content;
 mod derivation;
+mod file_io;
 pub(crate) mod frontmatter;
 mod index_store;
 mod internal_migration;
@@ -61,6 +62,9 @@ pub use derivation::{
     extract_todos_from_body, normalize_search_tag_filter, normalize_tag_path,
     tag_path_matches_filter,
 };
+pub use file_io::{
+    atomic_create_bytes, atomic_write_bytes, rename_file_noclobber, FileWriteOutcome,
+};
 pub use frontmatter::{
     build_md_content, extract_body_content, extract_document_metadata, extract_frontmatter_key,
     extract_frontmatter_properties, merge_frontmatter, normalize_document_tags,
@@ -68,9 +72,7 @@ pub use frontmatter::{
 };
 pub use index_store::{MemoContentCommit, MemoContentRevision};
 pub use internal_migration::{NotebookInternalMigrationReport, NOTEBOOK_INTERNAL_MIGRATION_KEY};
-pub use ops::{
-    atomic_write_bytes, base_filename, resolve_filename_conflict, sanitize_filename_component, IsMd,
-};
+pub use ops::{base_filename, resolve_filename_conflict, sanitize_filename_component, IsMd};
 pub use types::{
     AgentThreadItem, DeleteTagReport, Memo, MemoColor, MemoIndexEntry, MemoIndexFile, MemoLocation,
     MemoMetadataFile, MemoTag, MemoTodoEntry, MoveTagReport, Notebook, NotebookConfig,
@@ -112,7 +114,7 @@ pub struct MemoFile {
     notebook_configs_cache: std::sync::RwLock<Option<Vec<NotebookConfig>>>,
 }
 
-pub(crate) struct CrossProcessWriteGuard {
+pub struct CrossProcessWriteGuard {
     file: std::fs::File,
 }
 
@@ -145,7 +147,7 @@ impl MemoFile {
         }
     }
 
-    pub(crate) fn acquire_cross_process_write_lock(&self) -> io::Result<CrossProcessWriteGuard> {
+    pub fn acquire_cross_process_write_lock(&self) -> io::Result<CrossProcessWriteGuard> {
         std::fs::create_dir_all(&self.config_dir)?;
         let file = OpenOptions::new()
             .create(true)

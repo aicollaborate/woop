@@ -26,13 +26,18 @@ import { subscribe } from '@platform/tauri/event-bus';
 import { EventDispatcher, type DispatcherMiddleware } from '@/lib/event-dispatcher';
 import { createMemoDedupMiddleware } from '@/lib/memo-dispatcher-dedup';
 import { createLogger } from '@/lib/logger';
-import type { MemoEvent } from '@/types/memo';
+import type { MemoEvent, MemoDerivedRefresh } from '@/types/memo';
 
 /**
  * 全局 memoDispatcher 单例 (per-webview)。内容型 Webview 通过同一个事件
  * 桥接接收 payload，浏览器列与第三列共享这份 dispatcher。
  */
 export const memoDispatcher = new EventDispatcher<MemoEvent>();
+const derivedRefreshDispatcher = new EventDispatcher<MemoDerivedRefresh>();
+
+export function registerMemoDerivedRefreshHandler(handler: (event: MemoDerivedRefresh) => void): () => void {
+  return derivedRefreshDispatcher.subscribe(handler);
+}
 const logger = createLogger('memo-event');
 
 // ---- 显式生命周期: 单一 Tauri 订阅 → dispatcher 入口 ------------------------
@@ -96,7 +101,10 @@ let memoDedupInstalled = false;
 function installMemoDedup(): void {
   if (memoDedupInstalled) return;
   memoDedupInstalled = true;
-  memoDispatcher.use(createMemoDedupMiddleware({ delay: 50 }));
+  memoDispatcher.use(createMemoDedupMiddleware({
+    delay: 50,
+    onDiscardedDerivedChange: (event) => derivedRefreshDispatcher.dispatch(event),
+  }));
 }
 installMemoDedup();
 

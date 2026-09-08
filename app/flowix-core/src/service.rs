@@ -21,6 +21,13 @@ const DEFAULT_MEMO_PAGE_SIZE: usize = 50;
 const MAX_MEMO_PAGE_SIZE: usize = 100;
 const MAX_MEMO_CURSOR_BYTES: usize = 4096;
 
+pub struct MemoSaveReceipt {
+    pub edited: EditedMemo,
+    pub content: String,
+    pub notebook_id: String,
+    pub commit: Option<crate::memo_file::MemoContentRevision>,
+}
+
 type TagUsageSummary = (Vec<String>, Vec<(String, usize)>, usize, usize, usize);
 
 /// Opaque-to-transport cursor for a memo list query. The query identity is
@@ -511,22 +518,80 @@ impl<'a> MemoService<'a> {
         id_or_filename: &str,
         body: &str,
     ) -> Result<EditedMemo, FlowixError> {
+        self.save_memo_with_validation(id_or_filename, body, |_, _| Ok(()))
+    }
+
+    pub fn save_memo_with_validation(
+        &mut self,
+        id_or_filename: &str,
+        body: &str,
+        validate: impl FnOnce(&ResolvedMemo, &str) -> Result<(), FlowixError>,
+    ) -> Result<EditedMemo, FlowixError> {
+        self.save_memo_with_snapshot(id_or_filename, body, validate)
+            .map(|(edited, _)| edited)
+    }
+
+    pub fn save_memo_with_snapshot(
+        &mut self,
+        id_or_filename: &str,
+        body: &str,
+        validate: impl FnOnce(&ResolvedMemo, &str) -> Result<(), FlowixError>,
+    ) -> Result<(EditedMemo, String), FlowixError> {
+        self.save_memo_with_receipt(id_or_filename, body, false, validate)
+            .map(|receipt| (receipt.edited, receipt.content))
+    }
+
+    pub fn save_memo_with_receipt(
+        &mut self,
+        id_or_filename: &str,
+        body: &str,
+        create_auto_version: bool,
+        validate: impl FnOnce(&ResolvedMemo, &str) -> Result<(), FlowixError>,
+    ) -> Result<MemoSaveReceipt, FlowixError> {
+        use sha2::{Digest, Sha256};
         let _write_guard = self.memo_file.acquire_cross_process_write_lock()?;
         let resolved = self.resolve_memo(id_or_filename)?;
-        let old_bytes = std::fs::metadata(&resolved.path)
-            .map(|metadata| metadata.len() as usize)
-            .unwrap_or(0);
+        let current = std::fs::read_to_string(&resolved.path)?;
+        validate(&resolved, &current)?;
+        let old_bytes = current.len();
         let memo = self
             .memo_file
             .write_memo_renaming_on_title_change_global(&resolved.id, body)?;
         let path = PathBuf::from(&resolved.notebook.path).join(&memo.filename);
-        Ok(EditedMemo {
-            id: resolved.id,
-            memo: Some(memo),
-            path,
-            old_bytes,
-            new_bytes: body.len(),
-            dry_run: false,
+        let content = std::fs::read_to_string(&path)?;
+        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let commit = match self.memo_file.commit_memo_content_revision(
+            &resolved.id,
+            &resolved.notebook.id,
+            &content_hash,
+            &uuid::Uuid::new_v4().to_string(),
+        ) {
+            Ok(commit) => Some(commit.state),
+            Err(error) => {
+                tracing::warn!("Memo saved but revision persistence failed: {error}");
+                None
+            }
+        };
+        if create_auto_version {
+            if let Err(error) = self
+                .memo_file
+                .maybe_create_auto_memo_version(&resolved.id, &content)
+            {
+                tracing::warn!("Memo saved but automatic version failed: {error}");
+            }
+        }
+        Ok(MemoSaveReceipt {
+            edited: EditedMemo {
+                id: resolved.id,
+                memo: Some(memo),
+                path,
+                old_bytes,
+                new_bytes: content.len(),
+                dry_run: false,
+            },
+            content,
+            notebook_id: resolved.notebook.id,
+            commit,
         })
     }
 
@@ -810,6 +875,160 @@ mod tests {
             }])
             .unwrap();
         (temp, memo_file)
+    }
+
+    #[test]
+    fn save_snapshot_does_not_change_when_a_later_writer_saves() {
+        let (_directory, store) = service_fixture();
+        let mut service = MemoService::new(&store);
+        let created = service.create_memo("work", "# Note\noriginal\n").unwrap();
+        let (edited, snapshot) = service
+            .save_memo_with_snapshot(&created.memo.id, "# Note\nfirst\n", |_, _| Ok(()))
+            .unwrap();
+        service
+            .save_memo(&created.memo.id, "# Note\nsecond\n")
+            .unwrap();
+        assert!(snapshot.ends_with("# Note\nfirst\n"));
+        assert!(std::fs::read_to_string(edited.path)
+            .unwrap()
+            .ends_with("# Note\nsecond\n"));
+    }
+
+    #[test]
+    fn save_receipt_binds_revision_version_and_content_before_the_next_writer() {
+        use sha2::{Digest, Sha256};
+        let (_directory, store) = service_fixture();
+        let mut service = MemoService::new(&store);
+        let created = service.create_memo("work", "# Note\noriginal\n").unwrap();
+        let first = service
+            .save_memo_with_receipt(&created.memo.id, "# Note\nfirst\n", true, |_, _| Ok(()))
+            .unwrap();
+        let first_commit = first.commit.unwrap();
+        let second = service
+            .save_memo_with_receipt(&created.memo.id, "# Note\nsecond\n", false, |_, _| Ok(()))
+            .unwrap();
+        let second_commit = second.commit.unwrap();
+        assert_eq!(
+            first_commit.content_hash,
+            format!("{:x}", Sha256::digest(first.content.as_bytes()))
+        );
+        assert_eq!(
+            second_commit.content_hash,
+            format!("{:x}", Sha256::digest(second.content.as_bytes()))
+        );
+        assert!(second_commit.revision > first_commit.revision);
+        assert_ne!(first_commit.change_id, second_commit.change_id);
+        assert_eq!(first.notebook_id, "work");
+        let versions = service.list_memo_versions(&created.memo.id);
+        let version = versions
+            .iter()
+            .find(|version| version.content_hash == first_commit.content_hash)
+            .unwrap();
+        assert_eq!(
+            service
+                .read_memo_version(&created.memo.id, &version.id)
+                .as_deref(),
+            Some(first.content.as_str())
+        );
+    }
+
+    #[test]
+    fn rejected_save_preserves_file_name_content_and_index() {
+        let (_temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
+        let created = service
+            .create_memo("work", "# Original\n\nimportant\n")
+            .unwrap();
+        let original = std::fs::read_to_string(&created.path).unwrap();
+        let before = service.get_memo(&created.memo.id).unwrap();
+        let result = service.save_memo_with_validation(
+            &created.memo.id,
+            "# Renamed\n\nreplacement\n",
+            |_, _| Err(FlowixError::Conflict("stale snapshot".to_string())),
+        );
+        assert!(matches!(result, Err(FlowixError::Conflict(_))));
+        assert_eq!(std::fs::read_to_string(&created.path).unwrap(), original);
+        let after = service.get_memo(&created.memo.id).unwrap();
+        assert_eq!(after.entry.filename, before.entry.filename);
+        assert_eq!(after.entry.updated_at, before.entry.updated_at);
+        assert!(!created.path.parent().unwrap().join("Renamed.md").exists());
+    }
+
+    #[test]
+    fn validation_runs_while_the_shared_write_lock_is_held() {
+        let (temp, memo_file) = service_fixture();
+        let mut service = MemoService::new(&memo_file);
+        let created = service.create_memo("work", "# Note\nold\n").unwrap();
+        let lock_path = temp.path().join("config/.memo-write.lock");
+        let result = service
+            .save_memo_with_validation(&created.memo.id, "# Note\nnew\n", |_, current| {
+                assert!(current.contains("old"));
+                let probe = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&lock_path)
+                    .unwrap();
+                assert!(fs2::FileExt::try_lock_exclusive(&probe).is_err());
+                Ok(())
+            })
+            .unwrap();
+        assert!(std::fs::read_to_string(result.path)
+            .unwrap()
+            .contains("new"));
+    }
+
+    #[test]
+    fn concurrent_memo_saves_with_one_expected_snapshot_have_one_winner() {
+        use std::sync::{Arc, Barrier};
+        let (temp, memo_file) = service_fixture();
+        let created = MemoService::new(&memo_file)
+            .create_memo("work", "# Note\nold\n")
+            .unwrap();
+        let expected = std::fs::read_to_string(&created.path).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let workers: Vec<_> = ["# Note\nfirst\n", "# Note\nsecond\n"]
+            .into_iter()
+            .map(|content| {
+                let store = MemoFile::new(temp.path().join("config"));
+                let id = created.memo.id.clone();
+                let expected = expected.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (
+                        MemoService::new(&store).save_memo_with_validation(
+                            &id,
+                            content,
+                            |_, current| {
+                                if current != expected {
+                                    return Err(FlowixError::Conflict("stale snapshot".into()));
+                                }
+                                Ok(())
+                            },
+                        ),
+                        content,
+                    )
+                })
+            })
+            .collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_eq!(
+            results.iter().filter(|(result, _)| result.is_ok()).count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|(result, _)| matches!(result, Err(FlowixError::Conflict(_))))
+                .count(),
+            1
+        );
+        let winner = results.iter().find(|(result, _)| result.is_ok()).unwrap().1;
+        let stored = std::fs::read_to_string(&created.path).unwrap();
+        assert!(stored.ends_with(winner));
     }
 
     #[test]

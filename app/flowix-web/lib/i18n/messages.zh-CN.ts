@@ -1,4 +1,10 @@
 const zhCN = {
+    "editor.attachment.uploadFileTooLarge": "附件超过单文件 1 GiB 上限，请拆分文件后重试。",
+    "editor.attachment.uploadTooLarge": "附件内容超过 64 MiB，请使用原生文件选择导入。",
+    "editor.attachment.uploadBusy": "正在处理其他附件，请稍后重试。",
+    "editor.attachment.uploadOwnerRequired": "无法确定附件所属笔记，请重新打开笔记后重试。",
+    "editor.attachment.uploadFailed": "附件保存失败，请检查文件权限或剩余空间后重试。",
+    "editor.attachment.uploadUninserted": "附件已保存，但原插入位置已失效或编辑器已关闭。文件仍保留在笔记本的 attachments 目录中。",
     "language.zhCN": "简体中文",
     "language.enUS": "English",
 
@@ -974,6 +980,7 @@ const zhCN = {
     "memo.fileTree.deleted": "已删除 {name}",
     "memo.fileTree.deleteFailed": "删除失败",
     "memo.fileTree.createFailed": "创建失败",
+    "memo.fileTree.nameConflict": "同名文件已存在，请使用其他名称",
     "memo.fileTree.copyPath": "复制路径",
     "memo.fileTree.pathCopied": "路径已复制",
     "memo.fileTree.copyFailed": "复制失败",

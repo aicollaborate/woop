@@ -77,6 +77,44 @@ pub(super) fn emit_updated_memo_event(
     )
 }
 
+pub(super) fn emit_saved_memo_receipt(
+    state: &AppState,
+    app: &AppHandle,
+    receipt: flowix_core::service::MemoSaveReceipt,
+    before: Option<Memo>,
+    origin_window_label: &str,
+) -> Option<super::WriteDocumentResult> {
+    let memo = receipt.edited.memo?;
+    let id = receipt.edited.id;
+    let path = receipt.edited.path.to_string_lossy().into_owned();
+    mark_self_write_for(app, &receipt.edited.path);
+    try_index_upsert(state, &id);
+    let derived_changed = MemoDerivedChanged::from_memos(before.as_ref(), &memo);
+    let commit = receipt.commit.map(|commit| DocumentCommit {
+        content_hash: commit.content_hash,
+        revision: commit.revision,
+        change_id: commit.change_id,
+    });
+    let commit = memo_events::emit_with_recorded_commit_from_window(
+        app,
+        MemoEvent::Updated {
+            id,
+            path: path.clone(),
+            notebook_id: receipt.notebook_id,
+            memo,
+            derived_changed,
+            source: MemoChangeSource::UserEdit,
+        },
+        commit,
+        Some(origin_window_label),
+    );
+    Some(super::WriteDocumentResult {
+        path,
+        content: receipt.content,
+        commit,
+    })
+}
+
 /// Mark the written file, refresh the search index, and notify the UI.
 pub(crate) fn emit_updated_after_write(
     state: &AppState,
@@ -143,12 +181,49 @@ pub(super) fn normalize_markdown_for_cas(content: &str) -> String {
     out
 }
 
+fn code_content_for_cas(content: &str) -> Vec<String> {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut fence: Option<(char, usize)> = None;
+    let mut lines = Vec::new();
+    for line in extract_body_content(&normalized).lines() {
+        let trimmed = line.trim_start_matches(' ');
+        let indentation = line.len() - trimmed.len();
+        if let Some((marker, length)) = fence {
+            lines.push(line.to_string());
+            let run = trimmed.chars().take_while(|value| *value == marker).count();
+            if indentation <= 3 && run >= length && trimmed[run..].trim().is_empty() {
+                fence = None;
+            }
+        } else if indentation <= 3 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+            let marker = trimmed.chars().next().unwrap_or('`');
+            let length = trimmed.chars().take_while(|value| *value == marker).count();
+            fence = Some((marker, length));
+            lines.push(line.to_string());
+        } else if indentation >= 4 || line.starts_with('\t') {
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
 pub(super) fn cas_content_matches(current: &str, expected: &str, incoming: &str) -> bool {
     if current == expected || current == incoming {
         return true;
     }
 
-    normalize_markdown_for_cas(current) == normalize_markdown_for_cas(expected)
+    let metadata = |content: &str| {
+        flowix_core::memo_file::extract_document_metadata(content)
+            .ok()
+            .map(|mut metadata| {
+                if let Some(properties) = metadata.properties.as_object_mut() {
+                    properties.remove("key");
+                }
+                metadata
+            })
+    };
+    matches!((metadata(current), metadata(expected)), (Some(current), Some(expected)) if current == expected)
+        && code_content_for_cas(current) == code_content_for_cas(expected)
+        && normalize_markdown_for_cas(current) == normalize_markdown_for_cas(expected)
 }
 
 pub(super) fn note_title(filename: &str) -> String {
@@ -162,6 +237,35 @@ pub(super) fn note_title(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::cas_content_matches;
+
+    #[test]
+    fn cas_rejects_frontmatter_only_changes() {
+        let current = "---\nkey: note\nstatus: changed\n---\n# Title\n";
+        let expected = "---\nkey: note\nstatus: original\n---\n# Title\n";
+        assert!(!cas_content_matches(current, expected, "# Title\nnew body"));
+    }
+
+    #[test]
+    fn cas_preserves_significant_code_whitespace() {
+        assert!(!cas_content_matches(
+            "```\nvalue  \n```",
+            "```\nvalue\n```",
+            "updated"
+        ));
+        assert!(!cas_content_matches(
+            "~~~\n\n\nvalue\n~~~",
+            "~~~\n\nvalue\n~~~",
+            "updated"
+        ));
+        assert!(!cas_content_matches("    value  ", "    value", "updated"));
+    }
+
+    #[test]
+    fn cas_does_not_treat_invalid_metadata_as_empty() {
+        let current = "---\nstatus: [broken\n---\n# Title\n";
+        let expected = "---\nkey: note\n---\n# Title\n";
+        assert!(!cas_content_matches(current, expected, "# Title\nnew body"));
+    }
 
     #[test]
     fn cas_accepts_markdown_serialization_noise() {
