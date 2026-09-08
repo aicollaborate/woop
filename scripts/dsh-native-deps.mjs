@@ -25,6 +25,12 @@ export async function repairDshNativePackages(runtimeRoot, workspaceRoot, {
   const nativeSource = await findInstalledPackage(workspaceRoot, nativeName, expectedVersion)
   if (!nativeSource) throw missingDependency(`${nativeName}@${expectedVersion}`, platform, arch)
   await repairOptionalNativePackage(runtimeRoot, nativeSource, nativeName, expectedVersion)
+
+  const systemNativeName = `@deepseek-ai/node-addon-system-${platform}-${arch}`
+  const systemSource = await findInstalledPackage(workspaceRoot, systemNativeName)
+  if (!systemSource) throw missingDependency(systemNativeName, platform, arch)
+  const systemManifest = await readPackageManifest(systemSource)
+  await repairOptionalNativePackage(runtimeRoot, systemSource, systemNativeName, systemManifest.version, true)
 }
 
 /**
@@ -54,14 +60,14 @@ export async function verifyDshNativePackages(runtimeRoot, {
   return { wrapperVersion: wrapper.version, nativeVersion: native.version, nativeName }
 }
 
-async function repairOptionalNativePackage(runtimeRoot, source, packageName, expectedVersion) {
+async function repairOptionalNativePackage(runtimeRoot, source, packageName, expectedVersion, force = false) {
   const target = packageRoot(runtimeRoot, packageName)
   const sourceManifest = await readPackageManifest(source)
   if (sourceManifest.version !== expectedVersion) {
     throw new Error(`${packageName} source version mismatch: expected ${expectedVersion}, got ${sourceManifest.version ?? '<missing>'}`)
   }
   const targetManifest = await tryReadPackageManifest(target)
-  if (targetManifest?.version === expectedVersion && !targetManifest._pnpmPlaceholder) return
+  if (!force && targetManifest?.version === expectedVersion && !targetManifest._pnpmPlaceholder) return
 
   await rm(target, { recursive: true, force: true })
   await mkdir(dirname(target), { recursive: true })
