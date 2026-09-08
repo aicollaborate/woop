@@ -88,6 +88,35 @@ export function resolveBinding(
 }
 
 /**
+ * 返回动作当前可触发的全部绑定。用户设置过自定义绑定时，只返回该绑定；
+ * 否则返回主默认绑定和当前平台的附加默认绑定。
+ */
+export function resolveBindings(
+  actionId: string,
+  overrides: ShortcutOverrides = {},
+): ResolvedBinding[] {
+  const primary = resolveBinding(actionId, overrides);
+  if (!primary.chord) return [];
+
+  const override = overrides[actionId];
+  if (Object.prototype.hasOwnProperty.call(overrides, actionId) && tryParseChord(override)) {
+    return [primary];
+  }
+
+  const def = registry.get(actionId);
+  if (!def?.alternateBindings) return [primary];
+  const platform = getPlatform();
+  const platformKey: 'mac' | 'windows' | 'linux' =
+    platform === 'mac' ? 'mac' : platform === 'windows' ? 'windows' : 'linux';
+  const alternates = def.alternateBindings[platformKey] ?? [];
+  const resolved = alternates.flatMap((raw): ResolvedBinding[] => {
+    const chord = tryParseChord(raw);
+    return chord ? [{ chord, chordString: raw, isDefault: true }] : [];
+  });
+  return [primary, ...resolved];
+}
+
+/**
  * 探测当前所有 action 的 binding 冲突。
  *
  * 规则: 同一 (chord, scope) 上绑了 >1 个 action 即冲突。
@@ -103,12 +132,13 @@ export interface ConflictReport {
 export function detectConflicts(overrides: ShortcutOverrides = {}): ConflictReport[] {
   const buckets = new Map<string, string[]>();
   for (const action of listActions()) {
-    const { chord, chordString } = resolveBinding(action.id, overrides);
-    if (!chord || !chordString) continue;
-    const key = `${chordString}::${action.scope}`;
-    const arr = buckets.get(key) ?? [];
-    arr.push(action.id);
-    buckets.set(key, arr);
+    for (const { chord, chordString } of resolveBindings(action.id, overrides)) {
+      if (!chord || !chordString) continue;
+      const key = `${chordString}::${action.scope}`;
+      const arr = buckets.get(key) ?? [];
+      arr.push(action.id);
+      buckets.set(key, arr);
+    }
   }
   const out: ConflictReport[] = [];
   for (const [key, ids] of buckets) {

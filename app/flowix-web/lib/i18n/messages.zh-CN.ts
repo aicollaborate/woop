@@ -444,6 +444,8 @@ const zhCN = {
     "preferences.shortcuts.edit": "改键",
     "preferences.shortcuts.resetOneAria": "重置 {title} 为默认",
     "preferences.shortcuts.group.editor": "编辑",
+    "preferences.shortcuts.action.editor.selectAll.title": "全选",
+    "preferences.shortcuts.action.editor.selectAll.description": "全选当前编辑器中的内容。",
     "preferences.shortcuts.group.navigation": "导航",
     "preferences.shortcuts.group.view": "视图",
     "preferences.shortcuts.group.system": "系统",

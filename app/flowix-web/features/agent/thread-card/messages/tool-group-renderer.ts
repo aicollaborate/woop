@@ -12,9 +12,8 @@ import type {
 } from "@features/agent/thread-card/messages/message-render-context";
 import {
   createChevronIcon,
-  createToolPreviewLoadingIcon,
+  createToolRunningLoadingIcon,
 } from "@features/agent/thread-card/agent-thread-card-icons";
-import { TOOL_PREVIEW_EXIT_DURATION_MS } from "@features/agent/thread-card/messages/transient-display";
 
 type ToolGroup = Extract<AgentRenderItem, { kind: "tool-group" }>;
 
@@ -36,7 +35,7 @@ function parseEventTimestamp(
 }
 
 function getToolGroupDurationMs(group: ToolGroup, now = Date.now()): number | null {
-  const timings = group.tools.map((tool) => {
+  const timings = [...group.completedTools, ...group.runningTools].map((tool) => {
     const displayTimestamp = Date.parse(tool.timestamp);
     const callTimestamp = parseEventTimestamp(tool.toolCall);
     const resultTimestamp = parseEventTimestamp(tool.toolResult);
@@ -71,7 +70,7 @@ function formatToolGroupDuration(durationMs: number): string | null {
 }
 
 function getToolGroupLabel(group: ToolGroup, language: AppLanguage): string {
-  const completedCount = group.tools.filter(
+  const completedCount = group.completedTools.filter(
     (tool) => !tool.isLoading && !isFailedToolMessage(tool),
   ).length;
   const key =
@@ -102,7 +101,7 @@ function renderTool(
 
   // A running tool is progress feedback, not an expandable detail row. Keep
   // this rule at the group renderer boundary so it applies consistently to
-  // both the outer preview and the expanded full list.
+  // both the trailing running region and the expanded completed list.
   if (element && tool.isLoading) {
     element.querySelector<HTMLElement>(
       ".agent-thread-card__message-tool-toggle",
@@ -125,134 +124,57 @@ export function createToolGroupElement(options: {
   header.className = "agent-thread-card__tool-group-header";
   header.id = `${group.id}-header`;
 
-  const tools = document.createElement("div");
-  tools.className = "agent-thread-card__tool-group-tools";
-  tools.id = group.id;
-  tools.setAttribute("role", "region");
-  tools.setAttribute("aria-labelledby", header.id);
-  header.setAttribute("aria-controls", tools.id);
+  const completedTools = document.createElement("div");
+  completedTools.className = "agent-thread-card__tool-group-completed-tools";
+  completedTools.id = `${group.id}-completed`;
+  completedTools.setAttribute("role", "region");
+  completedTools.setAttribute("aria-labelledby", header.id);
 
-  type PreviewEntry = {
-    element: HTMLElement;
-    message: AgentMessage;
-    exitTimer: number | null;
-  };
-
-  const previews = new Map<string, PreviewEntry>();
+  const runningTools = document.createElement("div");
+  runningTools.className = "agent-thread-card__tool-group-running-tools";
+  runningTools.id = `${group.id}-running`;
+  runningTools.setAttribute("role", "region");
+  runningTools.setAttribute("aria-live", "polite");
+  runningTools.setAttribute("aria-labelledby", header.id);
+  header.setAttribute("aria-controls", `${completedTools.id} ${runningTools.id}`);
   let currentGroup = group;
   let currentContext = context;
   let expanded = context.getToolGroupExpanded?.(group.id) ?? false;
   let durationTimer: number | null = null;
 
-  const createPreview = (message: AgentMessage): HTMLElement | null => {
+  const createRunningTool = (message: AgentMessage): HTMLElement | null => {
     const element = renderTool(message, currentContext);
     if (!element) return null;
-    element.classList.add("agent-thread-card__tool-group-preview");
-    if (message.isLoading) {
-      const loadingIcon = createToolPreviewLoadingIcon();
-      loadingIcon.setAttribute("aria-hidden", "true");
-      const toolName = element.querySelector(
-        ".agent-thread-card__message-tool-name",
-      );
-      if (toolName) toolName.before(loadingIcon);
-      else element.prepend(loadingIcon);
-      element.classList.add("agent-thread-card__tool-group-preview--running");
-    }
-    element.setAttribute("aria-hidden", String(expanded));
+    element.classList.add("agent-thread-card__tool-group-running-tool");
+    const loadingIcon = createToolRunningLoadingIcon();
+    loadingIcon.setAttribute("aria-hidden", "true");
+    const toolName = element.querySelector(
+      ".agent-thread-card__message-tool-name",
+    );
+    if (toolName) toolName.before(loadingIcon);
+    else element.prepend(loadingIcon);
     return element;
   };
 
-  const syncTools = () => {
-    if (!expanded) {
-      tools.replaceChildren();
+  const syncCompletedTools = () => {
+    const visibleTools = expanded
+      ? currentGroup.completedTools
+      : currentGroup.completedTools.filter(isFailedToolMessage);
+    if (visibleTools.length === 0) {
+      completedTools.replaceChildren();
       return;
     }
-    const renderedTools = currentGroup.tools
-      // The active tool is already shown once in the outer progress preview.
-      // Completed tools remain in the expanded details list.
-      .filter((tool) => !tool.isLoading)
+    const renderedTools = visibleTools
       .map((tool) => renderTool(tool, currentContext))
       .filter((element): element is HTMLElement => element !== null);
-    tools.replaceChildren(...renderedTools);
+    completedTools.replaceChildren(...renderedTools);
   };
 
-  const finishPreviewExit = (id: string, entry: PreviewEntry) => {
-    if (previews.get(id) !== entry) return;
-    entry.element.remove();
-    previews.delete(id);
-  };
-
-  const startPreviewExit = (id: string, entry: PreviewEntry) => {
-    if (entry.exitTimer !== null) return;
-    // Mark the row as leaving immediately. CSS keeps it unchanged for the
-    // first 500ms, then fades it out over the remaining 300ms; the timer only
-    // removes the already-faded node at the end of that timeline.
-    entry.element.classList.remove("agent-thread-card__tool-group-preview");
-    entry.element.classList.remove(
-      "agent-thread-card__tool-group-preview--running",
-    );
-    entry.element.classList.add("agent-thread-card__tool-group-preview--exiting");
-    entry.element.setAttribute("aria-hidden", "true");
-    entry.exitTimer = window.setTimeout(
-      () => finishPreviewExit(id, entry),
-      TOOL_PREVIEW_EXIT_DURATION_MS,
-    );
-  };
-
-  const cancelPreviewExit = (entry: PreviewEntry) => {
-    if (entry.exitTimer !== null) {
-      window.clearTimeout(entry.exitTimer);
-      entry.exitTimer = null;
-    }
-    entry.element.classList.remove(
-      "agent-thread-card__tool-group-preview--exiting",
-    );
-    entry.element.classList.add("agent-thread-card__tool-group-preview");
-  };
-
-  const syncPreviews = () => {
-    // Failed tools must remain visible while the group is collapsed. Their
-    // renderer may have produced a fallback because malformed provider data
-    // threw during parsing; hiding that fallback would turn a recoverable
-    // rendering error into a silently missing message.
-    const previewTools = [
-      ...(currentGroup.previewTools ?? []),
-      ...currentGroup.tools.filter(isFailedToolMessage),
-    ];
-    const nextPreviewTools = [...new Map(
-      previewTools.map((tool) => [tool.id, tool]),
-    ).values()];
-    const nextIds = new Set(nextPreviewTools.map((tool) => tool.id));
-
-    for (const [id, entry] of previews) {
-      if (!nextIds.has(id)) startPreviewExit(id, entry);
-    }
-
-    for (const message of nextPreviewTools) {
-      const existing = previews.get(message.id);
-      if (existing) {
-        cancelPreviewExit(existing);
-        if (existing.message !== message) {
-          const nextElement = createPreview(message);
-          if (nextElement) {
-            nextElement.classList.add(
-              "agent-thread-card__tool-group-preview--updated",
-            );
-            existing.element.replaceWith(nextElement);
-            existing.element = nextElement;
-            existing.message = message;
-          }
-        }
-        wrapper.insertBefore(existing.element, tools);
-        continue;
-      }
-
-      const element = createPreview(message);
-      if (!element) continue;
-      const entry: PreviewEntry = { element, message, exitTimer: null };
-      previews.set(message.id, entry);
-      wrapper.insertBefore(element, tools);
-    }
+  const syncRunningTools = () => {
+    const renderedTools = currentGroup.runningTools
+      .map(createRunningTool)
+      .filter((element): element is HTMLElement => element !== null);
+    runningTools.replaceChildren(...renderedTools);
   };
 
   const label = document.createElement("span");
@@ -306,14 +228,9 @@ export function createToolGroupElement(options: {
       toggle,
       label,
     );
-    syncTools();
+    syncCompletedTools();
+    syncRunningTools();
     syncDurationTimer();
-    for (const entry of previews.values()) {
-      entry.element.setAttribute(
-        "aria-hidden",
-        String(nextExpanded && !entry.message.isLoading),
-      );
-    }
   };
 
   header.addEventListener("click", (event) => {
@@ -327,14 +244,13 @@ export function createToolGroupElement(options: {
   header.addEventListener("mousedown", (event) => event.stopPropagation());
 
   wrapper.append(header);
-  wrapper.append(tools);
+  wrapper.append(completedTools);
+  wrapper.append(runningTools);
   applyExpanded(context.getToolGroupExpanded?.(group.id) ?? false);
-  syncPreviews();
 
   toolGroupUpdaters.set(wrapper, (nextGroup, nextContext) => {
     currentGroup = nextGroup;
     currentContext = nextContext;
-    syncPreviews();
     applyExpanded(expanded);
   });
   return wrapper;

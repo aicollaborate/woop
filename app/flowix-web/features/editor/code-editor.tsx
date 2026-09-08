@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 
 import { isMarkdownFilePath } from '@features/editor/code-file';
 import { shikiHighlighting, shikiLanguageIdForPath } from '@features/editor/code-editor-shiki';
+import { pushHandler, useShortcutScope } from '@features/shortcuts';
 
 export interface CodeEditorHandle {
   flushPendingChanges: () => string | null;
@@ -177,6 +178,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   onEditorScrollRef.current = onEditorScroll;
   onEditingFinishedRef.current = onEditingFinished;
 
+  useShortcutScope('editor');
+
   useImperativeHandle(ref, () => ({
     flushPendingChanges: () => viewRef.current?.state.doc.toString() ?? null,
   }), []);
@@ -239,6 +242,18 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       viewRef.current = null;
     };
   }, [autoFocus, editableCompartment, filePath, languageCompartment]);
+
+  useEffect(() => {
+    const editorIsFocused = () => viewRef.current?.hasFocus ?? false;
+    return pushHandler('editor.selectAll', () => {
+      const view = viewRef.current;
+      if (!view || !view.hasFocus) return false;
+      view.dispatch({
+        selection: { anchor: 0, head: view.state.doc.length },
+      });
+      return true;
+    }, { isActive: editorIsFocused });
+  }, []);
 
   useEffect(() => {
     const view = viewRef.current;

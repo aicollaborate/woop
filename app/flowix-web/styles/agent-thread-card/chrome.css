@@ -372,6 +372,19 @@
   outline: none;
 }
 
+/* The work-column titlebar uses the same input class but is outside
+ * .markdown-editor. Keep the edit affordance explicit so titlebar styles
+ * cannot hide the hover/focus background. */
+.agent-thread-card__title-input:hover,
+.agent-thread-card__title-input:focus {
+  background-color: var(--muted);
+}
+
+.agent-thread-card__title-input {
+  field-sizing: content;
+  max-width: 100%;
+}
+
 .markdown-editor .agent-thread-card__meta {
   display: inline-flex;
   align-items: center;

@@ -151,7 +151,6 @@ export function attachMessageActions(
       activeConfirmation = null;
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
     };
-    item.addEventListener("mouseleave", closeConfirmation);
     forkButton.addEventListener("mousedown", (event) => event.stopPropagation());
     forkButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -176,8 +175,24 @@ export function attachMessageActions(
         confirmEvent.stopPropagation());
       confirmButton.addEventListener("click", (confirmEvent) => {
         confirmEvent.stopPropagation();
-        closeConfirmation();
-        void onFork?.(message);
+        // Keep the popover mounted while the native IPC request is pending.
+        // Fork can take a moment to start/recover the DSH host, and removing
+        // the only visible state made a successful click look like a no-op.
+        confirmButton.disabled = true;
+        cancelButton.disabled = true;
+        confirmButton.textContent = language === "zh-CN" ? "分叉中…" : "Forking…";
+        let result: void | Promise<void>;
+        try {
+          result = onFork?.(message);
+        } catch (error) {
+          closeConfirmation();
+          throw error;
+        }
+        if (result && typeof result.then === "function") {
+          void result.then(closeConfirmation, closeConfirmation);
+        } else {
+          closeConfirmation();
+        }
       });
 
       const cancelButton = document.createElement("button");

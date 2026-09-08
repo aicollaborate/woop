@@ -19,19 +19,41 @@
 
 type Handler = () => boolean | void;
 
-const stacks = new Map<string, Handler[]>();
+export interface HandlerOptions {
+  /**
+   * Optional runtime ownership check. This is used by commands that belong to
+   * the editor which currently owns DOM focus. Unfocused mounted editors must
+   * remain in the stack for lifecycle restoration, but cannot claim the action.
+   */
+  isActive?: () => boolean;
+}
+
+interface HandlerEntry {
+  handler: Handler;
+  isActive?: () => boolean;
+}
+
+const stacks = new Map<string, HandlerEntry[]>();
 
 /**
  * Push 一个 handler 到指定 actionId 的栈顶, 返回 pop 函数。
  *
  * pop 函数幂等: 多次调用不会重复出栈 (防御 React StrictMode 双调 cleanup)。
  */
-export function pushHandler(actionId: string, handler: Handler): () => void {
+export function pushHandler(
+  actionId: string,
+  handler: Handler,
+  options?: HandlerOptions,
+): () => void {
+  const entry: HandlerEntry = {
+    handler,
+    isActive: options?.isActive,
+  };
   const stack = stacks.get(actionId);
   if (stack) {
-    stack.push(handler);
+    stack.push(entry);
   } else {
-    stacks.set(actionId, [handler]);
+    stacks.set(actionId, [entry]);
   }
   let popped = false;
   return () => {
@@ -39,21 +61,22 @@ export function pushHandler(actionId: string, handler: Handler): () => void {
     popped = true;
     const s = stacks.get(actionId);
     if (!s) return;
-    const idx = s.lastIndexOf(handler);
+    const idx = s.lastIndexOf(entry);
     if (idx >= 0) s.splice(idx, 1);
     if (s.length === 0) stacks.delete(actionId);
   };
 }
 
 /**
- * 调用栈顶 handler。
+ * 调用栈顶 active handler。
  *
  * 返回值:
  *  - `true`: 已处理 (handler 执行了动作, 或干脆没返回值 — 都视作已 claim 按键)
  *  - `false`: 拒绝处理。两种情况都会返回 false:
  *      a) 栈空 (没人注册 handler) — 通常发生在组件未挂载, e.g. 无编辑器时按 ⌘F
  *      b) handler 抛了异常
- *      c) handler 显式返回 false (用于"运行时不该 claim"的场景, e.g. 焦点在
+ *      c) 没有 active handler (例如编辑器已挂载但焦点在其它控件)
+ *      d) handler 显式返回 false (用于"运行时不该 claim"的场景, e.g. 焦点在
  *         dialog 内的 input 里, 不应替用户确认)
  *
  * Provider 根据这个返回值决定是否 preventDefault。
@@ -61,10 +84,26 @@ export function pushHandler(actionId: string, handler: Handler): () => void {
 export function invokeHandler(actionId: string): boolean {
   const stack = stacks.get(actionId);
   if (!stack || stack.length === 0) return false;
-  const top = stack[stack.length - 1];
+  let top: HandlerEntry | undefined;
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    const candidate = stack[i];
+    if (!candidate.isActive) {
+      top = candidate;
+      break;
+    }
+    try {
+      if (candidate.isActive()) {
+        top = candidate;
+        break;
+      }
+    } catch (err) {
+      console.error(`[shortcuts] active check for "${actionId}" threw:`, err);
+    }
+  }
+  if (!top) return false;
   let result: boolean | void;
   try {
-    result = top();
+    result = top.handler();
   } catch (err) {
     console.error(`[shortcuts] handler for "${actionId}" threw:`, err);
     return false;

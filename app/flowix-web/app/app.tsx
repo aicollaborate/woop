@@ -8,7 +8,7 @@ import { useUserSettingsStore } from "@features/preferences/store/user-settings-
 import { useAgentRuntimeStore } from "@features/agent/store/agent-runtime-store";
 import { useApplyFontSettings } from "@features/preferences/hooks/use-apply-font-settings";
 import { ThemeProvider } from "@features/theme";
-import { ShortcutsProvider } from "@features/shortcuts";
+import { NativeSelectAllBridge, ShortcutsProvider } from "@features/shortcuts";
 import { I18nProvider } from "@/lib/i18n";
 import { TooltipProvider } from "@shared/ui/tooltip";
 import "@features/shortcuts/actions";
@@ -138,6 +138,7 @@ function App() {
           <ThemeProvider>
             <TooltipProvider>
               <ShortcutsProvider overrides={shortcutOverrides}>
+              <NativeSelectAllBridge />
               <Suspense fallback={null}>
                 <PreferencesView initialTab={tab} />
                 <AppReadySignal />
@@ -163,6 +164,7 @@ function App() {
           </Suspense>
           <TooltipProvider>
             <ShortcutsProvider overrides={shortcutOverrides}>
+              <NativeSelectAllBridge />
               <Suspense fallback={null}>
                 <MainLayout />
                 <MainWindowReadySignal />

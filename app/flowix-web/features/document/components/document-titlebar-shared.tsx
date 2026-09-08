@@ -399,7 +399,7 @@ export function AgentThreadCardFullscreenExitButton({
         type="button"
         onClick={() => {
           window.dispatchEvent(new CustomEvent(AGENT_THREAD_CARD_REQUEST_FULLSCREEN_EVENT, {
-            detail: { exitOthers: true },
+            detail: { host, exitOthers: true },
           }));
         }}
         aria-label={t('editor.threadCard.exitFullscreen')}
@@ -427,6 +427,8 @@ export function AgentThreadCardFullscreenIdentity({
 } = {}) {
   const { t } = useI18n();
   const info = useFullscreenAgentThreadCardInfo(host);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   // 用 selector 而不是 getState() ── session/runtime store 更新时让组件
   // 重新 render, 否则外部 session id / cwd 注入后不会反映到 popup 内容。
   const instance = useAgentSessionStore((state) =>
@@ -437,6 +439,20 @@ export function AgentThreadCardFullscreenIdentity({
   );
 
   if (!info) return null;
+
+  const title = instance?.title?.trim() || info.title || t('common.untitled');
+  const commitTitle = () => {
+    const nextTitle = titleDraft.trim();
+    if (nextTitle && nextTitle !== title) {
+      void useAgentSessionStore.getState().renameAgentConversation({
+        instanceId: info.instanceId,
+        threadId: instance?.threadId ?? info.threadId,
+        title: nextTitle,
+        typeKey: info.typeKey,
+      });
+    }
+    setIsEditingTitle(false);
+  };
 
   // Document titlebar 自身在 data-tauri-drag-region 容器里, badge wrapper + trigger
   // 都必须显式 [-webkit-app-region:no-drag], 否则 Radix HoverCard 的 hover 会被
@@ -475,9 +491,38 @@ export function AgentThreadCardFullscreenIdentity({
           <AgentIcon typeKey={info.typeKey} alt="" className="agent-type-badge__icon" />
         </span>
       </span>
-      <span className="min-w-0 truncate text-sm font-semibold leading-none text-[var(--foreground)] [-webkit-app-region:no-drag]">
-        {info.title || t('common.untitled')}
-      </span>
+      {isEditingTitle ? (
+        <div className="min-w-0 flex-[0_1_auto] truncate rounded px-0.5 py-1 text-sm font-semibold leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] focus-within:bg-[var(--muted)] [-webkit-app-region:no-drag]">
+          <input
+            autoFocus
+            value={titleDraft}
+            aria-label="重命名会话"
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.nativeEvent.isComposing || event.keyCode === 229)) return;
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                commitTitle();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                setIsEditingTitle(false);
+              }
+            }}
+            className="agent-thread-card__title-input h-auto max-w-full min-w-0 border-0 bg-transparent p-0 font-inherit leading-none text-[var(--foreground)] shadow-none outline-none ring-0 focus:border-0 focus:bg-transparent focus:outline-none focus:ring-0 [-webkit-app-region:no-drag]"
+          />
+        </div>
+      ) : (
+        <span
+          className="min-w-0 flex-[0_1_auto] truncate rounded px-0.5 py-1 text-sm font-semibold leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] [-webkit-app-region:no-drag]"
+          onDoubleClick={() => {
+            setTitleDraft(title);
+            setIsEditingTitle(true);
+          }}
+        >
+          {title}
+        </span>
+      )}
     </div>
   );
 }

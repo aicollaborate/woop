@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod document_access;
 pub mod export_access;
+mod native_menu;
 pub mod panic;
 pub mod paths;
 pub mod search_index;

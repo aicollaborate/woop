@@ -163,7 +163,7 @@ export function PreferencesView({ initialTab }: PreferencesViewProps) {
 
 	return (
 		<div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-[var(--background)]">
-			<WindowsTitlebarControls />
+			<WindowsTitlebarControls showBottomBorder />
 			{isWindowsPlatform() ? <PreferencesTitlebarWin /> : <PreferencesTitlebarMac />}
 			<div className="flex-1 flex min-h-0">
 				{/* Left sidebar */}

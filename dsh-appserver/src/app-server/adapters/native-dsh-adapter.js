@@ -317,10 +317,20 @@ export class NativeDshAdapter {
       || this.ctx.sessions.get(sourceId)
       || (await this.resumeThread(sourceId), this.ctx.sessions.get(sourceId))
     if (!source) throw new Error(`Session not found: ${sourceId}`)
-    const boundary = boundarySeq === undefined ? source.seq - 1 : boundarySeq
-    if (!Number.isInteger(Number(boundary)) || Number(boundary) < -1 || Number(boundary) >= source.events.length) throw new Error(`Invalid fork boundary: ${boundary}`)
-    const boundaryIndex = source.events.findIndex(event => Number(event.seq) === Number(boundary))
-    const boundaryEvent = boundaryIndex >= 0 ? source.events[boundaryIndex] : undefined
+    // A session returned by the registry can be a metadata/live view without
+    // carrying its event array. Use the same durable snapshot as history/read
+    // instead of assuming that `source.events` is always present.
+    const snapshot = await this.eventSnapshot(sourceId)
+    const events = Array.isArray(snapshot.events) ? snapshot.events : []
+    const boundary = boundarySeq === undefined
+      ? (Number.isInteger(Number(source.seq)) ? Number(source.seq) - 1 : (events.at(-1)?.seq ?? -1))
+      : boundarySeq
+    if (!Number.isInteger(Number(boundary)) || Number(boundary) < -1) throw new Error(`Invalid fork boundary: ${boundary}`)
+    const boundaryIndex = Number(boundary) === -1
+      ? -1
+      : events.findIndex(event => Number(event.seq) === Number(boundary))
+    if (Number(boundary) !== -1 && boundaryIndex < 0) throw new Error(`Invalid fork boundary: ${boundary}`)
+    const boundaryEvent = boundaryIndex >= 0 ? events[boundaryIndex] : undefined
     if (boundaryEvent && ['turn/start', 'step/start', 'agent/inbox/spliced'].includes(boundaryEvent.type)) throw new Error(`Cannot fork at a non-message boundary: ${boundary}`)
     // The UI exposes the final assistant/message as the fork point. In the
     // DSH event log its matching turn/end is normally the next event, so
@@ -330,12 +340,13 @@ export class NativeDshAdapter {
     // notifications.
     let seedEnd = boundaryIndex >= 0 ? boundaryIndex : boundary
     if (boundaryEvent?.type === 'assistant/message') {
-      const turnEndIndex = source.events.findIndex((event, index) => index > seedEnd && event.type === 'turn/end')
+      const turnEndIndex = events.findIndex((event, index) => index > seedEnd && event.type === 'turn/end')
       if (turnEndIndex >= 0) seedEnd = turnEndIndex
     }
-    const seed = source.events.slice(0, seedEnd + 1)
-    const context = [...source.events].reverse().find(event => event.type === 'request/context')?.data || {}
-    const agentPreset = source.header?.agentPreset || process.env.DSH_AGENT_PRESET?.trim() || 'standard'
+    const seed = events.slice(0, seedEnd + 1)
+    const context = [...events].reverse().find(event => event.type === 'request/context')?.data || {}
+    const header = snapshot.header || source.header || {}
+    const agentPreset = header.agentPreset || process.env.DSH_AGENT_PRESET?.trim() || 'standard'
     const presets = this.ctx.get?.('agentPresets')
     const agentOptions = typeof context.provider === 'string' && context.provider && typeof context.model === 'string' && context.model
       ? { provider: context.provider, model: context.model }
@@ -344,7 +355,7 @@ export class NativeDshAdapter {
     const handle = await this.ctx.agents.create({
       sessionId: id,
       seed,
-      meta: { parentSession: sourceId, seedLength: seed.length, cwd: source.header?.cwd, agentPreset },
+      meta: { parentSession: sourceId, seedLength: seed.length, cwd: header.cwd, agentPreset },
       ...(presets ? { setup: agentCtx => presets.mount(agentCtx, agentPreset) } : {}),
       ...(agentOptions ? { agentOptions } : {}),
     })
@@ -437,10 +448,10 @@ export class NativeDshAdapter {
       try { live = this.ctx.sessions.get(id) } catch { /* the owning agent may have closed its scoped context */ }
     }
     let snapshot
-    if (live) {
+    if (live && Array.isArray(live.events)) {
       // A live Session keeps appending to its event array. Never expose that
       // mutable container as a supposedly point-in-time history snapshot.
-      snapshot = { events: [...(live.events || [])] }
+      snapshot = { header: live.header, events: [...live.events] }
     } else if (typeof persistence?.open === 'function') {
       // Current DSH exposes durable history through a read handle. `stat` (and
       // older compatibility `inspect`) only returns session metadata; it does

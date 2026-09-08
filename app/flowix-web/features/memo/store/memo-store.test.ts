@@ -53,6 +53,7 @@ describe('memo store list loading', () => {
       memos: [],
       selectedMemo: memo('current'),
       selectedNotebook: null,
+      middleColumnView: 'notes',
       activeFilter: 'todos',
       activePluginId: null,
     });
@@ -132,12 +133,14 @@ describe('memo store list loading', () => {
 
     let persisted = JSON.parse(localStorage.getItem('test-memo-store') ?? '{}');
     expect(persisted.state.activeFilter).toBe('agents');
+    expect(useMemoStore.getState().middleColumnView).toBe('conversations');
     expect(persisted.state.selectedMemoId).toBe('current');
     expect(persisted.state.selectedMemo).toBeUndefined();
 
     useMemoStore.getState().setActiveFilter('color');
     persisted = JSON.parse(localStorage.getItem('test-memo-store') ?? '{}');
     expect(persisted.state.activeFilter).toBe('all');
+    expect(useMemoStore.getState().middleColumnView).toBe('notes');
 
   });
 

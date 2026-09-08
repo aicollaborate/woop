@@ -1956,6 +1956,114 @@ describe("AgentThreadCard NodeView streaming", () => {
     expect(editor.state.doc.firstChild?.attrs.fullscreen).toBe(false);
   });
 
+  it("does not exit a Browser Column fullscreen card when main-third leaves agent view", async () => {
+    const { AgentThreadCard } =
+      await import("@features/agent/thread-card");
+    const workspaceHost = document.createElement("section");
+    workspaceHost.dataset.workspaceHost = "browser-column";
+    const host = document.createElement("div");
+    workspaceHost.append(host);
+    document.body.append(workspaceHost);
+
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "agentThreadCard",
+            attrs: {
+              instanceId: "instance-browser-column-fullscreen",
+              threadId: "thread-browser-column-fullscreen",
+              title: "Browser Column conversation",
+              typeKey: "deepseek-harness",
+              collapsed: false,
+              fullscreen: false,
+            },
+          },
+        ],
+      },
+    });
+
+    host
+      .querySelector<HTMLButtonElement>(".agent-thread-card__fullscreen")
+      ?.click();
+
+    const card = host.querySelector<HTMLElement>(".agent-thread-card");
+    expect(card?.classList.contains("agent-thread-card--fullscreen")).toBe(true);
+    expect(editor.state.doc.firstChild?.attrs.fullscreen).toBe(true);
+
+    window.dispatchEvent(
+      new CustomEvent("flowix:agent-thread-card-request-fullscreen", {
+        detail: { host: "main-third", exitOthers: true, persist: true },
+      }),
+    );
+
+    expect(card?.classList.contains("agent-thread-card--fullscreen")).toBe(true);
+    expect(editor.state.doc.firstChild?.attrs.fullscreen).toBe(true);
+  });
+
+  it("persists a Work Column fullscreen exit and does not restore it on update", async () => {
+    const { AgentThreadCard } =
+      await import("@features/agent/thread-card");
+    const workspaceHost = document.createElement("section");
+    workspaceHost.dataset.workspaceHost = "main-third";
+    const host = document.createElement("div");
+    workspaceHost.append(host);
+    document.body.append(workspaceHost);
+
+    editor = new Editor({
+      element: host,
+      extensions: [StarterKit, AgentThreadCard],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "agentThreadCard",
+            attrs: {
+              instanceId: "instance-work-column-fullscreen",
+              threadId: "thread-work-column-fullscreen",
+              title: "Work Column conversation",
+              typeKey: "deepseek-harness",
+              collapsed: false,
+              fullscreen: false,
+            },
+          },
+        ],
+      },
+    });
+
+    host
+      .querySelector<HTMLButtonElement>(".agent-thread-card__fullscreen")
+      ?.click();
+    const card = host.querySelector<HTMLElement>(".agent-thread-card");
+    expect(card?.classList.contains("agent-thread-card--fullscreen")).toBe(true);
+
+    window.dispatchEvent(
+      new CustomEvent("flowix:agent-thread-card-request-fullscreen", {
+        detail: { host: "main-third", exitOthers: true, persist: true },
+      }),
+    );
+
+    expect(card?.classList.contains("agent-thread-card--fullscreen")).toBe(false);
+    expect(editor.state.doc.firstChild?.attrs.fullscreen).toBe(false);
+
+    const currentNode = editor.state.doc.firstChild;
+    expect(currentNode).not.toBeNull();
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(0, undefined, {
+        ...currentNode?.attrs,
+        title: "Work Column conversation updated",
+      }),
+    );
+    await flushPromises();
+    await flushAnimationFrame();
+
+    expect(card?.classList.contains("agent-thread-card--fullscreen")).toBe(false);
+    expect(editor.state.doc.firstChild?.attrs.fullscreen).toBe(false);
+  });
+
   it("restores only the first fullscreen-marked Thread Card on document entry", async () => {
     const { AgentThreadCard } =
       await import("@features/agent/thread-card");

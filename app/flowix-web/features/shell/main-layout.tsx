@@ -1,6 +1,6 @@
 'use client';
 
-import { lazy, Suspense, useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
+import { lazy, Suspense, useState, useEffect, useLayoutEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { ArrowUp, Check, Loader2, Plug } from 'lucide-react';
 import { DocumentTitlebarWin } from '@features/document/components/document-titlebar-win';
 import { DocumentTitlebarMac } from '@features/document/components/document-titlebar-mac';
@@ -88,14 +88,36 @@ const BrowserColumn = lazy(() =>
   })),
 );
 
-// The Memo list is the default navigation surface. Keep the Agent
-// conversation list out of the startup graph until the user switches to the
-// Agents filter; the module promise is shared and cached by React.lazy.
-const AgentConversationList = lazy(() =>
-  import('@features/agent/components/agent-conversation-list').then((module) => ({
+// The Memo list is the default navigation surface. The module is still loaded
+// lazily, but its promise is shared by the idle prefetch and React.lazy so the
+// first visible switch does not start a second import.
+let agentConversationListModulePromise: ReturnType<typeof importAgentConversationList> | null = null;
+
+function importAgentConversationList() {
+  return import('@features/agent/components/agent-conversation-list').then((module) => ({
     default: module.AgentConversationList,
-  })),
-);
+  }));
+}
+
+function loadAgentConversationList() {
+  agentConversationListModulePromise ??= importAgentConversationList();
+  return agentConversationListModulePromise;
+}
+
+const AgentConversationList = lazy(loadAgentConversationList);
+
+function AgentConversationListReadySignal({
+  onReady,
+  isActive,
+}: {
+  onReady: () => void;
+  isActive: boolean;
+}) {
+  useLayoutEffect(() => {
+    onReady();
+  }, [onReady]);
+  return <AgentConversationList isActive={isActive} />;
+}
 
 const LOCAL_AGENT_INTRO_OPTIONS = [
   { key: 'codex', nameKey: 'agent.types.codex.name', icon: iconCodex },
@@ -178,10 +200,18 @@ export function MainLayout() {
   const notebooks = useMemoStore((s) => s.notebooks);
   const selectedMemo = useMemoStore((s) => s.selectedMemo);
   const selectedNotebook = useMemoStore((s) => s.selectedNotebook);
+  const middleColumnView = useMemoStore((s) => s.middleColumnView);
   const activeFilter = useMemoStore((s) => s.activeFilter);
   const activePluginId = useMemoStore((s) => s.activePluginId);
   const activeSort = useMemoStore((s) => s.activeSort);
-  const isAgentConversationView = activeFilter === 'agents';
+  const isAgentConversationView = middleColumnView === 'conversations';
+  const [agentConversationListMounted, setAgentConversationListMounted] = useState(
+    () => middleColumnView === 'conversations',
+  );
+  const [agentConversationListReady, setAgentConversationListReady] = useState(false);
+  const handleAgentConversationListReady = useCallback(() => {
+    setAgentConversationListReady(true);
+  }, []);
   const [dshDownload, setDshDownload] = useState<DshDownloadProgress | null>(null);
   const productUpdatesEnabled = useUserSettings((settings) => settings.productUpdates.enabled);
   const userSettingsLoading = useUserSettingsStore((state) => state.isLoading);
@@ -189,6 +219,25 @@ export function MainLayout() {
     autoCheck: !userSettingsLoading,
     enabled: productUpdatesEnabled,
   });
+
+  // Mount the conversation list once it is first requested, but never tear it
+  // down again. Its local pagination, filters, and scroll position then remain
+  // available for the next view switch.
+  useEffect(() => {
+    if (isAgentConversationView) setAgentConversationListMounted(true);
+  }, [isAgentConversationView]);
+
+  // Warm the lazy chunk after the initial surface has settled. The promise is
+  // shared with React.lazy, so a user switching earlier still uses the same
+  // in-flight import.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadAgentConversationList().catch((error) => {
+        logger.warn('prefetch conversation list failed', { error });
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const applyProgress = (progress: DshDownloadProgress) => {
@@ -291,7 +340,6 @@ export function MainLayout() {
   const [isDraggingNoteNavigationDivider, setIsDraggingNoteNavigationDivider] = useState(false);
   const currentDocumentContentRef = useRef('');
   const syncedNotebookIdRef = useRef<string | null | undefined>(undefined);
-  const wasAgentConversationViewRef = useRef(isAgentConversationView);
   const noteNavigationDividerStartRef = useRef({
     x: 0,
     width: NOTE_NAVIGATION_PANEL_WIDTH,
@@ -332,6 +380,10 @@ export function MainLayout() {
     });
   }, []);
   const memoListMounted = useDeferredUnmount(memoListVisible);
+  const shouldRenderAgentConversationList =
+    agentConversationListMounted || isAgentConversationView;
+  const showMemoListSurface = !isAgentConversationView || !agentConversationListReady;
+  const showAgentConversationSurface = isAgentConversationView && agentConversationListReady;
   // tags 面板独立成最左列, 宽度走自己的 state。
   const noteNavigationColumnWidth = noteNavigationVisible ? noteNavigationPanelWidth : 0;
   const browserColumnVisible = useBrowserColumnStore((state) => state.visible);
@@ -364,6 +416,14 @@ export function MainLayout() {
     dividerCount: (noteNavigationVisible ? 1 : 0) + (!isMemoListHidden ? 1 : 0),
     splitRatio: browserColumnSplitRatio,
   });
+  const browserColumnLayoutKey = [
+    viewportWidth,
+    noteNavigationColumnWidth,
+    memoListWidth,
+    browserColumnLayout.mainColumnWidth,
+    browserColumnLayout.browserColumnWidth,
+    isMemoListHidden ? 'memo-hidden' : 'memo-visible',
+  ].join(':');
   const handleBrowserColumnResize = useCallback((nextWidth: number) => {
     if (!browserColumnLayout.canSplit || browserColumnLayout.availableDocumentWidth <= 0) return;
     setBrowserColumnSplitRatio(nextWidth / browserColumnLayout.availableDocumentWidth);
@@ -382,18 +442,6 @@ export function MainLayout() {
   const memoListPreviewVisible =
     isMemoListHidden && memoListPreviewPhase !== 'closed';
   const documentTitlebarHeight = isWindowsPlatform() ? 36 : 48;
-
-  useEffect(() => {
-    if (!isAgentConversationView && wasAgentConversationViewRef.current) {
-      // The fullscreen view is only locked while browsing the dedicated
-      // conversation list. Leaving that mode exits fullscreen, but the
-      // independently selected work-column conversation remains mounted.
-      window.dispatchEvent(new CustomEvent('flowix:agent-thread-card-request-fullscreen', {
-        detail: { exitOthers: true, persist: false },
-      }));
-    }
-    wasAgentConversationViewRef.current = isAgentConversationView;
-  }, [isAgentConversationView]);
 
   useEffect(() => {
     // Notebook changes initiated by the navigation facade already update the
@@ -929,7 +977,7 @@ export function MainLayout() {
                       (memoListPreviewPhase === 'open'
                         ? 'flowix-hover-preview-enter'
                         : 'flowix-hover-preview-leave')
-                    : 'flex-1 min-h-0 min-w-0 w-full'
+                    : 'relative flex-1 min-h-0 min-w-0 w-full'
                 }
                 style={memoListPreviewVisible ? {
                   left: noteNavigationColumnWidth + 2,
@@ -937,18 +985,45 @@ export function MainLayout() {
                   bottom: 0,
                 } : undefined}
               >
-                {isAgentConversationView ? (
-                  <Suspense
-                    fallback={
-                      <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
-                        {t('memo.navigation.loading')}
-                      </div>
-                    }
+                <div
+                  className={`absolute inset-0 ${
+                    showMemoListSurface
+                      ? 'visible'
+                      : 'invisible pointer-events-none'
+                  }`}
+                  aria-hidden={!showMemoListSurface}
+                >
+                  <MemoList
+                    navigationDrawerEnabled={!noteNavigationVisible}
+                    isActive={!isAgentConversationView}
+                    dataLoadingEnabled={!isAgentConversationView}
+                  />
+                </div>
+                {shouldRenderAgentConversationList && (
+                  <div
+                    className={`absolute inset-0 ${
+                      showAgentConversationSurface
+                        ? 'visible z-10'
+                        : 'invisible pointer-events-none'
+                    }`}
+                    aria-hidden={!showAgentConversationSurface}
                   >
-                    <AgentConversationList />
-                  </Suspense>
-                ) : (
-                  <MemoList navigationDrawerEnabled={!noteNavigationVisible} />
+                    <Suspense fallback={null}>
+                      <AgentConversationListReadySignal
+                        onReady={handleAgentConversationListReady}
+                        isActive={isAgentConversationView}
+                      />
+                    </Suspense>
+                  </div>
+                )}
+                {isAgentConversationView && !agentConversationListReady && (
+                  <div
+                    className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[color-mix(in_oklch,var(--card)_78%,transparent)] text-sm text-[var(--muted-foreground)] backdrop-blur-[1px]"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {t('status.agent.loadingConversations')}
+                  </div>
                 )}
               </div>
             </div>
@@ -1032,6 +1107,7 @@ export function MainLayout() {
             <Suspense fallback={null}>
               <BrowserColumn
                 width={browserColumnLayout.browserColumnWidth}
+                layoutKey={browserColumnLayoutKey}
                 onResize={handleBrowserColumnResize}
                 toolbarCollapsed={toolbarCollapsed}
                 onToolbarCollapsedChange={setToolbarCollapsed}

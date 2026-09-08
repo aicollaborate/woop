@@ -25,23 +25,28 @@ function useContextMenuContext() {
 
 interface ContextMenuProps {
 	children: React.ReactNode;
+	onOpenChange?: (open: boolean) => void;
 }
 
-function ContextMenu({ children }: ContextMenuProps) {
+function ContextMenu({ children, onOpenChange }: ContextMenuProps) {
 	const [open, setOpen] = React.useState(false);
 	const [position, setPosition] = React.useState<{ x: number; y: number } | null>(null);
+	const updateOpen = React.useCallback((nextOpen: boolean) => {
+		setOpen(nextOpen);
+		onOpenChange?.(nextOpen);
+	}, [onOpenChange]);
 
 	const openAt = React.useCallback((x: number, y: number) => {
 		setPosition({ x, y });
-		setOpen(true);
-	}, []);
+		updateOpen(true);
+	}, [updateOpen]);
 
 	const close = React.useCallback(() => {
-		setOpen(false);
+		updateOpen(false);
 		// Keep the last position until the menu finishes its close animation; the
 		// content is unmounted when open is false so position becomes invisible
 		// to the user either way.
-	}, []);
+	}, [updateOpen]);
 
 	return (
 		<ContextMenuContext.Provider value={{ open, position, setOpen: close, openAt }}>

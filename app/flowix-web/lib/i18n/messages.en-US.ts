@@ -461,6 +461,8 @@ const enUS: Record<keyof typeof zhCN, string> = {
     "preferences.shortcuts.edit": "Edit",
     "preferences.shortcuts.resetOneAria": "Reset {title} to default",
     "preferences.shortcuts.group.editor": "Editor",
+    "preferences.shortcuts.action.editor.selectAll.title": "Select all",
+    "preferences.shortcuts.action.editor.selectAll.description": "Select all content in the current editor.",
     "preferences.shortcuts.group.navigation": "Navigation",
     "preferences.shortcuts.group.view": "View",
     "preferences.shortcuts.group.system": "System",

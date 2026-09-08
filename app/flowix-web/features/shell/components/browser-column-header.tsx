@@ -59,6 +59,9 @@ export interface BrowserColumnHeaderProps {
   onCloseAllTabs: () => void | Promise<void>;
   onOpenTabInWorkColumn: (tabId: string) => void | Promise<void>;
   onReorderTab: (tabId: string, beforeTabId: string | null) => void;
+  isTabMenuOpen: boolean;
+  onTabMenuOpenChange: (open: boolean) => void;
+  onContextMenuOpenChange: (tabId: string, open: boolean) => void;
 }
 
 export function BrowserColumnHeader({
@@ -71,6 +74,9 @@ export function BrowserColumnHeader({
   onCloseAllTabs,
   onOpenTabInWorkColumn,
   onReorderTab,
+  isTabMenuOpen,
+  onTabMenuOpenChange,
+  onContextMenuOpenChange,
 }: BrowserColumnHeaderProps) {
   const { t } = useI18n();
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
@@ -122,7 +128,10 @@ export function BrowserColumnHeader({
             ? { title: fullscreenInfo.title || tab.title, typeKey: fullscreenInfo.typeKey }
             : null;
           return (
-            <ContextMenu key={tab.id}>
+            <ContextMenu
+              key={tab.id}
+              onOpenChange={(open) => onContextMenuOpenChange(tab.id, open)}
+            >
               <ContextMenuTrigger asChild>
                 <div
                   draggable
@@ -252,46 +261,50 @@ export function BrowserColumnHeader({
         className="agent-thread-card-fullscreen-exit-btn"
       />
       <div className="h-8 w-8 shrink-0 pr-0.5 [-webkit-app-region:no-drag]">
-        <DropdownMenu className="[-webkit-app-region:no-drag]">
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={t('tabWindow.showAll')}
-              title={t('tabWindow.showAll')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] [-webkit-app-region:no-drag]"
+        <DropdownMenu
+          className="[-webkit-app-region:no-drag]"
+          open={isTabMenuOpen}
+          onOpenChange={onTabMenuOpenChange}
+        >
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('tabWindow.showAll')}
+                title={t('tabWindow.showAll')}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] [-webkit-app-region:no-drag]"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              side="bottom"
+              sideOffset={4}
+              className="max-h-[min(420px,calc(100vh-16px))] w-[210px] rounded-xl overflow-y-auto p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
             >
-              <ChevronDown className="h-4 w-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            side="bottom"
-            sideOffset={4}
-            className="max-h-[min(420px,calc(100vh-16px))] w-[210px] rounded-xl overflow-y-auto p-1 shadow-[0_4px_24px_-3px_rgb(0_0_0_/_0.24)]"
-          >
-            <DropdownMenuLabel className="px-2 py-1 text-xs font-medium text-[var(--muted-foreground)]">
-              {t('tabWindow.all')}
-            </DropdownMenuLabel>
-            <div className="space-y-0.5">
-              {tabs.map((tab) => {
-                const selected = tab.id === activeTabId;
-                return (
-                  <DropdownMenuItem
-                    key={tab.id}
-                    title={tab.title}
-                    onClick={() => onSelectTab(tab.id)}
-                    className="group h-7 gap-2 rounded-lg px-2 py-0 hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]">
-                      {tabIcon(tab)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-left">{tab.title}</span>
-                    {selected && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--brand)] group-hover:text-[var(--primary-foreground)]" />}
-                  </DropdownMenuItem>
-                );
-              })}
-            </div>
-          </DropdownMenuContent>
+              <DropdownMenuLabel className="px-2 py-1 text-xs font-medium text-[var(--muted-foreground)]">
+                {t('tabWindow.all')}
+              </DropdownMenuLabel>
+              <div className="space-y-0.5">
+                {tabs.map((tab) => {
+                  const selected = tab.id === activeTabId;
+                  return (
+                    <DropdownMenuItem
+                      key={tab.id}
+                      title={tab.title}
+                      onClick={() => onSelectTab(tab.id)}
+                      className="group h-7 gap-2 rounded-lg px-2 py-0 hover:bg-[var(--brand)] hover:text-[var(--primary-foreground)]"
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--muted-foreground)] group-hover:text-[var(--primary-foreground)]">
+                        {tabIcon(tab)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-left">{tab.title}</span>
+                      {selected && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--brand)] group-hover:text-[var(--primary-foreground)]" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </div>
+            </DropdownMenuContent>
         </DropdownMenu>
       </div>
     </header>

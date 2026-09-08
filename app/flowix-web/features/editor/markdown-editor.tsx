@@ -30,7 +30,7 @@ import { MathBlock } from '@features/editor/extensions/math-block';
 import { WebCard } from '@features/editor/extensions/web-card';
 import { SearchAndReplace } from '@features/editor/extensions/search-replace';
 import { SearchReplacePanel } from '@features/editor/components/search-replace-panel';
-import Frontmatter from '@features/editor/extensions/frontmatter';
+import Frontmatter, { selectEditableDocumentContent } from '@features/editor/extensions/frontmatter';
 import { MenuPinExtension } from '@features/editor/extensions/menu-pin';
 import { BlockDragExtension } from '@features/editor/extensions/block-drag';
 import { SlashMenu } from '@features/editor/extensions/slash-menu';
@@ -492,6 +492,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       // 修复跨多块复制时多余空行：ProseMirror 默认在块间插入 `\n\n`，
       // 改成单个 `\n`，粘贴到纯文本目标时块间只保留一个换行。
       editorProps: {
+        attributes: editable
+          ? {}
+          : {
+              tabindex: '0',
+              'aria-readonly': 'true',
+            },
         clipboardTextSerializer(content) {
           return content.content.textBetween(0, content.content.size, '\n', '\n');
         },
@@ -698,6 +704,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
   useEffect(() => {
     if (editorRef.current) {
       editorRef.current.setEditable(editable);
+      const editorDom = editorRef.current.view.dom;
+      if (editable) {
+        editorDom.removeAttribute('tabindex');
+        editorDom.removeAttribute('aria-readonly');
+      } else {
+        editorDom.setAttribute('tabindex', '0');
+        editorDom.setAttribute('aria-readonly', 'true');
+      }
     }
   }, [editable]);
 
@@ -707,52 +721,65 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     }
   }, [editorStorageUpdatedAt]);
 
-  // 把 editor.find / editor.undo / editor.redo 三个 action 的实例级 handler
-  // 注册到全局 handler-registry。组件卸载时 pop 走 — 命令面板 (Phase 3)
-  // 仍能从 registry 读到 action 列表, 但 run 落到空栈, 行为退化为 no-op。
+  // 把 editor.find / editor.undo / editor.redo 以及块级格式 action 的实例级
+  // handler 注册到全局 handler-registry。组件卸载时 pop 走 — 命令面板
+  // (Phase 3) 仍能从 registry 读到 action 列表, 但 run 落到空栈, 行为退化
+  // 为 no-op。编辑器命令附带真实 DOM focus 检查，避免多列同时挂载时把
+  // 命令发给最后挂载而非当前活动的编辑器。
   //
-  // ⌘F 不限制 scope (走 'window'), 焦点不在编辑器内时 invokeHandler 也会命中
-  // 这个栈 — 单一编辑器挂载, 自然没有歧义。Phase 3 若引入第二个 Tiptap 实例
-  // (e.g. 浮层编辑器), 改用 focus 事件动态 push/pop 即可。
   useEffect(() => {
+    const editorIsFocused = () => {
+      const editor = editorRef.current;
+      if (!editor || editor.isDestroyed) return false;
+      try {
+        return editor.view.hasFocus();
+      } catch {
+        return false;
+      }
+    };
     const pops = [
+      pushHandler('editor.selectAll', () => {
+        const editor = editorRef.current;
+        if (!editor) return false;
+        return selectEditableDocumentContent(editor);
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.find', () => {
         onSearchPanelOpenChangeRef.current?.(true);
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.undo', () => {
         editorRef.current?.commands.undo();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.redo', () => {
         editorRef.current?.commands.redo();
-      }),
+      }, { isActive: editorIsFocused }),
       // 块元素切换 (⌘1-4 / ⌘0 / ⌘⇧7-9) — 与 drag-context-menu items.tsx
       // 里的菜单项一一对应, 走同一组 Tiptap chain().focus().toggleXxx() 命令。
       // focus() 先调用是为了: 用户可能从标题输入框等地方按快捷键,
       // focus 保证命令落到编辑器内的当前 block。
       pushHandler('editor.setHeading1', () => {
         editorRef.current?.chain().focus().toggleHeading({ level: 1 }).run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.setHeading2', () => {
         editorRef.current?.chain().focus().toggleHeading({ level: 2 }).run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.setHeading3', () => {
         editorRef.current?.chain().focus().toggleHeading({ level: 3 }).run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.setHeading4', () => {
         editorRef.current?.chain().focus().toggleHeading({ level: 4 }).run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.setParagraph', () => {
         editorRef.current?.chain().focus().setParagraph().run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.toggleBulletList', () => {
         editorRef.current?.chain().focus().toggleBulletList().run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.toggleOrderedList', () => {
         editorRef.current?.chain().focus().toggleOrderedList().run();
-      }),
+      }, { isActive: editorIsFocused }),
       pushHandler('editor.toggleTaskList', () => {
         editorRef.current?.chain().focus().toggleTaskList().run();
-      }),
+      }, { isActive: editorIsFocused }),
     ];
     return () => {
       for (const pop of pops) pop();

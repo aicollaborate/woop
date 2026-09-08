@@ -200,7 +200,7 @@ pub fn run() {
     // 实际绑定�?.setup() �?��里完成�?
     let memo_watcher = Arc::new(RwLock::new(MemoWatcher::new(memo_file_arc.clone())));
 
-    tauri::Builder::default()
+    crate::app::native_menu::configure(tauri::Builder::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             handle_second_instance(app, args);
         }))

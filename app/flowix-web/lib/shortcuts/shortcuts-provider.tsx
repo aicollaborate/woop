@@ -3,7 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { chordMatches, isInEditableField, scopeAllows } from './matcher';
 import { getPlatform } from './platform';
-import { listActions, resolveBinding } from './registry';
+import { listActions, resolveBindings } from './registry';
 import type { ActionContext, Scope, ShortcutOverrides } from './types';
 
 /**
@@ -88,13 +88,10 @@ export function ShortcutsProvider({ overrides, children }: ShortcutsProviderProp
       const actions = listActions();
       for (const action of actions) {
         if (!scopeAllows(action.scope, scopeStack, editable)) continue;
-        const { chord } = resolveBinding(action.id, overridesRef.current);
-        if (!chord) continue;
-        if (
-          !chordMatches(e, chord, {
-            platform,
-          })
-        ) {
+        const bindings = resolveBindings(action.id, overridesRef.current);
+        if (!bindings.some(({ chord }) => chord && chordMatches(e, chord, {
+            platform: action.acceptEitherMod ? 'unknown' : platform,
+          }))) {
           continue;
         }
         if (
@@ -149,5 +146,9 @@ export function ShortcutsProvider({ overrides, children }: ShortcutsProviderProp
     [pushScope, overrides],
   );
 
-  return <ShortcutsContext.Provider value={value}>{children}</ShortcutsContext.Provider>;
+  return (
+    <ShortcutsContext.Provider value={value}>
+      {children}
+    </ShortcutsContext.Provider>
+  );
 }

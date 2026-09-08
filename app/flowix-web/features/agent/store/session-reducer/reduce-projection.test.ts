@@ -552,6 +552,34 @@ describe("reduceProjection / DSH command operations", () => {
     });
   });
 
+  it("does not show the internal /plan steer prompt as a second live user message", () => {
+    let p = emptyProjection();
+    p = reduceProjection(
+      p,
+      event("dsh_command", {
+        agentType: "deepseek-harness",
+        threadId: "t1",
+        runId: "command-run-1",
+        timestamp: 1000,
+        id: "command-1",
+        name: "plan",
+        args: " 调研项目介绍",
+        status: "pending",
+      }),
+    );
+
+    p = reduceProjection(
+      p,
+      userMessage("调研项目介绍\n<## CONTEXT PROMPT ##>internal context", "steer-1"),
+    );
+
+    expect(p.messages).toHaveLength(1);
+    expect(p.messages[0]).toMatchObject({
+      id: "dsh-command:live:command-1",
+      content: "/plan 调研项目介绍",
+    });
+  });
+
 });
 
 describe("reduceProjection / session_resolved is a no-op", () => {

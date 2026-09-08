@@ -24,6 +24,7 @@ import { contentIdentityKey } from '@features/workspace/store/workspace-content-
 
 export interface BrowserColumnProps {
   width: number;
+  layoutKey: string;
   onResize: (width: number) => void;
   toolbarCollapsed: boolean;
   onToolbarCollapsedChange: (collapsed: boolean) => void;
@@ -31,10 +32,13 @@ export interface BrowserColumnProps {
 
 export function BrowserColumn({
   width,
+  layoutKey,
   onResize,
   toolbarCollapsed,
   onToolbarCollapsedChange,
 }: BrowserColumnProps) {
+  const [isTabMenuOpen, setIsTabMenuOpen] = useState(false);
+  const [contextMenuTabId, setContextMenuTabId] = useState<string | null>(null);
   const tabs = useBrowserColumnStore((state) => state.tabs);
   const activeTabId = useBrowserColumnStore((state) => state.activeTabId);
   const activeTab = useMemo(
@@ -109,6 +113,18 @@ export function BrowserColumn({
       closeAllTabs();
     });
   }, [closeAllTabs]);
+  const handleContextMenuOpenChange = useCallback((tabId: string, open: boolean) => {
+    setContextMenuTabId((current) => {
+      if (open) return tabId;
+      return current === tabId ? null : current;
+    });
+  }, []);
+  useEffect(() => {
+    if (contextMenuTabId && !tabs.some((tab) => tab.id === contextMenuTabId)) {
+      setContextMenuTabId(null);
+    }
+  }, [contextMenuTabId, tabs]);
+  const nativeOverlayOpen = isTabMenuOpen || contextMenuTabId !== null;
   const activeSurface = activeTab
     ? resolveBrowserColumnSurface(
         activeTab,
@@ -117,6 +133,8 @@ export function BrowserColumn({
         activeWebRuntime,
         toolbarCollapsed,
         onToolbarCollapsedChange,
+        layoutKey,
+        nativeOverlayOpen,
       )
     : null;
   const [isResizing, setIsResizing] = useState(false);
@@ -171,6 +189,9 @@ export function BrowserColumn({
         onCloseAllTabs={handleCloseAllTabs}
         onOpenTabInWorkColumn={(tabId) => { void openBrowserColumnTabInWorkColumn(tabId); }}
         onReorderTab={reorderTab}
+        isTabMenuOpen={isTabMenuOpen}
+        onTabMenuOpenChange={setIsTabMenuOpen}
+        onContextMenuOpenChange={handleContextMenuOpenChange}
       />
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {activeSurface ? (

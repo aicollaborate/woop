@@ -95,6 +95,17 @@ export interface ActionDefinition {
     windows?: string;
     linux?: string;
   };
+  /**
+   * 同一动作的附加默认绑定。用户自定义主绑定后整组默认绑定都会被替换。
+   * 适用于“全选”这类需要同时兼容 macOS Command 和 Control 的少数动作。
+   */
+  alternateBindings?: {
+    mac?: string[];
+    windows?: string[];
+    linux?: string[];
+  };
+  /** 让 Mod 绑定同时接受 Meta/Ctrl；仅用于全选等明确要求双绑定的动作。 */
+  acceptEitherMod?: boolean;
   /** 额外条件, return false 时跳过 (但其它 action 仍有机会匹配)。 */
   when?: (ctx: WhenContext) => boolean;
   /**

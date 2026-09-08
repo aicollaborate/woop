@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { SquarePen, Search, Check } from 'lucide-react';
+import { ArrowDownUp, Check, ListFilter, Search, SquarePen } from 'lucide-react';
 import {
   getVisibleCreateFilter,
   MEMO_COLOR_HEX,
@@ -72,10 +72,15 @@ function EmptyState() {
 interface MemoListProps {
   /** The full left navigation owns these controls when it is visible. */
   navigationDrawerEnabled?: boolean;
+  /** Keep the memo list mounted while the middle column shows conversations. */
+  isActive?: boolean;
+  dataLoadingEnabled?: boolean;
 }
 
 export function MemoList({
   navigationDrawerEnabled = true,
+  isActive = true,
+  dataLoadingEnabled = true,
 }: MemoListProps) {
   const { t } = useI18n();
   const [showScrollTopHint, setShowScrollTopHint] = useState(false);
@@ -102,6 +107,7 @@ export function MemoList({
   const startupError = useMemoStore((s) => s.startupError);
   const initialMemoQueryKey = useMemoStore((s) => s.initialMemoQueryKey);
   const memoListQueryKey = useMemoStore((s) => s.memoListQueryKey);
+  const middleColumnView = useMemoStore((s) => s.middleColumnView);
   const selectedNotebookId = selectedNotebook?.id;
   const selectedTagId = useTagStore((s) => s.selectedTagId);
   const tagMetadataRefreshVersion = useTagStore((s) => s.metadataRefreshVersion);
@@ -148,6 +154,8 @@ export function MemoList({
   const [tagMap, setTagMap] = useState<Record<string, string>>({});
   const [isMemoListLoading, setIsMemoListLoading] = useState(false);
   const [loadedMemoListQueryKey, setLoadedMemoListQueryKey] = useState<string | null>(null);
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   useEffect(() => {
     if (!navigationDrawerEnabled) setNavigationDrawerOpen(false);
@@ -172,10 +180,11 @@ export function MemoList({
   }, [handleMemoListLoadError, loadMoreMemos]);
 
   const loadData = useCallback(async () => {
-    if (startupPhase !== 'ready') return;
+    if (!isActiveRef.current || startupPhase !== 'ready') return;
 
     const currentNotebook = useMemoStore.getState().selectedNotebook;
     if (!currentNotebook) {
+      if (!isActiveRef.current) return;
       setSelectedNotebook(null);
       setSelectedMemo(null);
       void clearWorkspaceDocument();
@@ -189,6 +198,7 @@ export function MemoList({
       currentNotebook,
       tagMetadataRefreshVersion
     );
+    if (!isActiveRef.current || useMemoStore.getState().startupPhase !== 'ready') return;
     if (!libraryMetadata) return;
     if (useMemoStore.getState().selectedNotebook?.id !== currentNotebook.id) return;
 
@@ -208,10 +218,11 @@ export function MemoList({
 
   useEffect(() => {
     void loadData().catch((error) => {
+      if (!isActiveRef.current) return;
       logger.warn('load list metadata failed', { error });
       toast.error(t('memo.list.loadFailed'));
     });
-  }, [loadData, refreshTrigger, selectedNotebookId]);
+  }, [isActive, loadData, refreshTrigger, selectedNotebookId, t]);
 
   const currentMemoListQueryKey = getMemoListQueryKey(
     selectedNotebookId,
@@ -289,6 +300,7 @@ export function MemoList({
     loadingMorePages: memoListLoadingMore,
     loadMorePages: handleLoadMoreMemos,
     scrollerRef: listContainerRef,
+    isActive: isActive && dataLoadingEnabled,
   });
 
   const memoVirtualizationEnabled =
@@ -568,7 +580,7 @@ export function MemoList({
   return (
     <div className="memo-list relative flex h-full min-w-0 select-none flex-col bg-[var(--card)]">
       <MemoListDataLoader
-        dataLoadingEnabled
+        dataLoadingEnabled={dataLoadingEnabled}
         startupPhase={startupPhase}
         initialMemoQueryKey={initialMemoQueryKey}
         memoListQueryKey={memoListQueryKey}
@@ -590,7 +602,7 @@ export function MemoList({
       <div className="flex min-w-0 items-center gap-2 px-3 pb-2">
         <div className="shrink-0">
           <MemoListViewTabs
-            activeTab={activeFilter === 'agents' ? 'conversations' : 'notes'}
+            activeTab={middleColumnView === 'conversations' ? 'conversations' : 'notes'}
             onChange={(tab) => setActiveFilter(tab === 'conversations' ? 'agents' : 'all')}
             navigationDrawerEnabled={navigationDrawerEnabled}
             navigationDrawerOpen={navigationDrawerOpen}
@@ -609,6 +621,7 @@ export function MemoList({
             {/* Filter — 二级弹窗 (本周 / 本月 / 颜色组) */}
             <MemoNavigationSubmenu
               label={t('memo.list.filterLabel')}
+              icon={<ListFilter className="h-4 w-4 shrink-0" aria-hidden="true" />}
               open={colorSubmenuOpen}
               hideHeader
               emptyText=""
@@ -676,6 +689,7 @@ export function MemoList({
             {/* Sort — 二级弹窗 */}
             <MemoNavigationSubmenu
               label={t('memo.list.sortLabel')}
+              icon={<ArrowDownUp className="h-4 w-4 shrink-0" aria-hidden="true" />}
               open={sortSubmenuOpen}
               hideHeader
               emptyText=""

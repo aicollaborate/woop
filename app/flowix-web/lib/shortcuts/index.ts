@@ -29,7 +29,7 @@ export type { ShortcutsContextValue, ShortcutsProviderProps } from './shortcuts-
 export { useShortcutScope } from './use-shortcut-scope';
 
 // Registry API (命令面板 / 冲突检测用)
-export { defineAction, getAction, listActions, resolveBinding, detectConflicts } from './registry';
+export { defineAction, getAction, listActions, resolveBinding, resolveBindings, detectConflicts } from './registry';
 export type { ConflictReport } from './registry';
 
 // Handler registry (组件 mount/unmount 时挂载/卸载 action 的实例级 handler)

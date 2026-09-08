@@ -160,17 +160,21 @@ function AgentConversationHeader({ instanceId }: { instanceId: string }) {
         </span>
       </span>
       {isEditingTitle ? (
-        <div className="min-w-0 flex-1 truncate text-sm font-semibold leading-none text-[var(--foreground)] [-webkit-app-region:no-drag]">
+        <div className="min-w-0 flex-[0_1_auto] truncate rounded px-0.5 py-1 text-sm font-semibold leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--muted)] focus-within:bg-[var(--muted)] [-webkit-app-region:no-drag]">
           <input autoFocus value={titleDraft}
-            className="agent-thread-card__title-input h-[1em] w-full min-w-0 border-0 bg-transparent p-0 font-inherit leading-none text-[var(--foreground)] shadow-none outline-none ring-0 focus:border-0 focus:bg-transparent focus:outline-none focus:ring-0 [-webkit-app-region:no-drag]"
+            className="agent-thread-card__title-input h-auto max-w-full min-w-0 border-0 bg-transparent p-0 font-inherit leading-none text-[var(--foreground)] shadow-none outline-none ring-0 focus:border-0 focus:bg-transparent focus:outline-none focus:ring-0 [-webkit-app-region:no-drag]"
             onChange={(event) => setTitleDraft(event.target.value)} onBlur={commitTitle}
             onKeyDown={(event) => {
+              // Enter is also emitted while an IME is confirming its current
+              // candidate. Let the composition finish before allowing the
+              // title editor to commit and blur.
+              if (event.key === 'Enter' && (event.nativeEvent.isComposing || event.keyCode === 229)) return;
               if (event.key === 'Enter') { event.preventDefault(); commitTitle(); }
               if (event.key === 'Escape') setIsEditingTitle(false);
             }} />
         </div>
       ) : (
-        <div className="min-w-0 flex-[0_1_auto] truncate text-sm font-semibold leading-none text-[var(--foreground)]" onDoubleClick={() => {
+        <div className="min-w-0 flex-[0_1_auto] truncate rounded px-0.5 py-1 text-sm font-semibold leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--muted)]" onDoubleClick={() => {
           setTitleDraft(instance.title?.trim() || '');
           setIsEditingTitle(true);
         }}>{presentation.title}</div>

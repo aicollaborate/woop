@@ -86,6 +86,13 @@ function applyUserMessageToProjection(
   p: ThreadProjection,
   event: AgentEvent & { kind: "user_message" },
 ): ThreadProjection {
+  // `/plan <prompt>` is represented by the DSH command row. DSH also emits
+  // the prompt it puts into the steer inbox as a provider user-message event,
+  // but that event is an internal model input rather than a second human
+  // message. History projection already applies the same rule; do it here as
+  // well so the live view matches history before the turn finishes.
+  if (isLiveDshPlanPrompt(p, event.text)) return p;
+
   const live = projectionToLive(p);
   const next = applyUserMessageChunk(live, event.text, {
     id: event.id,
@@ -110,6 +117,24 @@ function applyUserMessageToProjection(
       reasoningId: next.pendingReasoningId,
     },
   };
+}
+
+function isLiveDshPlanPrompt(p: ThreadProjection, text: string): boolean {
+  const prompt = text.split("\n<## CONTEXT PROMPT ##>", 1)[0].trim();
+  if (!prompt) return false;
+
+  const command = [...p.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "user" &&
+        message.messageType === "dsh-command" &&
+        message.isLoading,
+    );
+  if (!command) return false;
+
+  const match = /^\/plan(?:\s+)([\s\S]+)$/iu.exec(command.content.trim());
+  return match?.[1].trim() === prompt;
 }
 
 function applyTextDeltaToProjection(

@@ -3,7 +3,7 @@ use tokio::io::BufReader;
 
 #[test]
 fn canonical_message_identity_is_shared_and_idempotent() {
-    for agent_type in ["codex", "claude", "hermes", "opencode"] {
+    for agent_type in ["claude", "hermes", "opencode"] {
         let id = canonical_message_id(agent_type, "run-1", "assistant", "source-1");
         assert_eq!(id, format!("msg:{agent_type}:run-1:assistant:source-1"));
         assert_eq!(
@@ -11,10 +11,25 @@ fn canonical_message_identity_is_shared_and_idempotent() {
             id
         );
     }
+
+    // Codex app-server item ids are already thread-unique and must match the
+    // raw ids returned by thread/turns/list history.
+    assert_eq!(
+        canonical_message_id("codex", "run-1", "assistant", "source-1"),
+        "source-1"
+    );
+    assert_eq!(
+        canonical_message_id("codex", "run-1", "assistant", "source-1"),
+        canonical_message_id("codex", "run-2", "assistant", "source-1")
+    );
+    assert_eq!(
+        canonical_message_id("codex", "run-1", "error", "source-1"),
+        "msg:codex:run-1:error:source-1"
+    );
 }
 
 #[test]
-fn chunk_payload_keeps_provider_id_beside_canonical_id() {
+fn chunk_payload_keeps_codex_item_id_aligned_with_history() {
     let chunk = AgentChunk::Text {
         thread_id: "thread-1".to_string(),
         text: "hello".to_string(),
@@ -31,12 +46,34 @@ fn chunk_payload_keeps_provider_id_beside_canonical_id() {
     .expect("serialize canonical chunk");
     assert_eq!(
         payload.get("message_id").and_then(Value::as_str),
-        Some("msg:codex:run-1:assistant:assistant-source-1")
+        Some("assistant-source-1")
     );
     assert_eq!(
         payload.get("source_message_id").and_then(Value::as_str),
         Some("assistant-source-1")
     );
+}
+
+#[test]
+fn chunk_payload_scopes_codex_fallback_identity_per_run() {
+    let chunk = AgentChunk::Text {
+        thread_id: "thread-1".to_string(),
+        text: "hello".to_string(),
+    };
+    let run_one = chunk_payload_value(&chunk, "codex", "run-1", &AgentChunkMetadata::default())
+        .expect("serialize run-one fallback");
+    let run_two = chunk_payload_value(&chunk, "codex", "run-2", &AgentChunkMetadata::default())
+        .expect("serialize run-two fallback");
+
+    assert_eq!(
+        run_one.get("message_id").and_then(Value::as_str),
+        Some("msg:codex:run-1:assistant:stream")
+    );
+    assert_eq!(
+        run_two.get("message_id").and_then(Value::as_str),
+        Some("msg:codex:run-2:assistant:stream")
+    );
+    assert_ne!(run_one.get("message_id"), run_two.get("message_id"));
 }
 
 #[test]

@@ -327,6 +327,7 @@ export class ComposerSlashCommandController {
     if (!this.menu || !this.composer.isConnected) return;
     const rect = this.composer.getBoundingClientRect();
     const viewportPadding = 8;
+    const menuGap = 4;
     const width = Math.max(240, Math.min(rect.width, window.innerWidth - viewportPadding * 2));
     const left = Math.min(
       Math.max(viewportPadding, rect.left),
@@ -334,7 +335,7 @@ export class ComposerSlashCommandController {
     );
     this.menu.style.width = `${width}px`;
     this.menu.style.left = `${left}px`;
-    this.menu.style.bottom = `${Math.max(viewportPadding, window.innerHeight - rect.top + 8)}px`;
+    this.menu.style.bottom = `${Math.max(viewportPadding, window.innerHeight - rect.top + menuGap)}px`;
   };
 
   private handleItemMouseMove(event: MouseEvent, index: number): void {

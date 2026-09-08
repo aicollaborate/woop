@@ -323,6 +323,37 @@ describe('NativeDshAdapter thread launch', () => {
     expect(seed?.map(event => (event as { seq: number }).seq)).toEqual([1, 2, 3, 4])
   })
 
+  it('forks from persistence when the live session view has no events array', async () => {
+    const events = [
+      { type: 'turn/start', seq: 10, data: { turn: 1 } },
+      { type: 'user/message', seq: 11, data: { id: 'u1', content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'assistant/message', seq: 12, data: { message: { id: 'a1', content: [{ type: 'text', text: 'hi' }] } } },
+      { type: 'turn/end', seq: 13, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    let seed: unknown[] | undefined
+    const source = { id: 'source', seq: 14, header: {} }
+    const childAgent = { session: { id: 'child', events: [], header: {}, deriveMessages: () => [] } }
+    const ctx = {
+      on: () => () => {},
+      sessions: { get: (id: string) => id === 'source' ? source : undefined },
+      agents: {
+        create: async (options: Record<string, unknown>) => {
+          seed = options.seed as unknown[]
+          return { agent: childAgent, dispose: async () => {} }
+        },
+        get: () => undefined,
+      },
+      get: (name: string) => name === 'sessionPersistence'
+        ? { inspect: async () => ({ header: { cwd: '/workspace', agentPreset: 'standard' }, events }) }
+        : undefined,
+    }
+    const adapter = new NativeDshAdapter(ctx)
+
+    await adapter.forkThread('source', 12, 'child')
+
+    expect(seed?.map(event => (event as { seq: number }).seq)).toEqual([10, 11, 12, 13])
+  })
+
   it('creates a configured agent with its preset and permission', async () => {
     let options: Record<string, any> | undefined
     const mounted: string[] = []

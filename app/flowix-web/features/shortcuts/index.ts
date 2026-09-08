@@ -10,3 +10,4 @@
  * 由 app.tsx 顶层 `import "@features/shortcuts/actions"` 副作用挂载。
  */
 export * from '@/lib/shortcuts';
+export { NativeSelectAllBridge } from './native-select-all-bridge';

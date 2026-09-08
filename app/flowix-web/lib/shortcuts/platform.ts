@@ -3,9 +3,9 @@ import type { Platform } from './types';
 /**
  * 平台识别 + 修饰键互转。
  *
- * - 优先尝试 Tauri 的 `window.__TAURI__.os.platform()`, 没有再降级到 navigator UA。
- *   主窗口 / 偏好设置窗口都是 Tauri webview, Tauri 路径一定命中;
- *   普通浏览器开发模式 (npm run dev 单独跑 Vite) 走 UA 兜底。
+ * - 优先读取 Chromium/WebKit 提供的平台字段，再降级到 user-agent。
+ *   不能依赖 `window.__TAURI__`：生产配置可关闭 global Tauri 注入，而且
+ *   Tauri OS API 是异步的，不适合在 keydown 热路径中临时查询。
  * - 结果缓存一次, 后续调用零成本。
  */
 
@@ -19,41 +19,30 @@ export function getPlatform(): Platform {
 }
 
 function detectPlatform(): Platform {
-  // 1) Tauri 注入的全局 — Tauri 2 在生产/开发都注入 window.__TAURI__
-  try {
-    // Tauri 2 把核心 API 放在 window.__TAURI_INTERNALS__, 但 os plugin 注入到 window.__TAURI__.os
-    const tauri = (window as unknown as { __TAURI__?: { os?: { platform?: () => string | Promise<string> } } }).__TAURI__;
-    if (tauri?.os?.platform) {
-      const p = tauri.os.platform();
-      // Tauri 的 platform() 是同步字符串 — 但万一新版改成 async, 这里保守处理。
-      if (typeof p === 'string') {
-        const mapped = mapTauriPlatform(p);
-        if (mapped) return mapped;
-      }
-    }
-  } catch {
-    // 忽略 — 切到 UA 路径
-  }
-
-  // 2) navigator UA 兜底
-  if (typeof navigator !== 'undefined') {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('mac') || ua.includes('darwin')) {
-      return 'mac';
-    }
-    if (ua.includes('win')) return 'windows';
-    if (ua.includes('linux') || ua.includes('x11')) return 'linux';
-  }
-
-  return 'unknown';
+  if (typeof navigator === 'undefined') return 'unknown';
+  return detectNavigatorPlatform(navigator);
 }
 
-function mapTauriPlatform(p: string): Platform | null {
-  // Tauri 2 desktop platform values used by this application.
-  if (p === 'macos') return 'mac';
-  if (p === 'windows') return 'windows';
-  if (p === 'linux') return 'linux';
-  return null;
+interface NavigatorPlatformSource {
+  platform?: string;
+  userAgent?: string;
+  userAgentData?: { platform?: string };
+}
+
+/** 纯函数版本便于覆盖不同 WebView 暴露字段的组合测试。 */
+export function detectNavigatorPlatform(source: NavigatorPlatformSource): Platform {
+  const candidates = [
+    source.userAgentData?.platform,
+    source.platform,
+    source.userAgent,
+  ];
+  for (const candidate of candidates) {
+    const value = candidate?.toLowerCase() ?? '';
+    if (value.includes('mac') || value.includes('darwin')) return 'mac';
+    if (value.includes('win')) return 'windows';
+    if (value.includes('linux') || value.includes('x11')) return 'linux';
+  }
+  return 'unknown';
 }
 
 /** 便捷谓词 — 业务层用得最多的就是 "是不是 Mac"。 */

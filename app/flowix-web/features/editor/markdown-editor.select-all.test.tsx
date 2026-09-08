@@ -1,0 +1,191 @@
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import type { Editor } from '@tiptap/core';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { MarkdownEditor } from './markdown-editor';
+import { ShortcutsProvider } from '@features/shortcuts';
+import '@features/shortcuts/actions';
+
+let container: HTMLDivElement;
+let root: Root;
+const reactActEnvironment = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+function pressSelectAll(editor: Editor, modifier: 'command' | 'control' = 'command'): void {
+  editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'a',
+    code: 'KeyA',
+    metaKey: modifier === 'command',
+    ctrlKey: modifier === 'control',
+    bubbles: true,
+    cancelable: true,
+  }));
+}
+
+describe('MarkdownEditor select all', () => {
+  beforeEach(() => {
+    reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it('keeps focus and selects the current editable document', async () => {
+    let editor: Editor | null = null;
+    await act(async () => {
+      root.render(
+        <ShortcutsProvider overrides={{}}>
+          <MarkdownEditor
+            content={'# First\n\nSecond'}
+            onBeforeCreate={(instance) => { editor = instance; }}
+          />
+        </ShortcutsProvider>,
+      );
+    });
+
+    expect(editor).not.toBeNull();
+    act(() => {
+      editor!.view.focus();
+      pressSelectAll(editor!);
+    });
+
+    expect(editor!.view.hasFocus()).toBe(true);
+    expect(editor!.state.selection.from).toBe(0);
+    expect(editor!.state.selection.to).toBe(editor!.state.doc.content.size);
+
+  });
+
+  it('keeps focus and selects a read-only document', async () => {
+    let editor: Editor | null = null;
+    await act(async () => {
+      root.render(
+        <ShortcutsProvider overrides={{}}>
+          <MarkdownEditor
+            content={'# First\n\nSecond'}
+            editable={false}
+            onBeforeCreate={(instance) => { editor = instance; }}
+          />
+        </ShortcutsProvider>,
+      );
+    });
+
+    expect(editor).not.toBeNull();
+    act(() => {
+      editor!.view.dom.focus();
+      pressSelectAll(editor!);
+    });
+
+    expect(editor!.view.hasFocus()).toBe(true);
+    expect(editor!.state.selection.from).toBe(0);
+    expect(editor!.state.selection.to).toBe(editor!.state.doc.content.size);
+  });
+
+  it('selects only the focused editor when two columns are mounted', async () => {
+    const editors: Editor[] = [];
+    await act(async () => {
+      root.render(
+        <ShortcutsProvider overrides={{}}>
+          <>
+            <MarkdownEditor
+              content={'# Work\n\nWork body'}
+              onBeforeCreate={(instance) => { editors[0] = instance; }}
+            />
+            <MarkdownEditor
+              content={'# Browser\n\nBrowser body'}
+              onBeforeCreate={(instance) => { editors[1] = instance; }}
+            />
+          </>
+        </ShortcutsProvider>,
+      );
+    });
+
+    expect(editors).toHaveLength(2);
+    act(() => {
+      editors[0].view.focus();
+      pressSelectAll(editors[0]);
+    });
+
+    expect(editors[0].state.selection.from).toBe(0);
+    expect(editors[0].state.selection.to).toBe(editors[0].state.doc.content.size);
+    expect(editors[1].state.selection.empty).toBe(true);
+  });
+
+  it('leaves select-all to a nested input instead of claiming it for the document', async () => {
+    let editor: Editor | null = null;
+    await act(async () => {
+      root.render(
+        <ShortcutsProvider overrides={{}}>
+          <MarkdownEditor
+            content={'# First\n\nSecond'}
+            onBeforeCreate={(instance) => { editor = instance; }}
+          />
+        </ShortcutsProvider>,
+      );
+    });
+
+    const input = document.createElement('input');
+    input.value = 'nested value';
+    editor!.view.dom.appendChild(input);
+    input.focus();
+    const event = new KeyboardEvent('keydown', {
+      key: 'a',
+      code: 'KeyA',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => input.dispatchEvent(event));
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(editor!.state.selection.empty).toBe(true);
+  });
+
+  it.each(['command', 'control'] as const)(
+    'selects the body after protected frontmatter with %s+A',
+    async (modifier) => {
+      let editor: Editor | null = null;
+      await act(async () => {
+        root.render(
+          <ShortcutsProvider overrides={{}}>
+            <MarkdownEditor
+              content={'---\nkey: buvbaqmc\n---\n# First\n\nSecond'}
+              onBeforeCreate={(instance) => { editor = instance; }}
+            />
+          </ShortcutsProvider>,
+        );
+      });
+
+      const frontmatter = editor!.state.doc.firstChild;
+      expect(frontmatter?.type.name).toBe('frontmatter');
+      act(() => {
+        editor!.view.focus();
+        pressSelectAll(editor!, modifier);
+      });
+
+      expect(editor!.state.selection.empty).toBe(false);
+      expect(editor!.state.selection.from).toBe(frontmatter!.nodeSize + 1);
+      expect(editor!.state.selection.to).toBe(editor!.state.doc.content.size - 1);
+    },
+  );
+});

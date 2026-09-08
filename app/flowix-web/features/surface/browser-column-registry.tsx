@@ -43,9 +43,11 @@ import {
   resolveFileBrowserBreadcrumbItems,
   type FileBrowserBreadcrumbItem,
 } from './file-browser-breadcrumb';
-import { Webview } from '@platform/tauri/webview';
 import { getCurrentWindow } from '@platform/tauri/window';
-import { LogicalPosition, LogicalSize } from '@platform/tauri/dpi';
+import {
+  BrowserColumnWebviewManager,
+  type BrowserColumnWebviewBounds,
+} from './browser-column-webview-manager';
 import { files, type FileBrowserDirectoriesChangedEvent } from '@platform/tauri/client';
 import { subscribe } from '@platform/tauri/event-bus';
 import { canonicalPath } from '@/lib/path';
@@ -79,6 +81,10 @@ export type BrowserColumnSurfaceCapability =
 interface SurfaceBase {
   instanceKey: string;
   tabId: string;
+  /** Changes whenever the host layout may have moved the native child. */
+  layoutKey: string;
+  /** DOM portals cannot cover a native child WebView. */
+  nativeOverlayOpen: boolean;
 }
 
 export interface BrowserDocumentSurface extends SurfaceBase {
@@ -152,6 +158,9 @@ function browserFaviconForUrl(url: string): string | null {
 function BrowserWebSurfaceView({ surface }: { surface: BrowserWebSurface }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const webviewManagerRef = useRef<BrowserColumnWebviewManager | null>(null);
+  const nativeOverlayOpenRef = useRef(surface.nativeOverlayOpen);
+  nativeOverlayOpenRef.current = surface.nativeOverlayOpen;
   const isNativeTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
   const runtime = surface.runtime;
   const currentUrl = runtime?.currentUrl ?? surface.url;
@@ -243,25 +252,33 @@ function BrowserWebSurfaceView({ surface }: { surface: BrowserWebSurface }) {
     });
   }, [currentUrl, reportRuntime, surface.tabId, updateTabMetadata]);
 
+  const readBounds = useCallback((): BrowserColumnWebviewBounds | null => {
+    const viewport = viewportRef.current;
+    if (!viewport) return null;
+    const rect = viewport.getBoundingClientRect();
+    return {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }, []);
+
+  const syncBounds = useCallback(() => {
+    const bounds = readBounds();
+    if (bounds) webviewManagerRef.current?.setBounds(bounds);
+  }, [readBounds]);
+
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !isNativeTauri) return;
 
     const label = `browser-column-webpage-${++externalWebviewSequence}`;
     const currentWindow = getCurrentWindow();
-    const getBounds = () => {
-      const rect = viewport.getBoundingClientRect();
-      return {
-        x: Math.max(0, rect.left),
-        y: Math.max(0, rect.top),
-        width: Math.max(1, rect.width),
-        height: Math.max(1, rect.height),
-      };
-    };
-
-    let child: Webview | null = null;
     let disposed = false;
     let unlistenNavigation: (() => void) | null = null;
+    let unlistenWindowResize: (() => void) | null = null;
+    let unlistenScaleChanged: (() => void) | null = null;
     try {
       reportRuntime({ isLoading: true, error: null });
       void currentWindow.listen<BrowserColumnNavigationEvent>(
@@ -285,43 +302,81 @@ function BrowserWebSurfaceView({ surface }: { surface: BrowserWebSurface }) {
           });
         },
       ).then((unlisten) => {
-        if (disposed) {
-          unlisten();
-        } else {
-          unlistenNavigation = unlisten;
-        }
+        if (disposed) unlisten();
+        else unlistenNavigation = unlisten;
       }).catch(() => undefined);
-      child = new Webview(currentWindow, label, { url: currentUrl, ...getBounds(), focus: false });
-      void child.once('tauri://created', () => {
-        if (!disposed) reportRuntime({ isLoading: false, error: null });
+
+      const initialBounds = readBounds();
+      if (!initialBounds) return;
+      const manager = new BrowserColumnWebviewManager(currentWindow, {
+        label,
+        url: currentUrl,
+        bounds: initialBounds,
+        onCreated: () => {
+          if (disposed) return;
+          reportRuntime({ isLoading: false, error: null });
+          manager.setVisible(!nativeOverlayOpenRef.current);
+          syncBounds();
+        },
+        onError: (event) => {
+          console.error('Failed to create browser-column webpage WebView', event);
+          if (!disposed) reportRuntime({ isLoading: false, error: '网页视图创建失败' });
+        },
       });
-      void child.once('tauri://error', (event) => {
-        console.error('Failed to create browser-column webpage Webview', event);
-        if (!disposed) reportRuntime({ isLoading: false, error: '网页视图创建失败' });
-      });
-      const syncBounds = () => {
-        if (!child || disposed) return;
-        const next = getBounds();
-        void Promise.all([
-          child.setPosition(new LogicalPosition(next.x, next.y)),
-          child.setSize(new LogicalSize(next.width, next.height)),
-        ]).catch(() => undefined);
-      };
+      webviewManagerRef.current = manager;
+      manager.setVisible(!nativeOverlayOpenRef.current);
+
       const observer = new ResizeObserver(syncBounds);
       observer.observe(viewport);
       window.addEventListener('resize', syncBounds);
+      const visualViewport = window.visualViewport;
+      visualViewport?.addEventListener('resize', syncBounds);
+      visualViewport?.addEventListener('scroll', syncBounds);
+      void currentWindow.onResized(() => syncBounds()).then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenWindowResize = unlisten;
+      }).catch(() => undefined);
+      void currentWindow.onScaleChanged(() => syncBounds()).then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenScaleChanged = unlisten;
+      }).catch(() => undefined);
       return () => {
         disposed = true;
         unlistenNavigation?.();
+        unlistenWindowResize?.();
+        unlistenScaleChanged?.();
         observer.disconnect();
         window.removeEventListener('resize', syncBounds);
-        void child?.close().catch(() => undefined);
+        visualViewport?.removeEventListener('resize', syncBounds);
+        visualViewport?.removeEventListener('scroll', syncBounds);
+        if (webviewManagerRef.current === manager) webviewManagerRef.current = null;
+        manager.dispose();
       };
     } catch (error) {
-      console.error('Failed to initialize browser-column webpage Webview', error);
+      console.error('Failed to initialize browser-column webpage WebView', error);
       reportRuntime({ isLoading: false, error: '网页视图初始化失败' });
     }
-  }, [currentUrl, isNativeTauri, reloadToken, reportRuntime]);
+  }, [currentUrl, isNativeTauri, readBounds, reloadToken, reportRuntime, syncBounds]);
+
+  useEffect(() => {
+    if (!isNativeTauri) return;
+    webviewManagerRef.current?.setVisible(!surface.nativeOverlayOpen);
+  }, [isNativeTauri, surface.nativeOverlayOpen]);
+
+  // Width changes are observed by ResizeObserver, but a column can also move
+  // horizontally while keeping the same size. Track the host transition after
+  // every layout-key change so native and DOM geometry converge together.
+  useEffect(() => {
+    if (!isNativeTauri) return;
+    let frame = 0;
+    const deadline = performance.now() + 300;
+    const trackLayout = () => {
+      syncBounds();
+      if (performance.now() < deadline) frame = requestAnimationFrame(trackLayout);
+    };
+    trackLayout();
+    return () => cancelAnimationFrame(frame);
+  }, [isNativeTauri, surface.layoutKey, syncBounds]);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-[var(--background)]">
@@ -876,8 +931,15 @@ export function resolveBrowserColumnSurface(
   webRuntime?: BrowserColumnWebRuntime | null,
   toolbarCollapsed = false,
   onToolbarCollapsedChange?: (collapsed: boolean) => void,
+  layoutKey = '',
+  nativeOverlayOpen = false,
 ): BrowserColumnSurface {
-  const base = { instanceKey: `tab:${tab.id}`, tabId: tab.id };
+  const base = {
+    instanceKey: `tab:${tab.id}`,
+    tabId: tab.id,
+    layoutKey,
+    nativeOverlayOpen,
+  };
   switch (tab.target.kind) {
     case 'memo':
       return {

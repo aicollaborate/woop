@@ -39,9 +39,8 @@ export interface RenderedAgentMessageCache {
 
 export function getRenderedAgentItems(
   messages: ThreadState["messages"],
-  toolGroupPreview?: ReadonlyMap<string, AgentMessage[]>,
 ): AgentRenderItem[] {
-  return groupAgentMessages(messages, toolGroupPreview).filter(
+  return groupAgentMessages(messages).filter(
     (item) => item.kind === "tool-group" || shouldRenderAgentMessage(item.message),
   );
 }
@@ -153,7 +152,7 @@ function syncMessageActions(
   list: HTMLDivElement,
   context: AgentThreadCardMessageRenderContext,
 ): void {
-  const renderItems = getRenderedAgentItems(messages, context.toolGroupPreview);
+  const renderItems = getRenderedAgentItems(messages);
   for (let index = 0; index < renderItems.length; index += 1) {
     const renderItem = renderItems[index];
     if (renderItem.kind !== "message") continue;
@@ -257,7 +256,7 @@ export function updateRenderedAgentToolGroups(
   const list = cache.list;
   if (!list || !body.contains(list)) return null;
 
-  const nextItems = getRenderedAgentItems(messages, context.toolGroupPreview);
+  const nextItems = getRenderedAgentItems(messages);
   if (
     nextItems.length !== cache.refs.length ||
     list.children.length !== cache.refs.length
@@ -280,7 +279,7 @@ export function patchLastRenderedAgentMessage(
   const list = cache.list;
   if (!list || !body.contains(list)) return null;
 
-  const renderItems = getRenderedAgentItems(messages, context.toolGroupPreview);
+  const renderItems = getRenderedAgentItems(messages);
   if (
     renderItems.length === 0 ||
     renderItems.length !== cache.refs.length ||
@@ -382,7 +381,7 @@ export function appendRenderedAgentMessagesToTail(
   if (oldRefs.length === 0) return null;
   if (!list || !body.contains(list)) return null;
 
-  const newRendered = getRenderedAgentItems(messages, context.toolGroupPreview);
+  const newRendered = getRenderedAgentItems(messages);
   if (newRendered.length <= oldRefs.length) return null;
   if (list.children.length !== oldRefs.length) return null;
 
@@ -440,7 +439,7 @@ export function createRenderedAgentMessageList(
   list.className = "agent-thread-card__messages";
   const rememberedMessages: ThreadState["messages"] = [];
 
-  const renderItems = getRenderedAgentItems(messages, context.toolGroupPreview);
+  const renderItems = getRenderedAgentItems(messages);
   for (let index = 0; index < renderItems.length; index += 1) {
     const renderItem = renderItems[index];
     const rendered = renderItem.kind === "tool-group"

@@ -98,6 +98,12 @@ export class AgentThreadCardTitleEditController {
     input.addEventListener("click", (event) => event.stopPropagation());
     input.addEventListener("keydown", (event) => {
       event.stopPropagation();
+      // Do not commit when Enter is only confirming an IME candidate. The
+      // following compositionend/input event must be allowed to update the
+      // value first.
+      if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         void this.commitEdit();

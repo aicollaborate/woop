@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArchiveIcon, PencilSimpleIcon, PlusIcon, StarIcon, TrashSimpleIcon } from '@phosphor-icons/react';
 import { Loader2 } from 'lucide-react';
 import { MoreHorizontal } from 'lucide-react';
@@ -80,6 +80,11 @@ const CONVERSATION_GROUP_LABEL_KEY = {
 const logger = createLogger('agent-conversation-list');
 const CONVERSATION_PAGE_SIZE = 30;
 
+interface AgentConversationListProps {
+  /** Keep durable list state while closing transient UI when hidden. */
+  isActive?: boolean;
+}
+
 /** OpenCode history listing previously materialized provider-only sessions as
  * `legacy-ses_...` instances. They have no Flowix-owned conversation and must
  * not be shown alongside real conversation cards. */
@@ -90,7 +95,7 @@ function isSyntheticOpenCodeHistoryInstance(instance: AgentConversationInstance)
     && instance.threadId.startsWith('ses_');
 }
 
-export function AgentConversationList() {
+export function AgentConversationList({ isActive = true }: AgentConversationListProps) {
   const { t } = useI18n();
   const instances = useAgentSessionStore((state) => state.conversationRegistry.instances);
   const threadTombstones = useAgentSessionStore((state) => state.threadTombstones);
@@ -100,7 +105,7 @@ export function AgentConversationList() {
   // index by scanning every loaded conversation.
   const conversationRunIndex = useAgentSessionStore((state) => state.threadRunSignatures);
   const currentNotebookId = useMemoStore((state) => state.selectedNotebook?.id ?? null);
-  const activeFilter = useMemoStore((state) => state.activeFilter);
+  const middleColumnView = useMemoStore((state) => state.middleColumnView);
   const setActiveFilter = useMemoStore((state) => state.setActiveFilter);
   const selectedInstanceId = useWorkspaceRestoreStore(
     (state) => state.agentConversation.selectedInstanceId,
@@ -137,6 +142,18 @@ export function AgentConversationList() {
   const [renameTarget, setRenameTarget] = useState<AgentConversationInstance | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameSaving, setRenameSaving] = useState(false);
+
+  useLayoutEffect(() => {
+    if (isActive) return;
+    // Keep list data, filters, and scroll position alive, but never leave a
+    // portal-backed menu or dialog visible after this surface is hidden.
+    setOpenMenuId(null);
+    setRenameTarget(null);
+    setRenameDraft('');
+    setRenameSaving(false);
+    setShowScrollTopHint(false);
+    setJustEndedIds((current) => (current.size === 0 ? current : new Set()));
+  }, [isActive]);
 
   const toggleFavorite = useCallback((instanceId: string) => {
     setFavoriteIds((current) => {
@@ -549,7 +566,7 @@ export function AgentConversationList() {
       <div className="flex items-center justify-between px-3 pb-2 gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <MemoListViewTabs
-              activeTab={activeFilter === 'agents' ? 'conversations' : 'notes'}
+              activeTab={middleColumnView === 'conversations' ? 'conversations' : 'notes'}
               onChange={(tab) => setActiveFilter(tab === 'conversations' ? 'agents' : 'all')}
             />
             <span className="min-w-0 truncate text-[15px] font-medium text-[var(--foreground)]">
@@ -641,7 +658,7 @@ export function AgentConversationList() {
         >
           {isLoading ? (
             <div
-              className="flex min-h-0 flex-1 items-center justify-center gap-2 px-4 text-center text-sm text-[var(--muted-foreground)]"
+              className="flex h-full min-h-0 w-full items-center justify-center gap-2 px-4 text-center text-sm text-[var(--muted-foreground)]"
               role="status"
               aria-live="polite"
             >

@@ -151,9 +151,9 @@ export function createRoleOptionsLoadingIcon(): SVGSVGElement {
   );
 }
 
-export function createToolPreviewLoadingIcon(): SVGSVGElement {
+export function createToolRunningLoadingIcon(): SVGSVGElement {
   return appendStrokePath(
-    createSvg("0 0 24 24", "agent-thread-card__tool-preview-loading-icon"),
+    createSvg("0 0 24 24", "agent-thread-card__tool-group-running-loading-icon"),
     ICON_LOADER_PATH,
   );
 }

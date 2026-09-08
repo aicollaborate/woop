@@ -50,8 +50,9 @@ export function isInEditableField(target: EventTarget | null): boolean {
  * 用 OR 关系匹配, 任意一个归一形式等于 chord.key 即视为命中 — 这是 VS Code /
  * Linear / Notion 的标准做法, 跨平台一致。
  *
- * Mac 上的 Mod: 同时接受 ⌘ (metaKey) 和 ⌃ (ctrlKey) 作为「主修饰键」—
- * 这样 `Mod+K` 既能用 ⌘K 也能用 ⌃K 触发, 兼容 Windows 用户带过来的肌肉记忆。
+ * 平台已知时严格遵守系统语义：macOS 的 Mod 是 Meta，Windows/Linux 是 Ctrl。
+ * 仅在平台确实未知时同时接受两者，避免扩大兼容逻辑后改变 macOS 的 Ctrl
+ * 编辑习惯或让其它平台的 Meta 意外触发应用快捷键。
  * `Ctrl+K` (chord.ctrl=true, chord.mod=false) 仍然只接受 ⌃K, 不被 ⌘K 误触发;
  * `Mod+Ctrl+K` 类组合按精确比对走。
  */
@@ -63,15 +64,11 @@ export function chordMatches(
   if (isImeComposing(event)) return false;
 
   // 修饰键精确比对
-  if (ctx.platform === 'mac') {
-    // 'Mod+X' 在 Mac 上兼容 ⌘X 和 ⌃X (用户从 Windows 切过来时 ⌃K 是常用键)
-    if (chord.mod && !chord.ctrl) {
-      const hasMod = event.metaKey || event.ctrlKey;
-      if (!hasMod) return false;
-    } else {
-      if (matchesModifier('mod', event, ctx.platform) !== chord.mod) return false;
-      if (matchesModifier('ctrl', event, ctx.platform) !== chord.ctrl) return false;
-    }
+  if (ctx.platform === 'unknown' && chord.mod && !chord.ctrl) {
+    if (!event.metaKey && !event.ctrlKey) return false;
+  } else if (ctx.platform === 'mac') {
+    if (matchesModifier('mod', event, ctx.platform) !== chord.mod) return false;
+    if (matchesModifier('ctrl', event, ctx.platform) !== chord.ctrl) return false;
   } else if (event.ctrlKey !== (chord.mod || chord.ctrl)) {
     return false;
   }

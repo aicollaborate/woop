@@ -25,6 +25,7 @@ interface MemoListWindowOptions {
   loadingMorePages: boolean;
   loadMorePages: () => void;
   scrollerRef: RefObject<HTMLDivElement | null>;
+  isActive: boolean;
 }
 
 /**
@@ -45,6 +46,7 @@ export function useMemoListWindow({
   loadingMorePages,
   loadMorePages,
   scrollerRef,
+  isActive,
 }: MemoListWindowOptions) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
 
@@ -95,6 +97,7 @@ export function useMemoListWindow({
 
   const onScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
+      if (!isActive) return;
       if (!hasMoreMemos && (!hasMorePages || loadingMorePages)) return;
       const scroller = event.currentTarget;
       const distanceToBottom =
@@ -107,11 +110,11 @@ export function useMemoListWindow({
         }
       }
     },
-    [hasMoreMemos, hasMorePages, loadMore, loadMorePages, loadingMorePages],
+    [hasMoreMemos, hasMorePages, isActive, loadMore, loadMorePages, loadingMorePages],
   );
 
   useLayoutEffect(() => {
-    if (loading || loadingMorePages) return;
+    if (!isActive || loading || loadingMorePages) return;
     const scroller = scrollerRef.current;
     if (
       scroller &&
@@ -126,6 +129,7 @@ export function useMemoListWindow({
   }, [
     hasMoreMemos,
     hasMorePages,
+    isActive,
     loadMore,
     loadMorePages,
     loading,

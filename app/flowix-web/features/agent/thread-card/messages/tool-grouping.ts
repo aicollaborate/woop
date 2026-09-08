@@ -10,10 +10,12 @@ export type AgentRenderItem =
   | {
       kind: "tool-group";
       id: string;
-      tools: ChatMessage[];
+      /** Tools whose result is available and can be expanded as details. */
+      completedTools: ChatMessage[];
+      /** Tools still executing; rendered as the group's trailing progress rows. */
+      runningTools: ChatMessage[];
       totalCount: number;
       status: AgentToolGroupStatus;
-      previewTools?: ChatMessage[];
     };
 
 export function isFailedToolMessage(message: ChatMessage): boolean {
@@ -29,19 +31,18 @@ function getToolGroupStatus(tools: ChatMessage[]): AgentToolGroupStatus {
   return "completed";
 }
 
-function createToolGroup(
-  tools: ChatMessage[],
-  previewToolsByGroup?: ReadonlyMap<string, ChatMessage[]>,
-): AgentRenderItem {
+function createToolGroup(tools: ChatMessage[]): AgentRenderItem {
   const id = `tool-group:${tools[0].id}`;
+  const completedTools = tools.filter((tool) => !tool.isLoading);
+  const runningTools = tools.filter((tool) => tool.isLoading);
   return {
     kind: "tool-group",
     // The first tool id is stable across live updates and history hydration.
     id,
-    tools,
+    completedTools,
+    runningTools,
     totalCount: tools.length,
     status: getToolGroupStatus(tools),
-    previewTools: previewToolsByGroup?.get(id),
   };
 }
 
@@ -53,14 +54,13 @@ function createToolGroup(
  */
 export function groupAgentMessages(
   messages: ChatMessage[],
-  previewToolsByGroup?: ReadonlyMap<string, ChatMessage[]>,
 ): AgentRenderItem[] {
   const items: AgentRenderItem[] = [];
   let toolRun: ChatMessage[] = [];
 
   const flushTools = () => {
     if (toolRun.length > 0) {
-      items.push(createToolGroup(toolRun, previewToolsByGroup));
+      items.push(createToolGroup(toolRun));
     }
     toolRun = [];
   };
@@ -90,17 +90,17 @@ export function areAgentRenderItemsEqual(
     left.id !== right.id ||
     left.status !== right.status ||
     left.totalCount !== right.totalCount ||
-    left.tools.length !== right.tools.length
+    left.completedTools.length !== right.completedTools.length ||
+    left.runningTools.length !== right.runningTools.length
   ) {
     return false;
   }
-  if ((left.previewTools?.length ?? 0) !== (right.previewTools?.length ?? 0)) {
-    return false;
-  }
   return (
-    left.tools.every((tool, index) => tool === right.tools[index]) &&
-    (left.previewTools ?? []).every(
-      (tool, index) => tool === (right.previewTools ?? [])[index],
+    left.completedTools.every(
+      (tool, index) => tool === right.completedTools[index],
+    ) &&
+    left.runningTools.every(
+      (tool, index) => tool === right.runningTools[index],
     )
   );
 }

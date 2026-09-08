@@ -176,5 +176,14 @@ describe('AgentThreadCard fullscreen host scoping', () => {
     const button = container?.querySelector('button.agent-thread-card-fullscreen-exit-btn');
     expect(button).not.toBeNull();
     expect(button?.getAttribute('aria-label')).toBeTruthy();
+
+    let requestHost: string | undefined;
+    const handleRequest = (event: Event) => {
+      requestHost = (event as CustomEvent<{ host?: string }>).detail?.host;
+    };
+    window.addEventListener('flowix:agent-thread-card-request-fullscreen', handleRequest);
+    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    window.removeEventListener('flowix:agent-thread-card-request-fullscreen', handleRequest);
+    expect(requestHost).toBe('browser-column');
   });
 });

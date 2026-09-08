@@ -38,7 +38,8 @@ describe("groupAgentMessages", () => {
     const group = items[1];
     expect(group.kind).toBe("tool-group");
     if (group.kind === "tool-group") {
-      expect(group.tools.map((tool) => tool.id)).toEqual(["t1", "t2"]);
+      expect(group.completedTools.map((tool) => tool.id)).toEqual(["t1", "t2"]);
+      expect(group.runningTools).toEqual([]);
       expect(group.totalCount).toBe(2);
       expect(group.status).toBe("completed");
     }
@@ -48,23 +49,22 @@ describe("groupAgentMessages", () => {
     const [item] = groupAgentMessages([message("t1", "tool")]);
     expect(item.kind).toBe("tool-group");
     if (item.kind === "tool-group") {
-      expect(item.tools).toHaveLength(1);
+      expect(item.completedTools).toHaveLength(1);
+      expect(item.runningTools).toHaveLength(0);
       expect(item.totalCount).toBe(1);
     }
   });
 
-  it("includes the running tool in the group and exposes a preview batch", () => {
+  it("separates running tools into the group's trailing render region", () => {
     const running = message("t2", "tool", { isLoading: true, content: "" });
-    const [item] = groupAgentMessages(
-      [message("t1", "tool"), running],
-      new Map([["tool-group:t1", [running]]]),
-    );
+    const [item] = groupAgentMessages([message("t1", "tool"), running]);
 
     expect(item.kind).toBe("tool-group");
     if (item.kind === "tool-group") {
       expect(item.status).toBe("running");
       expect(item.totalCount).toBe(2);
-      expect(item.previewTools).toEqual([running]);
+      expect(item.completedTools.map((tool) => tool.id)).toEqual(["t1"]);
+      expect(item.runningTools).toEqual([running]);
     }
   });
 
@@ -76,7 +76,8 @@ describe("groupAgentMessages", () => {
     expect(item.kind).toBe("tool-group");
     if (item.kind === "tool-group") {
       expect(item.status).toBe("completed");
-      expect(item.previewTools).toBeUndefined();
+      expect(item.completedTools.map((tool) => tool.id)).toEqual(["t1", "t2"]);
+      expect(item.runningTools).toHaveLength(0);
     }
   });
 

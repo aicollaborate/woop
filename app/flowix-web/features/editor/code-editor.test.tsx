@@ -1,8 +1,11 @@
 import { act, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EditorView } from '@codemirror/view';
 
 import { CodeEditor, type CodeEditorHandle } from '@features/editor/code-editor';
+import { ShortcutsProvider } from '@features/shortcuts';
+import '@features/shortcuts/actions';
 
 vi.mock(
   '@features/editor/extensions/codeblock-shiki/shiki/shiki-highlighter',
@@ -115,5 +118,34 @@ describe('CodeEditor', () => {
         expect(container.querySelector('.cm-code-string')?.textContent).toBe('"yes"');
       });
     });
+  });
+
+  it('selects the focused CodeMirror document through the shared action', async () => {
+    await act(async () => root.render(
+      <ShortcutsProvider overrides={{}}>
+        <CodeEditor
+          filePath="/project/example.md"
+          content={'First\nSecond'}
+          onChange={vi.fn()}
+        />
+      </ShortcutsProvider>
+    ));
+
+    const content = container.querySelector<HTMLElement>('.cm-content');
+    expect(content).not.toBeNull();
+    content!.focus();
+    const event = new KeyboardEvent('keydown', {
+      key: 'a',
+      code: 'KeyA',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => content!.dispatchEvent(event));
+
+    const view = EditorView.findFromDOM(content!);
+    expect(event.defaultPrevented).toBe(true);
+    expect(view?.state.selection.main.from).toBe(0);
+    expect(view?.state.selection.main.to).toBe(view?.state.doc.length);
   });
 });

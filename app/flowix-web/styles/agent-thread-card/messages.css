@@ -96,11 +96,6 @@
   opacity: 0.72;
 }
 
-.markdown-editor .agent-thread-card__message--dsh-command-loading::after {
-  content: " …";
-  color: var(--muted-foreground);
-}
-
 .markdown-editor .agent-thread-card__message--dsh-command-result {
   align-self: flex-start;
   color: var(--muted-foreground);
@@ -380,8 +375,8 @@
 }
 
 /* ── 连续工具组: 独立的两级折叠容器 ─────────────────────────────
- * header 是一级折叠; 内部每个 tool row 仍保留自己的输入展开按钮。
- * streaming 组在收起时额外显示最近一批 tool rows 作为进度预览。 */
+ * header 是一级折叠; 已完成工具区域在展开时显示, 每个 tool row 仍保留
+ * 自己的输入展开按钮; 进行中工具区域始终位于组尾并保持单行。 */
 .markdown-editor .agent-thread-card__tool-group {
   display: flex;
   flex-direction: column;
@@ -444,15 +439,15 @@
   transition: transform 150ms ease;
 }
 
-.markdown-editor .agent-thread-card__tool-preview-loading-icon {
+.markdown-editor .agent-thread-card__tool-group-running-loading-icon {
   width: 12px;
   height: 12px;
   flex: 0 0 auto;
   color: var(--muted-foreground);
-  animation: agent-thread-card-tool-preview-loading 1s linear infinite;
+  animation: agent-thread-card-tool-group-running-loading 1s linear infinite;
 }
 
-@keyframes agent-thread-card-tool-preview-loading {
+@keyframes agent-thread-card-tool-group-running-loading {
   to {
     transform: rotate(360deg);
   }
@@ -468,85 +463,47 @@
   color: var(--destructive, var(--muted-foreground));
 }
 
-.markdown-editor .agent-thread-card__tool-group-tools {
+.markdown-editor .agent-thread-card__tool-group-completed-tools {
   display: none;
   min-width: 0;
   padding-left: 18px;
 }
 
 .markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-tools {
+  .agent-thread-card__tool-group-completed-tools {
   display: flex;
   flex-direction: column;
 }
 
-.markdown-editor .agent-thread-card__tool-group-preview {
+/* A failed tool keeps its fallback row visible while the group is collapsed,
+ * so provider/rendering errors are not silently hidden behind the summary. */
+.markdown-editor .agent-thread-card__tool-group--failed
+  .agent-thread-card__tool-group-completed-tools {
   display: flex;
-  align-items: center;
-  padding-left: 19px;
-  animation: agent-thread-card-tool-preview-fade-in 300ms ease both;
+  flex-direction: column;
+}
+
+.markdown-editor .agent-thread-card__tool-group-running-tools {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: 18px;
 }
 
 .markdown-editor
-  .agent-thread-card__tool-group-preview
+  .agent-thread-card__tool-group-running-tool
   .agent-thread-card__message-tool-icon-wrap {
   align-self: center;
 }
 
-/* Keep a leaving preview mounted for its 800ms exit timeline. */
-.markdown-editor .agent-thread-card__tool-group-preview--exiting {
+.markdown-editor .agent-thread-card__tool-group-running-tool {
   display: flex;
   align-items: center;
-  padding-left: 19px;
-  pointer-events: none;
-  animation: agent-thread-card-tool-preview-fade-out 800ms linear both;
-}
-
-.markdown-editor .agent-thread-card__tool-group-preview--updated {
-  animation: none;
-}
-
-@keyframes agent-thread-card-tool-preview-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes agent-thread-card-tool-preview-fade-out {
-  0%,
-  62.5% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
+  padding-left: 1px;
 }
 
 .markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-preview:not(
-    .agent-thread-card__tool-group-preview--running
-  ) {
-  display: none;
-}
-
-.markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-preview--exiting:not(
-    .agent-thread-card__tool-group-preview--running
-  ) {
-  display: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .markdown-editor .agent-thread-card__tool-group-preview {
-    animation: none;
-  }
-}
-
-.markdown-editor .agent-thread-card__tool-group--expanded
-  .agent-thread-card__tool-group-tools
+  .agent-thread-card__tool-group-completed-tools
   .agent-thread-card__message {
   padding-top: 6px;
   padding-bottom: 6px;

@@ -11,7 +11,13 @@ function isTauriApp(): boolean {
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 }
 
-export function WindowsTitlebarControls() {
+interface WindowsTitlebarControlsProps {
+  showBottomBorder?: boolean;
+}
+
+export function WindowsTitlebarControls({
+  showBottomBorder = false,
+}: WindowsTitlebarControlsProps) {
   const { t } = useI18n();
   if (!isWindowsPlatform() || !isTauriApp()) return null;
 
@@ -47,6 +53,12 @@ export function WindowsTitlebarControls() {
           <X className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>
       </Tooltip>
+      {showBottomBorder && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-px bg-[var(--divider)]"
+        />
+      )}
     </div>
   );
 }

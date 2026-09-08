@@ -18,6 +18,7 @@ import { translate, type AppLanguage, type I18nKey, type I18nParams } from "@/li
 import { createLogger } from "@/lib/logger";
 import { errorMessage } from "@/lib/error-message";
 import type { AgentTypeKey } from "@/types/agent";
+import type { WorkspaceHostId } from "@features/workspace/store/workspace-focus-store";
 import { deriveThreadTitleFromPrompt, defaultThreadTitle } from "@features/agent/store/thread-titles";
 import { toast } from "@/lib/toast";
 import { openNoteByDeepLink } from "@features/memo/use-cases/open-by-target";
@@ -190,26 +191,39 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
   private fullscreenRestoreFrame: number | null = null;
   private badgePositionFrame: number | null = null;
   /** 文档引用注入回调 (旧 quick-phrases 弹窗入参已废弃, 这里留给将来扩展)。 */
-  private boundHandleBodyScroll = (): void => {
+  private boundHandleBodyScroll = (event: Event): void => {
+    const body = event.currentTarget;
+    if (body instanceof HTMLElement) {
+      body.classList.toggle(
+        "agent-thread-card__body--scrolled",
+        body.scrollTop > SCROLL_DELTA_EPSILON_PX,
+      );
+    }
     this.messages.handleScroll();
   };
   private boundHandleRequestFullscreen = (event: Event): void => {
     const detail = (event as CustomEvent<{
       element?: HTMLElement;
       threadId?: string | null;
+      host?: WorkspaceHostId;
       exitOthers?: boolean;
       persist?: boolean;
     }>).detail;
+    // This request is deliberately host-scoped. Ignore legacy/unscoped
+    // broadcasts so a missing host can never turn into a cross-column exit.
+    const hostMatches =
+      detail?.host !== undefined && detail.host === this.workspaceHost;
     const isTarget =
-      detail?.element === this.dom ||
-      (!!detail?.threadId && detail.threadId === this.threadId);
+      hostMatches &&
+      (detail?.element === this.dom ||
+        (!!detail?.threadId && detail.threadId === this.threadId));
 
     if (isTarget) {
       this.setFullscreen(true, { persist: detail?.persist });
       return;
     }
 
-    if (detail?.exitOthers !== false && this.isFullscreen) {
+    if (hostMatches && detail?.exitOthers !== false && this.isFullscreen) {
       this.setFullscreen(false, { persist: detail?.persist });
     }
   };
@@ -774,6 +788,12 @@ export class AgentThreadCardView implements ProseMirrorNodeView {
 
   private get persistedFullscreen(): boolean {
     return !!this.node.attrs.fullscreen;
+  }
+
+  private get workspaceHost(): WorkspaceHostId | null {
+    const host = this.dom.closest<HTMLElement>("[data-workspace-host]")
+      ?.dataset.workspaceHost;
+    return host === "main-third" || host === "browser-column" ? host : null;
   }
 
   private get inputDraft(): string {

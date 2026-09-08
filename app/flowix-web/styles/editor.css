@@ -42,6 +42,14 @@
   --editor-scale: calc(var(--app-font-size, 15px) / 16px);
 }
 
+/* Browser-column memo surfaces can be read-only while remaining selectable.
+ * Make that contract explicit because contenteditable=false alone removes
+ * keyboard focus behavior in WebKit. */
+.markdown-editor .ProseMirror[aria-readonly="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .markdown-editor:focus .ProseMirror {
   outline: none;
 }

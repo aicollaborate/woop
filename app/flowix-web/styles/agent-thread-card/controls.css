@@ -284,6 +284,37 @@
   padding-inline: 0;
 }
 
+/* 全屏 Thread Card 的 header 会被移到 work-column titlebar, 因此消息
+ * body 是 grid 的第一块可见区域。复用独立 Agent 对话的顶部滚动提示：
+ * sticky 伪元素不会增加布局高度，只有 body 已向下滚动时才显示，避免
+ * 在消息区顶部制造一条常驻分隔线。 */
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__body::before {
+  display: block;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  width: 100%;
+  height: 8px;
+  margin-bottom: -8px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 1%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.markdown-editor
+  .agent-thread-card--fullscreen
+  .agent-thread-card__body.agent-thread-card__body--scrolled::before {
+  opacity: 1;
+}
+
 /* Dedicated right-panel conversation surface. It deliberately uses the same
  * message/composer classes as Thread Card, but is a normal flex layout rather
  * than the card's fixed-position fullscreen mode. */
